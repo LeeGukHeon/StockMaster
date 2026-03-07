@@ -41,7 +41,7 @@ st.title("Market Pulse")
 st.caption("Regime, investor flow breadth, and latest selection engine v1 output in one place.")
 
 st.subheader("Pulse Snapshot")
-st.dataframe(pulse, use_container_width=True, hide_index=True)
+st.dataframe(pulse, width="stretch", hide_index=True)
 
 left, right = st.columns(2)
 with left:
@@ -58,7 +58,7 @@ with left:
                 "risks",
             ]
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 with right:
@@ -78,9 +78,9 @@ with right:
                 "risks",
             ]
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
 st.subheader("Market-wide News")
-st.dataframe(news, use_container_width=True, hide_index=True)
+st.dataframe(news, width="stretch", hide_index=True)

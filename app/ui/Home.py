@@ -136,7 +136,7 @@ st.subheader("Latest Syncs")
 if latest_sync_runs.empty:
     st.info("No sync history yet.")
 else:
-    st.dataframe(latest_sync_runs, use_container_width=True, hide_index=True)
+    st.dataframe(latest_sync_runs, width="stretch", hide_index=True)
 
 st.subheader("Research Data Freshness")
 if research_summary.empty or research_summary.iloc[0].isna().all():
@@ -209,17 +209,17 @@ with pulse_left:
     if market_pulse.empty:
         st.info("Run regime, flow, and selection scripts to populate market pulse.")
     else:
-        st.dataframe(market_pulse, use_container_width=True, hide_index=True)
+        st.dataframe(market_pulse, width="stretch", hide_index=True)
     st.markdown("**Latest Flow Coverage**")
     if latest_flow_summary.empty:
         st.info("Investor flow summary is not available yet.")
     else:
-        st.dataframe(latest_flow_summary, use_container_width=True, hide_index=True)
+        st.dataframe(latest_flow_summary, width="stretch", hide_index=True)
     st.markdown("**Latest Proxy Prediction Summary**")
     if latest_prediction_summary.empty:
         st.info("Proxy prediction bands are not available yet.")
     else:
-        st.dataframe(latest_prediction_summary, use_container_width=True, hide_index=True)
+        st.dataframe(latest_prediction_summary, width="stretch", hide_index=True)
 with pulse_right:
     st.markdown("**Selection Engine v1 Preview (D+5)**")
     if selection_preview.empty:
@@ -243,12 +243,12 @@ with pulse_right:
         preview["final_selection_rank_pct"] = (
             pd.to_numeric(preview["final_selection_rank_pct"], errors="coerce") * 100.0
         ).round(1)
-        st.dataframe(preview, use_container_width=True, hide_index=True)
+        st.dataframe(preview, width="stretch", hide_index=True)
     st.markdown("**Selection Grade Mix (D+5)**")
     if selection_grades.empty:
         st.info("No selection grade mix available yet.")
     else:
-        st.dataframe(selection_grades, use_container_width=True, hide_index=True)
+        st.dataframe(selection_grades, width="stretch", hide_index=True)
 
 coverage_left, coverage_right = st.columns(2)
 with coverage_left:
@@ -256,13 +256,13 @@ with coverage_left:
     if latest_feature_coverage.empty:
         st.info("Feature coverage will appear after the feature store is built.")
     else:
-        st.dataframe(latest_feature_coverage, use_container_width=True, hide_index=True)
+        st.dataframe(latest_feature_coverage, width="stretch", hide_index=True)
 with coverage_right:
     st.subheader("Latest Feature Sample")
     if latest_feature_sample.empty:
         st.info("No feature matrix sample available yet.")
     else:
-        st.dataframe(latest_feature_sample, use_container_width=True, hide_index=True)
+        st.dataframe(latest_feature_sample, width="stretch", hide_index=True)
 
 validation_left, validation_right = st.columns(2)
 with validation_left:
@@ -270,13 +270,13 @@ with validation_left:
     if selection_validation.empty:
         st.info("No selection validation summary yet.")
     else:
-        st.dataframe(selection_validation, use_container_width=True, hide_index=True)
+        st.dataframe(selection_validation, width="stretch", hide_index=True)
 with validation_right:
     st.subheader("Explanatory Validation")
     if explanatory_validation.empty:
         st.info("No explanatory validation summary yet.")
     else:
-        st.dataframe(explanatory_validation, use_container_width=True, hide_index=True)
+        st.dataframe(explanatory_validation, width="stretch", hide_index=True)
 
 evaluation_left, evaluation_right = st.columns(2)
 with evaluation_left:
@@ -284,34 +284,34 @@ with evaluation_left:
     if latest_outcomes.empty:
         st.info("No matured outcome summary yet.")
     else:
-        st.dataframe(latest_outcomes, use_container_width=True, hide_index=True)
+        st.dataframe(latest_outcomes, width="stretch", hide_index=True)
     st.subheader("Evaluation Comparison")
     if latest_evaluation_comparison.empty:
         st.info("No selection-vs-explanatory comparison yet.")
     else:
-        st.dataframe(latest_evaluation_comparison, use_container_width=True, hide_index=True)
+        st.dataframe(latest_evaluation_comparison, width="stretch", hide_index=True)
 with evaluation_right:
     st.subheader("Rolling Evaluation Summary")
     if latest_evaluation_summary.empty:
         st.info("No evaluation summary rows yet.")
     else:
-        st.dataframe(latest_evaluation_summary, use_container_width=True, hide_index=True)
+        st.dataframe(latest_evaluation_summary, width="stretch", hide_index=True)
     st.subheader("Calibration Diagnostics")
     if latest_calibration.empty:
         st.info("No calibration diagnostics yet.")
     else:
-        st.dataframe(latest_calibration, use_container_width=True, hide_index=True)
+        st.dataframe(latest_calibration, width="stretch", hide_index=True)
 
 news_left, news_right = st.columns(2)
 with news_left:
     st.subheader("Latest Market-wide News")
-    st.dataframe(latest_market_news, use_container_width=True, hide_index=True)
+    st.dataframe(latest_market_news, width="stretch", hide_index=True)
 with news_right:
     st.subheader("Version Tracking")
-    st.dataframe(latest_versions, use_container_width=True, hide_index=True)
+    st.dataframe(latest_versions, width="stretch", hide_index=True)
 
 st.subheader("Latest Regime Snapshot")
-st.dataframe(latest_regime, use_container_width=True, hide_index=True)
+st.dataframe(latest_regime, width="stretch", hide_index=True)
 
 if discord_preview:
     with st.expander("Latest Discord Preview", expanded=False):
@@ -325,7 +325,7 @@ st.subheader("Recent Runs")
 if runs.empty:
     st.info("No run history yet. Execute `python scripts/bootstrap.py` first.")
 else:
-    st.dataframe(runs, use_container_width=True, hide_index=True)
+    st.dataframe(runs, width="stretch", hide_index=True)
 
 st.subheader("Provider Health")
-st.dataframe(provider_health, use_container_width=True, hide_index=True)
+st.dataframe(provider_health, width="stretch", hide_index=True)

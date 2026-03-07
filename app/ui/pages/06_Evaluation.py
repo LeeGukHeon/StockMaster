@@ -61,15 +61,15 @@ else:
     left, right = st.columns(2)
     with left:
         st.subheader("Latest Evaluation Summary")
-        st.dataframe(latest_summary, use_container_width=True, hide_index=True)
+        st.dataframe(latest_summary, width="stretch", hide_index=True)
         st.subheader("Latest Selection vs Explanatory")
-        st.dataframe(latest_comparison, use_container_width=True, hide_index=True)
+        st.dataframe(latest_comparison, width="stretch", hide_index=True)
     with right:
         st.subheader("Latest Calibration Diagnostics")
-        st.dataframe(latest_calibration, use_container_width=True, hide_index=True)
+        st.dataframe(latest_calibration, width="stretch", hide_index=True)
         if postmortem_preview:
             with st.expander("Latest Postmortem Preview", expanded=False):
                 st.code(postmortem_preview)
 
     st.subheader("Matured Outcome Rows")
-    st.dataframe(outcomes, use_container_width=True, hide_index=True)
+    st.dataframe(outcomes, width="stretch", hide_index=True)

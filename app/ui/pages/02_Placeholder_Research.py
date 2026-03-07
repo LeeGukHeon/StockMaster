@@ -66,21 +66,21 @@ st.markdown(
 summary_left, summary_right = st.columns(2)
 with summary_left:
     st.subheader("Latest Feature Coverage")
-    st.dataframe(feature_coverage, use_container_width=True, hide_index=True)
+    st.dataframe(feature_coverage, width="stretch", hide_index=True)
     st.subheader("Latest Label Coverage")
-    st.dataframe(label_coverage, use_container_width=True, hide_index=True)
+    st.dataframe(label_coverage, width="stretch", hide_index=True)
     st.subheader("Latest Flow Coverage")
-    st.dataframe(flow_summary, use_container_width=True, hide_index=True)
+    st.dataframe(flow_summary, width="stretch", hide_index=True)
 with summary_right:
     st.subheader("Market Pulse")
-    st.dataframe(market_pulse, use_container_width=True, hide_index=True)
+    st.dataframe(market_pulse, width="stretch", hide_index=True)
     st.subheader("Latest Regime Snapshot")
-    st.dataframe(regime_snapshot, use_container_width=True, hide_index=True)
+    st.dataframe(regime_snapshot, width="stretch", hide_index=True)
     st.subheader("Latest Proxy Prediction Summary")
-    st.dataframe(prediction_summary, use_container_width=True, hide_index=True)
+    st.dataframe(prediction_summary, width="stretch", hide_index=True)
 
 st.subheader("Feature Matrix Sample")
-st.dataframe(feature_sample, use_container_width=True, hide_index=True)
+st.dataframe(feature_sample, width="stretch", hide_index=True)
 
 st.subheader("Selection Engine v1 Preview (D+5)")
 st.dataframe(
@@ -98,14 +98,14 @@ st.dataframe(
             "risks",
         ]
     ],
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
 )
 
 validation_left, validation_right = st.columns(2)
 with validation_left:
     st.subheader("Selection Validation")
-    st.dataframe(selection_validation, use_container_width=True, hide_index=True)
+    st.dataframe(selection_validation, width="stretch", hide_index=True)
 with validation_right:
     st.subheader("Explanatory Validation")
-    st.dataframe(explanatory_validation, use_container_width=True, hide_index=True)
+    st.dataframe(explanatory_validation, width="stretch", hide_index=True)

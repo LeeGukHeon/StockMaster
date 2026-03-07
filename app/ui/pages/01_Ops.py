@@ -81,60 +81,60 @@ with top_left:
     st.write(storage_report.message)
 with top_right:
     st.metric("Available", f"{storage_report.available_gb:.2f} GB", storage_report.status.upper())
-    st.dataframe(watermarks, use_container_width=True, hide_index=True)
+    st.dataframe(watermarks, width="stretch", hide_index=True)
 
 summary_left, summary_right = st.columns(2)
 with summary_left:
     st.subheader("Universe")
-    st.dataframe(universe_summary, use_container_width=True, hide_index=True)
+    st.dataframe(universe_summary, width="stretch", hide_index=True)
 with summary_right:
     st.subheader("Trading Calendar")
-    st.dataframe(calendar_summary, use_container_width=True, hide_index=True)
+    st.dataframe(calendar_summary, width="stretch", hide_index=True)
 
 st.subheader("Latest Sync Status")
-st.dataframe(latest_sync_runs, use_container_width=True, hide_index=True)
+st.dataframe(latest_sync_runs, width="stretch", hide_index=True)
 
 st.subheader("Research Data Freshness")
-st.dataframe(research_summary, use_container_width=True, hide_index=True)
+st.dataframe(research_summary, width="stretch", hide_index=True)
 
 ops_left, ops_right = st.columns(2)
 with ops_left:
     st.subheader("Feature Coverage")
-    st.dataframe(feature_coverage, use_container_width=True, hide_index=True)
+    st.dataframe(feature_coverage, width="stretch", hide_index=True)
     st.subheader("Label Coverage")
-    st.dataframe(label_coverage, use_container_width=True, hide_index=True)
+    st.dataframe(label_coverage, width="stretch", hide_index=True)
     st.subheader("Flow Summary")
-    st.dataframe(flow_summary, use_container_width=True, hide_index=True)
+    st.dataframe(flow_summary, width="stretch", hide_index=True)
 with ops_right:
     st.subheader("Version Tracking")
-    st.dataframe(latest_versions, use_container_width=True, hide_index=True)
+    st.dataframe(latest_versions, width="stretch", hide_index=True)
     st.subheader("Prediction Summary")
-    st.dataframe(prediction_summary, use_container_width=True, hide_index=True)
+    st.dataframe(prediction_summary, width="stretch", hide_index=True)
     st.subheader("Latest Regime Snapshot")
-    st.dataframe(latest_regime, use_container_width=True, hide_index=True)
+    st.dataframe(latest_regime, width="stretch", hide_index=True)
 
 evaluation_left, evaluation_right = st.columns(2)
 with evaluation_left:
     st.subheader("Outcome Summary")
-    st.dataframe(outcome_summary, use_container_width=True, hide_index=True)
+    st.dataframe(outcome_summary, width="stretch", hide_index=True)
     st.subheader("Evaluation Summary")
-    st.dataframe(evaluation_summary, use_container_width=True, hide_index=True)
+    st.dataframe(evaluation_summary, width="stretch", hide_index=True)
 with evaluation_right:
     st.subheader("Selection vs Explanatory")
-    st.dataframe(evaluation_comparison, use_container_width=True, hide_index=True)
+    st.dataframe(evaluation_comparison, width="stretch", hide_index=True)
     st.subheader("Calibration Diagnostics")
-    st.dataframe(calibration_summary, use_container_width=True, hide_index=True)
+    st.dataframe(calibration_summary, width="stretch", hide_index=True)
 
 validation_left, validation_right = st.columns(2)
 with validation_left:
     st.subheader("Selection Validation")
-    st.dataframe(selection_validation, use_container_width=True, hide_index=True)
+    st.dataframe(selection_validation, width="stretch", hide_index=True)
 with validation_right:
     st.subheader("Explanatory Validation")
-    st.dataframe(explanatory_validation, use_container_width=True, hide_index=True)
+    st.dataframe(explanatory_validation, width="stretch", hide_index=True)
 
 st.subheader("Provider Health")
-st.dataframe(provider_health, use_container_width=True, hide_index=True)
+st.dataframe(provider_health, width="stretch", hide_index=True)
 
 if discord_preview:
     with st.expander("Latest Discord Preview", expanded=False):
@@ -145,10 +145,10 @@ if postmortem_preview:
         st.code(postmortem_preview)
 
 st.subheader("Run Manifest")
-st.dataframe(runs, use_container_width=True, hide_index=True)
+st.dataframe(runs, width="stretch", hide_index=True)
 
 st.subheader("Recent Failures")
 if failed_runs.empty:
     st.success("No failed runs recorded.")
 else:
-    st.dataframe(failed_runs, use_container_width=True, hide_index=True)
+    st.dataframe(failed_runs, width="stretch", hide_index=True)

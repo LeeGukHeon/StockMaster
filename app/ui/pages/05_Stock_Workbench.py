@@ -42,18 +42,18 @@ else:
     outcome_history = stock_workbench_outcome_frame(settings, symbol=selected_symbol, limit=20)
 
     st.subheader("Summary")
-    st.dataframe(summary, use_container_width=True, hide_index=True)
+    st.dataframe(summary, width="stretch", hide_index=True)
 
     left, right = st.columns(2)
     with left:
         st.subheader("Recent OHLCV")
-        st.dataframe(price_history, use_container_width=True, hide_index=True)
+        st.dataframe(price_history, width="stretch", hide_index=True)
     with right:
         st.subheader("Recent Investor Flow")
-        st.dataframe(flow_history, use_container_width=True, hide_index=True)
+        st.dataframe(flow_history, width="stretch", hide_index=True)
 
     st.subheader("Frozen Selection Outcomes")
-    st.dataframe(outcome_history, use_container_width=True, hide_index=True)
+    st.dataframe(outcome_history, width="stretch", hide_index=True)
 
     st.subheader("Linked News Metadata")
-    st.dataframe(news_history, use_container_width=True, hide_index=True)
+    st.dataframe(news_history, width="stretch", hide_index=True)

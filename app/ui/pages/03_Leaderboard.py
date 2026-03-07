@@ -101,23 +101,23 @@ else:
             display["final_selection_rank_pct"] = (
                 pd.to_numeric(display["final_selection_rank_pct"], errors="coerce") * 100.0
             ).round(1)
-            st.dataframe(display, use_container_width=True, hide_index=True)
+            st.dataframe(display, width="stretch", hide_index=True)
     with top_right:
         st.subheader("Grade Mix")
         if grade_counts.empty:
             st.info("No grade mix available.")
         else:
-            st.dataframe(grade_counts, use_container_width=True, hide_index=True)
+            st.dataframe(grade_counts, width="stretch", hide_index=True)
 
     st.subheader("Latest Validation Summary")
     if validation.empty:
         st.info("Validation rows are empty for the selected version.")
     else:
         filtered = validation.loc[validation["horizon"] == horizon].copy()
-        st.dataframe(filtered, use_container_width=True, hide_index=True)
+        st.dataframe(filtered, width="stretch", hide_index=True)
 
     st.subheader("Latest Selection v1 vs Explanatory v0")
     if evaluation_comparison.empty:
         st.info("No evaluation comparison rows are available yet.")
     else:
-        st.dataframe(evaluation_comparison, use_container_width=True, hide_index=True)
+        st.dataframe(evaluation_comparison, width="stretch", hide_index=True)
