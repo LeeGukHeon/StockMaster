@@ -20,9 +20,8 @@ from app.storage.manifests import fetch_recent_runs
 def load_ui_settings(project_root: Path) -> Settings:
     settings = load_settings(project_root=project_root)
     ensure_storage_layout(settings)
-    if not settings.paths.duckdb_path.exists():
-        with duckdb_connection(settings.paths.duckdb_path) as connection:
-            bootstrap_core_tables(connection)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
     return settings
 
 
@@ -135,8 +134,129 @@ def latest_sync_runs_frame(settings: Settings) -> pd.DataFrame:
                 status,
                 notes
             FROM ops_run_manifest
-            WHERE run_type IN ('sync_universe', 'sync_trading_calendar')
+            WHERE run_type IN (
+                'sync_universe',
+                'sync_trading_calendar',
+                'sync_daily_ohlcv',
+                'sync_fundamentals_snapshot',
+                'sync_news_metadata'
+            )
             QUALIFY ROW_NUMBER() OVER (PARTITION BY run_type ORDER BY started_at DESC) = 1
             ORDER BY run_type
             """
+        ).fetchdf()
+
+
+def research_data_summary_frame(settings: Settings) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                (SELECT MAX(trading_date) FROM fact_daily_ohlcv) AS latest_ohlcv_date,
+                (SELECT COUNT(*) FROM fact_daily_ohlcv WHERE trading_date = (
+                    SELECT MAX(trading_date) FROM fact_daily_ohlcv
+                )) AS latest_ohlcv_rows,
+                (
+                    SELECT MAX(as_of_date)
+                    FROM fact_fundamentals_snapshot
+                ) AS latest_fundamentals_date,
+                (SELECT COUNT(*) FROM fact_fundamentals_snapshot WHERE as_of_date = (
+                    SELECT MAX(as_of_date) FROM fact_fundamentals_snapshot
+                )) AS latest_fundamentals_rows,
+                (SELECT MAX(signal_date) FROM fact_news_item) AS latest_news_date,
+                (SELECT COUNT(*) FROM fact_news_item WHERE signal_date = (
+                    SELECT MAX(signal_date) FROM fact_news_item
+                )) AS latest_news_rows,
+                (SELECT COUNT(*) FROM fact_news_item WHERE signal_date = (
+                    SELECT MAX(signal_date) FROM fact_news_item
+                ) AND COALESCE(symbol_candidates, '[]') = '[]') AS latest_news_unmatched
+            """
+        ).fetchdf()
+
+
+def recent_failure_runs_frame(settings: Settings, *, limit: int = 5) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                run_type,
+                as_of_date,
+                started_at,
+                finished_at,
+                error_message
+            FROM ops_run_manifest
+            WHERE status = 'failed'
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_ohlcv_sample_frame(settings: Settings, *, limit: int = 10) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                trading_date,
+                symbol,
+                open,
+                high,
+                low,
+                close,
+                volume
+            FROM fact_daily_ohlcv
+            ORDER BY trading_date DESC, symbol
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_fundamentals_sample_frame(settings: Settings, *, limit: int = 10) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                as_of_date,
+                symbol,
+                revenue,
+                operating_income,
+                net_income,
+                roe,
+                debt_ratio
+            FROM fact_fundamentals_snapshot
+            ORDER BY as_of_date DESC, symbol
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_news_sample_frame(settings: Settings, *, limit: int = 10) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                signal_date,
+                published_at,
+                title,
+                publisher,
+                symbol_candidates,
+                query_bucket
+            FROM fact_news_item
+            ORDER BY signal_date DESC, published_at DESC
+            LIMIT ?
+            """,
+            [limit],
         ).fetchdf()

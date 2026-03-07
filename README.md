@@ -1,34 +1,34 @@
 # StockMaster
 
-StockMaster is a Korea-focused personal stock research platform. The repository now covers the foundation plus the first live reference-data ticket:
+StockMaster is a Korea-focused personal stock research platform for post-market analysis, ranking, reporting, and evaluation. The repository now covers:
 
-- KIS minimal provider activation
-- DART minimal provider activation
-- `dim_symbol` population
-- `dim_trading_calendar` population
-- Streamlit Home/Ops summaries for universe, calendar, and provider health
+- foundation and storage bootstrap
+- provider activation for KIS, DART, and Naver News
+- reference data sync for `dim_symbol` and `dim_trading_calendar`
+- core research data sync for OHLCV, fundamentals snapshots, and news metadata
 
-The product scope remains post-market research, ranking, reporting, and evaluation. Order routing and auto-trading are intentionally out of scope.
+Auto-trading, order routing, and tick/orderbook warehousing remain out of scope.
 
 ## Scope in this state
 
 Implemented now:
 
-- Typed settings loader using YAML + `.env`
-- Structured logging with `run_id` and `run_type`
-- Data directory bootstrap and DuckDB initialization
-- KIS token cache, symbol master download, current quote probe, daily OHLCV probe
-- DART corpCode download/cache/parse and company overview probe
-- `dim_symbol`, `vw_universe_active_common_stock`, and `dim_trading_calendar`
-- Streamlit Home, Ops, and Research placeholder pages
-- Unit and integration tests for normalization, calendar sync, bootstrap, universe sync, and provider smoke checks
+- YAML + `.env` typed settings
+- structured logging with `run_id` and `run_type`
+- DuckDB bootstrap, run manifest, and disk watermark tracking
+- KIS token cache, symbol master download, quote probe, and daily OHLCV ingestion
+- DART corpCode cache, company overview probe, regular disclosure scan, and financial snapshot materialization
+- Naver News metadata fetch, dedupe, and conservative symbol linking
+- `dim_symbol`, `dim_trading_calendar`, `fact_daily_ohlcv`, `fact_fundamentals_snapshot`, `fact_news_item`
+- Streamlit Home, Ops, and Research inspection pages
+- unit and integration tests for the current ingestion layers
 
-Still skeleton / follow-up tickets:
+Still follow-up work:
 
-- Full OHLCV bulk ingestion across the universe
-- Financial statement bulk ingestion
-- News ingestion and ranking features
-- D+1 / D+5 feature store, modeling, evaluation, and report delivery
+- full feature store and ranking models
+- report rendering and Discord delivery
+- richer news scoring and more advanced entity linking
+- sector/industry enrichment beyond the current seed fallback
 
 ## Repository layout
 
@@ -60,134 +60,205 @@ Copy-Item .env.example .env
 
 3. Fill the provider credentials you actually have.
 
-Required for live provider activation:
+Live data collection requires:
 
 - `KIS_APP_KEY`
 - `KIS_APP_SECRET`
 - `DART_API_KEY`
+- `NAVER_CLIENT_ID`
+- `NAVER_CLIENT_SECRET`
 
-Optional in this ticket:
+Needed when you use the related provider features:
 
 - `KIS_ACCOUNT_NO`
 - `KIS_PRODUCT_CODE`
+- `KIS_USE_MOCK`
 - `KRX_API_KEY`
-- `NAVER_CLIENT_ID`
-- `NAVER_CLIENT_SECRET`
 - `DISCORD_WEBHOOK_URL`
 
 Notes:
 
 - `KIS_USE_MOCK=false` uses the production KIS host.
-- `KRX_API_KEY` can stay blank in TICKET-001.
-- `DISCORD_WEBHOOK_URL` is not used yet by the current scripts.
+- `KRX_API_KEY` is still optional in TICKET-002 because KRX is not yet used as a live ingestion source.
+- `DISCORD_WEBHOOK_URL` is still unused by the current pipelines.
 
-## Reference-data flow
+## Bootstrap and reference data
 
-Run the ticket flow in this order.
-
-1. Bootstrap storage and DuckDB.
+TICKET-002 assumes the TICKET-001 reference data already exists. Run these first on a new machine:
 
 ```powershell
 python scripts/bootstrap.py
-```
-
-2. Build the trading calendar.
-
-```powershell
 python scripts/sync_trading_calendar.py --start 2025-01-01 --end 2026-12-31
-```
-
-3. Sync the KOSPI/KOSDAQ symbol universe.
-
-```powershell
 python scripts/sync_universe.py
-```
-
-4. Run the provider smoke check.
-
-```powershell
 python scripts/provider_smoke_check.py --symbol 005930
 ```
 
-5. Start the Streamlit UI.
+## TICKET-002 pipeline flow
+
+Run the core research data syncs in this order.
+
+1. Daily OHLCV
+
+```powershell
+python scripts/sync_daily_ohlcv.py --date 2026-03-06 --limit-symbols 50
+```
+
+2. Fundamentals snapshot
+
+```powershell
+python scripts/sync_fundamentals_snapshot.py --as-of-date 2026-03-06 --limit-symbols 50
+```
+
+3. News metadata
+
+```powershell
+python scripts/sync_news_metadata.py --date 2026-03-06 --mode market_and_focus --limit-symbols 50
+```
+
+4. Backfill example
+
+```powershell
+python scripts/backfill_core_research_data.py --start 2026-03-02 --end 2026-03-06 --limit-symbols 50
+```
+
+5. Scheduled-style daily orchestration
+
+```powershell
+python scripts/run_daily_pipeline.py
+```
+
+This entrypoint resolves the latest available trading day from `dim_trading_calendar` and runs the OHLCV, fundamentals, and news metadata syncs as one manifest-tracked daily job.
+
+6. Start the UI
 
 ```powershell
 streamlit run app/ui/Home.py
 ```
 
-## What each command does
+## Command reference
 
-`python scripts/bootstrap.py`
+### `scripts/sync_daily_ohlcv.py`
 
-- creates `data/raw`, `data/curated`, `data/marts`, `data/cache`, `data/logs`, `data/artifacts`
-- creates or migrates DuckDB
-- records a `bootstrap` run in `ops_run_manifest`
+Supported options:
 
-`python scripts/sync_trading_calendar.py --start ... --end ...`
+- `--date YYYY-MM-DD`
+- `--start YYYY-MM-DD --end YYYY-MM-DD`
+- `--symbols 005930,000660`
+- `--limit-symbols 100`
+- `--market KOSPI|KOSDAQ|ALL`
+- `--force`
+- `--dry-run`
 
-- generates `dim_trading_calendar`
-- uses weekend rules + Korea public holidays + optional override CSV
-- records a `sync_trading_calendar` run
-- writes a snapshot parquet under `data/artifacts/trading_calendar/`
+Behavior:
 
-`python scripts/sync_universe.py`
+- requires `dim_trading_calendar`
+- skips non-trading days with a success note
+- validates `high >= max(open, close)`, `low <= min(open, close)`, positive prices, and non-negative volume
+- uses `(trading_date, symbol)` as the deterministic upsert key
 
-- downloads official KIS KOSPI/KOSDAQ symbol master files
-- downloads or loads cached DART corpCode mapping
-- normalizes and upserts `dim_symbol`
-- recreates `vw_universe_active_common_stock`
-- records a `sync_universe` run
+### `scripts/sync_fundamentals_snapshot.py`
 
-`python scripts/provider_smoke_check.py --symbol 005930`
+Supported options:
 
-- runs a KIS current-quote probe
-- resolves DART `corp_code` by symbol when possible
-- runs a DART company overview probe when mapping exists
-- records a `provider_smoke_check` run
+- `--as-of-date YYYY-MM-DD`
+- `--start YYYY-MM-DD --end YYYY-MM-DD`
+- `--symbols 005930,000660`
+- `--limit-symbols 100`
+- `--force`
+- `--dry-run`
 
-## Raw storage rules
+Behavior:
 
-Representative outputs created by this ticket:
+- reads `dim_symbol.dart_corp_code`
+- scans DART regular disclosures up to the requested `as_of_date`
+- prefers consolidated statements (`CFS`), then falls back to separate statements (`OFS`)
+- materializes one row per `(as_of_date, symbol)`
+
+### `scripts/sync_news_metadata.py`
+
+Supported options:
+
+- `--date YYYY-MM-DD`
+- `--start YYYY-MM-DD --end YYYY-MM-DD`
+- `--symbols 005930,000660`
+- `--limit-symbols 100`
+- `--mode market_only|market_and_focus|symbol_list`
+- `--query-pack default`
+- `--max-items-per-query 50`
+- `--force`
+- `--dry-run`
+
+Behavior:
+
+- stores metadata only, never full article body
+- filters Naver search results by `signal_date`
+- dedupes by canonical link or stable article identity
+- uses conservative symbol linking and allows empty `symbol_candidates`
+
+## Raw and curated storage
+
+Representative outputs created by TICKET-002:
 
 ```text
-data/raw/kis/current_quote_probe/date=YYYY-MM-DD/*.json
-data/raw/kis/daily_ohlcv_probe/date=YYYY-MM-DD/*.json
-data/raw/kis/daily_ohlcv_probe/date=YYYY-MM-DD/*.parquet
-data/raw/kis/symbol_master_zip/date=YYYY-MM-DD/*.zip
-data/raw/dart/corp_codes/date=YYYY-MM-DD/*.zip
-data/raw/dart/company_overview/date=YYYY-MM-DD/*.json
-data/raw/reference/symbol_master/date=YYYY-MM-DD/*.parquet
-data/raw/reference/symbol_master_snapshot/date=YYYY-MM-DD/*.parquet
+data/raw/kis/daily_ohlcv/trading_date=YYYY-MM-DD/symbol=XXXXXX/*.json
+data/raw/dart/financials/disclosed_date=YYYY-MM-DD/symbol=XXXXXX/*.json
+data/raw/naver_news/fetch_date=YYYY-MM-DD/query_bucket=.../*.json
+
+data/curated/market/daily_ohlcv/trading_date=YYYY-MM-DD/*.parquet
+data/curated/fundamentals/snapshot/as_of_date=YYYY-MM-DD/*.parquet
+data/curated/news/items/signal_date=YYYY-MM-DD/*.parquet
 ```
 
-## Override and fallback files
+DuckDB helper views available after bootstrap:
 
-Optional files:
+- `vw_universe_active_common_stock`
+- `vw_latest_daily_ohlcv`
+- `vw_latest_fundamentals_snapshot`
+- `vw_news_recent_market`
+- `vw_news_recent_by_symbol`
 
-- `config/trading_calendar_overrides.csv`
-- `config/seeds/symbol_master_seed.csv`
-- `config/universe_filters.yaml`
+## News query pack adjustment
 
-Examples are included here:
+The default query pack lives in [config/news_queries.yaml](/d:/MyApps/StockMaster/config/news_queries.yaml).
 
-- `config/trading_calendar_overrides.example.csv`
-- `config/seeds/symbol_master_seed.example.csv`
+Current structure:
 
-Usage:
+- `packs.default.market`: market-wide and thematic queries
+- focus queries: generated from `dim_symbol.company_name` for the selected subset
 
-- copy the example file to the non-example name
-- keep only the rows you want to override or enrich
-- rerun the matching sync script
+How to adjust:
 
-Current fallback behavior:
+1. Edit `packs.default.market`
+2. Add or remove `bucket` / `keyword` pairs
+3. Rerun `scripts/sync_news_metadata.py`
 
-- calendar overrides are applied last and win over weekend/holiday rules
-- symbol seed fallback only enriches missing `sector`, `industry`, and `market_segment`
-- KRX seed fallback is optional and does not replace KIS as the primary source
+Operational note:
+
+- `market_and_focus` without explicit symbols defaults the focus subset to 25 names to avoid an unbounded query fan-out.
+
+## Fundamentals availability rule
+
+Current rule is the conservative date-only rule:
+
+- a DART filing is eligible only if `rcept_dt <= as_of_date`
+- the latest eligible regular filing wins
+- the code is structured so a later ticket can add a time-of-day cutoff rule
+
+This avoids mixing future disclosures into historical snapshots.
+
+## Known limitations
+
+- `market_cap` is still null in `fact_daily_ohlcv`
+- DART ratio calculations are simple snapshot ratios, not yet TTM or sector-adjusted
+- news publisher is derived from the article link domain
+- symbol linking is intentionally conservative and may leave `symbol_candidates = []`
+- Naver Search can rate limit bursty runs; the client retries on `429`, but very large focus sets will still slow down
+- no full article text storage
+- no feature store, model inference, leaderboard, or evaluation reports yet
 
 ## Validation
 
-Run the current test suite:
+Run tests:
 
 ```powershell
 python -m pytest
@@ -203,10 +274,9 @@ python -m ruff check .
 
 After `streamlit run app/ui/Home.py`, verify:
 
-- Home shows data root and DuckDB path
-- Home shows symbol counts, DART mapped count, and calendar min/max range
-- Ops shows recent run manifest rows
-- Provider health shows KIS/DART status summaries
+- Home shows reference data summary and research data freshness
+- Ops shows latest sync runs and recent failed runs
+- Research page shows sample OHLCV, fundamentals, and news rows
 
 ## Docker
 

@@ -6,6 +6,11 @@ from app.providers.base import BaseProvider, ProviderHealth
 
 from .company import DartCompanyClient
 from .corp_codes import CorpCodesSnapshot, DartCorpCodeClient
+from .financials import (
+    DartDisclosureSnapshot,
+    DartFinancialClient,
+    DartFinancialStatementSnapshot,
+)
 
 
 class DartProvider(BaseProvider):
@@ -15,6 +20,7 @@ class DartProvider(BaseProvider):
         super().__init__(settings, timeout=timeout)
         self.corp_codes = DartCorpCodeClient(settings, self.client, self.logger)
         self.company = DartCompanyClient(settings, self.client, self.logger)
+        self.financials = DartFinancialClient(settings, self.client, self.logger)
 
     def credential_map(self) -> dict[str, str | None]:
         return {"api_key": self.settings.providers.dart.api_key}
@@ -53,3 +59,33 @@ class DartProvider(BaseProvider):
 
     def fetch_company_overview(self, *, corp_code: str) -> dict[str, object]:
         return self.company.fetch_company_overview(corp_code=corp_code)
+
+    def fetch_regular_disclosures(
+        self,
+        *,
+        corp_code: str,
+        start_date,
+        end_date,
+        page_count: int = 100,
+    ) -> DartDisclosureSnapshot:
+        return self.financials.fetch_regular_disclosures(
+            corp_code=corp_code,
+            start_date=start_date,
+            end_date=end_date,
+            page_count=page_count,
+        )
+
+    def fetch_financial_statement(
+        self,
+        *,
+        corp_code: str,
+        bsns_year: int,
+        reprt_code: str,
+        fs_div: str,
+    ) -> DartFinancialStatementSnapshot:
+        return self.financials.fetch_financial_statement(
+            corp_code=corp_code,
+            bsns_year=bsns_year,
+            reprt_code=reprt_code,
+            fs_div=fs_div,
+        )

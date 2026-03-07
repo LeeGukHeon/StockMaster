@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -9,6 +9,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from app.common.disk import measure_disk_usage
 from app.common.run_context import activate_run_context
 from app.common.time import get_timezone, now_local, today_local
+from app.pipelines.daily_ohlcv import sync_daily_ohlcv
+from app.pipelines.fundamentals_snapshot import sync_fundamentals_snapshot
+from app.pipelines.news_metadata import sync_news_metadata
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout, log_disk_usage
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -92,9 +95,110 @@ def _run_skeleton_job(settings: Settings, *, run_type: str, notes: str) -> JobEx
                 raise
 
 
+def _resolve_pipeline_date(settings: Settings) -> date:
+    target_date = today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        row = connection.execute(
+            """
+            SELECT trading_date
+            FROM dim_trading_calendar
+            WHERE trading_date <= ?
+              AND is_trading_day
+            ORDER BY trading_date DESC
+            LIMIT 1
+            """,
+            [target_date],
+        ).fetchone()
+    return row[0] if row is not None else target_date
+
+
 def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
-    notes = "Daily pipeline skeleton executed. Real ingestion, features, and ranking are pending."
-    return _run_skeleton_job(settings, run_type="daily_pipeline", notes=notes)
+    ensure_storage_layout(settings)
+    pipeline_date = _resolve_pipeline_date(settings)
+    artifact_paths: list[str] = []
+
+    with activate_run_context("daily_pipeline", as_of_date=pipeline_date) as run_context:
+        with duckdb_connection(settings.paths.duckdb_path) as manifest_connection:
+            bootstrap_core_tables(manifest_connection)
+            record_run_start(
+                manifest_connection,
+                run_id=run_context.run_id,
+                run_type=run_context.run_type,
+                started_at=run_context.started_at,
+                as_of_date=run_context.as_of_date,
+                input_sources=[
+                    "sync_daily_ohlcv",
+                    "sync_fundamentals_snapshot",
+                    "sync_news_metadata",
+                ],
+                notes=(
+                    "Run the TICKET-002 daily ingestion pipeline for "
+                    f"{pipeline_date.isoformat()}"
+                ),
+            )
+        try:
+            ohlcv_result = sync_daily_ohlcv(settings, trading_date=pipeline_date)
+            fundamentals_result = sync_fundamentals_snapshot(
+                settings,
+                as_of_date=pipeline_date,
+            )
+            news_result = sync_news_metadata(
+                settings,
+                signal_date=pipeline_date,
+                mode="market_and_focus",
+            )
+            artifact_paths.extend(ohlcv_result.artifact_paths)
+            artifact_paths.extend(fundamentals_result.artifact_paths)
+            artifact_paths.extend(news_result.artifact_paths)
+
+            notes = (
+                f"Daily pipeline completed for {pipeline_date.isoformat()}. "
+                f"ohlcv_rows={ohlcv_result.row_count}, "
+                f"fundamentals_rows={fundamentals_result.row_count}, "
+                f"news_rows={news_result.deduped_row_count}"
+            )
+            with duckdb_connection(settings.paths.duckdb_path) as manifest_connection:
+                bootstrap_core_tables(manifest_connection)
+                disk_report = measure_disk_usage(
+                    settings.paths.data_dir,
+                    warning_ratio=settings.storage.warning_ratio,
+                    prune_ratio=settings.storage.prune_ratio,
+                    limit_ratio=settings.storage.limit_ratio,
+                )
+                log_disk_usage(
+                    manifest_connection,
+                    report=disk_report,
+                    measured_at=now_local(settings.app.timezone),
+                    action_taken="daily_pipeline",
+                )
+                record_run_finish(
+                    manifest_connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="success",
+                    output_artifacts=artifact_paths,
+                    notes=notes,
+                )
+            return JobExecutionResult(
+                run_id=run_context.run_id,
+                run_type="daily_pipeline",
+                status="success",
+                notes=notes,
+            )
+        except Exception as exc:
+            with duckdb_connection(settings.paths.duckdb_path) as manifest_connection:
+                bootstrap_core_tables(manifest_connection)
+                record_run_finish(
+                    manifest_connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="failed",
+                    output_artifacts=artifact_paths,
+                    notes="Daily pipeline failed.",
+                    error_message=str(exc),
+                )
+            raise
 
 
 def run_evaluation_job(settings: Settings) -> JobExecutionResult:

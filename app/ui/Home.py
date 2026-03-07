@@ -15,10 +15,14 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.ui.helpers import (
     calendar_summary_frame,
     disk_report,
+    latest_fundamentals_sample_frame,
+    latest_news_sample_frame,
+    latest_ohlcv_sample_frame,
     latest_sync_runs_frame,
     load_ui_settings,
     provider_health_frame,
     recent_runs_frame,
+    research_data_summary_frame,
     universe_summary_frame,
 )
 
@@ -31,6 +35,10 @@ provider_health = provider_health_frame(settings)
 universe_summary = universe_summary_frame(settings)
 calendar_summary = calendar_summary_frame(settings)
 latest_sync_runs = latest_sync_runs_frame(settings)
+research_summary = research_data_summary_frame(settings)
+latest_ohlcv = latest_ohlcv_sample_frame(settings, limit=5)
+latest_fundamentals = latest_fundamentals_sample_frame(settings, limit=5)
+latest_news = latest_news_sample_frame(settings, limit=5)
 
 st.title(settings.app.display_name)
 st.caption("Reference data dashboard for the KR stock research platform.")
@@ -80,18 +88,29 @@ with summary_right:
 
 st.subheader("Latest Syncs")
 if latest_sync_runs.empty:
-    st.info("No universe/calendar sync history yet.")
+    st.info("No sync history yet.")
 else:
-    sync_left, sync_right = st.columns(2)
-    by_type = {row["run_type"]: row for _, row in latest_sync_runs.iterrows()}
-    universe_run = by_type.get("sync_universe")
-    calendar_run = by_type.get("sync_trading_calendar")
-    with sync_left:
-        if universe_run is not None:
-            st.metric("Last Universe Sync", str(universe_run["started_at"]), universe_run["status"])
-    with sync_right:
-        if calendar_run is not None:
-            st.metric("Last Calendar Sync", str(calendar_run["started_at"]), calendar_run["status"])
+    st.dataframe(latest_sync_runs, use_container_width=True, hide_index=True)
+
+st.subheader("Research Data Freshness")
+if research_summary.empty or pd.isna(research_summary.iloc[0]["latest_ohlcv_date"]):
+    st.info(
+        "No core research data loaded yet. Run daily OHLCV, fundamentals, and news sync scripts."
+    )
+else:
+    row = research_summary.iloc[0]
+    top, mid, bottom = st.columns(3)
+    top.metric("Latest OHLCV", str(row["latest_ohlcv_date"]), int(row["latest_ohlcv_rows"]))
+    mid.metric(
+        "Latest Fundamentals",
+        str(row["latest_fundamentals_date"]),
+        int(row["latest_fundamentals_rows"]),
+    )
+    bottom.metric(
+        "Latest News",
+        str(row["latest_news_date"]),
+        f"rows={int(row['latest_news_rows'])} unmatched={int(row['latest_news_unmatched'])}",
+    )
 
 st.subheader("Recent Runs")
 if runs.empty:
@@ -102,35 +121,12 @@ else:
 st.subheader("Provider Health")
 st.dataframe(provider_health, use_container_width=True, hide_index=True)
 
-st.subheader("Current Implementation Status")
-checklist = pd.DataFrame(
-    [
-        {
-            "area": "Foundation",
-            "status": "implemented",
-            "notes": "Settings, logging, manifest, storage bootstrap",
-        },
-        {
-            "area": "KIS provider",
-            "status": "minimal live",
-            "notes": "Auth, token cache, quote probe, symbol master",
-        },
-        {
-            "area": "DART provider",
-            "status": "minimal live",
-            "notes": "corpCode cache and company overview probe",
-        },
-        {
-            "area": "Universe dimension",
-            "status": "implemented",
-            "notes": "dim_symbol + active common stock view",
-        },
-        {
-            "area": "Trading calendar",
-            "status": "implemented",
-            "notes": "Weekend + KR holidays + override CSV",
-        },
-        {"area": "Research features", "status": "pending", "notes": "TICKET-002 and later"},
-    ]
-)
-st.dataframe(checklist, use_container_width=True, hide_index=True)
+sample_left, sample_right = st.columns(2)
+with sample_left:
+    st.subheader("Latest OHLCV Sample")
+    st.dataframe(latest_ohlcv, use_container_width=True, hide_index=True)
+    st.subheader("Latest Fundamentals Sample")
+    st.dataframe(latest_fundamentals, use_container_width=True, hide_index=True)
+with sample_right:
+    st.subheader("Latest News Sample")
+    st.dataframe(latest_news, use_container_width=True, hide_index=True)

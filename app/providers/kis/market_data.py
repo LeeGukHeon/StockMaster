@@ -204,6 +204,7 @@ class SymbolMasterSnapshot:
 @dataclass(slots=True)
 class DailyOhlcvProbe:
     frame: pd.DataFrame
+    payload: dict[str, Any]
     raw_json_path: str
     raw_parquet_path: str
 
@@ -437,6 +438,7 @@ class KisMarketDataClient:
 
         return DailyOhlcvProbe(
             frame=frame,
+            payload=payload,
             raw_json_path=str(raw_json_path),
             raw_parquet_path=str(raw_parquet_path),
         )

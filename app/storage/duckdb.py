@@ -54,6 +54,71 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_daily_ohlcv (
+        trading_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        open DOUBLE,
+        high DOUBLE,
+        low DOUBLE,
+        close DOUBLE,
+        volume BIGINT,
+        turnover_value DOUBLE,
+        market_cap DOUBLE,
+        source VARCHAR,
+        source_notes_json VARCHAR,
+        ingested_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (trading_date, symbol)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_fundamentals_snapshot (
+        as_of_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        fiscal_year INTEGER,
+        report_code VARCHAR,
+        revenue DOUBLE,
+        operating_income DOUBLE,
+        net_income DOUBLE,
+        roe DOUBLE,
+        debt_ratio DOUBLE,
+        operating_margin DOUBLE,
+        source_doc_id VARCHAR,
+        source VARCHAR,
+        disclosed_at TIMESTAMPTZ,
+        statement_basis VARCHAR,
+        report_name VARCHAR,
+        currency VARCHAR,
+        accounting_standard VARCHAR,
+        source_notes_json VARCHAR,
+        ingested_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, symbol)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_news_item (
+        news_id VARCHAR PRIMARY KEY,
+        signal_date DATE,
+        published_at TIMESTAMPTZ,
+        symbol_candidates VARCHAR,
+        query_keyword VARCHAR,
+        title VARCHAR,
+        publisher VARCHAR,
+        link VARCHAR,
+        snippet VARCHAR,
+        tags_json VARCHAR,
+        catalyst_score DOUBLE,
+        sentiment_score DOUBLE,
+        freshness_score DOUBLE,
+        source VARCHAR,
+        canonical_link VARCHAR,
+        match_method_json VARCHAR,
+        query_bucket VARCHAR,
+        is_market_wide BOOLEAN,
+        source_notes_json VARCHAR,
+        ingested_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS ops_run_manifest (
         run_id VARCHAR PRIMARY KEY,
         run_type VARCHAR NOT NULL,
@@ -106,18 +171,70 @@ CALENDAR_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
 )
 
-ACTIVE_COMMON_STOCK_VIEW_DDL = """
-CREATE OR REPLACE VIEW vw_universe_active_common_stock AS
-SELECT *
-FROM dim_symbol
-WHERE market IN ('KOSPI', 'KOSDAQ')
-  AND COALESCE(is_common_stock, FALSE)
-  AND NOT COALESCE(is_etf, FALSE)
-  AND NOT COALESCE(is_etn, FALSE)
-  AND NOT COALESCE(is_spac, FALSE)
-  AND NOT COALESCE(is_reit, FALSE)
-  AND NOT COALESCE(is_delisted, FALSE)
-"""
+CORE_VIEW_DDL: tuple[str, ...] = (
+    """
+    CREATE OR REPLACE VIEW vw_universe_active_common_stock AS
+    SELECT *
+    FROM dim_symbol
+    WHERE market IN ('KOSPI', 'KOSDAQ')
+      AND COALESCE(is_common_stock, FALSE)
+      AND NOT COALESCE(is_etf, FALSE)
+      AND NOT COALESCE(is_etn, FALSE)
+      AND NOT COALESCE(is_spac, FALSE)
+      AND NOT COALESCE(is_reit, FALSE)
+      AND NOT COALESCE(is_delisted, FALSE)
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_daily_ohlcv AS
+    SELECT *
+    FROM fact_daily_ohlcv
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol
+        ORDER BY trading_date DESC, ingested_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_fundamentals_snapshot AS
+    SELECT *
+    FROM fact_fundamentals_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol
+        ORDER BY as_of_date DESC, disclosed_at DESC NULLS LAST, ingested_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_news_recent_market AS
+    SELECT
+        signal_date,
+        published_at,
+        title,
+        publisher,
+        query_bucket,
+        tags_json,
+        link,
+        freshness_score
+    FROM fact_news_item
+    WHERE COALESCE(is_market_wide, FALSE)
+      AND signal_date >= CURRENT_DATE - INTERVAL 7 DAY
+    ORDER BY signal_date DESC, published_at DESC
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_news_recent_by_symbol AS
+    SELECT
+        signal_date,
+        published_at,
+        title,
+        publisher,
+        symbol_candidates,
+        query_bucket,
+        link,
+        freshness_score
+    FROM fact_news_item
+    WHERE COALESCE(symbol_candidates, '[]') <> '[]'
+      AND signal_date >= CURRENT_DATE - INTERVAL 7 DAY
+    ORDER BY signal_date DESC, published_at DESC
+    """,
+)
 
 
 def connect_duckdb(
@@ -152,7 +269,8 @@ def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
     for ddl in CALENDAR_COLUMN_MIGRATIONS:
         connection.execute(ddl)
 
-    connection.execute(ACTIVE_COMMON_STOCK_VIEW_DDL)
+    for ddl in CORE_VIEW_DDL:
+        connection.execute(ddl)
 
 
 def fetch_dataframe(connection: duckdb.DuckDBPyConnection, query: str):

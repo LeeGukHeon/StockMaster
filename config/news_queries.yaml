@@ -1,0 +1,19 @@
+packs:
+  default:
+    market:
+      - bucket: market_index
+        keyword: 코스피
+      - bucket: market_index
+        keyword: 코스닥
+      - bucket: sector_semiconductor
+        keyword: 반도체
+      - bucket: sector_battery
+        keyword: 2차전지
+      - bucket: macro_rates
+        keyword: 금리
+      - bucket: macro_fx
+        keyword: 환율
+      - bucket: capital_flow
+        keyword: 외국인 순매수
+      - bucket: short_selling
+        keyword: 공매도
