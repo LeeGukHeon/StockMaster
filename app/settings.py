@@ -188,11 +188,7 @@ def _read_env_values(env_path: Path | None) -> dict[str, str]:
     values: dict[str, str] = {}
     if env_path is not None:
         values.update(
-            {
-                key: value
-                for key, value in dotenv_values(env_path).items()
-                if value is not None
-            }
+            {key: value for key, value in dotenv_values(env_path).items() if value is not None}
         )
     for key, value in os.environ.items():
         if value:

@@ -3,9 +3,12 @@ from __future__ import annotations
 from datetime import date
 
 from app.common.paths import project_root
+from app.features.feature_store import FeatureStoreBuildResult
 from app.pipelines.daily_ohlcv import DailyOhlcvSyncResult
 from app.pipelines.fundamentals_snapshot import FundamentalsSnapshotSyncResult
 from app.pipelines.news_metadata import NewsMetadataSyncResult
+from app.ranking.explanatory_score import RankingMaterializationResult
+from app.regime.snapshot import MarketRegimeBuildResult
 from app.scheduler.jobs import run_daily_pipeline_job
 from app.settings import load_settings
 from app.storage.bootstrap import bootstrap_storage
@@ -92,29 +95,82 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
             notes="ok",
         )
 
+    def fake_build_feature_store(settings_arg, *, as_of_date, **kwargs):
+        observed_dates.append(as_of_date)
+        return FeatureStoreBuildResult(
+            run_id="feature-run",
+            as_of_date=as_of_date,
+            symbol_count=10,
+            feature_row_count=640,
+            artifact_paths=["curated/features.parquet"],
+            notes="ok",
+            feature_version="feature_store_v1",
+        )
+
+    def fake_build_market_regime_snapshot(settings_arg, *, as_of_date, **kwargs):
+        observed_dates.append(as_of_date)
+        return MarketRegimeBuildResult(
+            run_id="regime-run",
+            as_of_date=as_of_date,
+            row_count=3,
+            artifact_paths=["curated/regime.parquet"],
+            notes="ok",
+            regime_version="market_regime_v1",
+        )
+
+    def fake_materialize_explanatory_ranking(settings_arg, *, as_of_date, horizons, **kwargs):
+        observed_dates.append(as_of_date)
+        assert horizons == [1, 5]
+        return RankingMaterializationResult(
+            run_id="ranking-run",
+            as_of_date=as_of_date,
+            row_count=20,
+            artifact_paths=["curated/ranking.parquet"],
+            notes="ok",
+            ranking_version="explanatory_ranking_v0",
+        )
+
     monkeypatch.setattr("app.scheduler.jobs.sync_daily_ohlcv", fake_sync_daily_ohlcv)
     monkeypatch.setattr(
         "app.scheduler.jobs.sync_fundamentals_snapshot",
         fake_sync_fundamentals_snapshot,
     )
     monkeypatch.setattr("app.scheduler.jobs.sync_news_metadata", fake_sync_news_metadata)
+    monkeypatch.setattr("app.scheduler.jobs.build_feature_store", fake_build_feature_store)
+    monkeypatch.setattr(
+        "app.scheduler.jobs.build_market_regime_snapshot",
+        fake_build_market_regime_snapshot,
+    )
+    monkeypatch.setattr(
+        "app.scheduler.jobs.materialize_explanatory_ranking",
+        fake_materialize_explanatory_ranking,
+    )
 
     result = run_daily_pipeline_job(settings)
 
     assert result.status == "success"
-    assert observed_dates == [date(2026, 3, 6), date(2026, 3, 6), date(2026, 3, 6)]
+    assert observed_dates == [date(2026, 3, 6)] * 6
     assert "ohlcv_rows=8" in result.notes
     assert "fundamentals_rows=6" in result.notes
     assert "news_rows=7" in result.notes
+    assert "feature_rows=640" in result.notes
+    assert "regime_rows=3" in result.notes
+    assert "ranking_rows=20" in result.notes
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         manifest_row = connection.execute(
             """
-            SELECT run_type, status, notes
+            SELECT run_type, status, notes, feature_version, ranking_version
             FROM ops_run_manifest
             WHERE run_type = 'daily_pipeline'
             ORDER BY started_at DESC
             LIMIT 1
             """
         ).fetchone()
-        assert manifest_row == ("daily_pipeline", "success", result.notes)
+        assert manifest_row == (
+            "daily_pipeline",
+            "success",
+            result.notes,
+            "feature_store_v1",
+            "explanatory_ranking_v0",
+        )

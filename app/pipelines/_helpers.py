@@ -43,13 +43,17 @@ def load_symbol_frame(
     require_dart: bool = False,
 ) -> pd.DataFrame:
     explicit_symbols = [symbol.zfill(6) for symbol in symbols or []]
-    query = """
+    query = (
+        """
         SELECT symbol, company_name, market, dart_corp_code
         FROM dim_symbol
-    """ if explicit_symbols else """
+    """
+        if explicit_symbols
+        else """
         SELECT symbol, company_name, market, dart_corp_code
         FROM vw_universe_active_common_stock
     """
+    )
 
     frame = connection.execute(query).fetchdf()
     if frame.empty:

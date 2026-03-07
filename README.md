@@ -1,44 +1,34 @@
 # StockMaster
 
-StockMaster is a Korea-focused personal stock research platform for post-market analysis, ranking, reporting, and evaluation. The repository now covers:
+StockMaster is a Korea-focused personal stock research platform for post-market analysis, explanatory ranking, reporting, and retrospective evaluation.
 
-- foundation and storage bootstrap
+Implemented through TICKET-003:
+
+- foundation, settings, logging, bootstrap, and disk guard
 - provider activation for KIS, DART, and Naver News
 - reference data sync for `dim_symbol` and `dim_trading_calendar`
-- core research data sync for OHLCV, fundamentals snapshots, and news metadata
+- core research ingestion for `fact_daily_ohlcv`, `fact_fundamentals_snapshot`, and `fact_news_item`
+- feature store, forward return labels, market regime snapshot, and explanatory ranking v0
+- Streamlit Home, Ops, Research, and Leaderboard pages
 
-Auto-trading, order routing, and tick/orderbook warehousing remain out of scope.
+Out of scope:
 
-## Scope in this state
+- auto-trading, order routing, and execution
+- full news article storage
+- ML alpha model training or prediction
+- fake uncertainty or fake model disagreement scores
 
-Implemented now:
-
-- YAML + `.env` typed settings
-- structured logging with `run_id` and `run_type`
-- DuckDB bootstrap, run manifest, and disk watermark tracking
-- KIS token cache, symbol master download, quote probe, and daily OHLCV ingestion
-- DART corpCode cache, company overview probe, regular disclosure scan, and financial snapshot materialization
-- Naver News metadata fetch, dedupe, and conservative symbol linking
-- `dim_symbol`, `dim_trading_calendar`, `fact_daily_ohlcv`, `fact_fundamentals_snapshot`, `fact_news_item`
-- Streamlit Home, Ops, and Research inspection pages
-- unit and integration tests for the current ingestion layers
-
-Still follow-up work:
-
-- full feature store and ranking models
-- report rendering and Discord delivery
-- richer news scoring and more advanced entity linking
-- sector/industry enrichment beyond the current seed fallback
+The current ranking is an explanatory layer. It is not a predictive engine.
 
 ## Repository layout
 
 ```text
-app/                Application packages
-config/             YAML configuration and local examples
-data/               Runtime storage roots (.gitkeep only)
-docs/               Architecture notes and ticket docs
-scripts/            CLI entrypoints
-tests/              Unit and integration tests
+app/                application packages
+config/             yaml configuration and local examples
+data/               runtime storage roots (.gitkeep only)
+docs/               architecture notes and ticket docs
+scripts/            cli entrypoints
+tests/              unit and integration tests
 ```
 
 ## Local setup
@@ -60,7 +50,7 @@ Copy-Item .env.example .env
 
 3. Fill the provider credentials you actually have.
 
-Live data collection requires:
+Required for live ingestion:
 
 - `KIS_APP_KEY`
 - `KIS_APP_SECRET`
@@ -68,7 +58,7 @@ Live data collection requires:
 - `NAVER_CLIENT_ID`
 - `NAVER_CLIENT_SECRET`
 
-Needed when you use the related provider features:
+Used only when the related capability is enabled:
 
 - `KIS_ACCOUNT_NO`
 - `KIS_PRODUCT_CODE`
@@ -79,12 +69,12 @@ Needed when you use the related provider features:
 Notes:
 
 - `KIS_USE_MOCK=false` uses the production KIS host.
-- `KRX_API_KEY` is still optional in TICKET-002 because KRX is not yet used as a live ingestion source.
-- `DISCORD_WEBHOOK_URL` is still unused by the current pipelines.
+- `KRX_API_KEY` is still optional because KRX is not yet a live ingestion dependency.
+- `DISCORD_WEBHOOK_URL` is still reserved for later delivery/report tickets.
 
-## Bootstrap and reference data
+## Initial bootstrap and reference data
 
-TICKET-002 assumes the TICKET-001 reference data already exists. Run these first on a new machine:
+Run these first on a new machine:
 
 ```powershell
 python scripts/bootstrap.py
@@ -93,138 +83,209 @@ python scripts/sync_universe.py
 python scripts/provider_smoke_check.py --symbol 005930
 ```
 
-## TICKET-002 pipeline flow
+## Core ingestion flow
 
-Run the core research data syncs in this order.
-
-1. Daily OHLCV
+TICKET-002 research ingestion:
 
 ```powershell
 python scripts/sync_daily_ohlcv.py --date 2026-03-06 --limit-symbols 50
-```
-
-2. Fundamentals snapshot
-
-```powershell
 python scripts/sync_fundamentals_snapshot.py --as-of-date 2026-03-06 --limit-symbols 50
-```
-
-3. News metadata
-
-```powershell
 python scripts/sync_news_metadata.py --date 2026-03-06 --mode market_and_focus --limit-symbols 50
-```
-
-4. Backfill example
-
-```powershell
 python scripts/backfill_core_research_data.py --start 2026-03-02 --end 2026-03-06 --limit-symbols 50
 ```
 
-5. Scheduled-style daily orchestration
+`python scripts/run_daily_pipeline.py` now orchestrates:
+
+- OHLCV sync
+- fundamentals snapshot sync
+- news metadata sync
+- feature store build
+- market regime snapshot build
+- explanatory ranking materialization
+
+Forward labels and ranking validation remain separate because they depend on future trading days.
+
+## TICKET-003 execution flow
+
+Single-date build flow:
 
 ```powershell
-python scripts/run_daily_pipeline.py
+python scripts/build_feature_store.py --as-of-date 2026-03-06 --limit-symbols 100
+python scripts/build_forward_labels.py --start 2026-03-02 --end 2026-03-06 --horizons 1 5 --limit-symbols 100
+python scripts/build_market_regime_snapshot.py --as-of-date 2026-03-06
+python scripts/materialize_explanatory_ranking.py --as-of-date 2026-03-06 --horizons 1 5 --limit-symbols 100
+python scripts/validate_explanatory_ranking.py --start 2026-02-17 --end 2026-03-06 --horizons 1 5
 ```
 
-This entrypoint resolves the latest available trading day from `dim_trading_calendar` and runs the OHLCV, fundamentals, and news metadata syncs as one manifest-tracked daily job.
-
-6. Start the UI
+UI:
 
 ```powershell
 streamlit run app/ui/Home.py
 ```
 
-## Command reference
+Historical validation note:
 
-### `scripts/sync_daily_ohlcv.py`
+- validation only works on dates where both `fact_ranking` and `fact_forward_return_label` exist
+- the latest as-of date often has no available label yet because future closes are not known
+- to validate a window, materialize historical feature/regime/ranking snapshots first
 
-Supported options:
+PowerShell example for historical ranking snapshots:
 
-- `--date YYYY-MM-DD`
-- `--start YYYY-MM-DD --end YYYY-MM-DD`
-- `--symbols 005930,000660`
-- `--limit-symbols 100`
-- `--market KOSPI|KOSDAQ|ALL`
-- `--force`
-- `--dry-run`
-
-Behavior:
-
-- requires `dim_trading_calendar`
-- skips non-trading days with a success note
-- validates `high >= max(open, close)`, `low <= min(open, close)`, positive prices, and non-negative volume
-- uses `(trading_date, symbol)` as the deterministic upsert key
-
-### `scripts/sync_fundamentals_snapshot.py`
-
-Supported options:
-
-- `--as-of-date YYYY-MM-DD`
-- `--start YYYY-MM-DD --end YYYY-MM-DD`
-- `--symbols 005930,000660`
-- `--limit-symbols 100`
-- `--force`
-- `--dry-run`
-
-Behavior:
-
-- reads `dim_symbol.dart_corp_code`
-- scans DART regular disclosures up to the requested `as_of_date`
-- prefers consolidated statements (`CFS`), then falls back to separate statements (`OFS`)
-- materializes one row per `(as_of_date, symbol)`
-
-### `scripts/sync_news_metadata.py`
-
-Supported options:
-
-- `--date YYYY-MM-DD`
-- `--start YYYY-MM-DD --end YYYY-MM-DD`
-- `--symbols 005930,000660`
-- `--limit-symbols 100`
-- `--mode market_only|market_and_focus|symbol_list`
-- `--query-pack default`
-- `--max-items-per-query 50`
-- `--force`
-- `--dry-run`
-
-Behavior:
-
-- stores metadata only, never full article body
-- filters Naver search results by `signal_date`
-- dedupes by canonical link or stable article identity
-- uses conservative symbol linking and allows empty `symbol_candidates`
-
-## Raw and curated storage
-
-Representative outputs created by TICKET-002:
-
-```text
-data/raw/kis/daily_ohlcv/trading_date=YYYY-MM-DD/symbol=XXXXXX/*.json
-data/raw/dart/financials/disclosed_date=YYYY-MM-DD/symbol=XXXXXX/*.json
-data/raw/naver_news/fetch_date=YYYY-MM-DD/query_bucket=.../*.json
-
-data/curated/market/daily_ohlcv/trading_date=YYYY-MM-DD/*.parquet
-data/curated/fundamentals/snapshot/as_of_date=YYYY-MM-DD/*.parquet
-data/curated/news/items/signal_date=YYYY-MM-DD/*.parquet
+```powershell
+foreach ($d in "2026-03-02","2026-03-03","2026-03-04","2026-03-05","2026-03-06") {
+  python scripts/build_feature_store.py --as-of-date $d --limit-symbols 100
+  python scripts/build_market_regime_snapshot.py --as-of-date $d
+  python scripts/materialize_explanatory_ranking.py --as-of-date $d --horizons 1 5 --limit-symbols 100
+}
+python scripts/validate_explanatory_ranking.py --start 2026-03-02 --end 2026-03-06 --horizons 1 5
 ```
 
-DuckDB helper views available after bootstrap:
+## Feature groups
 
-- `vw_universe_active_common_stock`
-- `vw_latest_daily_ohlcv`
-- `vw_latest_fundamentals_snapshot`
-- `vw_news_recent_market`
-- `vw_news_recent_by_symbol`
+Current `fact_feature_snapshot` groups:
+
+- `price_trend`
+- `volatility_risk`
+- `liquidity_turnover`
+- `fundamentals_quality`
+- `value_safety`
+- `news_catalyst`
+- `data_quality`
+
+Representative features:
+
+- price/trend: `ret_3d`, `ret_5d`, `ret_20d`, `ma5_over_ma20`, `ma20_over_ma60`, `drawdown_20d`
+- volatility/risk: `realized_vol_20d`, `gap_abs_avg_20d`, `hl_range_1d`, `max_loss_20d`
+- turnover/liquidity: `volume_ratio_1d_vs_20d`, `turnover_z_5_20`, `adv_20`, `adv_60`
+- fundamentals/quality: `roe_latest`, `debt_ratio_latest`, `operating_margin_latest`, `days_since_latest_report`
+- value/safety: `earnings_yield_proxy`, `low_debt_preference_proxy`, `profitability_support_proxy`
+- news: `news_count_3d`, `distinct_publishers_3d`, `latest_news_age_hours`, `positive_catalyst_count_3d`
+- data quality: `stale_price_flag`, `missing_key_feature_count`, `data_confidence_score`
+
+## Feature calculation overview
+
+- price and trend features come from `fact_daily_ohlcv`
+- turnover features use `turnover_value` and fall back to `close * volume`
+- fundamentals features come from the latest eligible DART snapshot at or before `as_of_date`
+- news features use metadata only and conservative symbol linking
+- data quality features score whether price, fundamentals, and news are present and current
+- all feature rows are materialized into `fact_feature_snapshot`
+- cross-sectional `rank_pct` and `zscore` are computed within market (`KOSPI`, `KOSDAQ`)
+
+## Label definition
+
+`fact_forward_return_label` uses explicit next-open logic:
+
+- D+1: next trading day open -> same day close
+- D+5: next trading day open -> close of the fifth trading session in the holding window
+- baseline: same-market equal-weight average forward return
+- excess label: symbol forward return minus same-market baseline
+
+This is intentionally next-open based because a post-market research decision cannot assume same-day close execution without look-ahead bias.
+
+## Regime state rules
+
+`fact_market_regime_snapshot` is built for:
+
+- `KR_ALL`
+- `KOSPI`
+- `KOSDAQ`
+
+Current v0 regime states:
+
+- `panic`
+- `risk_off`
+- `neutral`
+- `risk_on`
+- `euphoria`
+
+Inputs used by the rule engine:
+
+- breadth up ratio
+- median symbol return 1d
+- median symbol return 5d
+- 20d market realized volatility
+- turnover burst z-score
+- 20d new high ratio
+- 20d new low ratio
+
+## Explanatory score v0
+
+Active components:
+
+- `trend_momentum_score`
+- `turnover_participation_score`
+- `quality_score`
+- `value_safety_score`
+- `news_catalyst_score`
+- `regime_fit_score`
+- `risk_penalty_score`
+
+Reserved components:
+
+- `flow_score`
+
+`flow_score` is explicitly marked as reserved, not faked.
+
+Weights differ by horizon:
+
+- D+1 favors short-term trend, turnover, and news
+- D+5 shifts more weight toward medium-term trend, quality, and value/safety
+
+Stored outputs:
+
+- `final_selection_value`
+- `top_reason_tags_json`
+- `risk_flags_json`
+- `eligibility_notes_json`
+- `explanatory_score_json`
+
+## Grade rules
+
+Current grade assignment:
+
+- `A`: eligible and top 5%
+- `A-`: eligible and top 15%
+- `B`: eligible and top 35%, or critical-risk names that still clear the minimum threshold
+- `C`: everything else, including ineligible names
+
+Grades are presentation buckets, not probability estimates.
+
+## Tables and views added by TICKET-003
+
+Tables:
+
+- `fact_feature_snapshot`
+- `fact_forward_return_label`
+- `fact_market_regime_snapshot`
+- `fact_ranking`
+- `ops_ranking_validation_summary`
+
+Views:
+
+- `vw_feature_snapshot_latest`
+- `vw_feature_matrix_latest`
+- `vw_latest_forward_return_label`
+- `vw_market_regime_latest`
+- `vw_ranking_latest`
+- `vw_latest_ranking_validation_summary`
+
+## Raw, curated, and artifact outputs
+
+Representative paths:
+
+```text
+data/curated/features/as_of_date=YYYY-MM-DD/feature_snapshot.parquet
+data/curated/features/as_of_date=YYYY-MM-DD/feature_matrix.parquet
+data/curated/labels/as_of_date=YYYY-MM-DD/forward_return_labels.parquet
+data/curated/regime/as_of_date=YYYY-MM-DD/market_regime_snapshot.parquet
+data/curated/ranking/as_of_date=YYYY-MM-DD/horizon=N/explanatory_ranking.parquet
+data/artifacts/validation/ranking/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/ranking_validation_summary.parquet
+```
 
 ## News query pack adjustment
 
 The default query pack lives in [config/news_queries.yaml](/d:/MyApps/StockMaster/config/news_queries.yaml).
-
-Current structure:
-
-- `packs.default.market`: market-wide and thematic queries
-- focus queries: generated from `dim_symbol.company_name` for the selected subset
 
 How to adjust:
 
@@ -234,29 +295,27 @@ How to adjust:
 
 Operational note:
 
-- `market_and_focus` without explicit symbols defaults the focus subset to 25 names to avoid an unbounded query fan-out.
+- `market_and_focus` without explicit symbols caps the focus subset to avoid unbounded query fan-out
 
 ## Fundamentals availability rule
 
-Current rule is the conservative date-only rule:
+Current rule is conservative and date-only:
 
 - a DART filing is eligible only if `rcept_dt <= as_of_date`
 - the latest eligible regular filing wins
-- the code is structured so a later ticket can add a time-of-day cutoff rule
-
-This avoids mixing future disclosures into historical snapshots.
+- future filings are excluded from historical snapshots
 
 ## Known limitations
 
-- `market_cap` is still null in `fact_daily_ohlcv`
-- DART ratio calculations are simple snapshot ratios, not yet TTM or sector-adjusted
-- news publisher is derived from the article link domain
-- symbol linking is intentionally conservative and may leave `symbol_candidates = []`
-- Naver Search can rate limit bursty runs; the client retries on `429`, but very large focus sets will still slow down
-- no full article text storage
-- no feature store, model inference, leaderboard, or evaluation reports yet
+- ranking is explanatory only and does not include ML alpha, uncertainty, or disagreement
+- `flow_score` is reserved
+- `market_cap` depends on upstream availability and is not yet independently validated
+- many 20d and 60d features will be null on shallow history windows
+- symbol linking for news is intentionally conservative and may leave `symbol_candidates = []`
+- no full article body storage
+- validation is sparse unless historical ranking snapshots have already been materialized
 
-## Validation
+## Validation and lint
 
 Run tests:
 
@@ -274,9 +333,10 @@ python -m ruff check .
 
 After `streamlit run app/ui/Home.py`, verify:
 
-- Home shows reference data summary and research data freshness
-- Ops shows latest sync runs and recent failed runs
-- Research page shows sample OHLCV, fundamentals, and news rows
+- Home shows reference data, research freshness, feature/ranking snapshot, and validation summary
+- Ops shows version tracking, feature coverage, label coverage, regime snapshot, and failures
+- Research shows feature store, regime, labels, and sample upstream tables
+- Leaderboard shows rank table, grade mix, and validation summary
 
 ## Docker
 

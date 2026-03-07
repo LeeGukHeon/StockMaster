@@ -13,10 +13,7 @@ def validate_daily_ohlcv(frame: pd.DataFrame) -> None:
         errors.append(f"duplicate_keys={duplicate_count}")
 
     invalid_price = frame.loc[
-        (frame["open"] <= 0)
-        | (frame["high"] <= 0)
-        | (frame["low"] <= 0)
-        | (frame["close"] <= 0)
+        (frame["open"] <= 0) | (frame["high"] <= 0) | (frame["low"] <= 0) | (frame["close"] <= 0)
     ]
     if not invalid_price.empty:
         errors.append(f"invalid_prices={len(invalid_price)}")

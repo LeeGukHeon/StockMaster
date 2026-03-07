@@ -14,7 +14,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.ui.helpers import (
     calendar_summary_frame,
     disk_report,
+    latest_feature_coverage_frame,
+    latest_label_coverage_frame,
+    latest_regime_frame,
     latest_sync_runs_frame,
+    latest_validation_summary_frame,
+    latest_version_frame,
     load_ui_settings,
     provider_health_frame,
     recent_failure_runs_frame,
@@ -36,9 +41,14 @@ provider_health = provider_health_frame(settings)
 latest_sync_runs = latest_sync_runs_frame(settings)
 research_summary = research_data_summary_frame(settings)
 failed_runs = recent_failure_runs_frame(settings)
+feature_coverage = latest_feature_coverage_frame(settings)
+label_coverage = latest_label_coverage_frame(settings)
+latest_regime = latest_regime_frame(settings)
+latest_versions = latest_version_frame(settings)
+validation_summary = latest_validation_summary_frame(settings, limit=20)
 
 st.title("Ops")
-st.caption("Operational summary for provider health, symbol universe, and calendar sync.")
+st.caption("Operational summary for ingestion, feature builds, rankings, and validation state.")
 
 top_left, top_right = st.columns(2)
 with top_left:
@@ -77,6 +87,36 @@ if research_summary.empty or research_summary.iloc[0].isna().all():
     st.info("Core research tables have not been populated yet.")
 else:
     st.dataframe(research_summary, use_container_width=True, hide_index=True)
+
+ops_left, ops_right = st.columns(2)
+with ops_left:
+    st.subheader("Feature Coverage")
+    if feature_coverage.empty:
+        st.info("Feature coverage is not available yet.")
+    else:
+        st.dataframe(feature_coverage, use_container_width=True, hide_index=True)
+    st.subheader("Label Coverage")
+    if label_coverage.empty:
+        st.info("Forward labels are not available yet.")
+    else:
+        st.dataframe(label_coverage, use_container_width=True, hide_index=True)
+with ops_right:
+    st.subheader("Version Tracking")
+    if latest_versions.empty:
+        st.info("No feature/ranking versions recorded yet.")
+    else:
+        st.dataframe(latest_versions, use_container_width=True, hide_index=True)
+    st.subheader("Latest Regime Snapshot")
+    if latest_regime.empty:
+        st.info("Market regime snapshot is not available yet.")
+    else:
+        st.dataframe(latest_regime, use_container_width=True, hide_index=True)
+
+st.subheader("Ranking Validation")
+if validation_summary.empty:
+    st.info("Ranking validation summary is not available yet.")
+else:
+    st.dataframe(validation_summary, use_container_width=True, hide_index=True)
 
 st.subheader("Provider Health")
 st.dataframe(provider_health, use_container_width=True, hide_index=True)

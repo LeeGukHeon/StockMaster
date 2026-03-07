@@ -37,11 +37,7 @@ def dedupe_news_items(frame: pd.DataFrame) -> pd.DataFrame:
             }
         )
         tags = sorted(
-            {
-                tag
-                for payload in group["tags_json"]
-                for tag in json.loads(payload or "[]")
-            }
+            {tag for payload in group["tags_json"] for tag in json.loads(payload or "[]")}
         )
         query_keywords = [str(value) for value in group["query_keyword"].dropna().unique()]
         query_buckets = [str(value) for value in group["query_bucket"].dropna().unique()]

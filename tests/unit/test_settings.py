@@ -27,9 +27,10 @@ def test_load_settings_applies_env_overrides(tmp_path):
 
     assert settings.app.env == "prod"
     assert settings.paths.data_dir == (project_root() / "runtime-data").resolve()
-    assert settings.paths.duckdb_path == (
-        project_root() / "runtime-data" / "marts" / "test.duckdb"
-    ).resolve()
+    assert (
+        settings.paths.duckdb_path
+        == (project_root() / "runtime-data" / "marts" / "test.duckdb").resolve()
+    )
     assert settings.storage.warning_ratio == 0.55
     assert settings.model.default_horizons == ["D1", "D5", "D10"]
 

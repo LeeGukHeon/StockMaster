@@ -23,6 +23,7 @@ def record_run_start(
     input_sources: list[str] | None = None,
     notes: str | None = None,
     git_commit: str | None = None,
+    ranking_version: str | None = None,
 ) -> None:
     connection.execute(
         """
@@ -37,11 +38,12 @@ def record_run_start(
             output_artifacts_json,
             model_version,
             feature_version,
+            ranking_version,
             git_commit,
             notes,
             error_message
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             run_id,
@@ -54,6 +56,7 @@ def record_run_start(
             _json_text([]),
             None,
             None,
+            ranking_version,
             git_commit,
             notes,
             None,
@@ -72,6 +75,7 @@ def record_run_finish(
     error_message: str | None = None,
     model_version: str | None = None,
     feature_version: str | None = None,
+    ranking_version: str | None = None,
 ) -> None:
     connection.execute(
         """
@@ -82,7 +86,8 @@ def record_run_finish(
             notes = ?,
             error_message = ?,
             model_version = ?,
-            feature_version = ?
+            feature_version = ?,
+            ranking_version = ?
         WHERE run_id = ?
         """,
         [
@@ -93,6 +98,7 @@ def record_run_finish(
             error_message,
             model_version,
             feature_version,
+            ranking_version,
             run_id,
         ],
     )
@@ -129,6 +135,9 @@ def fetch_recent_runs(connection: duckdb.DuckDBPyConnection, limit: int = 10):
             notes,
             error_message,
             output_artifacts_json
+            ,
+            feature_version,
+            ranking_version
         FROM ops_run_manifest
         ORDER BY started_at DESC
         LIMIT ?

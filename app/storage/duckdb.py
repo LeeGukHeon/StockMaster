@@ -7,6 +7,33 @@ from typing import Iterator
 import duckdb
 
 from app.common.paths import ensure_directory
+from app.features.constants import FEATURE_NAMES
+
+
+def _build_feature_matrix_latest_view() -> str:
+    select_columns = ",\n        ".join(
+        [
+            "MAX(CASE WHEN feature_name = "
+            f"'{feature_name}' THEN feature_value END) AS {feature_name}"
+            for feature_name in FEATURE_NAMES
+        ]
+    )
+    return f"""
+    CREATE OR REPLACE VIEW vw_feature_matrix_latest AS
+    WITH latest_date AS (
+        SELECT MAX(as_of_date) AS as_of_date
+        FROM fact_feature_snapshot
+    )
+    SELECT
+        snapshot.as_of_date,
+        snapshot.symbol,
+        {select_columns}
+    FROM fact_feature_snapshot AS snapshot
+    JOIN latest_date
+      ON snapshot.as_of_date = latest_date.as_of_date
+    GROUP BY snapshot.as_of_date, snapshot.symbol
+    """
+
 
 CORE_TABLE_DDL: tuple[str, ...] = (
     """
@@ -119,6 +146,87 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_feature_snapshot (
+        run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        feature_name VARCHAR NOT NULL,
+        feature_value DOUBLE,
+        feature_group VARCHAR,
+        source_version VARCHAR,
+        feature_rank_pct DOUBLE,
+        feature_zscore DOUBLE,
+        is_imputed BOOLEAN,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, symbol, feature_name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_forward_return_label (
+        run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        market VARCHAR,
+        entry_date DATE,
+        exit_date DATE,
+        entry_basis VARCHAR,
+        exit_basis VARCHAR,
+        entry_price DOUBLE,
+        exit_price DOUBLE,
+        gross_forward_return DOUBLE,
+        baseline_type VARCHAR,
+        baseline_forward_return DOUBLE,
+        excess_forward_return DOUBLE,
+        label_available_flag BOOLEAN NOT NULL,
+        exclusion_reason VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, symbol, horizon)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_market_regime_snapshot (
+        run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        market_scope VARCHAR NOT NULL,
+        breadth_up_ratio DOUBLE,
+        breadth_down_ratio DOUBLE,
+        median_symbol_return_1d DOUBLE,
+        median_symbol_return_5d DOUBLE,
+        market_realized_vol_20d DOUBLE,
+        turnover_burst_z DOUBLE,
+        new_high_ratio_20d DOUBLE,
+        new_low_ratio_20d DOUBLE,
+        regime_state VARCHAR,
+        regime_score DOUBLE,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, market_scope)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_ranking (
+        run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        final_selection_value DOUBLE,
+        final_selection_rank_pct DOUBLE,
+        grade VARCHAR,
+        explanatory_score_json VARCHAR,
+        top_reason_tags_json VARCHAR,
+        risk_flags_json VARCHAR,
+        eligible_flag BOOLEAN,
+        eligibility_notes_json VARCHAR,
+        regime_state VARCHAR,
+        ranking_version VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, symbol, horizon)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS ops_run_manifest (
         run_id VARCHAR PRIMARY KEY,
         run_type VARCHAR NOT NULL,
@@ -130,6 +238,7 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         output_artifacts_json VARCHAR,
         model_version VARCHAR,
         feature_version VARCHAR,
+        ranking_version VARCHAR,
         git_commit VARCHAR,
         notes VARCHAR,
         error_message VARCHAR
@@ -143,6 +252,22 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         available_gb DOUBLE NOT NULL,
         usage_ratio DOUBLE NOT NULL,
         action_taken VARCHAR
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ops_ranking_validation_summary (
+        run_id VARCHAR NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        horizon INTEGER NOT NULL,
+        bucket_type VARCHAR NOT NULL,
+        bucket_name VARCHAR NOT NULL,
+        symbol_count BIGINT NOT NULL,
+        avg_gross_forward_return DOUBLE,
+        avg_excess_forward_return DOUBLE,
+        median_excess_forward_return DOUBLE,
+        top_decile_gap DOUBLE,
+        created_at TIMESTAMPTZ NOT NULL
     )
     """,
 )
@@ -169,6 +294,10 @@ CALENDAR_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS source_confidence VARCHAR",
     "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS is_override BOOLEAN",
     "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
+)
+
+MANIFEST_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE ops_run_manifest ADD COLUMN IF NOT EXISTS ranking_version VARCHAR",
 )
 
 CORE_VIEW_DDL: tuple[str, ...] = (
@@ -234,6 +363,52 @@ CORE_VIEW_DDL: tuple[str, ...] = (
       AND signal_date >= CURRENT_DATE - INTERVAL 7 DAY
     ORDER BY signal_date DESC, published_at DESC
     """,
+    """
+    CREATE OR REPLACE VIEW vw_feature_snapshot_latest AS
+    SELECT *
+    FROM fact_feature_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, feature_name
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    _build_feature_matrix_latest_view(),
+    """
+    CREATE OR REPLACE VIEW vw_latest_forward_return_label AS
+    SELECT *
+    FROM fact_forward_return_label
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, horizon
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_market_regime_latest AS
+    SELECT *
+    FROM fact_market_regime_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY market_scope
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_ranking_latest AS
+    SELECT *
+    FROM fact_ranking
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, horizon
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_ranking_validation_summary AS
+    SELECT *
+    FROM ops_ranking_validation_summary
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, bucket_type, bucket_name
+        ORDER BY created_at DESC
+    ) = 1
+    """,
 )
 
 
@@ -267,6 +442,9 @@ def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
         connection.execute(ddl)
 
     for ddl in CALENDAR_COLUMN_MIGRATIONS:
+        connection.execute(ddl)
+
+    for ddl in MANIFEST_COLUMN_MIGRATIONS:
         connection.execute(ddl)
 
     for ddl in CORE_VIEW_DDL:

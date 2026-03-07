@@ -9,9 +9,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from app.common.disk import measure_disk_usage
 from app.common.run_context import activate_run_context
 from app.common.time import get_timezone, now_local, today_local
+from app.features.feature_store import build_feature_store
 from app.pipelines.daily_ohlcv import sync_daily_ohlcv
 from app.pipelines.fundamentals_snapshot import sync_fundamentals_snapshot
 from app.pipelines.news_metadata import sync_news_metadata
+from app.ranking.explanatory_score import materialize_explanatory_ranking
+from app.regime.snapshot import build_market_regime_snapshot
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout, log_disk_usage
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -131,10 +134,12 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
                     "sync_daily_ohlcv",
                     "sync_fundamentals_snapshot",
                     "sync_news_metadata",
+                    "build_feature_store",
+                    "build_market_regime_snapshot",
+                    "materialize_explanatory_ranking",
                 ],
                 notes=(
-                    "Run the TICKET-002 daily ingestion pipeline for "
-                    f"{pipeline_date.isoformat()}"
+                    f"Run the TICKET-003 daily research pipeline for {pipeline_date.isoformat()}"
                 ),
             )
         try:
@@ -148,15 +153,34 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
                 signal_date=pipeline_date,
                 mode="market_and_focus",
             )
+            feature_result = build_feature_store(
+                settings,
+                as_of_date=pipeline_date,
+            )
+            regime_result = build_market_regime_snapshot(
+                settings,
+                as_of_date=pipeline_date,
+            )
+            ranking_result = materialize_explanatory_ranking(
+                settings,
+                as_of_date=pipeline_date,
+                horizons=[1, 5],
+            )
             artifact_paths.extend(ohlcv_result.artifact_paths)
             artifact_paths.extend(fundamentals_result.artifact_paths)
             artifact_paths.extend(news_result.artifact_paths)
+            artifact_paths.extend(feature_result.artifact_paths)
+            artifact_paths.extend(regime_result.artifact_paths)
+            artifact_paths.extend(ranking_result.artifact_paths)
 
             notes = (
                 f"Daily pipeline completed for {pipeline_date.isoformat()}. "
                 f"ohlcv_rows={ohlcv_result.row_count}, "
                 f"fundamentals_rows={fundamentals_result.row_count}, "
-                f"news_rows={news_result.deduped_row_count}"
+                f"news_rows={news_result.deduped_row_count}, "
+                f"feature_rows={feature_result.feature_row_count}, "
+                f"regime_rows={regime_result.row_count}, "
+                f"ranking_rows={ranking_result.row_count}"
             )
             with duckdb_connection(settings.paths.duckdb_path) as manifest_connection:
                 bootstrap_core_tables(manifest_connection)
@@ -179,6 +203,8 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
                     status="success",
                     output_artifacts=artifact_paths,
                     notes=notes,
+                    feature_version=feature_result.feature_version,
+                    ranking_version=ranking_result.ranking_version,
                 )
             return JobExecutionResult(
                 run_id=run_context.run_id,
@@ -216,8 +242,7 @@ def run_prune_storage_job(settings: Settings) -> JobExecutionResult:
         days=settings.retention.log_days,
     )
     notes = (
-        "Storage prune executed. "
-        f"Removed {removed_cache} cache files and {removed_logs} log files."
+        f"Storage prune executed. Removed {removed_cache} cache files and {removed_logs} log files."
     )
     return _run_skeleton_job(settings, run_type="prune_storage", notes=notes)
 
