@@ -14,15 +14,25 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         symbol VARCHAR PRIMARY KEY,
         company_name VARCHAR,
         market VARCHAR,
+        market_segment VARCHAR,
         sector VARCHAR,
         industry VARCHAR,
         listing_date DATE,
+        security_type VARCHAR,
         is_common_stock BOOLEAN,
+        is_preferred_stock BOOLEAN,
         is_etf BOOLEAN,
         is_etn BOOLEAN,
         is_spac BOOLEAN,
+        is_reit BOOLEAN,
         is_delisted BOOLEAN,
+        is_trading_halt BOOLEAN,
+        is_management_issue BOOLEAN,
         status_flags VARCHAR,
+        dart_corp_code VARCHAR,
+        dart_corp_name VARCHAR,
+        source VARCHAR,
+        as_of_date DATE,
         updated_at TIMESTAMPTZ
     )
     """,
@@ -31,8 +41,16 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         trading_date DATE PRIMARY KEY,
         is_trading_day BOOLEAN NOT NULL,
         market_session_type VARCHAR,
+        weekday INTEGER,
+        is_weekend BOOLEAN,
+        is_public_holiday BOOLEAN,
+        holiday_name VARCHAR,
+        source VARCHAR,
+        source_confidence VARCHAR,
+        is_override BOOLEAN,
         prev_trading_date DATE,
-        next_trading_date DATE
+        next_trading_date DATE,
+        updated_at TIMESTAMPTZ
     )
     """,
     """
@@ -64,6 +82,43 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     """,
 )
 
+SYMBOL_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS market_segment VARCHAR",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS security_type VARCHAR",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS is_preferred_stock BOOLEAN",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS is_reit BOOLEAN",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS is_trading_halt BOOLEAN",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS is_management_issue BOOLEAN",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS dart_corp_code VARCHAR",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS dart_corp_name VARCHAR",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS source VARCHAR",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS as_of_date DATE",
+)
+
+CALENDAR_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS weekday INTEGER",
+    "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS is_weekend BOOLEAN",
+    "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS is_public_holiday BOOLEAN",
+    "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS holiday_name VARCHAR",
+    "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS source VARCHAR",
+    "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS source_confidence VARCHAR",
+    "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS is_override BOOLEAN",
+    "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
+)
+
+ACTIVE_COMMON_STOCK_VIEW_DDL = """
+CREATE OR REPLACE VIEW vw_universe_active_common_stock AS
+SELECT *
+FROM dim_symbol
+WHERE market IN ('KOSPI', 'KOSDAQ')
+  AND COALESCE(is_common_stock, FALSE)
+  AND NOT COALESCE(is_etf, FALSE)
+  AND NOT COALESCE(is_etn, FALSE)
+  AND NOT COALESCE(is_spac, FALSE)
+  AND NOT COALESCE(is_reit, FALSE)
+  AND NOT COALESCE(is_delisted, FALSE)
+"""
+
 
 def connect_duckdb(
     db_path: Path,
@@ -90,6 +145,14 @@ def duckdb_connection(
 def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
     for ddl in CORE_TABLE_DDL:
         connection.execute(ddl)
+
+    for ddl in SYMBOL_COLUMN_MIGRATIONS:
+        connection.execute(ddl)
+
+    for ddl in CALENDAR_COLUMN_MIGRATIONS:
+        connection.execute(ddl)
+
+    connection.execute(ACTIVE_COMMON_STOCK_VIEW_DDL)
 
 
 def fetch_dataframe(connection: duckdb.DuckDBPyConnection, query: str):

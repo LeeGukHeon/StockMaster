@@ -1,16 +1,55 @@
 from __future__ import annotations
 
-from app.providers.base import BaseProvider
+import pandas as pd
+
+from app.providers.base import BaseProvider, ProviderHealth
+
+from .company import DartCompanyClient
+from .corp_codes import CorpCodesSnapshot, DartCorpCodeClient
 
 
 class DartProvider(BaseProvider):
     provider_name = "dart"
 
+    def __init__(self, settings, *, timeout: float = 15.0) -> None:
+        super().__init__(settings, timeout=timeout)
+        self.corp_codes = DartCorpCodeClient(settings, self.client, self.logger)
+        self.company = DartCompanyClient(settings, self.client, self.logger)
+
     def credential_map(self) -> dict[str, str | None]:
         return {"api_key": self.settings.providers.dart.api_key}
 
-    def fetch_corp_codes(self) -> dict[str, object]:
-        return self.build_stub_payload("fetch_corp_codes")
+    def health_check(self) -> ProviderHealth:
+        missing = self.missing_credentials()
+        if missing:
+            return super().health_check()
+
+        try:
+            snapshot = self.download_corp_codes(force=False)
+        except Exception as exc:
+            return ProviderHealth(
+                provider=self.provider_name,
+                configured=True,
+                status="error",
+                detail=str(exc),
+            )
+
+        source = "cache" if snapshot.cached else "fresh_download"
+        return ProviderHealth(
+            provider=self.provider_name,
+            configured=True,
+            status="ok",
+            detail=f"corpCode map loaded from {source}. rows={len(snapshot.frame)}",
+        )
+
+    def download_corp_codes(self, *, force: bool = False) -> CorpCodesSnapshot:
+        return self.corp_codes.download_corp_codes(force=force)
+
+    def load_corp_code_map(self, *, force: bool = False) -> pd.DataFrame:
+        return self.download_corp_codes(force=force).frame
+
+    def fetch_corp_codes(self) -> pd.DataFrame:
+        return self.load_corp_code_map(force=False)
 
     def fetch_company_overview(self, *, corp_code: str) -> dict[str, object]:
-        return self.build_stub_payload("fetch_company_overview", corp_code=corp_code)
+        return self.company.fetch_company_overview(corp_code=corp_code)

@@ -12,6 +12,7 @@ authors = [{ name = "StockMaster" }]
 dependencies = [
   "apscheduler>=3.10,<4",
   "duckdb>=1.2,<2",
+  "holidays>=0.69,<1",
   "httpx>=0.27,<1",
   "pandas>=2.2,<3",
   "plotly>=6,<7",

@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import sys
@@ -11,31 +13,23 @@ if str(PROJECT_ROOT) not in sys.path:
 
 st.set_page_config(page_title="Research Placeholder", page_icon="SM", layout="wide")
 
-st.title("Research Placeholder")
-st.caption("Reserved space for Market Pulse, Leaderboard, and Stock Workbench pages.")
+st.title("Placeholder Research")
+st.caption("TICKET-001 stops at provider activation and reference data.")
 
-market_col, leaderboard_col = st.columns(2)
+st.subheader("Planned Panels")
+st.markdown(
+    """
+    - Market Pulse: regime summary and breadth indicators
+    - Leaderboard: expected D+1 and D+5 excess return candidates
+    - Symbol Workbench: OHLCV, filings, and news trace by ticker
+    """
+)
 
-with market_col:
-    st.subheader("Market Pulse")
-    st.info("Post-market regime summary, issue clusters, and breadth metrics will be added here.")
-    st.markdown(
-        """
-        - Regime label
-        - KOSPI/KOSDAQ breadth
-        - Flow and liquidity summary
-        - News clusters and commentary
-        """
-    )
-
-with leaderboard_col:
-    st.subheader("Leaderboard")
-    st.info("Ranked stock candidates and explanatory scores will be added here.")
-    st.markdown(
-        """
-        - D+1 / D+5 ranked candidates
-        - Explanatory score cards
-        - Risk flags
-        - Drilldown links into future workbench pages
-        """
-    )
+st.subheader("Current Upstream Dependencies")
+st.markdown(
+    """
+    - `dim_symbol` now carries the tradable universe contract
+    - `dim_trading_calendar` now carries prev/next trading dates
+    - KIS and DART have minimal provider probes for smoke checks
+    """
+)

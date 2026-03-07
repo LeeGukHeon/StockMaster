@@ -1,0 +1,11 @@
+active_common_stock:
+  markets:
+    - KOSPI
+    - KOSDAQ
+  require_common_stock: true
+  exclude:
+    - is_etf
+    - is_etn
+    - is_spac
+    - is_reit
+    - is_delisted
