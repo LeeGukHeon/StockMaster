@@ -16,10 +16,9 @@ from app.ui.helpers import (
     latest_market_news_frame,
     leaderboard_frame,
     load_ui_settings,
+    localize_frame,
     market_pulse_frame,
 )
-
-st.set_page_config(page_title="Market Pulse", page_icon="SM", layout="wide")
 
 settings = load_ui_settings(PROJECT_ROOT)
 pulse = market_pulse_frame(settings)
@@ -37,50 +36,44 @@ d5_board = leaderboard_frame(
     ranking_version=SELECTION_ENGINE_VERSION,
 )
 
-st.title("Market Pulse")
-st.caption("Regime, investor flow breadth, and latest selection engine v1 output in one place.")
+st.title("시장 현황")
+st.caption("시장 상태, 수급 폭, 선정 엔진 v1 결과를 함께 보는 화면입니다.")
 
-st.subheader("Pulse Snapshot")
-st.dataframe(pulse, width="stretch", hide_index=True)
+st.subheader("시장 현황 스냅샷")
+st.dataframe(localize_frame(pulse), width="stretch", hide_index=True)
 
 left, right = st.columns(2)
 with left:
-    st.subheader("Top D+1")
-    st.dataframe(
-        d1_board[
-            [
-                "symbol",
-                "company_name",
-                "market",
-                "final_selection_value",
-                "grade",
-                "reasons",
-                "risks",
-            ]
-        ],
-        width="stretch",
-        hide_index=True,
-    )
+    st.subheader("상위 D+1 후보")
+    d1_display = d1_board[
+        [
+            "symbol",
+            "company_name",
+            "market",
+            "final_selection_value",
+            "grade",
+            "reasons",
+            "risks",
+        ]
+    ].copy()
+    st.dataframe(localize_frame(d1_display), width="stretch", hide_index=True)
 with right:
-    st.subheader("Top D+5")
-    st.dataframe(
-        d5_board[
-            [
-                "symbol",
-                "company_name",
-                "market",
-                "final_selection_value",
-                "grade",
-                "expected_excess_return",
-                "lower_band",
-                "upper_band",
-                "reasons",
-                "risks",
-            ]
-        ],
-        width="stretch",
-        hide_index=True,
-    )
+    st.subheader("상위 D+5 후보")
+    d5_display = d5_board[
+        [
+            "symbol",
+            "company_name",
+            "market",
+            "final_selection_value",
+            "grade",
+            "expected_excess_return",
+            "lower_band",
+            "upper_band",
+            "reasons",
+            "risks",
+        ]
+    ].copy()
+    st.dataframe(localize_frame(d5_display), width="stretch", hide_index=True)
 
-st.subheader("Market-wide News")
-st.dataframe(news, width="stretch", hide_index=True)
+st.subheader("시장 전체 뉴스")
+st.dataframe(localize_frame(news), width="stretch", hide_index=True)

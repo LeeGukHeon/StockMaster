@@ -29,6 +29,394 @@ def load_ui_settings(project_root: Path) -> Settings:
     return settings
 
 
+UI_COLUMN_LABELS: dict[str, str] = {
+    "threshold": "임계치",
+    "ratio": "비율",
+    "provider": "제공처",
+    "configured": "설정됨",
+    "status": "상태",
+    "detail": "상세",
+    "total_symbols": "전체 종목",
+    "kospi_symbols": "코스피 종목",
+    "kosdaq_symbols": "코스닥 종목",
+    "dart_mapped_symbols": "DART 매핑 종목",
+    "active_common_stock_count": "활성 보통주 수",
+    "min_trading_date": "최소 거래일",
+    "max_trading_date": "최대 거래일",
+    "total_days": "전체 일수",
+    "trading_days": "거래일 수",
+    "override_days": "오버라이드 일수",
+    "run_type": "실행 종류",
+    "started_at": "시작 시각",
+    "finished_at": "종료 시각",
+    "notes": "메모",
+    "error_message": "오류 메시지",
+    "latest_ohlcv_date": "최신 OHLCV 날짜",
+    "latest_ohlcv_rows": "최신 OHLCV 행수",
+    "latest_fundamentals_date": "최신 재무 날짜",
+    "latest_fundamentals_rows": "최신 재무 행수",
+    "latest_news_date": "최신 뉴스 날짜",
+    "latest_news_rows": "최신 뉴스 행수",
+    "latest_news_unmatched": "최신 뉴스 미매칭",
+    "latest_flow_date": "최신 수급 날짜",
+    "latest_flow_rows": "최신 수급 행수",
+    "latest_feature_date": "최신 피처 날짜",
+    "latest_feature_rows": "최신 피처 행수",
+    "latest_label_date": "최신 라벨 날짜",
+    "latest_available_label_rows": "최신 사용 가능 라벨 행수",
+    "latest_regime_date": "최신 시장 상태 날짜",
+    "latest_explanatory_ranking_date": "최신 설명형 순위 날짜",
+    "latest_explanatory_ranking_rows": "최신 설명형 순위 행수",
+    "latest_selection_date": "최신 선정 엔진 날짜",
+    "latest_selection_rows": "최신 선정 엔진 행수",
+    "latest_prediction_date": "최신 예측 밴드 날짜",
+    "latest_prediction_rows": "최신 예측 밴드 행수",
+    "latest_outcome_date": "최신 성과 날짜",
+    "latest_outcome_rows": "최신 성과 행수",
+    "latest_evaluation_summary_date": "최신 평가 요약 날짜",
+    "latest_evaluation_summary_rows": "최신 평가 요약 행수",
+    "latest_calibration_date": "최신 보정 진단 날짜",
+    "latest_calibration_rows": "최신 보정 진단 행수",
+    "feature_name": "피처명",
+    "symbol_rows": "종목 수",
+    "null_ratio": "결측 비율",
+    "as_of_date": "기준일",
+    "market_scope": "시장 범위",
+    "regime_state": "시장 상태",
+    "regime_score": "상태 점수",
+    "breadth_up_ratio": "상승 종목 비율",
+    "median_symbol_return_1d": "중앙값 1일 수익률",
+    "market_realized_vol_20d": "20일 시장 실현 변동성",
+    "turnover_burst_z": "거래대금 급증 Z",
+    "latest_feature_version": "최신 피처 버전",
+    "latest_ranking_version": "최신 설명형 순위 버전",
+    "latest_selection_version": "최신 Selection 버전",
+    "latest_prediction_version": "최신 예측 밴드 버전",
+    "trading_date": "거래일",
+    "signal_date": "신호일",
+    "published_at": "발행 시각",
+    "title": "제목",
+    "publisher": "언론사",
+    "query_bucket": "쿼리 묶음",
+    "link": "링크",
+    "symbol": "종목코드",
+    "company_name": "종목명",
+    "market": "시장",
+    "horizon": "기간",
+    "final_selection_value": "최종 선택 점수",
+    "final_selection_rank_pct": "선택 상위 비율",
+    "grade": "등급",
+    "ranking_version": "순위 버전",
+    "reasons": "주요 사유",
+    "risks": "위험 신호",
+    "expected_excess_return": "예상 초과수익률",
+    "expected_excess_return_at_selection": "선정 시 예상 초과수익률",
+    "lower_band": "하단 밴드",
+    "median_band": "중앙 밴드",
+    "upper_band": "상단 밴드",
+    "outcome_status": "성과 상태",
+    "realized_excess_return": "실현 초과수익률",
+    "band_status": "밴드 판정",
+    "row_count": "행수",
+    "foreign_value_coverage": "외국인 금액 커버리지",
+    "institution_value_coverage": "기관 금액 커버리지",
+    "individual_value_coverage": "개인 금액 커버리지",
+    "avg_expected_excess_return": "평균 예상 초과수익률",
+    "avg_band_width": "평균 밴드 폭",
+    "start_date": "시작일",
+    "end_date": "종료일",
+    "bucket_type": "구간 유형",
+    "bucket_name": "구간명",
+    "symbol_count": "종목 수",
+    "avg_gross_forward_return": "평균 총 수익률",
+    "avg_excess_forward_return": "평균 초과수익률",
+    "median_excess_forward_return": "중앙값 초과수익률",
+    "hit_rate": "적중률",
+    "avg_prediction_error": "평균 예측 오차",
+    "top_decile_gap": "상하위 10% 격차",
+    "evaluation_date": "평가일",
+    "matured_rows": "평가 완료 행수",
+    "summary_date": "요약일",
+    "window_type": "집계 창",
+    "segment_value": "세그먼트",
+    "count_evaluated": "평가 완료 수",
+    "selection_avg_excess": "Selection 평균 초과수익률",
+    "explanatory_avg_excess": "설명형 평균 초과수익률",
+    "avg_excess_gap": "평균 초과수익률 차이",
+    "hit_rate_gap": "적중률 차이",
+    "diagnostic_date": "진단일",
+    "bin_type": "구간 유형",
+    "bin_value": "구간값",
+    "sample_count": "표본 수",
+    "expected_median": "예상 중앙값",
+    "observed_mean": "관측 평균",
+    "coverage_rate": "커버리지",
+    "median_bias": "중앙값 편향",
+    "quality_flag": "품질 플래그",
+    "selection_date": "선정일",
+    "investor_flow_rows": "수급 행수",
+    "foreign_positive_ratio": "외국인 순매수 비율",
+    "institution_positive_ratio": "기관 순매수 비율",
+    "selection_rows": "선정 엔진 행수",
+    "prediction_rows": "예측 밴드 행수",
+    "open": "시가",
+    "high": "고가",
+    "low": "저가",
+    "close": "종가",
+    "volume": "거래량",
+    "turnover_value": "거래대금",
+    "revenue": "매출액",
+    "operating_income": "영업이익",
+    "net_income": "순이익",
+    "roe": "ROE",
+    "debt_ratio": "부채비율",
+    "ret_5d": "5일 수익률",
+    "ret_20d": "20일 수익률",
+    "adv_20": "20일 평균 거래대금",
+    "news_count_3d": "3일 뉴스 수",
+    "foreign_net_value_ratio_5d": "5일 외국인 순매수 비율",
+    "smart_money_flow_ratio_20d": "20일 스마트머니 수급 비율",
+    "flow_coverage_flag": "수급 커버리지",
+    "d1_selection_value": "D+1 선택 점수",
+    "d1_grade": "D+1 등급",
+    "d5_selection_value": "D+5 선택 점수",
+    "d5_grade": "D+5 등급",
+    "d5_expected_excess_return": "D+5 예상 초과수익률",
+    "d5_lower_band": "D+5 하단 밴드",
+    "d5_upper_band": "D+5 상단 밴드",
+    "d1_realized_excess_return": "D+1 실현 초과수익률",
+    "d1_band_status": "D+1 밴드 판정",
+    "d5_realized_excess_return": "D+5 실현 초과수익률",
+    "d5_band_status": "D+5 밴드 판정",
+    "foreign_net_value": "외국인 순매수금액",
+    "institution_net_value": "기관 순매수금액",
+    "individual_net_value": "개인 순매수금액",
+    "foreign_net_volume": "외국인 순매수수량",
+    "institution_net_volume": "기관 순매수수량",
+    "individual_net_volume": "개인 순매수수량",
+}
+
+UI_VALUE_LABELS: dict[str, dict[str, str]] = {
+    "threshold": {
+        "warning": "경고",
+        "prune": "정리",
+        "limit": "한계",
+    },
+    "provider": {
+        "kis": "한국투자",
+        "dart": "DART",
+        "krx": "KRX",
+        "naver_news": "네이버 뉴스",
+        "KIS": "한국투자",
+        "DART": "DART",
+        "KRX": "KRX",
+        "NAVER_NEWS": "네이버 뉴스",
+    },
+    "status": {
+        "normal": "정상",
+        "warning": "주의",
+        "prune": "정리 필요",
+        "limit": "한계",
+        "success": "성공",
+        "failed": "실패",
+        "error": "오류",
+        "ok": "정상",
+        "running": "실행 중",
+        "pending": "대기",
+        "healthy": "정상",
+        "unhealthy": "비정상",
+    },
+    "market": {
+        "ALL": "전체",
+        "KOSPI": "코스피",
+        "KOSDAQ": "코스닥",
+    },
+    "market_scope": {
+        "KR_ALL": "국내 전체",
+        "KOSPI": "코스피",
+        "KOSDAQ": "코스닥",
+    },
+    "ranking_version": {
+        EXPLANATORY_RANKING_VERSION: "설명형 순위 v0",
+        SELECTION_ENGINE_VERSION: "선정 엔진 v1",
+    },
+    "prediction_version": {
+        PREDICTION_VERSION: "프록시 예측 밴드 v1",
+    },
+    "run_type": {
+        "bootstrap": "초기화",
+        "sync_universe": "종목 유니버스 동기화",
+        "sync_trading_calendar": "거래일 캘린더 동기화",
+        "provider_smoke_check": "프로바이더 스모크 체크",
+        "sync_daily_ohlcv": "일봉 동기화",
+        "sync_fundamentals_snapshot": "재무 스냅샷 동기화",
+        "sync_news_metadata": "뉴스 메타데이터 동기화",
+        "sync_investor_flow": "수급 데이터 동기화",
+        "build_feature_store": "피처 스토어 생성",
+        "build_forward_labels": "미래 수익률 라벨 생성",
+        "build_market_regime_snapshot": "시장 상태 스냅샷 생성",
+        "materialize_explanatory_ranking": "설명형 순위 생성",
+        "validate_explanatory_ranking": "설명형 순위 검증",
+        "materialize_selection_engine_v1": "Selection 엔진 생성",
+        "calibrate_proxy_prediction_bands": "Proxy 밴드 보정",
+        "validate_selection_engine_v1": "Selection 엔진 검증",
+        "render_discord_eod_report": "Discord 장마감 리포트 렌더",
+        "publish_discord_eod_report": "Discord 장마감 리포트 발행",
+        "materialize_selection_outcomes": "Selection Outcome 생성",
+        "materialize_prediction_evaluation": "예측 평가 요약 생성",
+        "materialize_calibration_diagnostics": "Calibration 진단 생성",
+        "render_postmortem_report": "Postmortem 리포트 렌더",
+        "publish_discord_postmortem_report": "Postmortem Discord 발행",
+        "validate_evaluation_pipeline": "평가 파이프라인 검증",
+        "run_daily_pipeline": "일일 파이프라인 실행",
+        "run_evaluation": "평가 실행",
+        "prune_storage": "저장소 정리",
+    },
+    "regime_state": {
+        "panic": "패닉",
+        "risk_off": "리스크 오프",
+        "neutral": "중립",
+        "risk_on": "리스크 온",
+        "euphoria": "과열",
+    },
+    "outcome_status": {
+        "matured": "평가 완료",
+        "pending": "대기",
+        "unavailable": "평가 불가",
+    },
+    "band_status": {
+        "in_band": "밴드 내",
+        "above_upper": "상단 초과",
+        "below_lower": "하단 하회",
+        "band_missing": "밴드 없음",
+        "label_pending": "라벨 대기",
+    },
+    "window_type": {
+        "cohort": "코호트",
+        "rolling_20d": "20거래일 롤링",
+        "rolling_60d": "60거래일 롤링",
+    },
+    "segment_value": {
+        "all": "전체",
+        "top_decile": "상위 10%",
+        "report_candidates": "리포트 후보",
+    },
+    "bucket_type": {
+        "grade": "등급",
+        "decile": "10분위",
+        "overall": "전체",
+        "expected_return_bin": "예상수익 구간",
+    },
+    "quality_flag": {
+        "ok": "양호",
+        "coverage_drift": "커버리지 이탈",
+        "low_sample": "표본 부족",
+        "band_missing": "밴드 없음",
+    },
+}
+
+UI_REASON_TAG_LABELS: dict[str, str] = {
+    "short_term_momentum_strong": "단기 모멘텀 강함",
+    "breakout_near_20d_high": "20일 고점 근접",
+    "turnover_surge": "거래대금 급증",
+    "fresh_news_catalyst": "신규 뉴스 촉매",
+    "quality_metrics_supportive": "질적 지표 우호",
+    "low_drawdown_relative": "낙폭 안정적",
+    "foreign_institution_flow_supportive": "외국인·기관 수급 우호",
+    "implementation_friction_contained": "실행 마찰 낮음",
+}
+
+UI_RISK_TAG_LABELS: dict[str, str] = {
+    "high_realized_volatility": "실현 변동성 높음",
+    "large_recent_drawdown": "최근 낙폭 큼",
+    "weak_fundamental_coverage": "재무 커버리지 약함",
+    "thin_liquidity": "유동성 부족",
+    "news_link_low_confidence": "뉴스 연결 신뢰 낮음",
+    "data_missingness_high": "데이터 결손 높음",
+    "uncertainty_proxy_high": "불확실성 프록시 높음",
+    "implementation_friction_high": "실행 마찰 높음",
+    "flow_coverage_missing": "수급 커버리지 부족",
+}
+
+UI_NOTE_TAG_LABELS: dict[str, str] = {
+    "missing_price": "가격 데이터 없음",
+    "stale_price": "가격 데이터 지연",
+    "adv20_below_threshold": "20일 평균 거래대금 기준 미달",
+    "feature_missingness_high": "피처 결손 높음",
+    **UI_RISK_TAG_LABELS,
+}
+
+
+def _translate_scalar(column: str, value: object) -> object:
+    if pd.isna(value):
+        return value
+    if isinstance(value, bool):
+        return "예" if value else "아니오"
+    if column in {"latest_ranking_version", "latest_selection_version"}:
+        return _translate_scalar("ranking_version", value)
+    if column == "latest_prediction_version":
+        return _translate_scalar("prediction_version", value)
+    mapping = UI_VALUE_LABELS.get(column)
+    if mapping is None:
+        return value
+    text = str(value)
+    return mapping.get(text, value)
+
+
+def _translate_json_list(value: object, mapping: dict[str, str]) -> object:
+    if pd.isna(value):
+        return value
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return value
+    if not isinstance(parsed, list):
+        return value
+    translated = [mapping.get(str(item), str(item)) for item in parsed]
+    return ", ".join(translated) if translated else "-"
+
+
+def localize_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    localized = frame.copy()
+    for column in localized.columns:
+        if column in {"reasons", "top_reason_tags_json"}:
+            localized[column] = localized[column].map(
+                lambda value: _translate_json_list(value, UI_REASON_TAG_LABELS)
+            )
+            continue
+        if column in {"risks", "risk_flags_json"}:
+            localized[column] = localized[column].map(
+                lambda value: _translate_json_list(value, UI_RISK_TAG_LABELS)
+            )
+            continue
+        if column == "eligibility_notes_json":
+            localized[column] = localized[column].map(
+                lambda value: _translate_json_list(value, UI_NOTE_TAG_LABELS)
+            )
+            continue
+        localized[column] = localized[column].map(
+            lambda value, current_column=column: _translate_scalar(current_column, value)
+        )
+    return localized.rename(columns=UI_COLUMN_LABELS)
+
+
+def format_ranking_version_label(value: str) -> str:
+    return str(_translate_scalar("ranking_version", value))
+
+
+def format_market_label(value: str) -> str:
+    translated = _translate_scalar("market", value)
+    if translated == value:
+        translated = _translate_scalar("market_scope", value)
+    return str(translated)
+
+
+def format_disk_status_label(value: object) -> str:
+    return str(_translate_scalar("status", value))
+
+
 def recent_runs_frame(settings: Settings, *, limit: int = 10) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()

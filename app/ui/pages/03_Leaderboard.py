@@ -16,28 +16,29 @@ from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.ui.helpers import (
     available_ranking_dates,
     available_ranking_versions,
+    format_market_label,
+    format_ranking_version_label,
     latest_evaluation_comparison_frame,
     latest_selection_validation_summary_frame,
     latest_validation_summary_frame,
     leaderboard_frame,
     leaderboard_grade_count_frame,
     load_ui_settings,
+    localize_frame,
 )
-
-st.set_page_config(page_title="Leaderboard", page_icon="SM", layout="wide")
 
 settings = load_ui_settings(PROJECT_ROOT)
 ranking_versions = available_ranking_versions(settings)
 evaluation_comparison = latest_evaluation_comparison_frame(settings)
 
-st.title("Leaderboard")
+st.title("순위표")
 st.caption(
-    "Compare explanatory ranking v0 and selection engine v1. "
-    "Selection v1 may include calibrated proxy bands; these are not ML forecasts."
+    "설명형 순위 v0와 선정 엔진 v1을 비교합니다. "
+    "선정 엔진 v1의 프록시 밴드는 ML 예측이 아닙니다."
 )
 
 if not ranking_versions:
-    st.info("No ranking snapshots are available yet. Run the build scripts first.")
+    st.info("순위 스냅샷이 아직 없습니다. 관련 빌드 스크립트를 먼저 실행하세요.")
 else:
     default_version_index = (
         ranking_versions.index(SELECTION_ENGINE_VERSION)
@@ -45,15 +46,21 @@ else:
         else 0
     )
     selected_version = st.selectbox(
-        "Ranking version",
+        "순위 버전",
         options=ranking_versions,
         index=default_version_index,
+        format_func=format_ranking_version_label,
     )
     ranking_dates = available_ranking_dates(settings, ranking_version=selected_version)
-    selected_date = st.selectbox("As-of date", options=ranking_dates, index=0)
-    horizon = st.selectbox("Horizon", options=[1, 5], index=1)
-    market = st.selectbox("Market", options=["ALL", "KOSPI", "KOSDAQ"], index=0)
-    limit = st.slider("Rows", min_value=10, max_value=100, value=25, step=5)
+    selected_date = st.selectbox("기준일", options=ranking_dates, index=0)
+    horizon = st.selectbox("기간", options=[1, 5], index=1, format_func=lambda value: f"D+{value}")
+    market = st.selectbox(
+        "시장",
+        options=["ALL", "KOSPI", "KOSDAQ"],
+        index=0,
+        format_func=format_market_label,
+    )
+    limit = st.slider("표시 행수", min_value=10, max_value=100, value=25, step=5)
 
     board = leaderboard_frame(
         settings,
@@ -77,9 +84,9 @@ else:
 
     top_left, top_right = st.columns((2, 1))
     with top_left:
-        st.subheader("Ranking Table")
+        st.subheader("순위 테이블")
         if board.empty:
-            st.info("No ranking rows match the current filter.")
+            st.info("현재 필터에 맞는 순위 행이 없습니다.")
         else:
             columns = [
                 "symbol",
@@ -101,23 +108,23 @@ else:
             display["final_selection_rank_pct"] = (
                 pd.to_numeric(display["final_selection_rank_pct"], errors="coerce") * 100.0
             ).round(1)
-            st.dataframe(display, width="stretch", hide_index=True)
+            st.dataframe(localize_frame(display), width="stretch", hide_index=True)
     with top_right:
-        st.subheader("Grade Mix")
+        st.subheader("등급 분포")
         if grade_counts.empty:
-            st.info("No grade mix available.")
+            st.info("등급 분포가 아직 없습니다.")
         else:
-            st.dataframe(grade_counts, width="stretch", hide_index=True)
+            st.dataframe(localize_frame(grade_counts), width="stretch", hide_index=True)
 
-    st.subheader("Latest Validation Summary")
+    st.subheader("최신 검증 요약")
     if validation.empty:
-        st.info("Validation rows are empty for the selected version.")
+        st.info("선택한 버전에 대한 검증 행이 없습니다.")
     else:
         filtered = validation.loc[validation["horizon"] == horizon].copy()
-        st.dataframe(filtered, width="stretch", hide_index=True)
+        st.dataframe(localize_frame(filtered), width="stretch", hide_index=True)
 
-    st.subheader("Latest Selection v1 vs Explanatory v0")
+    st.subheader("선정 엔진 v1 대 설명형 순위 v0")
     if evaluation_comparison.empty:
-        st.info("No evaluation comparison rows are available yet.")
+        st.info("비교 평가 행이 아직 없습니다.")
     else:
-        st.dataframe(evaluation_comparison, width="stretch", hide_index=True)
+        st.dataframe(localize_frame(evaluation_comparison), width="stretch", hide_index=True)

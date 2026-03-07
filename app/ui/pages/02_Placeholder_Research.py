@@ -23,10 +23,9 @@ from app.ui.helpers import (
     latest_validation_summary_frame,
     leaderboard_frame,
     load_ui_settings,
+    localize_frame,
     market_pulse_frame,
 )
-
-st.set_page_config(page_title="Research", page_icon="SM", layout="wide")
 
 settings = load_ui_settings(PROJECT_ROOT)
 feature_sample = latest_feature_sample_frame(settings, limit=10)
@@ -45,67 +44,64 @@ selection_preview = leaderboard_frame(
 selection_validation = latest_selection_validation_summary_frame(settings, limit=10)
 explanatory_validation = latest_validation_summary_frame(settings, limit=10)
 
-st.title("Research")
+st.title("연구")
 st.caption(
-    "Inspection workspace for feature store v2, labels, market regime, "
-    "explanatory ranking v0, and selection engine v1."
+    "피처 스토어, 라벨, 시장 상태, 설명형 순위, "
+    "선정 엔진 v1을 점검하는 연구 화면입니다."
 )
 
-st.subheader("Active Research Layers")
+st.subheader("현재 연구 계층")
 st.markdown(
     """
-    - Feature store snapshot with price / fundamentals / news / flow / data-quality groups
-    - Next-open D+1 / D+5 forward return labels and excess returns vs same-market baseline
-    - Market regime classification for `KR_ALL`, `KOSPI`, and `KOSDAQ`
-    - Explanatory ranking v0 for human inspection
-    - Selection engine v1 with active `flow_score`, uncertainty proxy, and implementation penalty
-    - Calibrated proxy prediction bands attached to latest selection rows
+    - 가격 / 재무 / 뉴스 / 수급 / 데이터 품질 기반 피처 스냅샷
+    - 다음 시가 기준 D+1 / D+5 미래 수익률 라벨
+    - 국내 전체 / 코스피 / 코스닥 시장 상태 분류
+    - 사람 설명용 설명형 순위 v0
+    - 수급, 불확실성 프록시, 실행 패널티가 반영된 Selection Engine v1
+    - 최신 Selection 결과에 붙는 보정된 Proxy Prediction Band
     """
 )
 
 summary_left, summary_right = st.columns(2)
 with summary_left:
-    st.subheader("Latest Feature Coverage")
-    st.dataframe(feature_coverage, width="stretch", hide_index=True)
-    st.subheader("Latest Label Coverage")
-    st.dataframe(label_coverage, width="stretch", hide_index=True)
-    st.subheader("Latest Flow Coverage")
-    st.dataframe(flow_summary, width="stretch", hide_index=True)
+    st.subheader("최신 피처 커버리지")
+    st.dataframe(localize_frame(feature_coverage), width="stretch", hide_index=True)
+    st.subheader("최신 라벨 커버리지")
+    st.dataframe(localize_frame(label_coverage), width="stretch", hide_index=True)
+    st.subheader("최신 수급 커버리지")
+    st.dataframe(localize_frame(flow_summary), width="stretch", hide_index=True)
 with summary_right:
-    st.subheader("Market Pulse")
-    st.dataframe(market_pulse, width="stretch", hide_index=True)
-    st.subheader("Latest Regime Snapshot")
-    st.dataframe(regime_snapshot, width="stretch", hide_index=True)
-    st.subheader("Latest Proxy Prediction Summary")
-    st.dataframe(prediction_summary, width="stretch", hide_index=True)
+    st.subheader("시장 현황")
+    st.dataframe(localize_frame(market_pulse), width="stretch", hide_index=True)
+    st.subheader("최신 시장 상태")
+    st.dataframe(localize_frame(regime_snapshot), width="stretch", hide_index=True)
+    st.subheader("최신 예측 요약")
+    st.dataframe(localize_frame(prediction_summary), width="stretch", hide_index=True)
 
-st.subheader("Feature Matrix Sample")
-st.dataframe(feature_sample, width="stretch", hide_index=True)
+st.subheader("피처 매트릭스 샘플")
+st.dataframe(localize_frame(feature_sample), width="stretch", hide_index=True)
 
-st.subheader("Selection Engine v1 Preview (D+5)")
-st.dataframe(
-    selection_preview[
-        [
-            "symbol",
-            "company_name",
-            "market",
-            "final_selection_value",
-            "grade",
-            "expected_excess_return",
-            "lower_band",
-            "upper_band",
-            "reasons",
-            "risks",
-        ]
-    ],
-    width="stretch",
-    hide_index=True,
-)
+st.subheader("선정 엔진 v1 미리보기 (D+5)")
+preview = selection_preview[
+    [
+        "symbol",
+        "company_name",
+        "market",
+        "final_selection_value",
+        "grade",
+        "expected_excess_return",
+        "lower_band",
+        "upper_band",
+        "reasons",
+        "risks",
+    ]
+].copy()
+st.dataframe(localize_frame(preview), width="stretch", hide_index=True)
 
 validation_left, validation_right = st.columns(2)
 with validation_left:
-    st.subheader("Selection Validation")
-    st.dataframe(selection_validation, width="stretch", hide_index=True)
+    st.subheader("선정 엔진 검증")
+    st.dataframe(localize_frame(selection_validation), width="stretch", hide_index=True)
 with validation_right:
-    st.subheader("Explanatory Validation")
-    st.dataframe(explanatory_validation, width="stretch", hide_index=True)
+    st.subheader("설명형 순위 검증")
+    st.dataframe(localize_frame(explanatory_validation), width="stretch", hide_index=True)
