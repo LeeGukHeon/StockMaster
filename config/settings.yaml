@@ -1,0 +1,47 @@
+app:
+  name: stockmaster
+  display_name: KR Stock Research Platform v1
+  env: local
+  timezone: Asia/Seoul
+
+paths:
+  data_dir: ./data
+  duckdb_path: ./data/marts/main.duckdb
+  raw_dir: ./data/raw
+  curated_dir: ./data/curated
+  marts_dir: ./data/marts
+  cache_dir: ./data/cache
+  logs_dir: ./data/logs
+  artifacts_dir: ./data/artifacts
+
+logging:
+  level: INFO
+  filename: app.log
+
+storage:
+  warning_ratio: 0.70
+  prune_ratio: 0.80
+  limit_ratio: 0.90
+
+providers:
+  kis:
+    base_url: https://openapi.koreainvestment.com:9443
+    use_mock: false
+  dart:
+    base_url: https://opendart.fss.or.kr
+  krx:
+    base_url: https://data.krx.co.kr
+  naver_news:
+    base_url: https://openapi.naver.com
+
+discord:
+  username: KR Stock Research Bot
+
+model:
+  default_horizons:
+    - D1
+    - D5
+  uncertainty_lambda: 1.0
+  disagreement_eta: 1.0
+  implementation_kappa: 1.0
+  regime_rho: 1.0

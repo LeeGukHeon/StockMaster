@@ -1,0 +1,6 @@
+raw_api_days: 7
+intraday_5m_days: 90
+intraday_1m_days: 60
+orderbook_summary_days: 30
+report_cache_days: 7
+log_days: 30

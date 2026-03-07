@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs / temp
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# Data lake / generated artifacts
+data/raw/**
+data/curated/**
+data/marts/**
+data/cache/**
+data/logs/**
+data/artifacts/**
+!data/**/.gitkeep
+
+# DB / analytic files
+*.duckdb
+*.duckdb.wal
+*.parquet
+*.feather
+*.arrow
+*.csv
+*.tsv
+
+# Streamlit / notebook / misc
+.streamlit/secrets.toml
+.ipynb_checkpoints/
+
+# ML / report artifacts
+models/
+checkpoints/
+reports/generated/
+artifacts/
+
+# Keep planning docs and tracked config
+!README.md
+!*.md
+!config/*.yaml
