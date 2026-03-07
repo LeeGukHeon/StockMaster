@@ -14,9 +14,13 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.ui.helpers import (
     calendar_summary_frame,
     disk_report,
+    latest_discord_preview,
     latest_feature_coverage_frame,
+    latest_flow_summary_frame,
     latest_label_coverage_frame,
+    latest_prediction_summary_frame,
     latest_regime_frame,
+    latest_selection_validation_summary_frame,
     latest_sync_runs_frame,
     latest_validation_summary_frame,
     latest_version_frame,
@@ -43,12 +47,19 @@ research_summary = research_data_summary_frame(settings)
 failed_runs = recent_failure_runs_frame(settings)
 feature_coverage = latest_feature_coverage_frame(settings)
 label_coverage = latest_label_coverage_frame(settings)
+flow_summary = latest_flow_summary_frame(settings)
+prediction_summary = latest_prediction_summary_frame(settings)
 latest_regime = latest_regime_frame(settings)
 latest_versions = latest_version_frame(settings)
-validation_summary = latest_validation_summary_frame(settings, limit=20)
+selection_validation = latest_selection_validation_summary_frame(settings, limit=20)
+explanatory_validation = latest_validation_summary_frame(settings, limit=20)
+discord_preview = latest_discord_preview(settings)
 
 st.title("Ops")
-st.caption("Operational summary for ingestion, feature builds, rankings, and validation state.")
+st.caption(
+    "Operational summary for ingestion, feature builds, explanatory ranking v0, "
+    "selection engine v1, proxy bands, and Discord report rendering."
+)
 
 top_left, top_right = st.columns(2)
 with top_left:
@@ -65,67 +76,50 @@ with top_right:
 summary_left, summary_right = st.columns(2)
 with summary_left:
     st.subheader("Universe")
-    if universe_summary.empty:
-        st.info("Universe has not been synced yet.")
-    else:
-        st.dataframe(universe_summary, use_container_width=True, hide_index=True)
+    st.dataframe(universe_summary, use_container_width=True, hide_index=True)
 with summary_right:
     st.subheader("Trading Calendar")
-    if calendar_summary.empty:
-        st.info("Trading calendar has not been synced yet.")
-    else:
-        st.dataframe(calendar_summary, use_container_width=True, hide_index=True)
+    st.dataframe(calendar_summary, use_container_width=True, hide_index=True)
 
 st.subheader("Latest Sync Status")
-if latest_sync_runs.empty:
-    st.info("No sync runs recorded yet.")
-else:
-    st.dataframe(latest_sync_runs, use_container_width=True, hide_index=True)
+st.dataframe(latest_sync_runs, use_container_width=True, hide_index=True)
 
 st.subheader("Research Data Freshness")
-if research_summary.empty or research_summary.iloc[0].isna().all():
-    st.info("Core research tables have not been populated yet.")
-else:
-    st.dataframe(research_summary, use_container_width=True, hide_index=True)
+st.dataframe(research_summary, use_container_width=True, hide_index=True)
 
 ops_left, ops_right = st.columns(2)
 with ops_left:
     st.subheader("Feature Coverage")
-    if feature_coverage.empty:
-        st.info("Feature coverage is not available yet.")
-    else:
-        st.dataframe(feature_coverage, use_container_width=True, hide_index=True)
+    st.dataframe(feature_coverage, use_container_width=True, hide_index=True)
     st.subheader("Label Coverage")
-    if label_coverage.empty:
-        st.info("Forward labels are not available yet.")
-    else:
-        st.dataframe(label_coverage, use_container_width=True, hide_index=True)
+    st.dataframe(label_coverage, use_container_width=True, hide_index=True)
+    st.subheader("Flow Summary")
+    st.dataframe(flow_summary, use_container_width=True, hide_index=True)
 with ops_right:
     st.subheader("Version Tracking")
-    if latest_versions.empty:
-        st.info("No feature/ranking versions recorded yet.")
-    else:
-        st.dataframe(latest_versions, use_container_width=True, hide_index=True)
+    st.dataframe(latest_versions, use_container_width=True, hide_index=True)
+    st.subheader("Prediction Summary")
+    st.dataframe(prediction_summary, use_container_width=True, hide_index=True)
     st.subheader("Latest Regime Snapshot")
-    if latest_regime.empty:
-        st.info("Market regime snapshot is not available yet.")
-    else:
-        st.dataframe(latest_regime, use_container_width=True, hide_index=True)
+    st.dataframe(latest_regime, use_container_width=True, hide_index=True)
 
-st.subheader("Ranking Validation")
-if validation_summary.empty:
-    st.info("Ranking validation summary is not available yet.")
-else:
-    st.dataframe(validation_summary, use_container_width=True, hide_index=True)
+validation_left, validation_right = st.columns(2)
+with validation_left:
+    st.subheader("Selection Validation")
+    st.dataframe(selection_validation, use_container_width=True, hide_index=True)
+with validation_right:
+    st.subheader("Explanatory Validation")
+    st.dataframe(explanatory_validation, use_container_width=True, hide_index=True)
 
 st.subheader("Provider Health")
 st.dataframe(provider_health, use_container_width=True, hide_index=True)
 
+if discord_preview:
+    with st.expander("Latest Discord Preview", expanded=False):
+        st.code(discord_preview)
+
 st.subheader("Run Manifest")
-if runs.empty:
-    st.info("No runs recorded yet.")
-else:
-    st.dataframe(runs, use_container_width=True, hide_index=True)
+st.dataframe(runs, use_container_width=True, hide_index=True)
 
 st.subheader("Recent Failures")
 if failed_runs.empty:

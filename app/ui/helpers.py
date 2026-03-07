@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from app.providers.dart.client import DartProvider
 from app.providers.kis.client import KISProvider
 from app.providers.krx.client import KrxProvider
 from app.providers.naver_news.client import NaverNewsProvider
+from app.selection.calibration import PREDICTION_VERSION
+from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.settings import Settings, load_settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -79,6 +82,38 @@ def watermark_frame(settings: Settings) -> pd.DataFrame:
     )
 
 
+def _resolve_latest_ranking_version(connection, ranking_version: str | None) -> str | None:
+    if ranking_version:
+        return ranking_version
+    row = connection.execute(
+        """
+        SELECT ranking_version
+        FROM fact_ranking
+        ORDER BY
+            CASE WHEN ranking_version = ? THEN 0 ELSE 1 END,
+            as_of_date DESC,
+            created_at DESC
+        LIMIT 1
+        """,
+        [SELECTION_ENGINE_VERSION],
+    ).fetchone()
+    return None if row is None else str(row[0])
+
+
+def _resolve_latest_ranking_date(connection, ranking_version: str | None) -> object:
+    effective_version = _resolve_latest_ranking_version(connection, ranking_version)
+    if effective_version is None:
+        return None
+    return connection.execute(
+        """
+        SELECT MAX(as_of_date)
+        FROM fact_ranking
+        WHERE ranking_version = ?
+        """,
+        [effective_version],
+    ).fetchone()[0]
+
+
 def universe_summary_frame(settings: Settings) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
@@ -140,11 +175,18 @@ def latest_sync_runs_frame(settings: Settings) -> pd.DataFrame:
                 'sync_daily_ohlcv',
                 'sync_fundamentals_snapshot',
                 'sync_news_metadata',
+                'sync_investor_flow',
                 'build_feature_store',
                 'build_forward_labels',
                 'build_market_regime_snapshot',
                 'materialize_explanatory_ranking',
+                'materialize_selection_engine_v1',
+                'calibrate_proxy_prediction_bands',
                 'validate_explanatory_ranking'
+                ,
+                'validate_selection_engine_v1',
+                'render_discord_eod_report',
+                'publish_discord_eod_report'
             )
             QUALIFY ROW_NUMBER() OVER (PARTITION BY run_type ORDER BY started_at DESC) = 1
             ORDER BY run_type
@@ -177,6 +219,10 @@ def research_data_summary_frame(settings: Settings) -> pd.DataFrame:
                 (SELECT COUNT(*) FROM fact_news_item WHERE signal_date = (
                     SELECT MAX(signal_date) FROM fact_news_item
                 ) AND COALESCE(symbol_candidates, '[]') = '[]') AS latest_news_unmatched,
+                (SELECT MAX(trading_date) FROM fact_investor_flow) AS latest_flow_date,
+                (SELECT COUNT(*) FROM fact_investor_flow WHERE trading_date = (
+                    SELECT MAX(trading_date) FROM fact_investor_flow
+                )) AS latest_flow_rows,
                 (SELECT MAX(as_of_date) FROM fact_feature_snapshot) AS latest_feature_date,
                 (SELECT COUNT(*) FROM fact_feature_snapshot WHERE as_of_date = (
                     SELECT MAX(as_of_date) FROM fact_feature_snapshot
@@ -186,11 +232,42 @@ def research_data_summary_frame(settings: Settings) -> pd.DataFrame:
                     SELECT MAX(as_of_date) FROM fact_forward_return_label
                 ) AND label_available_flag) AS latest_available_label_rows,
                 (SELECT MAX(as_of_date) FROM fact_market_regime_snapshot) AS latest_regime_date,
-                (SELECT MAX(as_of_date) FROM fact_ranking) AS latest_ranking_date,
+                (
+                    SELECT MAX(as_of_date)
+                    FROM fact_ranking
+                    WHERE ranking_version = 'explanatory_ranking_v0'
+                ) AS latest_explanatory_ranking_date,
                 (SELECT COUNT(*) FROM fact_ranking WHERE as_of_date = (
-                    SELECT MAX(as_of_date) FROM fact_ranking
-                )) AS latest_ranking_rows
-            """
+                    SELECT MAX(as_of_date)
+                    FROM fact_ranking
+                    WHERE ranking_version = 'explanatory_ranking_v0'
+                ) AND ranking_version = 'explanatory_ranking_v0')
+                    AS latest_explanatory_ranking_rows,
+                (
+                    SELECT MAX(as_of_date)
+                    FROM fact_ranking
+                    WHERE ranking_version = ?
+                ) AS latest_selection_date,
+                (SELECT COUNT(*) FROM fact_ranking WHERE as_of_date = (
+                    SELECT MAX(as_of_date) FROM fact_ranking WHERE ranking_version = ?
+                ) AND ranking_version = ?) AS latest_selection_rows,
+                (
+                    SELECT MAX(as_of_date)
+                    FROM fact_prediction
+                    WHERE prediction_version = ?
+                ) AS latest_prediction_date,
+                (SELECT COUNT(*) FROM fact_prediction WHERE as_of_date = (
+                    SELECT MAX(as_of_date) FROM fact_prediction WHERE prediction_version = ?
+                ) AND prediction_version = ?) AS latest_prediction_rows
+            """,
+            [
+                SELECTION_ENGINE_VERSION,
+                SELECTION_ENGINE_VERSION,
+                SELECTION_ENGINE_VERSION,
+                PREDICTION_VERSION,
+                PREDICTION_VERSION,
+                PREDICTION_VERSION,
+            ],
         ).fetchdf()
 
 
@@ -342,6 +419,9 @@ def latest_feature_coverage_frame(settings: Settings) -> pd.DataFrame:
                 'roe_latest',
                 'debt_ratio_latest',
                 'news_count_3d',
+                'foreign_net_value_ratio_5d',
+                'smart_money_flow_ratio_20d',
+                'flow_coverage_flag',
                 'data_confidence_score'
               )
             GROUP BY feature_name
@@ -395,7 +475,25 @@ def latest_version_frame(settings: Settings) -> pd.DataFrame:
                       AND ranking_version IS NOT NULL
                     ORDER BY started_at DESC
                     LIMIT 1
-                ) AS latest_ranking_version
+                ) AS latest_explanatory_ranking_version,
+                (
+                    SELECT ranking_version
+                    FROM ops_run_manifest
+                    WHERE run_type = 'materialize_selection_engine_v1'
+                      AND status = 'success'
+                      AND ranking_version IS NOT NULL
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                ) AS latest_selection_ranking_version,
+                (
+                    SELECT model_version
+                    FROM ops_run_manifest
+                    WHERE run_type = 'calibrate_proxy_prediction_bands'
+                      AND status = 'success'
+                      AND model_version IS NOT NULL
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                ) AS latest_prediction_version
             """
         ).fetchdf()
 
@@ -425,16 +523,39 @@ def latest_validation_summary_frame(settings: Settings, *, limit: int = 20) -> p
         ).fetchdf()
 
 
-def available_ranking_dates(settings: Settings) -> list[str]:
+def available_ranking_versions(settings: Settings) -> list[str]:
     if not settings.paths.duckdb_path.exists():
         return []
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
         rows = connection.execute(
             """
+            SELECT DISTINCT ranking_version
+            FROM fact_ranking
+            ORDER BY
+                CASE WHEN ranking_version = ? THEN 0 ELSE 1 END,
+                ranking_version
+            """
+            ,
+            [SELECTION_ENGINE_VERSION],
+        ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def available_ranking_dates(settings: Settings, *, ranking_version: str | None = None) -> list[str]:
+    if not settings.paths.duckdb_path.exists():
+        return []
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        effective_version = _resolve_latest_ranking_version(connection, ranking_version)
+        if effective_version is None:
+            return []
+        rows = connection.execute(
+            """
             SELECT DISTINCT as_of_date
             FROM fact_ranking
+            WHERE ranking_version = ?
             ORDER BY as_of_date DESC
-            """
+            """,
+            [effective_version],
         ).fetchall()
     return [str(row[0]) for row in rows]
 
@@ -446,13 +567,15 @@ def leaderboard_frame(
     horizon: int = 5,
     market: str = "ALL",
     limit: int = 20,
+    ranking_version: str | None = None,
 ) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        selected_date = as_of_date or connection.execute(
-            "SELECT MAX(as_of_date) FROM fact_ranking"
-        ).fetchone()[0]
+        effective_version = _resolve_latest_ranking_version(connection, ranking_version)
+        if effective_version is None:
+            return pd.DataFrame()
+        selected_date = as_of_date or _resolve_latest_ranking_date(connection, effective_version)
         if selected_date is None:
             return pd.DataFrame()
         frame = connection.execute(
@@ -467,17 +590,29 @@ def leaderboard_frame(
                 ranking.final_selection_rank_pct,
                 ranking.grade,
                 ranking.regime_state,
+                ranking.ranking_version,
                 ranking.top_reason_tags_json,
                 ranking.risk_flags_json,
-                ranking.explanatory_score_json
+                ranking.explanatory_score_json,
+                prediction.expected_excess_return,
+                prediction.lower_band,
+                prediction.median_band,
+                prediction.upper_band
             FROM fact_ranking AS ranking
             JOIN dim_symbol AS symbol
               ON ranking.symbol = symbol.symbol
+            LEFT JOIN fact_prediction AS prediction
+              ON ranking.as_of_date = prediction.as_of_date
+             AND ranking.symbol = prediction.symbol
+             AND ranking.horizon = prediction.horizon
+             AND prediction.prediction_version = ?
+             AND prediction.ranking_version = ranking.ranking_version
             WHERE ranking.as_of_date = ?
               AND ranking.horizon = ?
+              AND ranking.ranking_version = ?
             ORDER BY ranking.final_selection_value DESC, ranking.symbol
             """,
-            [selected_date, horizon],
+            [PREDICTION_VERSION, selected_date, horizon, effective_version],
         ).fetchdf()
     if frame.empty:
         return frame
@@ -493,13 +628,15 @@ def leaderboard_grade_count_frame(
     *,
     as_of_date: str | None = None,
     horizon: int = 5,
+    ranking_version: str | None = None,
 ) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        selected_date = as_of_date or connection.execute(
-            "SELECT MAX(as_of_date) FROM fact_ranking"
-        ).fetchone()[0]
+        effective_version = _resolve_latest_ranking_version(connection, ranking_version)
+        if effective_version is None:
+            return pd.DataFrame()
+        selected_date = as_of_date or _resolve_latest_ranking_date(connection, effective_version)
         if selected_date is None:
             return pd.DataFrame()
         return connection.execute(
@@ -508,8 +645,321 @@ def leaderboard_grade_count_frame(
             FROM fact_ranking
             WHERE as_of_date = ?
               AND horizon = ?
+              AND ranking_version = ?
             GROUP BY grade
             ORDER BY grade
             """,
-            [selected_date, horizon],
+            [selected_date, horizon, effective_version],
         ).fetchdf()
+
+
+def latest_flow_summary_frame(settings: Settings) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            WITH latest_date AS (
+                SELECT MAX(trading_date) AS trading_date
+                FROM fact_investor_flow
+            )
+            SELECT
+                flow.trading_date,
+                COUNT(*) AS row_count,
+                AVG(
+                    CASE WHEN foreign_net_value IS NOT NULL THEN 1.0 ELSE 0.0 END
+                ) AS foreign_value_coverage,
+                AVG(
+                    CASE WHEN institution_net_value IS NOT NULL THEN 1.0 ELSE 0.0 END
+                ) AS institution_value_coverage,
+                AVG(
+                    CASE WHEN individual_net_value IS NOT NULL THEN 1.0 ELSE 0.0 END
+                ) AS individual_value_coverage
+            FROM fact_investor_flow AS flow
+            JOIN latest_date
+              ON flow.trading_date = latest_date.trading_date
+            GROUP BY flow.trading_date
+            """
+        ).fetchdf()
+
+
+def latest_prediction_summary_frame(settings: Settings) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            WITH latest_date AS (
+                SELECT MAX(as_of_date) AS as_of_date
+                FROM fact_prediction
+                WHERE prediction_version = ?
+            )
+            SELECT
+                horizon,
+                COUNT(*) AS row_count,
+                AVG(expected_excess_return) AS avg_expected_excess_return,
+                AVG(upper_band - lower_band) AS avg_band_width
+            FROM fact_prediction
+            WHERE prediction_version = ?
+              AND as_of_date = (SELECT as_of_date FROM latest_date)
+            GROUP BY horizon
+            ORDER BY horizon
+            """,
+            [PREDICTION_VERSION, PREDICTION_VERSION],
+        ).fetchdf()
+
+
+def latest_selection_validation_summary_frame(
+    settings: Settings,
+    *,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                start_date,
+                end_date,
+                horizon,
+                bucket_type,
+                bucket_name,
+                symbol_count,
+                avg_excess_forward_return,
+                median_excess_forward_return,
+                hit_rate,
+                avg_expected_excess_return,
+                avg_prediction_error,
+                top_decile_gap
+            FROM vw_latest_selection_validation_summary
+            WHERE ranking_version = ?
+            ORDER BY bucket_type, horizon, bucket_name
+            LIMIT ?
+            """,
+            [SELECTION_ENGINE_VERSION, limit],
+        ).fetchdf()
+
+
+def market_pulse_frame(settings: Settings) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                regime.as_of_date,
+                regime.regime_state,
+                regime.regime_score,
+                regime.breadth_up_ratio,
+                regime.market_realized_vol_20d,
+                flow.row_count AS investor_flow_rows,
+                flow.foreign_positive_ratio,
+                flow.institution_positive_ratio,
+                selection.selection_rows,
+                prediction.prediction_rows
+            FROM (
+                SELECT *
+                FROM vw_market_regime_latest
+                WHERE market_scope = 'KR_ALL'
+            ) AS regime
+            LEFT JOIN (
+                SELECT
+                    trading_date,
+                    COUNT(*) AS row_count,
+                    AVG(
+                        CASE WHEN foreign_net_value > 0 THEN 1.0 ELSE 0.0 END
+                    ) AS foreign_positive_ratio,
+                    AVG(
+                        CASE WHEN institution_net_value > 0 THEN 1.0 ELSE 0.0 END
+                    ) AS institution_positive_ratio
+                FROM fact_investor_flow
+                WHERE trading_date = (SELECT MAX(trading_date) FROM fact_investor_flow)
+                GROUP BY trading_date
+            ) AS flow
+              ON regime.as_of_date = flow.trading_date
+            LEFT JOIN (
+                SELECT as_of_date, COUNT(*) AS selection_rows
+                FROM fact_ranking
+                WHERE ranking_version = ?
+                GROUP BY as_of_date
+                QUALIFY ROW_NUMBER() OVER (ORDER BY as_of_date DESC) = 1
+            ) AS selection
+              ON regime.as_of_date = selection.as_of_date
+            LEFT JOIN (
+                SELECT as_of_date, COUNT(*) AS prediction_rows
+                FROM fact_prediction
+                WHERE prediction_version = ?
+                GROUP BY as_of_date
+                QUALIFY ROW_NUMBER() OVER (ORDER BY as_of_date DESC) = 1
+            ) AS prediction
+              ON regime.as_of_date = prediction.as_of_date
+            """,
+            [SELECTION_ENGINE_VERSION, PREDICTION_VERSION],
+        ).fetchdf()
+
+
+def latest_market_news_frame(settings: Settings, *, limit: int = 5) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT signal_date, title, publisher, link
+            FROM fact_news_item
+            WHERE signal_date = (SELECT MAX(signal_date) FROM fact_news_item)
+              AND COALESCE(is_market_wide, FALSE)
+            ORDER BY published_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def available_symbols(settings: Settings, *, limit: int = 200) -> list[str]:
+    if not settings.paths.duckdb_path.exists():
+        return []
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        rows = connection.execute(
+            """
+            SELECT symbol
+            FROM dim_symbol
+            WHERE market IN ('KOSPI', 'KOSDAQ')
+            ORDER BY symbol
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+    return [str(row[0]).zfill(6) for row in rows]
+
+
+def stock_workbench_summary_frame(settings: Settings, *, symbol: str) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                feature.symbol,
+                symbol_meta.company_name,
+                symbol_meta.market,
+                feature.as_of_date,
+                feature.ret_5d,
+                feature.ret_20d,
+                feature.adv_20,
+                feature.news_count_3d,
+                feature.foreign_net_value_ratio_5d,
+                feature.smart_money_flow_ratio_20d,
+                feature.flow_coverage_flag,
+                selection_1.final_selection_value AS d1_selection_value,
+                selection_1.grade AS d1_grade,
+                selection_5.final_selection_value AS d5_selection_value,
+                selection_5.grade AS d5_grade,
+                prediction_5.expected_excess_return AS d5_expected_excess_return,
+                prediction_5.lower_band AS d5_lower_band,
+                prediction_5.upper_band AS d5_upper_band
+            FROM vw_feature_matrix_latest AS feature
+            JOIN dim_symbol AS symbol_meta
+              ON feature.symbol = symbol_meta.symbol
+            LEFT JOIN vw_ranking_latest AS selection_1
+              ON feature.symbol = selection_1.symbol
+             AND selection_1.horizon = 1
+             AND selection_1.ranking_version = ?
+            LEFT JOIN vw_ranking_latest AS selection_5
+              ON feature.symbol = selection_5.symbol
+             AND selection_5.horizon = 5
+             AND selection_5.ranking_version = ?
+            LEFT JOIN vw_prediction_latest AS prediction_5
+              ON feature.symbol = prediction_5.symbol
+             AND prediction_5.horizon = 5
+             AND prediction_5.prediction_version = ?
+            WHERE feature.symbol = ?
+            """,
+            [SELECTION_ENGINE_VERSION, SELECTION_ENGINE_VERSION, PREDICTION_VERSION, symbol],
+        ).fetchdf()
+
+
+def stock_workbench_price_frame(
+    settings: Settings,
+    *,
+    symbol: str,
+    limit: int = 30,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT trading_date, open, high, low, close, volume, turnover_value
+            FROM fact_daily_ohlcv
+            WHERE symbol = ?
+            ORDER BY trading_date DESC
+            LIMIT ?
+            """,
+            [symbol, limit],
+        ).fetchdf()
+
+
+def stock_workbench_flow_frame(settings: Settings, *, symbol: str, limit: int = 30) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                trading_date,
+                foreign_net_value,
+                institution_net_value,
+                individual_net_value,
+                foreign_net_volume,
+                institution_net_volume,
+                individual_net_volume
+            FROM fact_investor_flow
+            WHERE symbol = ?
+            ORDER BY trading_date DESC
+            LIMIT ?
+            """,
+            [symbol, limit],
+        ).fetchdf()
+
+
+def stock_workbench_news_frame(settings: Settings, *, symbol: str, limit: int = 10) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT signal_date, published_at, title, publisher, query_bucket, link
+            FROM fact_news_item
+            WHERE symbol_candidates LIKE ?
+            ORDER BY signal_date DESC, published_at DESC
+            LIMIT ?
+            """,
+            [f"%{symbol}%", limit],
+        ).fetchdf()
+
+
+def latest_discord_preview(settings: Settings) -> str | None:
+    if not settings.paths.duckdb_path.exists():
+        return None
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT output_artifacts_json
+            FROM ops_run_manifest
+            WHERE run_type = 'render_discord_eod_report'
+              AND status = 'success'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None or not row[0]:
+        return None
+    artifacts = json.loads(row[0])
+    preview_candidates = [Path(item) for item in artifacts if str(item).endswith(".md")]
+    if not preview_candidates:
+        return None
+    preview_path = preview_candidates[-1]
+    if not preview_path.exists():
+        return None
+    return preview_path.read_text(encoding="utf-8")

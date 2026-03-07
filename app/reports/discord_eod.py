@@ -1,0 +1,474 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import date
+
+import httpx
+import pandas as pd
+
+from app.common.run_context import activate_run_context
+from app.common.time import now_local
+from app.selection.calibration import PREDICTION_VERSION
+from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
+from app.settings import Settings
+from app.storage.bootstrap import ensure_storage_layout
+from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
+from app.storage.manifests import record_run_finish, record_run_start
+
+DISCORD_MESSAGE_LIMIT = 1800
+
+
+@dataclass(slots=True)
+class DiscordRenderResult:
+    run_id: str
+    as_of_date: date
+    payload: dict[str, object]
+    artifact_paths: list[str]
+    notes: str
+
+
+@dataclass(slots=True)
+class DiscordPublishResult:
+    run_id: str
+    as_of_date: date
+    dry_run: bool
+    published: bool
+    artifact_paths: list[str]
+    notes: str
+
+
+def _load_market_pulse(connection, *, as_of_date: date) -> dict[str, object]:
+    regime_row = connection.execute(
+        """
+        SELECT regime_state, regime_score, breadth_up_ratio, market_realized_vol_20d
+        FROM fact_market_regime_snapshot
+        WHERE as_of_date = ?
+          AND market_scope = 'KR_ALL'
+        """,
+        [as_of_date],
+    ).fetchone()
+    flow_row = connection.execute(
+        """
+        SELECT
+            COUNT(*) AS row_count,
+            AVG(CASE WHEN foreign_net_value > 0 THEN 1.0 ELSE 0.0 END) AS foreign_positive_ratio,
+            AVG(
+                CASE WHEN institution_net_value > 0 THEN 1.0 ELSE 0.0 END
+            ) AS institution_positive_ratio
+        FROM fact_investor_flow
+        WHERE trading_date = ?
+        """,
+        [as_of_date],
+    ).fetchone()
+    return {
+        "regime_state": regime_row[0] if regime_row else None,
+        "regime_score": regime_row[1] if regime_row else None,
+        "breadth_up_ratio": regime_row[2] if regime_row else None,
+        "market_realized_vol_20d": regime_row[3] if regime_row else None,
+        "flow_row_count": flow_row[0] if flow_row else 0,
+        "foreign_positive_ratio": flow_row[1] if flow_row else None,
+        "institution_positive_ratio": flow_row[2] if flow_row else None,
+    }
+
+
+def _load_top_selection_rows(
+    connection,
+    *,
+    as_of_date: date,
+    horizon: int,
+    limit: int,
+) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            ranking.symbol,
+            symbol.company_name,
+            symbol.market,
+            ranking.final_selection_value,
+            ranking.grade,
+            ranking.top_reason_tags_json,
+            ranking.risk_flags_json,
+            prediction.expected_excess_return,
+            prediction.lower_band,
+            prediction.upper_band
+        FROM fact_ranking AS ranking
+        JOIN dim_symbol AS symbol
+          ON ranking.symbol = symbol.symbol
+        LEFT JOIN fact_prediction AS prediction
+          ON ranking.as_of_date = prediction.as_of_date
+         AND ranking.symbol = prediction.symbol
+         AND ranking.horizon = prediction.horizon
+         AND prediction.prediction_version = ?
+         AND prediction.ranking_version = ?
+        WHERE ranking.as_of_date = ?
+          AND ranking.horizon = ?
+          AND ranking.ranking_version = ?
+        ORDER BY ranking.final_selection_value DESC, ranking.symbol
+        LIMIT ?
+        """,
+        [
+            PREDICTION_VERSION,
+            SELECTION_ENGINE_VERSION,
+            as_of_date,
+            horizon,
+            SELECTION_ENGINE_VERSION,
+            limit,
+        ],
+    ).fetchdf()
+
+
+def _load_market_news(connection, *, as_of_date: date, limit: int = 3) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT title, publisher
+        FROM fact_news_item
+        WHERE signal_date = ?
+          AND COALESCE(is_market_wide, FALSE)
+        ORDER BY published_at DESC
+        LIMIT ?
+        """,
+        [as_of_date, limit],
+    ).fetchdf()
+
+
+def _format_pick_line(row: pd.Series) -> str:
+    reasons = ", ".join(json.loads(row["top_reason_tags_json"] or "[]")[:2])
+    risks = ", ".join(json.loads(row["risk_flags_json"] or "[]")[:2])
+    band = ""
+    if pd.notna(row.get("expected_excess_return")):
+        band = (
+            f" | proxy ex-ret {float(row['expected_excess_return']):+.2%}"
+            f" [{float(row['lower_band']):+.2%}, {float(row['upper_band']):+.2%}]"
+        )
+    return (
+        f"- `{row['symbol']}` {row['company_name']} ({row['market']})"
+        f" score={float(row['final_selection_value']):.1f} grade={row['grade']}{band}"
+        f" | reasons: {reasons or '-'} | risks: {risks or '-'}"
+    )
+
+
+def _build_payload_content(
+    *,
+    as_of_date: date,
+    market_pulse: dict[str, object],
+    d1_board: pd.DataFrame,
+    d5_board: pd.DataFrame,
+    market_news: pd.DataFrame,
+) -> str:
+    lines = [
+        f"**StockMaster EOD Report | {as_of_date.isoformat()}**",
+        "",
+        (
+            f"Market pulse: regime=`{market_pulse.get('regime_state') or 'n/a'}` "
+            f"score={market_pulse.get('regime_score') or 'n/a'} "
+            f"| breadth_up={market_pulse.get('breadth_up_ratio') or 'n/a'} "
+            f"| flow_rows={market_pulse.get('flow_row_count') or 0}"
+        ),
+        "Selection engine v1 uses explanatory + flow + proxy penalties. "
+        "Prediction bands below are calibrated historical proxies, not ML forecasts.",
+        "",
+        "**Top D+1 candidates**",
+    ]
+    if d1_board.empty:
+        lines.append("- no D+1 selection rows")
+    else:
+        lines.extend(_format_pick_line(row) for _, row in d1_board.iterrows())
+    lines.append("")
+    lines.append("**Top D+5 candidates**")
+    if d5_board.empty:
+        lines.append("- no D+5 selection rows")
+    else:
+        lines.extend(_format_pick_line(row) for _, row in d5_board.iterrows())
+    lines.append("")
+    lines.append("**Market-wide headlines**")
+    if market_news.empty:
+        lines.append("- no market-wide news metadata for the date")
+    else:
+        for _, row in market_news.iterrows():
+            lines.append(f"- {row['title']} ({row['publisher']})")
+    return "\n".join(lines)
+
+
+def _split_long_line(line: str, *, limit: int) -> list[str]:
+    if len(line) <= limit:
+        return [line]
+
+    segments: list[str] = []
+    remainder = line
+    while len(remainder) > limit:
+        split_at = remainder.rfind(" ", 0, limit)
+        if split_at <= 0:
+            split_at = limit
+        segments.append(remainder[:split_at].rstrip())
+        remainder = remainder[split_at:].lstrip()
+    if remainder:
+        segments.append(remainder)
+    return segments
+
+
+def _chunk_content(content: str, *, limit: int = DISCORD_MESSAGE_LIMIT) -> list[str]:
+    chunks: list[str] = []
+    current_lines: list[str] = []
+    current_length = 0
+
+    def flush() -> None:
+        nonlocal current_lines, current_length
+        if current_lines:
+            chunks.append("\n".join(current_lines).strip())
+            current_lines = []
+            current_length = 0
+
+    for raw_line in content.splitlines():
+        line_variants = _split_long_line(raw_line, limit=limit)
+        if not line_variants:
+            line_variants = [""]
+        for line in line_variants:
+            line_length = len(line)
+            separator_length = 1 if current_lines else 0
+            if current_lines and current_length + separator_length + line_length > limit:
+                flush()
+            current_lines.append(line)
+            current_length += line_length + (1 if len(current_lines) > 1 else 0)
+    flush()
+    return [chunk for chunk in chunks if chunk]
+
+
+def _build_payload_messages(
+    *,
+    username: str,
+    as_of_date: date,
+    content: str,
+) -> list[dict[str, str]]:
+    raw_chunks = _chunk_content(content)
+    if len(raw_chunks) <= 1:
+        return [{"username": username, "content": raw_chunks[0] if raw_chunks else ""}]
+
+    total = len(raw_chunks)
+    messages: list[dict[str, str]] = []
+    for index, chunk in enumerate(raw_chunks, start=1):
+        if index == 1:
+            content_text = chunk
+        else:
+            header = (
+                f"**StockMaster EOD Report | {as_of_date.isoformat()} "
+                f"(cont. {index}/{total})**"
+            )
+            content_text = f"{header}\n\n{chunk}"
+        messages.append({"username": username, "content": content_text})
+    return messages
+
+
+def render_discord_eod_report(
+    settings: Settings,
+    *,
+    as_of_date: date,
+    dry_run: bool,
+    top_limit: int = 5,
+) -> DiscordRenderResult:
+    ensure_storage_layout(settings)
+
+    with activate_run_context("render_discord_eod_report", as_of_date=as_of_date) as run_context:
+        with duckdb_connection(settings.paths.duckdb_path) as connection:
+            bootstrap_core_tables(connection)
+            record_run_start(
+                connection,
+                run_id=run_context.run_id,
+                run_type=run_context.run_type,
+                started_at=run_context.started_at,
+                as_of_date=run_context.as_of_date,
+                input_sources=[
+                    "fact_ranking",
+                    "fact_prediction",
+                    "fact_market_regime_snapshot",
+                    "fact_news_item",
+                ],
+                notes=f"Render Discord EOD report for {as_of_date.isoformat()}",
+                ranking_version=SELECTION_ENGINE_VERSION,
+            )
+            try:
+                market_pulse = _load_market_pulse(connection, as_of_date=as_of_date)
+                d1_board = _load_top_selection_rows(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizon=1,
+                    limit=top_limit,
+                )
+                d5_board = _load_top_selection_rows(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizon=5,
+                    limit=top_limit,
+                )
+                market_news = _load_market_news(connection, as_of_date=as_of_date)
+                content = _build_payload_content(
+                    as_of_date=as_of_date,
+                    market_pulse=market_pulse,
+                    d1_board=d1_board,
+                    d5_board=d5_board,
+                    market_news=market_news,
+                )
+                messages = _build_payload_messages(
+                    username=settings.discord.username,
+                    as_of_date=as_of_date,
+                    content=content,
+                )
+                payload = {
+                    "username": settings.discord.username,
+                    "content": messages[0]["content"] if messages else "",
+                    "message_count": len(messages),
+                    "messages": messages,
+                }
+
+                artifact_dir = (
+                    settings.paths.artifacts_dir
+                    / "discord"
+                    / f"as_of_date={as_of_date.isoformat()}"
+                    / run_context.run_id
+                )
+                artifact_dir.mkdir(parents=True, exist_ok=True)
+                payload_path = artifact_dir / "discord_payload.json"
+                payload_path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                preview_path = artifact_dir / "discord_preview.md"
+                preview_lines: list[str] = []
+                for index, message in enumerate(messages, start=1):
+                    preview_lines.append(f"## Message {index}")
+                    preview_lines.append("")
+                    preview_lines.append(str(message["content"]))
+                    preview_lines.append("")
+                preview_path.write_text("\n".join(preview_lines).strip(), encoding="utf-8")
+                artifact_paths = [str(payload_path), str(preview_path)]
+                notes = (
+                    f"Discord EOD report rendered. as_of_date={as_of_date.isoformat()} "
+                    f"dry_run={dry_run} message_count={len(messages)}"
+                )
+                record_run_finish(
+                    connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="success",
+                    output_artifacts=artifact_paths,
+                    notes=notes,
+                    ranking_version=SELECTION_ENGINE_VERSION,
+                )
+                return DiscordRenderResult(
+                    run_id=run_context.run_id,
+                    as_of_date=as_of_date,
+                    payload=payload,
+                    artifact_paths=artifact_paths,
+                    notes=notes,
+                )
+            except Exception as exc:
+                record_run_finish(
+                    connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="failed",
+                    output_artifacts=[],
+                    notes=f"Discord render failed for {as_of_date.isoformat()}",
+                    error_message=str(exc),
+                    ranking_version=SELECTION_ENGINE_VERSION,
+                )
+                raise
+
+
+def publish_discord_eod_report(
+    settings: Settings,
+    *,
+    as_of_date: date,
+    dry_run: bool,
+) -> DiscordPublishResult:
+    ensure_storage_layout(settings)
+
+    with activate_run_context("publish_discord_eod_report", as_of_date=as_of_date) as run_context:
+        with duckdb_connection(settings.paths.duckdb_path) as connection:
+            bootstrap_core_tables(connection)
+            record_run_start(
+                connection,
+                run_id=run_context.run_id,
+                run_type=run_context.run_type,
+                started_at=run_context.started_at,
+                as_of_date=run_context.as_of_date,
+                input_sources=["render_discord_eod_report"],
+                notes=f"Publish Discord EOD report for {as_of_date.isoformat()}",
+                ranking_version=SELECTION_ENGINE_VERSION,
+            )
+
+        render_result = render_discord_eod_report(settings, as_of_date=as_of_date, dry_run=dry_run)
+        artifact_paths = list(render_result.artifact_paths)
+        notes = f"Discord publish dry-run completed for {as_of_date.isoformat()}."
+        published = False
+
+        try:
+            webhook_url = settings.discord.webhook_url
+            messages = render_result.payload.get("messages") or []
+            if not settings.discord.enabled:
+                notes = (
+                    f"Discord publish skipped for {as_of_date.isoformat()}. "
+                    "DISCORD_REPORT_ENABLED=false."
+                )
+            elif dry_run or not webhook_url:
+                if not webhook_url:
+                    notes = (
+                        f"Discord publish skipped for {as_of_date.isoformat()}. "
+                        "Webhook URL is not configured."
+                    )
+            else:
+                response_payloads: list[dict[str, object]] = []
+                for index, message in enumerate(messages, start=1):
+                    response = httpx.post(webhook_url, json=message, timeout=10.0)
+                    response.raise_for_status()
+                    response_payloads.append(
+                        {
+                            "message_index": index,
+                            "status_code": response.status_code,
+                            "headers": dict(response.headers),
+                        }
+                    )
+                published = True
+                publish_path = (
+                    settings.paths.artifacts_dir
+                    / "discord"
+                    / f"as_of_date={as_of_date.isoformat()}"
+                    / run_context.run_id
+                    / "publish_response.json"
+                )
+                publish_path.parent.mkdir(parents=True, exist_ok=True)
+                publish_path.write_text(
+                    json.dumps(response_payloads, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                artifact_paths.append(str(publish_path))
+                notes = (
+                    f"Discord publish completed for {as_of_date.isoformat()}. "
+                    f"message_count={len(messages)}"
+                )
+        except Exception as exc:
+            notes = (
+                f"Discord publish warning for {as_of_date.isoformat()}: {exc}. "
+                "The report was rendered but publish did not complete."
+            )
+        finally:
+            with duckdb_connection(settings.paths.duckdb_path) as connection:
+                bootstrap_core_tables(connection)
+                record_run_finish(
+                    connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="success",
+                    output_artifacts=artifact_paths,
+                    notes=notes,
+                    ranking_version=SELECTION_ENGINE_VERSION,
+                )
+
+        return DiscordPublishResult(
+            run_id=run_context.run_id,
+            as_of_date=as_of_date,
+            dry_run=dry_run,
+            published=published,
+            artifact_paths=artifact_paths,
+            notes=notes,
+        )

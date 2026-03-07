@@ -132,6 +132,7 @@ class ProviderConfig(BaseModel):
 
 
 class DiscordConfig(BaseModel):
+    enabled: bool = False
     webhook_url: str | None = None
     username: str = "KR Stock Research Bot"
 
@@ -269,6 +270,10 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
     naver_news["client_id"] = env_values.get("NAVER_CLIENT_ID")
     naver_news["client_secret"] = env_values.get("NAVER_CLIENT_SECRET")
 
+    discord["enabled"] = _parse_bool(
+        env_values.get("DISCORD_REPORT_ENABLED"),
+        discord.get("enabled", False),
+    )
     discord["webhook_url"] = env_values.get("DISCORD_WEBHOOK_URL")
     discord["username"] = env_values.get("DISCORD_USERNAME", discord.get("username"))
 

@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import date
 
+import numpy as np
 import pandas as pd
 
 from app.common.run_context import activate_run_context
@@ -55,7 +56,7 @@ def _feature_rank(frame: pd.DataFrame, feature_name: str) -> pd.Series:
     column = f"{feature_name}_rank_pct"
     if column in frame.columns:
         return pd.to_numeric(frame[column], errors="coerce")
-    return pd.Series([pd.NA] * len(frame), index=frame.index, dtype="float64")
+    return pd.Series(np.nan, index=frame.index, dtype="float64")
 
 
 def _feature_inverse_rank(frame: pd.DataFrame, feature_name: str) -> pd.Series:
@@ -101,8 +102,8 @@ def upsert_ranking(connection, frame: pd.DataFrame) -> None:
     connection.execute(
         """
         DELETE FROM fact_ranking
-        WHERE (as_of_date, symbol, horizon) IN (
-            SELECT as_of_date, symbol, horizon
+        WHERE (as_of_date, symbol, horizon, ranking_version) IN (
+            SELECT as_of_date, symbol, horizon, ranking_version
             FROM ranking_stage
         )
         """
@@ -415,8 +416,12 @@ def materialize_explanatory_ranking(
                 ].copy()
                 if force:
                     connection.execute(
-                        "DELETE FROM fact_ranking WHERE as_of_date = ?",
-                        [as_of_date],
+                        """
+                        DELETE FROM fact_ranking
+                        WHERE as_of_date = ?
+                          AND ranking_version = ?
+                        """,
+                        [as_of_date, RANKING_VERSION],
                     )
                 upsert_ranking(connection, ranking_output)
 

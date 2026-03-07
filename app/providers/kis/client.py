@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.providers.base import BaseProvider, ProviderHealth
 
 from .auth import KisTokenManager
+from .investor_flow import KisInvestorFlowClient
 from .market_data import KisMarketDataClient, SymbolMasterSnapshot
 
 
@@ -13,6 +14,9 @@ class KISProvider(BaseProvider):
         super().__init__(settings, timeout=timeout)
         self.token_manager = KisTokenManager(settings, self.client, self.logger)
         self.market_data = KisMarketDataClient(
+            settings, self.client, self.logger, self.token_manager
+        )
+        self.investor_flow = KisInvestorFlowClient(
             settings, self.client, self.logger, self.token_manager
         )
 
@@ -70,3 +74,6 @@ class KISProvider(BaseProvider):
             start_date=start_date,
             end_date=end_date,
         )
+
+    def fetch_investor_flow(self, *, symbol: str, trading_date=None):
+        return self.investor_flow.fetch_investor_flow(symbol=symbol, trading_date=trading_date)

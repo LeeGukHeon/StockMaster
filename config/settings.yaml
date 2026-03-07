@@ -35,6 +35,7 @@ providers:
     base_url: https://openapi.naver.com
 
 discord:
+  enabled: false
   username: KR Stock Research Bot
 
 model:

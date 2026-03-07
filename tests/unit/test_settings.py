@@ -18,6 +18,7 @@ def test_load_settings_applies_env_overrides(tmp_path):
                 "APP_DUCKDB_PATH=./runtime-data/marts/test.duckdb",
                 "STORAGE_WARNING_RATIO=0.55",
                 "MODEL_DEFAULT_HORIZONS=D1,D5,D10",
+                "DISCORD_REPORT_ENABLED=true",
             ]
         ),
         encoding="utf-8",
@@ -33,6 +34,7 @@ def test_load_settings_applies_env_overrides(tmp_path):
     )
     assert settings.storage.warning_ratio == 0.55
     assert settings.model.default_horizons == ["D1", "D5", "D10"]
+    assert settings.discord.enabled is True
 
 
 def test_load_settings_raises_for_missing_explicit_env_file():

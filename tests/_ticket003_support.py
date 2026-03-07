@@ -79,6 +79,12 @@ _OPEN_FACTOR = {
     "123456": 0.995,
     "123457": 1.005,
 }
+_FLOW_VALUE_SERIES = {
+    "005930": [2.0e10, 2.2e10, 2.4e10, 2.8e10, 3.1e10, 3.3e10, 3.6e10, 3.8e10],
+    "000660": [8.0e9, 8.5e9, 9.0e9, 9.2e9, 9.4e9, 9.6e9, 9.8e9, 1.0e10],
+    "123456": [3.0e9, 3.1e9, 3.4e9, 3.7e9, 3.8e9, 4.0e9, 4.2e9, 4.4e9],
+    "123457": [-2.5e9, -2.7e9, -2.9e9, -3.0e9, -3.1e9, -3.2e9, -3.3e9, -3.4e9],
+}
 
 
 def build_test_settings(tmp_path) -> Settings:
@@ -410,4 +416,51 @@ def seed_ticket003_data(settings: Settings) -> None:
                     query_bucket,
                 ) in news_rows
             ],
+        )
+
+
+def seed_ticket004_flow_data(settings: Settings) -> None:
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        flow_rows: list[tuple[object, ...]] = []
+        for symbol_row in SYMBOLS:
+            symbol = symbol_row["symbol"]
+            market = symbol_row["market"]
+            for index, trading_date in enumerate(TRADING_DATES):
+                foreign_value = float(_FLOW_VALUE_SERIES[symbol][index])
+                institution_value = round(foreign_value * 0.55, 4)
+                individual_value = round(-(foreign_value + institution_value) * 0.85, 4)
+                flow_rows.append(
+                    (
+                        "test-flow-run",
+                        trading_date,
+                        symbol,
+                        market,
+                        foreign_value / 1000.0,
+                        institution_value / 1000.0,
+                        individual_value / 1000.0,
+                        foreign_value,
+                        institution_value,
+                        individual_value,
+                    )
+                )
+        connection.executemany(
+            """
+            INSERT INTO fact_investor_flow (
+                run_id,
+                trading_date,
+                symbol,
+                market,
+                foreign_net_volume,
+                institution_net_volume,
+                individual_net_volume,
+                foreign_net_value,
+                institution_net_value,
+                individual_net_value,
+                source,
+                source_notes_json,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'test', NULL, now())
+            """,
+            flow_rows,
         )

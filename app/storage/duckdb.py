@@ -146,6 +146,24 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_investor_flow (
+        run_id VARCHAR NOT NULL,
+        trading_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        market VARCHAR,
+        foreign_net_volume DOUBLE,
+        institution_net_volume DOUBLE,
+        individual_net_volume DOUBLE,
+        foreign_net_value DOUBLE,
+        institution_net_value DOUBLE,
+        individual_net_value DOUBLE,
+        source VARCHAR,
+        source_notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (trading_date, symbol)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS fact_feature_snapshot (
         run_id VARCHAR NOT NULL,
         as_of_date DATE NOT NULL,
@@ -223,7 +241,30 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         regime_state VARCHAR,
         ranking_version VARCHAR,
         created_at TIMESTAMPTZ NOT NULL,
-        PRIMARY KEY (as_of_date, symbol, horizon)
+        PRIMARY KEY (as_of_date, symbol, horizon, ranking_version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_prediction (
+        run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        market VARCHAR,
+        ranking_version VARCHAR NOT NULL,
+        prediction_version VARCHAR NOT NULL,
+        expected_excess_return DOUBLE,
+        lower_band DOUBLE,
+        median_band DOUBLE,
+        upper_band DOUBLE,
+        calibration_start_date DATE,
+        calibration_end_date DATE,
+        calibration_bucket VARCHAR,
+        calibration_sample_size BIGINT,
+        disagreement_score DOUBLE,
+        source_notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, symbol, horizon, prediction_version)
     )
     """,
     """
@@ -267,6 +308,25 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         avg_excess_forward_return DOUBLE,
         median_excess_forward_return DOUBLE,
         top_decile_gap DOUBLE,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ops_selection_validation_summary (
+        run_id VARCHAR NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        horizon INTEGER NOT NULL,
+        bucket_type VARCHAR NOT NULL,
+        bucket_name VARCHAR NOT NULL,
+        symbol_count BIGINT NOT NULL,
+        avg_excess_forward_return DOUBLE,
+        median_excess_forward_return DOUBLE,
+        hit_rate DOUBLE,
+        avg_expected_excess_return DOUBLE,
+        avg_prediction_error DOUBLE,
+        top_decile_gap DOUBLE,
+        ranking_version VARCHAR NOT NULL,
         created_at TIMESTAMPTZ NOT NULL
     )
     """,
@@ -329,6 +389,15 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY symbol
         ORDER BY as_of_date DESC, disclosed_at DESC NULLS LAST, ingested_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_investor_flow AS
+    SELECT *
+    FROM fact_investor_flow
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol
+        ORDER BY trading_date DESC, created_at DESC
     ) = 1
     """,
     """
@@ -396,7 +465,16 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     SELECT *
     FROM fact_ranking
     QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY symbol, horizon
+        PARTITION BY symbol, horizon, ranking_version
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_prediction_latest AS
+    SELECT *
+    FROM fact_prediction
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, horizon, prediction_version
         ORDER BY as_of_date DESC, created_at DESC
     ) = 1
     """,
@@ -409,7 +487,105 @@ CORE_VIEW_DDL: tuple[str, ...] = (
         ORDER BY created_at DESC
     ) = 1
     """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_selection_validation_summary AS
+    SELECT *
+    FROM ops_selection_validation_summary
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, bucket_type, bucket_name, ranking_version
+        ORDER BY created_at DESC
+    ) = 1
+    """,
 )
+
+
+def _table_exists(connection: duckdb.DuckDBPyConnection, table_name: str) -> bool:
+    row = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_name = ?
+        """,
+        [table_name],
+    ).fetchone()
+    return bool(row and row[0])
+
+
+def _migrate_fact_ranking_table(connection: duckdb.DuckDBPyConnection) -> None:
+    if not _table_exists(connection, "fact_ranking"):
+        return
+
+    table_info = connection.execute("PRAGMA table_info('fact_ranking')").fetchdf()
+    if table_info.empty:
+        return
+
+    ranking_row = table_info.loc[table_info["name"] == "ranking_version"]
+    ranking_pk = int(ranking_row["pk"].iloc[0]) if not ranking_row.empty else 0
+    if ranking_pk == 4:
+        return
+
+    connection.execute("ALTER TABLE fact_ranking RENAME TO fact_ranking_legacy")
+    connection.execute(
+        """
+        CREATE TABLE fact_ranking (
+            run_id VARCHAR NOT NULL,
+            as_of_date DATE NOT NULL,
+            symbol VARCHAR NOT NULL,
+            horizon INTEGER NOT NULL,
+            final_selection_value DOUBLE,
+            final_selection_rank_pct DOUBLE,
+            grade VARCHAR,
+            explanatory_score_json VARCHAR,
+            top_reason_tags_json VARCHAR,
+            risk_flags_json VARCHAR,
+            eligible_flag BOOLEAN,
+            eligibility_notes_json VARCHAR,
+            regime_state VARCHAR,
+            ranking_version VARCHAR,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (as_of_date, symbol, horizon, ranking_version)
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO fact_ranking (
+            run_id,
+            as_of_date,
+            symbol,
+            horizon,
+            final_selection_value,
+            final_selection_rank_pct,
+            grade,
+            explanatory_score_json,
+            top_reason_tags_json,
+            risk_flags_json,
+            eligible_flag,
+            eligibility_notes_json,
+            regime_state,
+            ranking_version,
+            created_at
+        )
+        SELECT
+            run_id,
+            as_of_date,
+            symbol,
+            horizon,
+            final_selection_value,
+            final_selection_rank_pct,
+            grade,
+            explanatory_score_json,
+            top_reason_tags_json,
+            risk_flags_json,
+            eligible_flag,
+            eligibility_notes_json,
+            regime_state,
+            COALESCE(ranking_version, 'explanatory_ranking_v0'),
+            created_at
+        FROM fact_ranking_legacy
+        """
+    )
+    connection.execute("DROP TABLE fact_ranking_legacy")
 
 
 def connect_duckdb(
@@ -435,6 +611,8 @@ def duckdb_connection(
 
 
 def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
+    _migrate_fact_ranking_table(connection)
+
     for ddl in CORE_TABLE_DDL:
         connection.execute(ddl)
 

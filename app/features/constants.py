@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-FEATURE_VERSION = "feature_store_v1"
+FEATURE_VERSION = "feature_store_v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +73,14 @@ FEATURE_SPECS: tuple[FeatureSpec, ...] = (
     FeatureSpec("negative_catalyst_count_3d", "news_catalyst"),
     FeatureSpec("news_link_confidence_score", "news_catalyst"),
     FeatureSpec("news_coverage_flag", "news_catalyst"),
+    FeatureSpec("foreign_net_value_ratio_1d", "investor_flow"),
+    FeatureSpec("foreign_net_value_ratio_5d", "investor_flow"),
+    FeatureSpec("institution_net_value_ratio_5d", "investor_flow"),
+    FeatureSpec("individual_net_value_ratio_5d", "investor_flow"),
+    FeatureSpec("smart_money_flow_ratio_5d", "investor_flow"),
+    FeatureSpec("smart_money_flow_ratio_20d", "investor_flow"),
+    FeatureSpec("flow_alignment_score", "investor_flow"),
+    FeatureSpec("flow_coverage_flag", "investor_flow"),
     FeatureSpec("has_daily_ohlcv_flag", "data_quality"),
     FeatureSpec("has_fundamentals_flag", "data_quality"),
     FeatureSpec("has_news_flag", "data_quality"),

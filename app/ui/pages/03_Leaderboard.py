@@ -12,8 +12,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.ui.helpers import (
     available_ranking_dates,
+    available_ranking_versions,
+    latest_selection_validation_summary_frame,
     latest_validation_summary_frame,
     leaderboard_frame,
     leaderboard_grade_count_frame,
@@ -23,14 +26,28 @@ from app.ui.helpers import (
 st.set_page_config(page_title="Leaderboard", page_icon="SM", layout="wide")
 
 settings = load_ui_settings(PROJECT_ROOT)
-ranking_dates = available_ranking_dates(settings)
+ranking_versions = available_ranking_versions(settings)
 
 st.title("Leaderboard")
-st.caption("Explanatory ranking v0. The score is an inspection layer, not a predictive model.")
+st.caption(
+    "Compare explanatory ranking v0 and selection engine v1. "
+    "Selection v1 may include calibrated proxy bands; these are not ML forecasts."
+)
 
-if not ranking_dates:
-    st.info("No ranking snapshots are available yet. Run the TICKET-003 build scripts first.")
+if not ranking_versions:
+    st.info("No ranking snapshots are available yet. Run the build scripts first.")
 else:
+    default_version_index = (
+        ranking_versions.index(SELECTION_ENGINE_VERSION)
+        if SELECTION_ENGINE_VERSION in ranking_versions
+        else 0
+    )
+    selected_version = st.selectbox(
+        "Ranking version",
+        options=ranking_versions,
+        index=default_version_index,
+    )
+    ranking_dates = available_ranking_dates(settings, ranking_version=selected_version)
     selected_date = st.selectbox("As-of date", options=ranking_dates, index=0)
     horizon = st.selectbox("Horizon", options=[1, 5], index=1)
     market = st.selectbox("Market", options=["ALL", "KOSPI", "KOSDAQ"], index=0)
@@ -42,13 +59,19 @@ else:
         horizon=horizon,
         market=market,
         limit=limit,
+        ranking_version=selected_version,
     )
     grade_counts = leaderboard_grade_count_frame(
         settings,
         as_of_date=selected_date,
         horizon=horizon,
+        ranking_version=selected_version,
     )
-    validation = latest_validation_summary_frame(settings, limit=50)
+    validation = (
+        latest_selection_validation_summary_frame(settings, limit=50)
+        if selected_version == SELECTION_ENGINE_VERSION
+        else latest_validation_summary_frame(settings, limit=50)
+    )
 
     top_left, top_right = st.columns((2, 1))
     with top_left:
@@ -56,19 +79,20 @@ else:
         if board.empty:
             st.info("No ranking rows match the current filter.")
         else:
-            display = board[
-                [
-                    "symbol",
-                    "company_name",
-                    "market",
-                    "final_selection_value",
-                    "final_selection_rank_pct",
-                    "grade",
-                    "regime_state",
-                    "reasons",
-                    "risks",
-                ]
-            ].copy()
+            columns = [
+                "symbol",
+                "company_name",
+                "market",
+                "final_selection_value",
+                "final_selection_rank_pct",
+                "grade",
+                "regime_state",
+                "reasons",
+                "risks",
+            ]
+            if selected_version == SELECTION_ENGINE_VERSION:
+                columns.extend(["expected_excess_return", "lower_band", "upper_band"])
+            display = board[columns].copy()
             display["final_selection_rank_pct"] = (
                 pd.to_numeric(display["final_selection_rank_pct"], errors="coerce") * 100.0
             ).round(1)
@@ -82,13 +106,7 @@ else:
 
     st.subheader("Latest Validation Summary")
     if validation.empty:
-        st.info(
-            "Validation rows are empty. Build historical rankings and forward "
-            "labels before validating."
-        )
+        st.info("Validation rows are empty for the selected version.")
     else:
         filtered = validation.loc[validation["horizon"] == horizon].copy()
-        if filtered.empty:
-            st.info("No validation rows for this horizon yet.")
-        else:
-            st.dataframe(filtered, use_container_width=True, hide_index=True)
+        st.dataframe(filtered, use_container_width=True, hide_index=True)

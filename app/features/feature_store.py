@@ -7,6 +7,7 @@ import pandas as pd
 
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
+from app.features.builders.flow_features import build_flow_feature_frame
 from app.features.builders.fundamentals_features import build_fundamentals_feature_frame
 from app.features.builders.liquidity_features import build_liquidity_feature_frame
 from app.features.builders.news_features import build_news_feature_frame
@@ -122,6 +123,28 @@ def _load_latest_fundamentals(connection, *, as_of_date: date) -> pd.DataFrame:
             PARTITION BY symbol
             ORDER BY as_of_date DESC, disclosed_at DESC NULLS LAST, ingested_at DESC
         ) = 1
+        """,
+        [as_of_date],
+    ).fetchdf()
+
+
+def _load_investor_flow_history(connection, *, as_of_date: date) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            trading_date,
+            symbol,
+            market,
+            foreign_net_volume,
+            institution_net_volume,
+            individual_net_volume,
+            foreign_net_value,
+            institution_net_value,
+            individual_net_value
+        FROM fact_investor_flow
+        WHERE symbol IN (SELECT symbol FROM feature_symbol_stage)
+          AND trading_date <= ?
+        ORDER BY symbol, trading_date
         """,
         [as_of_date],
     ).fetchdf()
@@ -293,6 +316,7 @@ def build_feature_store(
                     "fact_daily_ohlcv",
                     "fact_fundamentals_snapshot",
                     "fact_news_item",
+                    "fact_investor_flow",
                     "dim_symbol",
                 ],
                 notes=f"Build feature store snapshot for {as_of_date.isoformat()}",
@@ -347,6 +371,10 @@ def build_feature_store(
                     latest_fundamentals = _load_latest_fundamentals(
                         connection, as_of_date=as_of_date
                     )
+                    investor_flow_history = _load_investor_flow_history(
+                        connection,
+                        as_of_date=as_of_date,
+                    )
                     recent_news = _load_recent_news(connection, as_of_date=as_of_date)
                 finally:
                     _unregister_symbol_stage(connection)
@@ -377,6 +405,11 @@ def build_feature_store(
                     latest_fundamentals,
                     as_of_date=as_of_date,
                 )
+                flow_features = build_flow_feature_frame(
+                    investor_flow_history,
+                    ohlcv_history=ohlcv_history,
+                    as_of_date=as_of_date,
+                )
                 news_features = build_news_feature_frame(recent_news, as_of_date=as_of_date)
 
                 feature_matrix = (
@@ -386,6 +419,7 @@ def build_feature_store(
                     .merge(price_features, on="symbol", how="left")
                     .merge(liquidity_features, on="symbol", how="left")
                     .merge(fundamentals_features, on="symbol", how="left")
+                    .merge(flow_features, on="symbol", how="left")
                     .merge(news_features, on="symbol", how="left")
                 )
                 for feature_name in FEATURE_NAMES:
