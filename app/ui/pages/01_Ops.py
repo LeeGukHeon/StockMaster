@@ -14,10 +14,15 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.ui.helpers import (
     calendar_summary_frame,
     disk_report,
+    latest_calibration_diagnostic_frame,
     latest_discord_preview,
+    latest_evaluation_comparison_frame,
+    latest_evaluation_summary_frame,
     latest_feature_coverage_frame,
     latest_flow_summary_frame,
     latest_label_coverage_frame,
+    latest_outcome_summary_frame,
+    latest_postmortem_preview,
     latest_prediction_summary_frame,
     latest_regime_frame,
     latest_selection_validation_summary_frame,
@@ -49,11 +54,16 @@ feature_coverage = latest_feature_coverage_frame(settings)
 label_coverage = latest_label_coverage_frame(settings)
 flow_summary = latest_flow_summary_frame(settings)
 prediction_summary = latest_prediction_summary_frame(settings)
+outcome_summary = latest_outcome_summary_frame(settings)
+evaluation_summary = latest_evaluation_summary_frame(settings, limit=20)
+evaluation_comparison = latest_evaluation_comparison_frame(settings)
+calibration_summary = latest_calibration_diagnostic_frame(settings, limit=20)
 latest_regime = latest_regime_frame(settings)
 latest_versions = latest_version_frame(settings)
 selection_validation = latest_selection_validation_summary_frame(settings, limit=20)
 explanatory_validation = latest_validation_summary_frame(settings, limit=20)
 discord_preview = latest_discord_preview(settings)
+postmortem_preview = latest_postmortem_preview(settings)
 
 st.title("Ops")
 st.caption(
@@ -103,6 +113,18 @@ with ops_right:
     st.subheader("Latest Regime Snapshot")
     st.dataframe(latest_regime, use_container_width=True, hide_index=True)
 
+evaluation_left, evaluation_right = st.columns(2)
+with evaluation_left:
+    st.subheader("Outcome Summary")
+    st.dataframe(outcome_summary, use_container_width=True, hide_index=True)
+    st.subheader("Evaluation Summary")
+    st.dataframe(evaluation_summary, use_container_width=True, hide_index=True)
+with evaluation_right:
+    st.subheader("Selection vs Explanatory")
+    st.dataframe(evaluation_comparison, use_container_width=True, hide_index=True)
+    st.subheader("Calibration Diagnostics")
+    st.dataframe(calibration_summary, use_container_width=True, hide_index=True)
+
 validation_left, validation_right = st.columns(2)
 with validation_left:
     st.subheader("Selection Validation")
@@ -117,6 +139,10 @@ st.dataframe(provider_health, use_container_width=True, hide_index=True)
 if discord_preview:
     with st.expander("Latest Discord Preview", expanded=False):
         st.code(discord_preview)
+
+if postmortem_preview:
+    with st.expander("Latest Postmortem Preview", expanded=False):
+        st.code(postmortem_preview)
 
 st.subheader("Run Manifest")
 st.dataframe(runs, use_container_width=True, hide_index=True)

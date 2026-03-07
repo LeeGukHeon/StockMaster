@@ -12,6 +12,7 @@ from app.providers.dart.client import DartProvider
 from app.providers.kis.client import KISProvider
 from app.providers.krx.client import KrxProvider
 from app.providers.naver_news.client import NaverNewsProvider
+from app.ranking.explanatory_score import RANKING_VERSION as EXPLANATORY_RANKING_VERSION
 from app.selection.calibration import PREDICTION_VERSION
 from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.settings import Settings, load_settings
@@ -182,11 +183,17 @@ def latest_sync_runs_frame(settings: Settings) -> pd.DataFrame:
                 'materialize_explanatory_ranking',
                 'materialize_selection_engine_v1',
                 'calibrate_proxy_prediction_bands',
+                'materialize_selection_outcomes',
+                'materialize_prediction_evaluation',
+                'materialize_calibration_diagnostics',
                 'validate_explanatory_ranking'
                 ,
                 'validate_selection_engine_v1',
+                'validate_evaluation_pipeline',
                 'render_discord_eod_report',
-                'publish_discord_eod_report'
+                'publish_discord_eod_report',
+                'render_postmortem_report',
+                'publish_discord_postmortem_report'
             )
             QUALIFY ROW_NUMBER() OVER (PARTITION BY run_type ORDER BY started_at DESC) = 1
             ORDER BY run_type
@@ -258,7 +265,25 @@ def research_data_summary_frame(settings: Settings) -> pd.DataFrame:
                 ) AS latest_prediction_date,
                 (SELECT COUNT(*) FROM fact_prediction WHERE as_of_date = (
                     SELECT MAX(as_of_date) FROM fact_prediction WHERE prediction_version = ?
-                ) AND prediction_version = ?) AS latest_prediction_rows
+                ) AND prediction_version = ?) AS latest_prediction_rows,
+                (SELECT MAX(evaluation_date) FROM fact_selection_outcome) AS latest_outcome_date,
+                (SELECT COUNT(*) FROM fact_selection_outcome WHERE evaluation_date = (
+                    SELECT MAX(evaluation_date) FROM fact_selection_outcome
+                )) AS latest_outcome_rows,
+                (
+                    SELECT MAX(summary_date)
+                    FROM fact_evaluation_summary
+                ) AS latest_evaluation_summary_date,
+                (SELECT COUNT(*) FROM fact_evaluation_summary WHERE summary_date = (
+                    SELECT MAX(summary_date) FROM fact_evaluation_summary
+                )) AS latest_evaluation_summary_rows,
+                (
+                    SELECT MAX(diagnostic_date)
+                    FROM fact_calibration_diagnostic
+                ) AS latest_calibration_date,
+                (SELECT COUNT(*) FROM fact_calibration_diagnostic WHERE diagnostic_date = (
+                    SELECT MAX(diagnostic_date) FROM fact_calibration_diagnostic
+                )) AS latest_calibration_rows
             """,
             [
                 SELECTION_ENGINE_VERSION,
@@ -534,8 +559,7 @@ def available_ranking_versions(settings: Settings) -> list[str]:
             ORDER BY
                 CASE WHEN ranking_version = ? THEN 0 ELSE 1 END,
                 ranking_version
-            """
-            ,
+            """,
             [SELECTION_ENGINE_VERSION],
         ).fetchall()
     return [str(row[0]) for row in rows]
@@ -556,6 +580,21 @@ def available_ranking_dates(settings: Settings, *, ranking_version: str | None =
             ORDER BY as_of_date DESC
             """,
             [effective_version],
+        ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def available_evaluation_dates(settings: Settings) -> list[str]:
+    if not settings.paths.duckdb_path.exists():
+        return []
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT evaluation_date
+            FROM fact_selection_outcome
+            WHERE evaluation_date IS NOT NULL
+            ORDER BY evaluation_date DESC
+            """
         ).fetchall()
     return [str(row[0]) for row in rows]
 
@@ -597,7 +636,10 @@ def leaderboard_frame(
                 prediction.expected_excess_return,
                 prediction.lower_band,
                 prediction.median_band,
-                prediction.upper_band
+                prediction.upper_band,
+                outcome.outcome_status,
+                outcome.realized_excess_return,
+                outcome.band_status
             FROM fact_ranking AS ranking
             JOIN dim_symbol AS symbol
               ON ranking.symbol = symbol.symbol
@@ -607,6 +649,11 @@ def leaderboard_frame(
              AND ranking.horizon = prediction.horizon
              AND prediction.prediction_version = ?
              AND prediction.ranking_version = ranking.ranking_version
+            LEFT JOIN fact_selection_outcome AS outcome
+              ON ranking.as_of_date = outcome.selection_date
+             AND ranking.symbol = outcome.symbol
+             AND ranking.horizon = outcome.horizon
+             AND ranking.ranking_version = outcome.ranking_version
             WHERE ranking.as_of_date = ?
               AND ranking.horizon = ?
               AND ranking.ranking_version = ?
@@ -741,6 +788,166 @@ def latest_selection_validation_summary_frame(
         ).fetchdf()
 
 
+def latest_outcome_summary_frame(settings: Settings) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            WITH latest_date AS (
+                SELECT MAX(evaluation_date) AS evaluation_date
+                FROM fact_selection_outcome
+            )
+            SELECT
+                evaluation_date,
+                horizon,
+                ranking_version,
+                COUNT(*) AS row_count,
+                COUNT(*) FILTER (WHERE outcome_status = 'matured') AS matured_rows,
+                AVG(realized_excess_return) AS avg_realized_excess_return,
+                AVG(CASE WHEN realized_excess_return > 0 THEN 1.0 ELSE 0.0 END) AS hit_rate
+            FROM fact_selection_outcome
+            WHERE evaluation_date = (SELECT evaluation_date FROM latest_date)
+            GROUP BY evaluation_date, horizon, ranking_version
+            ORDER BY horizon, ranking_version
+            """
+        ).fetchdf()
+
+
+def latest_evaluation_summary_frame(settings: Settings, *, limit: int = 20) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                summary_date,
+                window_type,
+                horizon,
+                ranking_version,
+                segment_value,
+                count_evaluated,
+                mean_realized_excess_return,
+                hit_rate,
+                avg_expected_excess_return
+            FROM vw_latest_evaluation_summary
+            WHERE segment_type = 'coverage'
+              AND segment_value = 'all'
+            ORDER BY window_type, horizon, ranking_version
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_evaluation_comparison_frame(settings: Settings) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            WITH latest_summary AS (
+                SELECT *
+                FROM vw_latest_evaluation_summary
+                WHERE segment_type = 'coverage'
+                  AND segment_value = 'all'
+            )
+            SELECT
+                selection.summary_date,
+                selection.window_type,
+                selection.horizon,
+                selection.mean_realized_excess_return AS selection_avg_excess,
+                explanatory.mean_realized_excess_return AS explanatory_avg_excess,
+                selection.mean_realized_excess_return
+                    - explanatory.mean_realized_excess_return AS avg_excess_gap,
+                selection.hit_rate - explanatory.hit_rate AS hit_rate_gap
+            FROM latest_summary AS selection
+            JOIN latest_summary AS explanatory
+              ON selection.summary_date = explanatory.summary_date
+             AND selection.window_type = explanatory.window_type
+             AND selection.horizon = explanatory.horizon
+             AND selection.ranking_version = ?
+             AND explanatory.ranking_version = ?
+            ORDER BY selection.window_type, selection.horizon
+            """,
+            [SELECTION_ENGINE_VERSION, EXPLANATORY_RANKING_VERSION],
+        ).fetchdf()
+
+
+def latest_calibration_diagnostic_frame(settings: Settings, *, limit: int = 20) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                diagnostic_date,
+                horizon,
+                bin_type,
+                bin_value,
+                sample_count,
+                expected_median,
+                observed_mean,
+                coverage_rate,
+                median_bias,
+                quality_flag
+            FROM vw_latest_calibration_diagnostic
+            ORDER BY horizon, bin_type, bin_value
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def evaluation_outcomes_frame(
+    settings: Settings,
+    *,
+    evaluation_date: str | None = None,
+    horizon: int = 5,
+    ranking_version: str = SELECTION_ENGINE_VERSION,
+    limit: int = 50,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        if evaluation_date is None:
+            row = connection.execute(
+                """
+                SELECT MAX(evaluation_date)
+                FROM fact_selection_outcome
+                """
+            ).fetchone()
+            if row is None or row[0] is None:
+                return pd.DataFrame()
+            evaluation_date = str(row[0])
+        return connection.execute(
+            """
+            SELECT
+                outcome.evaluation_date,
+                outcome.selection_date,
+                outcome.symbol,
+                meta.company_name,
+                meta.market,
+                outcome.horizon,
+                outcome.ranking_version,
+                outcome.final_selection_value,
+                outcome.expected_excess_return_at_selection,
+                outcome.realized_excess_return,
+                outcome.band_status,
+                outcome.outcome_status
+            FROM fact_selection_outcome AS outcome
+            JOIN dim_symbol AS meta
+              ON outcome.symbol = meta.symbol
+            WHERE outcome.evaluation_date = ?
+              AND outcome.horizon = ?
+              AND outcome.ranking_version = ?
+            ORDER BY outcome.realized_excess_return DESC, outcome.symbol
+            LIMIT ?
+            """,
+            [evaluation_date, horizon, ranking_version, limit],
+        ).fetchdf()
+
+
 def market_pulse_frame(settings: Settings) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
@@ -857,7 +1064,11 @@ def stock_workbench_summary_frame(settings: Settings, *, symbol: str) -> pd.Data
                 selection_5.grade AS d5_grade,
                 prediction_5.expected_excess_return AS d5_expected_excess_return,
                 prediction_5.lower_band AS d5_lower_band,
-                prediction_5.upper_band AS d5_upper_band
+                prediction_5.upper_band AS d5_upper_band,
+                outcome_1.realized_excess_return AS d1_realized_excess_return,
+                outcome_1.band_status AS d1_band_status,
+                outcome_5.realized_excess_return AS d5_realized_excess_return,
+                outcome_5.band_status AS d5_band_status
             FROM vw_feature_matrix_latest AS feature
             JOIN dim_symbol AS symbol_meta
               ON feature.symbol = symbol_meta.symbol
@@ -873,9 +1084,24 @@ def stock_workbench_summary_frame(settings: Settings, *, symbol: str) -> pd.Data
               ON feature.symbol = prediction_5.symbol
              AND prediction_5.horizon = 5
              AND prediction_5.prediction_version = ?
+            LEFT JOIN vw_selection_outcome_latest AS outcome_1
+              ON feature.symbol = outcome_1.symbol
+             AND outcome_1.horizon = 1
+             AND outcome_1.ranking_version = ?
+            LEFT JOIN vw_selection_outcome_latest AS outcome_5
+              ON feature.symbol = outcome_5.symbol
+             AND outcome_5.horizon = 5
+             AND outcome_5.ranking_version = ?
             WHERE feature.symbol = ?
             """,
-            [SELECTION_ENGINE_VERSION, SELECTION_ENGINE_VERSION, PREDICTION_VERSION, symbol],
+            [
+                SELECTION_ENGINE_VERSION,
+                SELECTION_ENGINE_VERSION,
+                PREDICTION_VERSION,
+                SELECTION_ENGINE_VERSION,
+                SELECTION_ENGINE_VERSION,
+                symbol,
+            ],
         ).fetchdf()
 
 
@@ -939,6 +1165,36 @@ def stock_workbench_news_frame(settings: Settings, *, symbol: str, limit: int = 
         ).fetchdf()
 
 
+def stock_workbench_outcome_frame(
+    settings: Settings,
+    *,
+    symbol: str,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                selection_date,
+                evaluation_date,
+                horizon,
+                ranking_version,
+                final_selection_value,
+                expected_excess_return_at_selection,
+                realized_excess_return,
+                band_status,
+                outcome_status
+            FROM fact_selection_outcome
+            WHERE symbol = ?
+            ORDER BY selection_date DESC, ranking_version, horizon
+            LIMIT ?
+            """,
+            [symbol, limit],
+        ).fetchdf()
+
+
 def latest_discord_preview(settings: Settings) -> str | None:
     if not settings.paths.duckdb_path.exists():
         return None
@@ -948,6 +1204,32 @@ def latest_discord_preview(settings: Settings) -> str | None:
             SELECT output_artifacts_json
             FROM ops_run_manifest
             WHERE run_type = 'render_discord_eod_report'
+              AND status = 'success'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None or not row[0]:
+        return None
+    artifacts = json.loads(row[0])
+    preview_candidates = [Path(item) for item in artifacts if str(item).endswith(".md")]
+    if not preview_candidates:
+        return None
+    preview_path = preview_candidates[-1]
+    if not preview_path.exists():
+        return None
+    return preview_path.read_text(encoding="utf-8")
+
+
+def latest_postmortem_preview(settings: Settings) -> str | None:
+    if not settings.paths.duckdb_path.exists():
+        return None
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT output_artifacts_json
+            FROM ops_run_manifest
+            WHERE run_type = 'render_postmortem_report'
               AND status = 'success'
             ORDER BY started_at DESC
             LIMIT 1

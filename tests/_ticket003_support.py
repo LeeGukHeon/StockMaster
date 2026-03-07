@@ -4,6 +4,10 @@ import json
 from datetime import date, datetime
 
 from app.common.paths import project_root
+from app.features.feature_store import build_feature_store
+from app.ranking.explanatory_score import materialize_explanatory_ranking
+from app.regime.snapshot import build_market_regime_snapshot
+from app.selection.engine_v1 import materialize_selection_engine_v1
 from app.settings import Settings, load_settings
 from app.storage.bootstrap import bootstrap_storage
 from app.storage.duckdb import duckdb_connection
@@ -17,6 +21,10 @@ TRADING_DATES = [
     date(2026, 3, 5),
     date(2026, 3, 6),
     date(2026, 3, 9),
+    date(2026, 3, 10),
+    date(2026, 3, 11),
+    date(2026, 3, 12),
+    date(2026, 3, 13),
 ]
 
 SYMBOLS = [
@@ -47,10 +55,10 @@ SYMBOLS = [
 ]
 
 _CLOSE_SERIES = {
-    "005930": [94, 98, 100, 103, 107, 110, 116, 120],
-    "000660": [78, 79, 80, 81, 82, 83, 84, 85],
-    "123456": [47, 48, 50, 51, 52, 53, 55, 57],
-    "123457": [63, 62, 60, 58, 55, 54, 53, 52],
+    "005930": [94, 98, 100, 103, 107, 110, 116, 120, 122, 124, 127, 130],
+    "000660": [78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89],
+    "123456": [47, 48, 50, 51, 52, 53, 55, 57, 58, 59, 60, 61],
+    "123457": [63, 62, 60, 58, 55, 54, 53, 52, 51, 50, 49, 48],
 }
 _VOLUME_SERIES = {
     "005930": [
@@ -62,10 +70,53 @@ _VOLUME_SERIES = {
         1_350_000,
         1_500_000,
         1_550_000,
+        1_600_000,
+        1_650_000,
+        1_700_000,
+        1_760_000,
     ],
-    "000660": [750_000, 760_000, 780_000, 790_000, 810_000, 820_000, 830_000, 840_000],
-    "123456": [420_000, 430_000, 500_000, 540_000, 560_000, 580_000, 610_000, 640_000],
-    "123457": [360_000, 355_000, 340_000, 335_000, 320_000, 315_000, 310_000, 300_000],
+    "000660": [
+        750_000,
+        760_000,
+        780_000,
+        790_000,
+        810_000,
+        820_000,
+        830_000,
+        840_000,
+        850_000,
+        860_000,
+        870_000,
+        880_000,
+    ],
+    "123456": [
+        420_000,
+        430_000,
+        500_000,
+        540_000,
+        560_000,
+        580_000,
+        610_000,
+        640_000,
+        660_000,
+        680_000,
+        700_000,
+        720_000,
+    ],
+    "123457": [
+        360_000,
+        355_000,
+        340_000,
+        335_000,
+        320_000,
+        315_000,
+        310_000,
+        300_000,
+        295_000,
+        290_000,
+        285_000,
+        280_000,
+    ],
 }
 _MARKET_CAP_MULTIPLIER = {
     "005930": 1_000_000_000,
@@ -80,10 +131,49 @@ _OPEN_FACTOR = {
     "123457": 1.005,
 }
 _FLOW_VALUE_SERIES = {
-    "005930": [2.0e10, 2.2e10, 2.4e10, 2.8e10, 3.1e10, 3.3e10, 3.6e10, 3.8e10],
-    "000660": [8.0e9, 8.5e9, 9.0e9, 9.2e9, 9.4e9, 9.6e9, 9.8e9, 1.0e10],
-    "123456": [3.0e9, 3.1e9, 3.4e9, 3.7e9, 3.8e9, 4.0e9, 4.2e9, 4.4e9],
-    "123457": [-2.5e9, -2.7e9, -2.9e9, -3.0e9, -3.1e9, -3.2e9, -3.3e9, -3.4e9],
+    "005930": [
+        2.0e10,
+        2.2e10,
+        2.4e10,
+        2.8e10,
+        3.1e10,
+        3.3e10,
+        3.6e10,
+        3.8e10,
+        4.0e10,
+        4.2e10,
+        4.4e10,
+        4.6e10,
+    ],
+    "000660": [
+        8.0e9,
+        8.5e9,
+        9.0e9,
+        9.2e9,
+        9.4e9,
+        9.6e9,
+        9.8e9,
+        1.0e10,
+        1.02e10,
+        1.04e10,
+        1.06e10,
+        1.08e10,
+    ],
+    "123456": [3.0e9, 3.1e9, 3.4e9, 3.7e9, 3.8e9, 4.0e9, 4.2e9, 4.4e9, 4.5e9, 4.6e9, 4.7e9, 4.8e9],
+    "123457": [
+        -2.5e9,
+        -2.7e9,
+        -2.9e9,
+        -3.0e9,
+        -3.1e9,
+        -3.2e9,
+        -3.3e9,
+        -3.4e9,
+        -3.5e9,
+        -3.6e9,
+        -3.7e9,
+        -3.8e9,
+    ],
 }
 
 
@@ -464,3 +554,34 @@ def seed_ticket004_flow_data(settings: Settings) -> None:
             """,
             flow_rows,
         )
+
+
+def seed_ticket005_selection_history(
+    settings: Settings,
+    *,
+    selection_dates: list[date] | None = None,
+    limit_symbols: int = 4,
+) -> list[date]:
+    effective_dates = selection_dates or [
+        date(2026, 3, 2),
+        date(2026, 3, 3),
+        date(2026, 3, 4),
+        date(2026, 3, 5),
+        date(2026, 3, 6),
+    ]
+    for as_of_date in effective_dates:
+        build_feature_store(settings, as_of_date=as_of_date, limit_symbols=limit_symbols)
+        build_market_regime_snapshot(settings, as_of_date=as_of_date)
+        materialize_explanatory_ranking(
+            settings,
+            as_of_date=as_of_date,
+            horizons=[1, 5],
+            limit_symbols=limit_symbols,
+        )
+        materialize_selection_engine_v1(
+            settings,
+            as_of_date=as_of_date,
+            horizons=[1, 5],
+            limit_symbols=limit_symbols,
+        )
+    return effective_dates

@@ -9,6 +9,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from app.common.disk import measure_disk_usage
 from app.common.run_context import activate_run_context
 from app.common.time import get_timezone, now_local, today_local
+from app.evaluation.calibration_diagnostics import materialize_calibration_diagnostics
+from app.evaluation.outcomes import materialize_selection_outcomes
+from app.evaluation.summary import materialize_prediction_evaluation
+from app.evaluation.validation import validate_evaluation_pipeline
 from app.features.feature_store import build_feature_store
 from app.pipelines.daily_ohlcv import sync_daily_ohlcv
 from app.pipelines.fundamentals_snapshot import sync_fundamentals_snapshot
@@ -17,6 +21,7 @@ from app.pipelines.news_metadata import sync_news_metadata
 from app.ranking.explanatory_score import materialize_explanatory_ranking
 from app.regime.snapshot import build_market_regime_snapshot
 from app.reports.discord_eod import publish_discord_eod_report
+from app.reports.postmortem import publish_discord_postmortem_report
 from app.selection.calibration import PREDICTION_VERSION, calibrate_proxy_prediction_bands
 from app.selection.engine_v1 import materialize_selection_engine_v1
 from app.settings import Settings
@@ -118,6 +123,41 @@ def _resolve_pipeline_date(settings: Settings) -> date:
             [target_date],
         ).fetchone()
     return row[0] if row is not None else target_date
+
+
+def _resolve_latest_ranking_date(settings: Settings) -> date:
+    fallback = today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        row = connection.execute(
+            """
+            SELECT MAX(as_of_date)
+            FROM fact_ranking
+            """
+        ).fetchone()
+    return row[0] if row is not None and row[0] is not None else fallback
+
+
+def _resolve_latest_matured_evaluation_date(
+    settings: Settings,
+    *,
+    start_selection_date: date,
+    end_selection_date: date,
+) -> date | None:
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        row = connection.execute(
+            """
+            SELECT MAX(evaluation_date)
+            FROM fact_selection_outcome
+            WHERE selection_date BETWEEN ? AND ?
+              AND outcome_status = 'matured'
+            """,
+            [start_selection_date, end_selection_date],
+        ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return row[0]
 
 
 def _resolve_lookback_start_date(
@@ -318,8 +358,137 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
 
 
 def run_evaluation_job(settings: Settings) -> JobExecutionResult:
-    notes = "Evaluation skeleton executed. D+1 and D+5 scoring logic is pending."
-    return _run_skeleton_job(settings, run_type="evaluation", notes=notes)
+    ensure_storage_layout(settings)
+    selection_end_date = _resolve_latest_ranking_date(settings)
+    selection_start_date = _resolve_lookback_start_date(
+        settings,
+        end_date=selection_end_date,
+        trading_days=60,
+    )
+    artifact_paths: list[str] = []
+
+    with activate_run_context("evaluation", as_of_date=selection_end_date) as run_context:
+        with duckdb_connection(settings.paths.duckdb_path) as manifest_connection:
+            bootstrap_core_tables(manifest_connection)
+            record_run_start(
+                manifest_connection,
+                run_id=run_context.run_id,
+                run_type=run_context.run_type,
+                started_at=run_context.started_at,
+                as_of_date=run_context.as_of_date,
+                input_sources=[
+                    "materialize_selection_outcomes",
+                    "materialize_prediction_evaluation",
+                    "materialize_calibration_diagnostics",
+                    "publish_discord_postmortem_report",
+                    "validate_evaluation_pipeline",
+                ],
+                notes=(
+                    "Run the TICKET-005 evaluation pipeline. "
+                    f"selection_range={selection_start_date.isoformat()}.."
+                    f"{selection_end_date.isoformat()}"
+                ),
+            )
+        try:
+            outcome_result = materialize_selection_outcomes(
+                settings,
+                start_selection_date=selection_start_date,
+                end_selection_date=selection_end_date,
+                horizons=[1, 5],
+            )
+            summary_result = materialize_prediction_evaluation(
+                settings,
+                start_selection_date=selection_start_date,
+                end_selection_date=selection_end_date,
+                horizons=[1, 5],
+                rolling_windows=[20, 60],
+            )
+            diagnostic_result = materialize_calibration_diagnostics(
+                settings,
+                start_selection_date=selection_start_date,
+                end_selection_date=selection_end_date,
+                horizons=[1, 5],
+                bin_count=10,
+            )
+            evaluation_date = (
+                _resolve_latest_matured_evaluation_date(
+                    settings,
+                    start_selection_date=selection_start_date,
+                    end_selection_date=selection_end_date,
+                )
+                or selection_end_date
+            )
+            postmortem_result = publish_discord_postmortem_report(
+                settings,
+                evaluation_date=evaluation_date,
+                horizons=[1, 5],
+                dry_run=not settings.discord.enabled,
+            )
+            validation_result = validate_evaluation_pipeline(
+                settings,
+                start_selection_date=selection_start_date,
+                end_selection_date=selection_end_date,
+                horizons=[1, 5],
+            )
+
+            artifact_paths.extend(outcome_result.artifact_paths)
+            artifact_paths.extend(summary_result.artifact_paths)
+            artifact_paths.extend(diagnostic_result.artifact_paths)
+            artifact_paths.extend(postmortem_result.artifact_paths)
+            artifact_paths.extend(validation_result.artifact_paths)
+
+            notes = (
+                "Evaluation pipeline completed. selection_range="
+                f"{selection_start_date.isoformat()}.."
+                f"{selection_end_date.isoformat()}, outcome_rows={outcome_result.row_count}, "
+                f"evaluation_rows={summary_result.row_count}, "
+                f"diagnostic_rows={diagnostic_result.row_count}, "
+                f"postmortem_published={postmortem_result.published}, "
+                f"validation_checks={validation_result.row_count}"
+            )
+            with duckdb_connection(settings.paths.duckdb_path) as manifest_connection:
+                bootstrap_core_tables(manifest_connection)
+                disk_report = measure_disk_usage(
+                    settings.paths.data_dir,
+                    warning_ratio=settings.storage.warning_ratio,
+                    prune_ratio=settings.storage.prune_ratio,
+                    limit_ratio=settings.storage.limit_ratio,
+                )
+                log_disk_usage(
+                    manifest_connection,
+                    report=disk_report,
+                    measured_at=now_local(settings.app.timezone),
+                    action_taken="evaluation",
+                )
+                record_run_finish(
+                    manifest_connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="success",
+                    output_artifacts=artifact_paths,
+                    notes=notes,
+                    model_version=PREDICTION_VERSION,
+                    ranking_version="selection_engine_v1,explanatory_ranking_v0",
+                )
+            return JobExecutionResult(
+                run_id=run_context.run_id,
+                run_type="evaluation",
+                status="success",
+                notes=notes,
+            )
+        except Exception as exc:
+            with duckdb_connection(settings.paths.duckdb_path) as manifest_connection:
+                bootstrap_core_tables(manifest_connection)
+                record_run_finish(
+                    manifest_connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="failed",
+                    output_artifacts=artifact_paths,
+                    notes="Evaluation pipeline failed.",
+                    error_message=str(exc),
+                )
+            raise
 
 
 def run_prune_storage_job(settings: Settings) -> JobExecutionResult:

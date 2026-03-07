@@ -16,6 +16,7 @@ from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.ui.helpers import (
     available_ranking_dates,
     available_ranking_versions,
+    latest_evaluation_comparison_frame,
     latest_selection_validation_summary_frame,
     latest_validation_summary_frame,
     leaderboard_frame,
@@ -27,6 +28,7 @@ st.set_page_config(page_title="Leaderboard", page_icon="SM", layout="wide")
 
 settings = load_ui_settings(PROJECT_ROOT)
 ranking_versions = available_ranking_versions(settings)
+evaluation_comparison = latest_evaluation_comparison_frame(settings)
 
 st.title("Leaderboard")
 st.caption(
@@ -87,6 +89,9 @@ else:
                 "final_selection_rank_pct",
                 "grade",
                 "regime_state",
+                "outcome_status",
+                "realized_excess_return",
+                "band_status",
                 "reasons",
                 "risks",
             ]
@@ -110,3 +115,9 @@ else:
     else:
         filtered = validation.loc[validation["horizon"] == horizon].copy()
         st.dataframe(filtered, use_container_width=True, hide_index=True)
+
+    st.subheader("Latest Selection v1 vs Explanatory v0")
+    if evaluation_comparison.empty:
+        st.info("No evaluation comparison rows are available yet.")
+    else:
+        st.dataframe(evaluation_comparison, use_container_width=True, hide_index=True)

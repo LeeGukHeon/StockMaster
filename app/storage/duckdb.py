@@ -268,6 +268,121 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_selection_outcome (
+        selection_date DATE NOT NULL,
+        evaluation_date DATE,
+        symbol VARCHAR NOT NULL,
+        market VARCHAR,
+        horizon INTEGER NOT NULL,
+        ranking_version VARCHAR NOT NULL,
+        selection_engine_version VARCHAR,
+        grade VARCHAR,
+        grade_detail VARCHAR,
+        report_candidate_flag BOOLEAN,
+        eligible_flag BOOLEAN,
+        final_selection_value DOUBLE,
+        selection_percentile DOUBLE,
+        expected_excess_return_at_selection DOUBLE,
+        lower_band_at_selection DOUBLE,
+        median_band_at_selection DOUBLE,
+        upper_band_at_selection DOUBLE,
+        uncertainty_score_at_selection DOUBLE,
+        implementation_penalty_at_selection DOUBLE,
+        regime_label_at_selection VARCHAR,
+        top_reason_tags_json VARCHAR,
+        risk_flags_json VARCHAR,
+        entry_trade_date DATE,
+        exit_trade_date DATE,
+        realized_return DOUBLE,
+        realized_excess_return DOUBLE,
+        prediction_error DOUBLE,
+        direction_hit_flag BOOLEAN,
+        raw_positive_flag BOOLEAN,
+        band_available_flag BOOLEAN,
+        band_status VARCHAR,
+        in_band_flag BOOLEAN,
+        above_upper_flag BOOLEAN,
+        below_lower_flag BOOLEAN,
+        outcome_status VARCHAR,
+        source_label_version VARCHAR,
+        evaluation_run_id VARCHAR NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (selection_date, symbol, horizon, ranking_version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_evaluation_summary (
+        summary_date DATE NOT NULL,
+        window_type VARCHAR NOT NULL,
+        window_start DATE NOT NULL,
+        window_end DATE NOT NULL,
+        horizon INTEGER NOT NULL,
+        ranking_version VARCHAR NOT NULL,
+        segment_type VARCHAR NOT NULL,
+        segment_value VARCHAR NOT NULL,
+        count_total BIGINT NOT NULL,
+        count_evaluated BIGINT NOT NULL,
+        count_pending BIGINT NOT NULL,
+        mean_realized_return DOUBLE,
+        mean_realized_excess_return DOUBLE,
+        median_realized_excess_return DOUBLE,
+        hit_rate DOUBLE,
+        positive_raw_return_rate DOUBLE,
+        band_coverage_rate DOUBLE,
+        above_upper_rate DOUBLE,
+        below_lower_rate DOUBLE,
+        avg_expected_excess_return DOUBLE,
+        avg_prediction_error DOUBLE,
+        overlap_count BIGINT,
+        score_monotonicity_hint DOUBLE,
+        evaluation_run_id VARCHAR NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            summary_date,
+            window_type,
+            horizon,
+            ranking_version,
+            segment_type,
+            segment_value
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_calibration_diagnostic (
+        diagnostic_date DATE NOT NULL,
+        window_start DATE NOT NULL,
+        window_end DATE NOT NULL,
+        horizon INTEGER NOT NULL,
+        ranking_version VARCHAR NOT NULL,
+        bin_type VARCHAR NOT NULL,
+        bin_value VARCHAR NOT NULL,
+        sample_count BIGINT NOT NULL,
+        expected_median DOUBLE,
+        expected_q25 DOUBLE,
+        expected_q75 DOUBLE,
+        observed_mean DOUBLE,
+        observed_median DOUBLE,
+        observed_q25 DOUBLE,
+        observed_q75 DOUBLE,
+        median_bias DOUBLE,
+        coverage_rate DOUBLE,
+        above_upper_rate DOUBLE,
+        below_lower_rate DOUBLE,
+        monotonicity_order DOUBLE,
+        quality_flag VARCHAR,
+        evaluation_run_id VARCHAR NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            diagnostic_date,
+            horizon,
+            ranking_version,
+            bin_type,
+            bin_value
+        )
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS ops_run_manifest (
         run_id VARCHAR PRIMARY KEY,
         run_type VARCHAR NOT NULL,
@@ -479,6 +594,33 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     ) = 1
     """,
     """
+    CREATE OR REPLACE VIEW vw_selection_outcome_latest AS
+    SELECT *
+    FROM fact_selection_outcome
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, horizon, ranking_version
+        ORDER BY selection_date DESC, updated_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_evaluation_summary AS
+    SELECT *
+    FROM fact_evaluation_summary
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY window_type, horizon, ranking_version, segment_type, segment_value
+        ORDER BY summary_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_calibration_diagnostic AS
+    SELECT *
+    FROM fact_calibration_diagnostic
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, ranking_version, bin_type, bin_value
+        ORDER BY diagnostic_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
     CREATE OR REPLACE VIEW vw_latest_ranking_validation_summary AS
     SELECT *
     FROM ops_ranking_validation_summary
@@ -521,7 +663,7 @@ def _migrate_fact_ranking_table(connection: duckdb.DuckDBPyConnection) -> None:
 
     ranking_row = table_info.loc[table_info["name"] == "ranking_version"]
     ranking_pk = int(ranking_row["pk"].iloc[0]) if not ranking_row.empty else 0
-    if ranking_pk == 4:
+    if ranking_pk > 0:
         return
 
     connection.execute("ALTER TABLE fact_ranking RENAME TO fact_ranking_legacy")
@@ -611,22 +753,26 @@ def duckdb_connection(
 
 
 def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
-    _migrate_fact_ranking_table(connection)
+    try:
+        _migrate_fact_ranking_table(connection)
 
-    for ddl in CORE_TABLE_DDL:
-        connection.execute(ddl)
+        for ddl in CORE_TABLE_DDL:
+            connection.execute(ddl)
 
-    for ddl in SYMBOL_COLUMN_MIGRATIONS:
-        connection.execute(ddl)
+        for ddl in SYMBOL_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
 
-    for ddl in CALENDAR_COLUMN_MIGRATIONS:
-        connection.execute(ddl)
+        for ddl in CALENDAR_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
 
-    for ddl in MANIFEST_COLUMN_MIGRATIONS:
-        connection.execute(ddl)
+        for ddl in MANIFEST_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
 
-    for ddl in CORE_VIEW_DDL:
-        connection.execute(ddl)
+        for ddl in CORE_VIEW_DDL:
+            connection.execute(ddl)
+    except duckdb.InvalidInputException as exc:
+        if "read-only mode" not in str(exc).lower():
+            raise
 
 
 def fetch_dataframe(connection: duckdb.DuckDBPyConnection, query: str):

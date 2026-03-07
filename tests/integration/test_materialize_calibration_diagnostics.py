@@ -1,0 +1,43 @@
+from __future__ import annotations
+
+from datetime import date
+
+from app.evaluation.calibration_diagnostics import materialize_calibration_diagnostics
+from app.storage.duckdb import duckdb_connection
+from tests._ticket003_support import (
+    build_test_settings,
+    seed_ticket003_data,
+    seed_ticket004_flow_data,
+    seed_ticket005_selection_history,
+)
+
+
+def test_materialize_calibration_diagnostics_writes_rows(tmp_path):
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    seed_ticket004_flow_data(settings)
+    seed_ticket005_selection_history(settings)
+
+    result = materialize_calibration_diagnostics(
+        settings,
+        start_selection_date=date(2026, 3, 2),
+        end_selection_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        bin_count=4,
+        limit_symbols=4,
+    )
+
+    assert result.row_count > 0
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        row = connection.execute(
+            """
+            SELECT bin_type, quality_flag
+            FROM fact_calibration_diagnostic
+            WHERE ranking_version = 'selection_engine_v1'
+            ORDER BY bin_type, bin_value
+            LIMIT 1
+            """
+        ).fetchone()
+        assert row[0] in {"overall", "expected_return_bin"}
+        assert row[1] in {"ok", "low_sample", "coverage_drift"}

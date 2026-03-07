@@ -16,12 +16,17 @@ from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.ui.helpers import (
     calendar_summary_frame,
     disk_report,
+    latest_calibration_diagnostic_frame,
     latest_discord_preview,
+    latest_evaluation_comparison_frame,
+    latest_evaluation_summary_frame,
     latest_feature_coverage_frame,
     latest_feature_sample_frame,
     latest_flow_summary_frame,
     latest_label_coverage_frame,
     latest_market_news_frame,
+    latest_outcome_summary_frame,
+    latest_postmortem_preview,
     latest_prediction_summary_frame,
     latest_regime_frame,
     latest_selection_validation_summary_frame,
@@ -50,6 +55,10 @@ latest_sync_runs = latest_sync_runs_frame(settings)
 research_summary = research_data_summary_frame(settings)
 latest_flow_summary = latest_flow_summary_frame(settings)
 latest_prediction_summary = latest_prediction_summary_frame(settings)
+latest_outcomes = latest_outcome_summary_frame(settings)
+latest_evaluation_summary = latest_evaluation_summary_frame(settings, limit=12)
+latest_evaluation_comparison = latest_evaluation_comparison_frame(settings)
+latest_calibration = latest_calibration_diagnostic_frame(settings, limit=12)
 market_pulse = market_pulse_frame(settings)
 latest_market_news = latest_market_news_frame(settings, limit=5)
 latest_feature_sample = latest_feature_sample_frame(settings, limit=5)
@@ -71,6 +80,7 @@ selection_grades = leaderboard_grade_count_frame(
 explanatory_validation = latest_validation_summary_frame(settings, limit=8)
 selection_validation = latest_selection_validation_summary_frame(settings, limit=8)
 discord_preview = latest_discord_preview(settings)
+postmortem_preview = latest_postmortem_preview(settings)
 
 st.title(settings.app.display_name)
 st.caption(
@@ -176,6 +186,22 @@ else:
         str(row["latest_explanatory_ranking_date"]),
         int(row["latest_explanatory_ranking_rows"] or 0),
     )
+    top, mid, bottom = st.columns(3)
+    top.metric(
+        "Latest Outcomes",
+        str(row["latest_outcome_date"]),
+        int(row["latest_outcome_rows"] or 0),
+    )
+    mid.metric(
+        "Latest Eval Summary",
+        str(row["latest_evaluation_summary_date"]),
+        int(row["latest_evaluation_summary_rows"] or 0),
+    )
+    bottom.metric(
+        "Latest Calibration",
+        str(row["latest_calibration_date"]),
+        int(row["latest_calibration_rows"] or 0),
+    )
 
 st.subheader("Market Pulse and Selection")
 pulse_left, pulse_right = st.columns((1, 2))
@@ -252,6 +278,30 @@ with validation_right:
     else:
         st.dataframe(explanatory_validation, use_container_width=True, hide_index=True)
 
+evaluation_left, evaluation_right = st.columns(2)
+with evaluation_left:
+    st.subheader("Latest Outcomes")
+    if latest_outcomes.empty:
+        st.info("No matured outcome summary yet.")
+    else:
+        st.dataframe(latest_outcomes, use_container_width=True, hide_index=True)
+    st.subheader("Evaluation Comparison")
+    if latest_evaluation_comparison.empty:
+        st.info("No selection-vs-explanatory comparison yet.")
+    else:
+        st.dataframe(latest_evaluation_comparison, use_container_width=True, hide_index=True)
+with evaluation_right:
+    st.subheader("Rolling Evaluation Summary")
+    if latest_evaluation_summary.empty:
+        st.info("No evaluation summary rows yet.")
+    else:
+        st.dataframe(latest_evaluation_summary, use_container_width=True, hide_index=True)
+    st.subheader("Calibration Diagnostics")
+    if latest_calibration.empty:
+        st.info("No calibration diagnostics yet.")
+    else:
+        st.dataframe(latest_calibration, use_container_width=True, hide_index=True)
+
 news_left, news_right = st.columns(2)
 with news_left:
     st.subheader("Latest Market-wide News")
@@ -266,6 +316,10 @@ st.dataframe(latest_regime, use_container_width=True, hide_index=True)
 if discord_preview:
     with st.expander("Latest Discord Preview", expanded=False):
         st.code(discord_preview)
+
+if postmortem_preview:
+    with st.expander("Latest Postmortem Preview", expanded=False):
+        st.code(postmortem_preview)
 
 st.subheader("Recent Runs")
 if runs.empty:

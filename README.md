@@ -2,7 +2,7 @@
 
 StockMaster is a Korea-focused personal stock research platform for post-market analysis, explanatory ranking, reporting, and retrospective evaluation.
 
-Implemented through TICKET-004:
+Implemented through TICKET-005:
 
 - foundation, settings, logging, bootstrap, and disk guard
 - provider activation for KIS, DART, and Naver News
@@ -10,7 +10,8 @@ Implemented through TICKET-004:
 - core research ingestion for `fact_daily_ohlcv`, `fact_fundamentals_snapshot`, and `fact_news_item`
 - feature store, forward return labels, market regime snapshot, and explanatory ranking v0
 - investor flow ingestion, selection engine v1, calibrated proxy prediction bands, and Discord EOD report draft
-- Streamlit Home, Ops, Research, Leaderboard, Market Pulse, and Stock Workbench pages
+- selection outcome freezing, cohort/rolling evaluation summaries, calibration diagnostics, and Discord postmortem draft
+- Streamlit Home, Ops, Research, Leaderboard, Market Pulse, Stock Workbench, and Evaluation pages
 
 Out of scope:
 
@@ -153,6 +154,36 @@ Backfill note:
 - calibrated proxy bands are attached to the latest available selection snapshot at or before the calibration end date
 - `publish_discord_eod_report.py` always renders preview artifacts first, then optionally sends one or more Discord messages depending on payload length
 
+## TICKET-005 execution flow
+
+Outcome freezing, evaluation summary, calibration, and postmortem:
+
+```powershell
+python scripts/materialize_selection_outcomes.py --selection-date 2026-03-06 --horizons 1 5 --limit-symbols 100
+python scripts/backfill_selection_outcomes.py --start-selection-date 2026-02-17 --end-selection-date 2026-03-06 --horizons 1 5 --limit-symbols 100
+python scripts/materialize_prediction_evaluation.py --start-selection-date 2026-02-17 --end-selection-date 2026-03-06 --horizons 1 5 --rolling-windows 20 60
+python scripts/materialize_calibration_diagnostics.py --start-selection-date 2026-02-17 --end-selection-date 2026-03-06 --horizons 1 5 --bin-count 10
+python scripts/render_postmortem_report.py --evaluation-date 2026-03-13 --horizons 1 5 --dry-run
+python scripts/publish_discord_postmortem_report.py --evaluation-date 2026-03-13 --horizons 1 5 --dry-run
+python scripts/validate_evaluation_pipeline.py --start-selection-date 2026-02-17 --end-selection-date 2026-03-06 --horizons 1 5
+```
+
+`python scripts/run_evaluation.py` now orchestrates:
+
+- frozen selection outcome materialization
+- cohort and rolling evaluation summary generation
+- calibration diagnostic materialization
+- postmortem preview render on every run
+- postmortem Discord publish only when `DISCORD_REPORT_ENABLED=true`
+- evaluation consistency validation
+
+Selection snapshot freeze principle:
+
+- evaluation never reuses today's score to judge yesterday's pick
+- `fact_selection_outcome` freezes `fact_ranking` and `fact_prediction` fields at selection time
+- realized outcome is then attached from `fact_forward_return_label`
+- historical prediction snapshots are append-only backfills when missing; existing prediction rows are not overwritten during evaluation
+
 UI:
 
 ```powershell
@@ -230,6 +261,22 @@ Representative features:
 - excess label: symbol forward return minus same-market baseline
 
 This is intentionally next-open based because a post-market research decision cannot assume same-day close execution without look-ahead bias.
+
+## Realized outcome definitions
+
+Pre-cost evaluation uses the same next-open logic as the label layer:
+
+- realized return: `next trading day open -> future close`
+- realized excess return: realized return minus same-market equal-weight baseline
+- D+1 evaluation date: exit close of the next trading session
+- D+5 evaluation date: exit close of the fifth trading session in the holding window
+
+Band diagnostics use:
+
+- `in_band`: realized excess return is between `lower_band` and `upper_band`
+- `above_upper`: realized excess return is above `upper_band`
+- `below_lower`: realized excess return is below `lower_band`
+- `band_missing`: no frozen proxy band existed for that selection snapshot
 
 ## Regime state rules
 
@@ -339,6 +386,47 @@ Current rule:
 - prefer same-market calibration where available, otherwise fall back to `KR_ALL`
 - store quartile-like proxy bands and sample size in `fact_prediction`
 
+## Postmortem evaluation and calibration
+
+`fact_selection_outcome` stores:
+
+- frozen selection snapshot fields from `fact_ranking`
+- frozen proxy prediction bands from `fact_prediction`
+- realized return and realized excess return from `fact_forward_return_label`
+- `band_status`, `prediction_error`, and outcome maturity state
+
+`fact_evaluation_summary` stores:
+
+- cohort rows by `selection_date`
+- rolling rows such as `rolling_20d` and `rolling_60d`
+- separate summaries for `selection_engine_v1` and `explanatory_ranking_v0`
+
+Comparison rule:
+
+- selection engine v1 and explanatory ranking v0 are evaluated separately
+- comparison is done by aligning the same selection window and horizon, then comparing summary deltas
+
+Rolling evaluation window:
+
+- `rolling_20d`: latest 20 selection dates available in the requested range
+- `rolling_60d`: latest 60 selection dates available in the requested range
+
+Calibration diagnostics:
+
+- only frozen rows with proxy bands participate
+- `overall` rows show aggregate coverage and bias
+- `expected_return_bin` rows show whether higher expected-return buckets realized in a monotonic order
+
+Postmortem dry-run and publish:
+
+```powershell
+python scripts/render_postmortem_report.py --evaluation-date 2026-03-13 --horizons 1 5 --dry-run
+python scripts/publish_discord_postmortem_report.py --evaluation-date 2026-03-13 --horizons 1 5 --dry-run
+```
+
+- render always writes preview artifacts under `data/artifacts/postmortem/...`
+- publish failure is downgraded to a warning so the broader evaluation pipeline does not fail
+
 ## Grade rules
 
 Current grade assignment:
@@ -350,7 +438,7 @@ Current grade assignment:
 
 Grades are presentation buckets, not probability estimates.
 
-## Tables and views added by TICKET-003
+## Tables and views added through TICKET-005
 
 Tables:
 
@@ -360,6 +448,9 @@ Tables:
 - `fact_market_regime_snapshot`
 - `fact_ranking`
 - `fact_prediction`
+- `fact_selection_outcome`
+- `fact_evaluation_summary`
+- `fact_calibration_diagnostic`
 - `ops_ranking_validation_summary`
 - `ops_selection_validation_summary`
 
@@ -372,6 +463,9 @@ Views:
 - `vw_market_regime_latest`
 - `vw_ranking_latest`
 - `vw_prediction_latest`
+- `vw_selection_outcome_latest`
+- `vw_latest_evaluation_summary`
+- `vw_latest_calibration_diagnostic`
 - `vw_latest_ranking_validation_summary`
 - `vw_latest_selection_validation_summary`
 
@@ -388,9 +482,13 @@ data/curated/regime/as_of_date=YYYY-MM-DD/market_regime_snapshot.parquet
 data/curated/ranking/as_of_date=YYYY-MM-DD/horizon=N/explanatory_ranking.parquet
 data/curated/ranking/as_of_date=YYYY-MM-DD/horizon=N/ranking_version=selection_engine_v1/selection_engine_v1.parquet
 data/curated/prediction/as_of_date=YYYY-MM-DD/proxy_prediction_band.parquet
+data/curated/evaluation/selection_outcomes/selection_date=YYYY-MM-DD/ranking_version=.../horizon=N/selection_outcomes.parquet
+data/curated/evaluation/summary/start_selection_date=YYYY-MM-DD/end_selection_date=YYYY-MM-DD/evaluation_summary.parquet
+data/curated/evaluation/calibration_diagnostics/start_selection_date=YYYY-MM-DD/end_selection_date=YYYY-MM-DD/calibration_diagnostics.parquet
 data/artifacts/validation/ranking/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/ranking_validation_summary.parquet
 data/artifacts/validation/selection_engine_v1/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/selection_validation_summary.parquet
 data/artifacts/discord/as_of_date=YYYY-MM-DD/<run_id>/discord_preview.md
+data/artifacts/postmortem/evaluation_date=YYYY-MM-DD/<run_id>/postmortem_preview.md
 ```
 
 ## News query pack adjustment
@@ -449,6 +547,8 @@ Operational behavior:
 - investor flow coverage can be partial and stays null instead of being zero-filled
 - no full article body storage
 - validation is sparse unless historical ranking snapshots and forward labels have already been materialized
+- evaluation is pre-cost only; there is still no transaction-cost simulator
+- future-dated postmortem runs can render empty previews if the requested evaluation date has not matured yet
 
 ## Validation and lint
 
@@ -469,11 +569,12 @@ python -m ruff check .
 After `streamlit run app/ui/Home.py`, verify:
 
 - Home shows reference data, research freshness, feature/ranking snapshot, and validation summary
-- Ops shows version tracking, flow/prediction coverage, regime snapshot, Discord preview, and failures
+- Ops shows version tracking, flow/prediction coverage, evaluation status, and failures
 - Research shows feature store, flow, regime, labels, and selection validation
 - Leaderboard compares explanatory ranking v0 and selection engine v1
 - Market Pulse shows regime + flow breadth + latest top selections
-- Stock Workbench shows one symbol across features, flow history, prices, and news metadata
+- Stock Workbench shows one symbol across features, flow history, prices, frozen outcomes, and news metadata
+- Evaluation shows outcome cohorts, rolling summaries, calibration diagnostics, and postmortem preview
 
 ## Docker
 
