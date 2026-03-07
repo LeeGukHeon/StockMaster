@@ -14,6 +14,9 @@ from app.evaluation.outcomes import materialize_selection_outcomes
 from app.evaluation.summary import materialize_prediction_evaluation
 from app.evaluation.validation import validate_evaluation_pipeline
 from app.features.feature_store import build_feature_store
+from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
+from app.ml.inference import materialize_alpha_predictions_v1
+from app.ml.training import train_alpha_model_v1
 from app.pipelines.daily_ohlcv import sync_daily_ohlcv
 from app.pipelines.fundamentals_snapshot import sync_fundamentals_snapshot
 from app.pipelines.investor_flow import sync_investor_flow
@@ -24,6 +27,7 @@ from app.reports.discord_eod import publish_discord_eod_report
 from app.reports.postmortem import publish_discord_postmortem_report
 from app.selection.calibration import PREDICTION_VERSION, calibrate_proxy_prediction_bands
 from app.selection.engine_v1 import materialize_selection_engine_v1
+from app.selection.engine_v2 import materialize_selection_engine_v2
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout, log_disk_usage
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -227,6 +231,9 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
                     "build_market_regime_snapshot",
                     "materialize_explanatory_ranking",
                     "materialize_selection_engine_v1",
+                    "train_alpha_model_v1",
+                    "materialize_alpha_predictions_v1",
+                    "materialize_selection_engine_v2",
                     "calibrate_proxy_prediction_bands",
                     "publish_discord_eod_report",
                 ],
@@ -267,6 +274,23 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
                 as_of_date=pipeline_date,
                 horizons=[1, 5],
             )
+            alpha_training_result = train_alpha_model_v1(
+                settings,
+                train_end_date=pipeline_date,
+                horizons=[1, 5],
+                min_train_days=120,
+                validation_days=20,
+            )
+            alpha_prediction_result = materialize_alpha_predictions_v1(
+                settings,
+                as_of_date=pipeline_date,
+                horizons=[1, 5],
+            )
+            selection_v2_result = materialize_selection_engine_v2(
+                settings,
+                as_of_date=pipeline_date,
+                horizons=[1, 5],
+            )
             try:
                 calibration_result = calibrate_proxy_prediction_bands(
                     settings,
@@ -292,6 +316,9 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
             artifact_paths.extend(regime_result.artifact_paths)
             artifact_paths.extend(ranking_result.artifact_paths)
             artifact_paths.extend(selection_result.artifact_paths)
+            artifact_paths.extend(alpha_training_result.artifact_paths)
+            artifact_paths.extend(alpha_prediction_result.artifact_paths)
+            artifact_paths.extend(selection_v2_result.artifact_paths)
             if calibration_result is not None:
                 artifact_paths.extend(calibration_result.artifact_paths)
             artifact_paths.extend(discord_result.artifact_paths)
@@ -306,6 +333,9 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
                 f"regime_rows={regime_result.row_count}, "
                 f"ranking_rows={ranking_result.row_count}, "
                 f"selection_rows={selection_result.row_count}, "
+                f"alpha_training_runs={alpha_training_result.training_run_count}, "
+                f"alpha_prediction_rows={alpha_prediction_result.row_count}, "
+                f"selection_v2_rows={selection_v2_result.row_count}, "
                 f"prediction_rows={calibration_result.row_count if calibration_result else 0}, "
                 f"discord_published={discord_result.published}"
             )
@@ -332,9 +362,9 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
                     status="success",
                     output_artifacts=artifact_paths,
                     notes=notes,
-                    model_version=PREDICTION_VERSION if calibration_result is not None else None,
+                    model_version=ALPHA_MODEL_VERSION,
                     feature_version=feature_result.feature_version,
-                    ranking_version=selection_result.ranking_version,
+                    ranking_version=selection_v2_result.ranking_version,
                 )
             return JobExecutionResult(
                 run_id=run_context.run_id,

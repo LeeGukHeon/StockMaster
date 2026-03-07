@@ -9,6 +9,8 @@ import pandas as pd
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.labels.forward_returns import LABEL_VERSION, build_forward_labels
+from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
+from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ranking.explanatory_score import (
     RANKING_VERSION as EXPLANATORY_RANKING_VERSION,
 )
@@ -175,6 +177,18 @@ def _ensure_ranking_history(
             market=market,
         )
         built_dates.append(selection_dt)
+    for selection_dt in missing_by_version.get(SELECTION_ENGINE_V2_VERSION, []):
+        from app.selection.engine_v2 import materialize_selection_engine_v2
+
+        materialize_selection_engine_v2(
+            settings,
+            as_of_date=selection_dt,
+            horizons=horizons,
+            symbols=symbols,
+            limit_symbols=limit_symbols,
+            market=market,
+        )
+        built_dates.append(selection_dt)
     return sorted(set(built_dates))
 
 
@@ -324,7 +338,11 @@ def upsert_selection_outcomes(connection, frame: pd.DataFrame) -> None:
             median_band_at_selection,
             upper_band_at_selection,
             uncertainty_score_at_selection,
+            disagreement_score_at_selection,
             implementation_penalty_at_selection,
+            fallback_flag_at_selection,
+            fallback_reason_at_selection,
+            prediction_version_at_selection,
             regime_label_at_selection,
             top_reason_tags_json,
             risk_flags_json,
@@ -365,7 +383,11 @@ def upsert_selection_outcomes(connection, frame: pd.DataFrame) -> None:
             median_band_at_selection,
             upper_band_at_selection,
             uncertainty_score_at_selection,
+            disagreement_score_at_selection,
             implementation_penalty_at_selection,
+            fallback_flag_at_selection,
+            fallback_reason_at_selection,
+            prediction_version_at_selection,
             regime_label_at_selection,
             top_reason_tags_json,
             risk_flags_json,
@@ -528,7 +550,10 @@ def materialize_selection_outcomes(
                 horizon_placeholders = ",".join("?" for _ in horizons)
                 version_placeholders = ",".join("?" for _ in ranking_versions)
                 params: list[object] = [
+                    SELECTION_ENGINE_VERSION,
                     PREDICTION_VERSION,
+                    SELECTION_ENGINE_V2_VERSION,
+                    ALPHA_PREDICTION_VERSION,
                     start_dt,
                     end_dt,
                     *horizons,
@@ -566,10 +591,15 @@ def materialize_selection_outcomes(
                         ranking.risk_flags_json,
                         ranking.eligibility_notes_json,
                         ranking.regime_state,
+                        prediction.prediction_version AS prediction_version_at_selection,
                         prediction.expected_excess_return AS expected_excess_return_at_selection,
                         prediction.lower_band AS lower_band_at_selection,
                         prediction.median_band AS median_band_at_selection,
                         prediction.upper_band AS upper_band_at_selection,
+                        prediction.uncertainty_score AS uncertainty_score_at_selection,
+                        prediction.disagreement_score AS disagreement_score_at_selection,
+                        prediction.fallback_flag AS fallback_flag_at_selection,
+                        prediction.fallback_reason AS fallback_reason_at_selection,
                         label.entry_date AS entry_trade_date,
                         label.exit_date AS exit_trade_date,
                         label.gross_forward_return AS realized_return,
@@ -584,7 +614,11 @@ def materialize_selection_outcomes(
                      AND ranking.symbol = prediction.symbol
                      AND ranking.horizon = prediction.horizon
                      AND ranking.ranking_version = prediction.ranking_version
-                     AND prediction.prediction_version = ?
+                     AND prediction.prediction_version = CASE
+                        WHEN ranking.ranking_version = ? THEN ?
+                        WHEN ranking.ranking_version = ? THEN ?
+                        ELSE NULL
+                     END
                     LEFT JOIN fact_forward_return_label AS label
                       ON ranking.as_of_date = label.as_of_date
                      AND ranking.symbol = label.symbol
@@ -633,8 +667,11 @@ def materialize_selection_outcomes(
                 joined["report_candidate_flag"] = joined["eligible_flag"].fillna(False).astype(
                     bool
                 ) & joined["selection_percentile"].fillna(0.0).ge(0.85)
-                joined["uncertainty_score_at_selection"] = score_payloads.map(
-                    lambda payload: payload.get("uncertainty_proxy_score")
+                missing_uncertainty = joined["uncertainty_score_at_selection"].isna()
+                joined.loc[missing_uncertainty, "uncertainty_score_at_selection"] = (
+                    score_payloads.loc[missing_uncertainty].map(
+                        lambda payload: payload.get("uncertainty_proxy_score")
+                    )
                 )
                 joined["implementation_penalty_at_selection"] = score_payloads.map(
                     lambda payload: payload.get("implementation_penalty_score")
@@ -720,7 +757,11 @@ def materialize_selection_outcomes(
                         "median_band_at_selection",
                         "upper_band_at_selection",
                         "uncertainty_score_at_selection",
+                        "disagreement_score_at_selection",
                         "implementation_penalty_at_selection",
+                        "fallback_flag_at_selection",
+                        "fallback_reason_at_selection",
+                        "prediction_version_at_selection",
                         "regime_label_at_selection",
                         "top_reason_tags_json",
                         "risk_flags_json",

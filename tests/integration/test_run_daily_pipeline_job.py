@@ -4,6 +4,8 @@ from datetime import date
 
 from app.common.paths import project_root
 from app.features.feature_store import FeatureStoreBuildResult
+from app.ml.inference import AlphaPredictionMaterializationResult
+from app.ml.training import AlphaTrainingResult
 from app.pipelines.daily_ohlcv import DailyOhlcvSyncResult
 from app.pipelines.fundamentals_snapshot import FundamentalsSnapshotSyncResult
 from app.pipelines.investor_flow import InvestorFlowSyncResult
@@ -14,6 +16,7 @@ from app.reports.discord_eod import DiscordPublishResult
 from app.scheduler.jobs import run_daily_pipeline_job
 from app.selection.calibration import ProxyPredictionCalibrationResult
 from app.selection.engine_v1 import SelectionEngineMaterializationResult
+from app.selection.engine_v2 import SelectionEngineV2Result
 from app.settings import load_settings
 from app.storage.bootstrap import bootstrap_storage
 from app.storage.duckdb import duckdb_connection
@@ -159,6 +162,53 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
             ranking_version="selection_engine_v1",
         )
 
+    def fake_train_alpha_model_v1(
+        settings_arg,
+        *,
+        train_end_date,
+        horizons,
+        min_train_days,
+        validation_days,
+        **kwargs,
+    ):
+        observed_dates.append(train_end_date)
+        assert horizons == [1, 5]
+        assert min_train_days == 120
+        assert validation_days == 20
+        return AlphaTrainingResult(
+            run_id="alpha-train-run",
+            train_end_date=train_end_date,
+            row_count=200,
+            training_run_count=2,
+            artifact_paths=["artifacts/alpha_training.parquet"],
+            notes="ok",
+            model_version="alpha_model_v1",
+        )
+
+    def fake_materialize_alpha_predictions_v1(settings_arg, *, as_of_date, horizons, **kwargs):
+        observed_dates.append(as_of_date)
+        assert horizons == [1, 5]
+        return AlphaPredictionMaterializationResult(
+            run_id="alpha-pred-run",
+            as_of_date=as_of_date,
+            row_count=20,
+            artifact_paths=["curated/alpha_prediction.parquet"],
+            notes="ok",
+            prediction_version="alpha_prediction_v1",
+        )
+
+    def fake_materialize_selection_engine_v2(settings_arg, *, as_of_date, horizons, **kwargs):
+        observed_dates.append(as_of_date)
+        assert horizons == [1, 5]
+        return SelectionEngineV2Result(
+            run_id="selection-v2-run",
+            as_of_date=as_of_date,
+            row_count=20,
+            artifact_paths=["curated/selection_v2.parquet"],
+            notes="ok",
+            ranking_version="selection_engine_v2",
+        )
+
     def fake_calibrate_proxy_prediction_bands(settings_arg, *, start_date, end_date, horizons):
         observed_dates.append(end_date)
         assert start_date <= end_date
@@ -205,6 +255,15 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
         "app.scheduler.jobs.materialize_selection_engine_v1",
         fake_materialize_selection_engine_v1,
     )
+    monkeypatch.setattr("app.scheduler.jobs.train_alpha_model_v1", fake_train_alpha_model_v1)
+    monkeypatch.setattr(
+        "app.scheduler.jobs.materialize_alpha_predictions_v1",
+        fake_materialize_alpha_predictions_v1,
+    )
+    monkeypatch.setattr(
+        "app.scheduler.jobs.materialize_selection_engine_v2",
+        fake_materialize_selection_engine_v2,
+    )
     monkeypatch.setattr(
         "app.scheduler.jobs.calibrate_proxy_prediction_bands",
         fake_calibrate_proxy_prediction_bands,
@@ -217,7 +276,7 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
     result = run_daily_pipeline_job(settings)
 
     assert result.status == "success"
-    assert observed_dates == [date(2026, 3, 6)] * 10
+    assert observed_dates == [date(2026, 3, 6)] * 13
     assert "ohlcv_rows=8" in result.notes
     assert "fundamentals_rows=6" in result.notes
     assert "news_rows=7" in result.notes
@@ -226,6 +285,9 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
     assert "regime_rows=3" in result.notes
     assert "ranking_rows=20" in result.notes
     assert "selection_rows=20" in result.notes
+    assert "alpha_training_runs=2" in result.notes
+    assert "alpha_prediction_rows=20" in result.notes
+    assert "selection_v2_rows=20" in result.notes
     assert "prediction_rows=20" in result.notes
     assert "discord_published=False" in result.notes
 
@@ -243,9 +305,9 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
             "daily_pipeline",
             "success",
             result.notes,
-            "proxy_prediction_band_v1",
+            "alpha_model_v1",
             "feature_store_v1",
-            "selection_engine_v1",
+            "selection_engine_v2",
         )
 
 
@@ -376,6 +438,50 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
             ranking_version="selection_engine_v1",
         )
 
+    def fake_train_alpha_model_v1(
+        settings_arg,
+        *,
+        train_end_date,
+        horizons,
+        min_train_days,
+        validation_days,
+        **kwargs,
+    ):
+        assert horizons == [1, 5]
+        assert min_train_days == 120
+        assert validation_days == 20
+        return AlphaTrainingResult(
+            run_id="alpha-train-run",
+            train_end_date=train_end_date,
+            row_count=200,
+            training_run_count=2,
+            artifact_paths=["artifacts/alpha_training.parquet"],
+            notes="ok",
+            model_version="alpha_model_v1",
+        )
+
+    def fake_materialize_alpha_predictions_v1(settings_arg, *, as_of_date, horizons, **kwargs):
+        assert horizons == [1, 5]
+        return AlphaPredictionMaterializationResult(
+            run_id="alpha-pred-run",
+            as_of_date=as_of_date,
+            row_count=20,
+            artifact_paths=["curated/alpha_prediction.parquet"],
+            notes="ok",
+            prediction_version="alpha_prediction_v1",
+        )
+
+    def fake_materialize_selection_engine_v2(settings_arg, *, as_of_date, horizons, **kwargs):
+        assert horizons == [1, 5]
+        return SelectionEngineV2Result(
+            run_id="selection-v2-run",
+            as_of_date=as_of_date,
+            row_count=20,
+            artifact_paths=["curated/selection_v2.parquet"],
+            notes="ok",
+            ranking_version="selection_engine_v2",
+        )
+
     def fake_calibrate_proxy_prediction_bands(settings_arg, *, start_date, end_date, horizons):
         raise RuntimeError(
             "No overlapping selection-engine rows and forward labels were available "
@@ -412,6 +518,15 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
         "app.scheduler.jobs.materialize_selection_engine_v1",
         fake_materialize_selection_engine_v1,
     )
+    monkeypatch.setattr("app.scheduler.jobs.train_alpha_model_v1", fake_train_alpha_model_v1)
+    monkeypatch.setattr(
+        "app.scheduler.jobs.materialize_alpha_predictions_v1",
+        fake_materialize_alpha_predictions_v1,
+    )
+    monkeypatch.setattr(
+        "app.scheduler.jobs.materialize_selection_engine_v2",
+        fake_materialize_selection_engine_v2,
+    )
     monkeypatch.setattr(
         "app.scheduler.jobs.calibrate_proxy_prediction_bands",
         fake_calibrate_proxy_prediction_bands,
@@ -424,5 +539,8 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
     result = run_daily_pipeline_job(settings)
 
     assert result.status == "success"
+    assert "alpha_training_runs=2" in result.notes
+    assert "alpha_prediction_rows=20" in result.notes
+    assert "selection_v2_rows=20" in result.notes
     assert "prediction_rows=0" in result.notes
     assert "calibration_skipped=" in result.notes

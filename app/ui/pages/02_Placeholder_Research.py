@@ -11,12 +11,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
+from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ui.helpers import (
     latest_feature_coverage_frame,
     latest_feature_sample_frame,
     latest_flow_summary_frame,
     latest_label_coverage_frame,
+    latest_model_training_summary_frame,
     latest_prediction_summary_frame,
     latest_regime_frame,
     latest_selection_validation_summary_frame,
@@ -33,13 +34,14 @@ feature_coverage = latest_feature_coverage_frame(settings)
 label_coverage = latest_label_coverage_frame(settings)
 flow_summary = latest_flow_summary_frame(settings)
 prediction_summary = latest_prediction_summary_frame(settings)
+model_training_summary = latest_model_training_summary_frame(settings)
 regime_snapshot = latest_regime_frame(settings)
 market_pulse = market_pulse_frame(settings)
 selection_preview = leaderboard_frame(
     settings,
     horizon=5,
     limit=10,
-    ranking_version=SELECTION_ENGINE_VERSION,
+    ranking_version=SELECTION_ENGINE_V2_VERSION,
 )
 selection_validation = latest_selection_validation_summary_frame(settings, limit=10)
 explanatory_validation = latest_validation_summary_frame(settings, limit=10)
@@ -47,7 +49,7 @@ explanatory_validation = latest_validation_summary_frame(settings, limit=10)
 st.title("연구")
 st.caption(
     "피처 스토어, 라벨, 시장 상태, 설명형 순위, "
-    "선정 엔진 v1을 점검하는 연구 화면입니다."
+    "ML 알파 예측과 선정 엔진 v2를 점검하는 연구 화면입니다."
 )
 
 st.subheader("현재 연구 계층")
@@ -58,7 +60,8 @@ st.markdown(
     - 국내 전체 / 코스피 / 코스닥 시장 상태 분류
     - 사람 설명용 설명형 순위 v0
     - 수급, 불확실성 프록시, 실행 패널티가 반영된 Selection Engine v1
-    - 최신 Selection 결과에 붙는 보정된 Proxy Prediction Band
+    - ML 알파 예측, uncertainty/disagreement, Selection Engine v2
+    - 최신 Selection 결과에 붙는 프록시 밴드와 알파 예측 밴드
     """
 )
 
@@ -77,11 +80,13 @@ with summary_right:
     st.dataframe(localize_frame(regime_snapshot), width="stretch", hide_index=True)
     st.subheader("최신 예측 요약")
     st.dataframe(localize_frame(prediction_summary), width="stretch", hide_index=True)
+    st.subheader("최신 ML 알파 학습")
+    st.dataframe(localize_frame(model_training_summary), width="stretch", hide_index=True)
 
 st.subheader("피처 매트릭스 샘플")
 st.dataframe(localize_frame(feature_sample), width="stretch", hide_index=True)
 
-st.subheader("선정 엔진 v1 미리보기 (D+5)")
+st.subheader("Selection 엔진 v2 미리보기 (D+5)")
 preview = selection_preview[
     [
         "symbol",

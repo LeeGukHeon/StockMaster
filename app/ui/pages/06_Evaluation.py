@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.ranking.explanatory_score import RANKING_VERSION as EXPLANATORY_RANKING_VERSION
 from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
+from app.selection.engine_v2 import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ui.helpers import (
     available_evaluation_dates,
     evaluation_outcomes_frame,
@@ -21,6 +22,7 @@ from app.ui.helpers import (
     latest_evaluation_comparison_frame,
     latest_evaluation_summary_frame,
     latest_postmortem_preview,
+    latest_selection_engine_comparison_frame,
     load_ui_settings,
     localize_frame,
 )
@@ -29,6 +31,7 @@ settings = load_ui_settings(PROJECT_ROOT)
 evaluation_dates = available_evaluation_dates(settings)
 latest_summary = latest_evaluation_summary_frame(settings, limit=30)
 latest_comparison = latest_evaluation_comparison_frame(settings)
+latest_selection_v2_comparison = latest_selection_engine_comparison_frame(settings)
 latest_calibration = latest_calibration_diagnostic_frame(settings, limit=30)
 postmortem_preview = latest_postmortem_preview(settings)
 
@@ -45,7 +48,11 @@ else:
     horizon = st.selectbox("기간", options=[1, 5], index=1, format_func=lambda value: f"D+{value}")
     ranking_version = st.selectbox(
         "순위 버전",
-        options=[SELECTION_ENGINE_VERSION, EXPLANATORY_RANKING_VERSION],
+        options=[
+            SELECTION_ENGINE_V2_VERSION,
+            SELECTION_ENGINE_VERSION,
+            EXPLANATORY_RANKING_VERSION,
+        ],
         index=0,
         format_func=format_ranking_version_label,
     )
@@ -65,6 +72,10 @@ else:
         st.dataframe(localize_frame(latest_summary), width="stretch", hide_index=True)
         st.subheader("선정 엔진 대 설명형 순위")
         st.dataframe(localize_frame(latest_comparison), width="stretch", hide_index=True)
+        st.subheader("Selection v2 비교")
+        st.dataframe(
+            localize_frame(latest_selection_v2_comparison), width="stretch", hide_index=True
+        )
     with right:
         st.subheader("최신 보정 진단")
         st.dataframe(localize_frame(latest_calibration), width="stretch", hide_index=True)

@@ -261,10 +261,84 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         calibration_end_date DATE,
         calibration_bucket VARCHAR,
         calibration_sample_size BIGINT,
+        model_version VARCHAR,
+        uncertainty_score DOUBLE,
         disagreement_score DOUBLE,
+        fallback_flag BOOLEAN,
+        fallback_reason VARCHAR,
+        member_count BIGINT,
+        ensemble_weight_json VARCHAR,
         source_notes_json VARCHAR,
         created_at TIMESTAMPTZ NOT NULL,
         PRIMARY KEY (as_of_date, symbol, horizon, prediction_version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_model_training_run (
+        training_run_id VARCHAR PRIMARY KEY,
+        run_id VARCHAR NOT NULL,
+        model_version VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        train_end_date DATE NOT NULL,
+        training_window_start DATE,
+        training_window_end DATE,
+        validation_window_start DATE,
+        validation_window_end DATE,
+        train_row_count BIGINT NOT NULL,
+        validation_row_count BIGINT NOT NULL,
+        feature_count BIGINT NOT NULL,
+        ensemble_weight_json VARCHAR,
+        model_family_json VARCHAR,
+        fallback_flag BOOLEAN NOT NULL,
+        fallback_reason VARCHAR,
+        artifact_uri VARCHAR,
+        notes VARCHAR,
+        status VARCHAR NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_model_member_prediction (
+        training_run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        model_version VARCHAR NOT NULL,
+        prediction_role VARCHAR NOT NULL,
+        member_name VARCHAR NOT NULL,
+        predicted_excess_return DOUBLE,
+        actual_excess_return DOUBLE,
+        residual DOUBLE,
+        fallback_flag BOOLEAN,
+        fallback_reason VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            training_run_id,
+            as_of_date,
+            symbol,
+            horizon,
+            prediction_role,
+            member_name
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_model_metric_summary (
+        training_run_id VARCHAR NOT NULL,
+        model_version VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        member_name VARCHAR NOT NULL,
+        split_name VARCHAR NOT NULL,
+        metric_name VARCHAR NOT NULL,
+        metric_value DOUBLE,
+        sample_count BIGINT,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            training_run_id,
+            member_name,
+            split_name,
+            metric_name
+        )
     )
     """,
     """
@@ -287,7 +361,11 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         median_band_at_selection DOUBLE,
         upper_band_at_selection DOUBLE,
         uncertainty_score_at_selection DOUBLE,
+        disagreement_score_at_selection DOUBLE,
         implementation_penalty_at_selection DOUBLE,
+        fallback_flag_at_selection BOOLEAN,
+        fallback_reason_at_selection VARCHAR,
+        prediction_version_at_selection VARCHAR,
         regime_label_at_selection VARCHAR,
         top_reason_tags_json VARCHAR,
         risk_flags_json VARCHAR,
@@ -475,6 +553,34 @@ MANIFEST_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE ops_run_manifest ADD COLUMN IF NOT EXISTS ranking_version VARCHAR",
 )
 
+PREDICTION_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS model_version VARCHAR",
+    "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS uncertainty_score DOUBLE",
+    "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS fallback_flag BOOLEAN",
+    "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS fallback_reason VARCHAR",
+    "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS member_count BIGINT",
+    "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS ensemble_weight_json VARCHAR",
+)
+
+SELECTION_OUTCOME_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    (
+        "ALTER TABLE fact_selection_outcome "
+        "ADD COLUMN IF NOT EXISTS disagreement_score_at_selection DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_selection_outcome "
+        "ADD COLUMN IF NOT EXISTS fallback_flag_at_selection BOOLEAN"
+    ),
+    (
+        "ALTER TABLE fact_selection_outcome "
+        "ADD COLUMN IF NOT EXISTS fallback_reason_at_selection VARCHAR"
+    ),
+    (
+        "ALTER TABLE fact_selection_outcome "
+        "ADD COLUMN IF NOT EXISTS prediction_version_at_selection VARCHAR"
+    ),
+)
+
 CORE_VIEW_DDL: tuple[str, ...] = (
     """
     CREATE OR REPLACE VIEW vw_universe_active_common_stock AS
@@ -591,6 +697,33 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY symbol, horizon, prediction_version
         ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_model_training_run AS
+    SELECT *
+    FROM fact_model_training_run
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, model_version
+        ORDER BY train_end_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_model_member_prediction AS
+    SELECT *
+    FROM fact_model_member_prediction
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY as_of_date, symbol, horizon, prediction_role, member_name
+        ORDER BY created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_model_metric_summary AS
+    SELECT *
+    FROM fact_model_metric_summary
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, model_version, member_name, split_name, metric_name
+        ORDER BY created_at DESC
     ) = 1
     """,
     """
@@ -766,6 +899,12 @@ def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
             connection.execute(ddl)
 
         for ddl in MANIFEST_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in PREDICTION_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in SELECTION_OUTCOME_COLUMN_MIGRATIONS:
             connection.execute(ddl)
 
         for ddl in CORE_VIEW_DDL:

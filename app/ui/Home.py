@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
+from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ui.helpers import (
     calendar_summary_frame,
     disk_report,
@@ -82,12 +82,12 @@ def render_home() -> None:
         settings,
         horizon=5,
         limit=10,
-        ranking_version=SELECTION_ENGINE_VERSION,
+        ranking_version=SELECTION_ENGINE_V2_VERSION,
     )
     selection_grades = leaderboard_grade_count_frame(
         settings,
         horizon=5,
-        ranking_version=SELECTION_ENGINE_VERSION,
+        ranking_version=SELECTION_ENGINE_V2_VERSION,
     )
     explanatory_validation = latest_validation_summary_frame(settings, limit=8)
     selection_validation = latest_selection_validation_summary_frame(settings, limit=8)
@@ -209,6 +209,22 @@ def render_home() -> None:
         )
         top, mid, bottom = st.columns(3)
         top.metric(
+            "최신 모델 학습",
+            str(row["latest_model_train_date"]),
+            int(row["latest_model_train_rows"] or 0),
+        )
+        mid.metric(
+            "최신 알파 예측",
+            str(row["latest_model_prediction_date"]),
+            int(row["latest_model_prediction_rows"] or 0),
+        )
+        bottom.metric(
+            "최신 Selection v2",
+            str(row["latest_selection_v2_date"]),
+            int(row["latest_selection_v2_rows"] or 0),
+        )
+        top, mid, bottom = st.columns(3)
+        top.metric(
             "최신 Outcome",
             str(row["latest_outcome_date"]),
             int(row["latest_outcome_rows"] or 0),
@@ -246,9 +262,9 @@ def render_home() -> None:
                 hide_index=True,
             )
     with pulse_right:
-        st.markdown("**선정 엔진 v1 미리보기 (D+5)**")
+        st.markdown("**Selection 엔진 v2 미리보기 (D+5)**")
         if selection_preview.empty:
-            st.info("선정 엔진 v1 스냅샷이 아직 없습니다.")
+            st.info("Selection 엔진 v2 스냅샷이 아직 없습니다.")
         else:
             preview = selection_preview[
                 [
@@ -269,9 +285,9 @@ def render_home() -> None:
                 pd.to_numeric(preview["final_selection_rank_pct"], errors="coerce") * 100.0
             ).round(1)
             st.dataframe(localize_frame(preview), width="stretch", hide_index=True)
-        st.markdown("**선정 엔진 등급 분포 (D+5)**")
+        st.markdown("**Selection 엔진 v2 등급 분포 (D+5)**")
         if selection_grades.empty:
-            st.info("선정 엔진 등급 분포가 아직 없습니다.")
+            st.info("Selection 엔진 v2 등급 분포가 아직 없습니다.")
         else:
             st.dataframe(localize_frame(selection_grades), width="stretch", hide_index=True)
 

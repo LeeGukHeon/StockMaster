@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.ui.helpers import (
     available_ranking_dates,
@@ -33,8 +34,7 @@ evaluation_comparison = latest_evaluation_comparison_frame(settings)
 
 st.title("순위표")
 st.caption(
-    "설명형 순위 v0와 선정 엔진 v1을 비교합니다. "
-    "선정 엔진 v1의 프록시 밴드는 ML 예측이 아닙니다."
+    "설명형 순위 v0와 선정 엔진 v1을 비교합니다. 선정 엔진 v1의 프록시 밴드는 ML 예측이 아닙니다."
 )
 
 if not ranking_versions:
@@ -102,8 +102,17 @@ else:
                 "reasons",
                 "risks",
             ]
-            if selected_version == SELECTION_ENGINE_VERSION:
-                columns.extend(["expected_excess_return", "lower_band", "upper_band"])
+            if selected_version in {SELECTION_ENGINE_VERSION, SELECTION_ENGINE_V2_VERSION}:
+                columns.extend(
+                    [
+                        "expected_excess_return",
+                        "lower_band",
+                        "upper_band",
+                        "uncertainty_score",
+                        "disagreement_score",
+                        "fallback_flag",
+                    ]
+                )
             display = board[columns].copy()
             display["final_selection_rank_pct"] = (
                 pd.to_numeric(display["final_selection_rank_pct"], errors="coerce") * 100.0

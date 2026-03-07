@@ -427,6 +427,150 @@ python scripts/publish_discord_postmortem_report.py --evaluation-date 2026-03-13
 - render always writes preview artifacts under `data/artifacts/postmortem/...`
 - publish failure is downgraded to a warning so the broader evaluation pipeline does not fail
 
+## ML alpha model v1
+
+ML alpha model v1 is the first supervised excess-return layer. It is a pragmatic,
+sklearn-only baseline, not a claim of production-grade predictive power.
+
+Purpose:
+
+- learn symbol-level `excess_forward_return` from the curated feature store
+- feed `selection_engine_v2` with a distinct alpha signal that is separate from explanatory ranking
+- keep uncertainty, disagreement, and fallback rows explicit instead of hiding weak coverage
+
+Limits:
+
+- no LightGBM, XGBoost, SHAP, or deep-learning dependency is required on the default path
+- no random-shuffle CV is used; splits are date-aware only
+- evaluation remains pre-cost
+- model outputs are point estimates plus calibrated residual bands, not structural probabilistic forecasts
+
+### Excess-return label definition
+
+The label definition remains the same as TICKET-003:
+
+- entry return anchor: next trading-day open after `as_of_date`
+- exit return anchor: future close on the D+1 or D+5 trading day
+- raw forward return = `future_close / next_open - 1`
+- excess forward return = raw forward return minus same-market equal-weight baseline for the same horizon
+
+`next open -> future close` stays explicit because it better matches a realistic
+post-close research workflow than a same-close-to-close shortcut.
+
+### Train, validation, and OOF rules
+
+- build the supervised dataset from `fact_feature_snapshot` joined to `fact_forward_return_label`
+- train separate horizons for `D+1` and `D+5`
+- use time-aware date splits only
+- use the last `validation_days` distinct dates as validation, not random samples
+- if history is thin, keep training but mark fallback reasons in the model registry
+- `scripts/backfill_alpha_oof_predictions.py` rolls `train_end_date` over a historical range and stores validation predictions as time-aware OOF-style rows
+
+### Base model family and ensemble weighting
+
+Current member models:
+
+- `ElasticNetCV` linear baseline, with `ElasticNet` fallback when the split is too narrow
+- `HistGradientBoostingRegressor` boosting baseline
+- `ExtraTreesRegressor` bagged-tree baseline
+
+Ensemble weighting:
+
+- compute validation `mae`
+- use positive `corr` as a dampener when available
+- convert inverse-error scores into normalized ensemble weights
+- store weights in `fact_model_training_run.ensemble_weight_json`
+
+### Uncertainty v1 and disagreement v1
+
+`uncertainty_score`:
+
+- derived from validation residual calibration
+- each prediction is mapped into a residual bucket using validation-time predicted value ranges
+- use expected absolute residual for the matched bucket
+- convert that quantity into a percentile-like score for the current inference batch
+
+`disagreement_score`:
+
+- computed from the cross-member spread of `elasticnet`, `hist_gbm`, and `extra_trees`
+- current implementation uses member prediction standard deviation
+- convert the spread into a percentile-like score for the current inference batch
+
+Uncertainty and disagreement are not the same thing:
+
+- uncertainty measures calibrated residual instability
+- disagreement measures cross-model spread
+
+### Fallback policy
+
+Fallback is explicit and stored row by row.
+
+Current order:
+
+1. use the latest successful `alpha_model_v1` artifact for the requested horizon
+2. if no alpha artifact exists, fall back to `proxy_prediction_band_v1`
+3. if neither alpha nor proxy prediction exists, emit a null alpha-prediction row with `fallback_flag = true`
+
+`fallback_flag` and `fallback_reason` remain visible in `fact_prediction`,
+`fact_selection_outcome`, and the UI.
+
+### Selection engine v2
+
+Selection engine v2 is different from explanatory ranking v0 and selection engine v1.
+
+- v0: human-readable explanatory inspection layer
+- v1: rule-based selection layer with active flow and implementation frictions
+- v2: selection layer that adds a supervised alpha core plus model-aware penalties
+
+Current v2 structure:
+
+- positive side: `alpha_core_score`, `flow_score`, `trend_momentum_score`, `quality_score`, `value_safety_score`, `regime_fit_score`, `news_catalyst_score`
+- penalty side: `risk_penalty_score`, `uncertainty_score`, `disagreement_score`, `implementation_penalty_score`, fallback penalty
+
+High-level formula:
+
+- `final_selection_value = weighted_positive_components - weighted_penalties`
+
+The explanatory layer is still preserved in `explanatory_score_json`; it is not treated as a substitute for the ML alpha core.
+
+### Model registry and artifact layout
+
+Registry tables:
+
+- `fact_model_training_run`
+- `fact_model_member_prediction`
+- `fact_model_metric_summary`
+
+Key stored fields:
+
+- model/version metadata
+- train and validation windows
+- feature count and ensemble weights
+- validation metrics
+- validation and inference member predictions
+- fallback flags and reasons
+
+Representative artifacts:
+
+- training dataset parquet
+- pickled sklearn artifact per horizon
+- model validation summary
+- selection engine comparison summary
+- model diagnostic markdown report
+
+### TICKET-006 commands
+
+```powershell
+python scripts/build_model_training_dataset.py --train-end-date 2026-03-06 --horizons 1 5 --min-train-days 120
+python scripts/train_alpha_model_v1.py --train-end-date 2026-03-06 --horizons 1 5 --min-train-days 120 --validation-days 20
+python scripts/backfill_alpha_oof_predictions.py --start-train-end-date 2026-02-14 --end-train-end-date 2026-03-06 --horizons 1 5 --limit-models 3
+python scripts/materialize_alpha_predictions_v1.py --as-of-date 2026-03-06 --horizons 1 5
+python scripts/materialize_selection_engine_v2.py --as-of-date 2026-03-06 --horizons 1 5
+python scripts/validate_alpha_model_v1.py --as-of-date 2026-03-06 --horizons 1 5
+python scripts/compare_selection_engines.py --start-selection-date 2026-02-17 --end-selection-date 2026-03-06 --horizons 1 5
+python scripts/render_model_diagnostic_report.py --train-end-date 2026-03-06 --horizons 1 5 --dry-run
+```
+
 ## Grade rules
 
 Current grade assignment:
@@ -438,7 +582,7 @@ Current grade assignment:
 
 Grades are presentation buckets, not probability estimates.
 
-## Tables and views added through TICKET-005
+## Tables and views added through TICKET-006
 
 Tables:
 
@@ -451,6 +595,9 @@ Tables:
 - `fact_selection_outcome`
 - `fact_evaluation_summary`
 - `fact_calibration_diagnostic`
+- `fact_model_training_run`
+- `fact_model_member_prediction`
+- `fact_model_metric_summary`
 - `ops_ranking_validation_summary`
 - `ops_selection_validation_summary`
 
@@ -463,6 +610,9 @@ Views:
 - `vw_market_regime_latest`
 - `vw_ranking_latest`
 - `vw_prediction_latest`
+- `vw_latest_model_training_run`
+- `vw_latest_model_member_prediction`
+- `vw_latest_model_metric_summary`
 - `vw_selection_outcome_latest`
 - `vw_latest_evaluation_summary`
 - `vw_latest_calibration_diagnostic`
@@ -479,12 +629,19 @@ data/curated/features/as_of_date=YYYY-MM-DD/feature_matrix.parquet
 data/curated/market/investor_flow/trading_date=YYYY-MM-DD/investor_flow.parquet
 data/curated/labels/as_of_date=YYYY-MM-DD/forward_return_labels.parquet
 data/curated/regime/as_of_date=YYYY-MM-DD/market_regime_snapshot.parquet
+data/curated/model/training_dataset/train_end_date=YYYY-MM-DD/alpha_training_dataset.parquet
 data/curated/ranking/as_of_date=YYYY-MM-DD/horizon=N/explanatory_ranking.parquet
 data/curated/ranking/as_of_date=YYYY-MM-DD/horizon=N/ranking_version=selection_engine_v1/selection_engine_v1.parquet
+data/curated/ranking/as_of_date=YYYY-MM-DD/horizon=N/ranking_version=selection_engine_v2/selection_engine_v2.parquet
 data/curated/prediction/as_of_date=YYYY-MM-DD/proxy_prediction_band.parquet
+data/curated/prediction/as_of_date=YYYY-MM-DD/prediction_version=alpha_prediction_v1/alpha_prediction_v1.parquet
 data/curated/evaluation/selection_outcomes/selection_date=YYYY-MM-DD/ranking_version=.../horizon=N/selection_outcomes.parquet
 data/curated/evaluation/summary/start_selection_date=YYYY-MM-DD/end_selection_date=YYYY-MM-DD/evaluation_summary.parquet
 data/curated/evaluation/calibration_diagnostics/start_selection_date=YYYY-MM-DD/end_selection_date=YYYY-MM-DD/calibration_diagnostics.parquet
+data/artifacts/model/training/train_end_date=YYYY-MM-DD/horizon=N/alpha_model_v1.pkl
+data/artifacts/model_validation/<run_id>.md
+data/artifacts/selection_engine_comparison/<run_id>.md
+data/artifacts/model_diagnostics/train_end_date=YYYY-MM-DD/<run_id>/model_diagnostic_report.md
 data/artifacts/validation/ranking/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/ranking_validation_summary.parquet
 data/artifacts/validation/selection_engine_v1/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/selection_validation_summary.parquet
 data/artifacts/discord/as_of_date=YYYY-MM-DD/<run_id>/discord_preview.md
@@ -540,7 +697,10 @@ Operational behavior:
 
 - explanatory ranking v0 still keeps `flow_score` reserved by design
 - selection engine v1 is not an ML alpha model; its prediction bands are calibrated historical proxies only
-- `disagreement_score` remains `null` until a real multi-model layer exists
+- ML alpha model v1 is still a shallow-history sklearn baseline, not a fully tuned production stack
+- `expected_excess_return`, `lower_band`, `median_band`, and `upper_band` in `alpha_prediction_v1` come from calibrated residual logic, not a full probabilistic model
+- `disagreement_score` is model-spread based only; it is not a richer committee or Bayesian uncertainty estimate
+- fallback rows can still appear when no historical alpha artifact exists for a requested date/horizon
 - `market_cap` depends on upstream availability and is not yet independently validated
 - many 20d and 60d features will be null on shallow history windows
 - symbol linking for news is intentionally conservative and may leave `symbol_candidates = []`
@@ -569,12 +729,12 @@ python -m ruff check .
 After `streamlit run app/ui/Home.py`, verify:
 
 - Home shows reference data, research freshness, feature/ranking snapshot, and validation summary
-- Ops shows version tracking, flow/prediction coverage, evaluation status, and failures
+- Ops shows version tracking, flow/prediction coverage, model training summary, validation status, and failures
 - Research shows feature store, flow, regime, labels, and selection validation
-- Leaderboard compares explanatory ranking v0 and selection engine v1
+- Leaderboard compares explanatory ranking v0, selection engine v1, and selection engine v2
 - Market Pulse shows regime + flow breadth + latest top selections
-- Stock Workbench shows one symbol across features, flow history, prices, frozen outcomes, and news metadata
-- Evaluation shows outcome cohorts, rolling summaries, calibration diagnostics, and postmortem preview
+- Stock Workbench shows one symbol across features, alpha predictions, flow history, prices, frozen outcomes, and news metadata
+- Evaluation shows outcome cohorts, rolling summaries, calibration diagnostics, selection-engine comparison, and postmortem preview
 
 ## Docker
 

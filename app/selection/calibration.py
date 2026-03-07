@@ -73,7 +73,13 @@ def upsert_predictions(connection, frame: pd.DataFrame) -> None:
             calibration_end_date,
             calibration_bucket,
             calibration_sample_size,
+            model_version,
+            uncertainty_score,
             disagreement_score,
+            fallback_flag,
+            fallback_reason,
+            member_count,
+            ensemble_weight_json,
             source_notes_json,
             created_at
         )
@@ -93,7 +99,13 @@ def upsert_predictions(connection, frame: pd.DataFrame) -> None:
             calibration_end_date,
             calibration_bucket,
             calibration_sample_size,
+            model_version,
+            uncertainty_score,
             disagreement_score,
+            fallback_flag,
+            fallback_reason,
+            member_count,
+            ensemble_weight_json,
             source_notes_json,
             created_at
         FROM prediction_stage
@@ -313,7 +325,13 @@ def calibrate_proxy_prediction_bands(
                 predictions["prediction_version"] = PREDICTION_VERSION
                 predictions["calibration_start_date"] = start_date
                 predictions["calibration_end_date"] = end_date
+                predictions["model_version"] = PREDICTION_VERSION
+                predictions["uncertainty_score"] = pd.NA
                 predictions["disagreement_score"] = pd.NA
+                predictions["fallback_flag"] = False
+                predictions["fallback_reason"] = pd.NA
+                predictions["member_count"] = 0
+                predictions["ensemble_weight_json"] = "{}"
                 predictions["source_notes_json"] = predictions.apply(
                     lambda row: json.dumps(
                         {
@@ -343,7 +361,13 @@ def calibrate_proxy_prediction_bands(
                         "calibration_end_date",
                         "calibration_bucket",
                         "calibration_sample_size",
+                        "model_version",
+                        "uncertainty_score",
                         "disagreement_score",
+                        "fallback_flag",
+                        "fallback_reason",
+                        "member_count",
+                        "ensemble_weight_json",
                         "source_notes_json",
                         "created_at",
                     ]

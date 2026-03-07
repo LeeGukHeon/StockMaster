@@ -22,10 +22,13 @@ from app.ui.helpers import (
     latest_feature_coverage_frame,
     latest_flow_summary_frame,
     latest_label_coverage_frame,
+    latest_model_metric_summary_frame,
+    latest_model_training_summary_frame,
     latest_outcome_summary_frame,
     latest_postmortem_preview,
     latest_prediction_summary_frame,
     latest_regime_frame,
+    latest_selection_engine_comparison_frame,
     latest_selection_validation_summary_frame,
     latest_sync_runs_frame,
     latest_validation_summary_frame,
@@ -67,9 +70,12 @@ feature_coverage = latest_feature_coverage_frame(settings)
 label_coverage = latest_label_coverage_frame(settings)
 flow_summary = latest_flow_summary_frame(settings)
 prediction_summary = latest_prediction_summary_frame(settings)
+model_training_summary = latest_model_training_summary_frame(settings)
+model_metric_summary = latest_model_metric_summary_frame(settings)
 outcome_summary = latest_outcome_summary_frame(settings)
 evaluation_summary = latest_evaluation_summary_frame(settings, limit=20)
 evaluation_comparison = latest_evaluation_comparison_frame(settings)
+selection_engine_comparison = latest_selection_engine_comparison_frame(settings)
 calibration_summary = latest_calibration_diagnostic_frame(settings, limit=20)
 latest_regime = latest_regime_frame(settings)
 latest_versions = latest_version_frame(settings)
@@ -127,6 +133,8 @@ with ops_right:
     st.dataframe(localize_frame(latest_versions), width="stretch", hide_index=True)
     st.subheader("예측 요약")
     st.dataframe(localize_frame(prediction_summary), width="stretch", hide_index=True)
+    st.subheader("ML 알파 학습 요약")
+    st.dataframe(localize_frame(model_training_summary), width="stretch", hide_index=True)
     st.subheader("최신 시장 상태")
     st.dataframe(localize_frame(latest_regime), width="stretch", hide_index=True)
 
@@ -136,9 +144,13 @@ with evaluation_left:
     st.dataframe(localize_frame(outcome_summary), width="stretch", hide_index=True)
     st.subheader("평가 요약")
     st.dataframe(localize_frame(evaluation_summary), width="stretch", hide_index=True)
+    st.subheader("알파 모델 검증 지표")
+    st.dataframe(localize_frame(model_metric_summary), width="stretch", hide_index=True)
 with evaluation_right:
     st.subheader("선정 엔진 대 설명형 순위 비교")
     st.dataframe(localize_frame(evaluation_comparison), width="stretch", hide_index=True)
+    st.subheader("Selection v2 비교")
+    st.dataframe(localize_frame(selection_engine_comparison), width="stretch", hide_index=True)
     st.subheader("보정 진단")
     st.dataframe(localize_frame(calibration_summary), width="stretch", hide_index=True)
 

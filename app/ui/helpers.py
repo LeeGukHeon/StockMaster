@@ -7,6 +7,9 @@ from pathlib import Path
 import pandas as pd
 
 from app.common.disk import DiskUsageReport, measure_disk_usage
+from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
+from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
+from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.providers.base import ProviderHealth
 from app.providers.dart.client import DartProvider
 from app.providers.kis.client import KISProvider
@@ -24,7 +27,8 @@ from app.storage.manifests import fetch_recent_runs
 def load_ui_settings(project_root: Path) -> Settings:
     settings = load_settings(project_root=project_root)
     ensure_storage_layout(settings)
-    with duckdb_connection(settings.paths.duckdb_path) as connection:
+    read_only = settings.paths.duckdb_path.exists()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=read_only) as connection:
         bootstrap_core_tables(connection)
     return settings
 
@@ -315,6 +319,85 @@ UI_VALUE_LABELS: dict[str, dict[str, str]] = {
     },
 }
 
+UI_VALUE_LABELS.setdefault("ranking_version", {}).update(
+    {
+        SELECTION_ENGINE_V2_VERSION: "선정 엔진 v2",
+    }
+)
+UI_VALUE_LABELS.setdefault("prediction_version", {}).update(
+    {
+        ALPHA_PREDICTION_VERSION: "ML 알파 예측 v1",
+    }
+)
+UI_VALUE_LABELS.setdefault("run_type", {}).update(
+    {
+        "build_model_training_dataset": "모델 학습 데이터셋 생성",
+        "train_alpha_model_v1": "ML 알파 모델 학습",
+        "backfill_alpha_oof_predictions": "알파 OOF 백필",
+        "materialize_alpha_predictions_v1": "ML 알파 추론 생성",
+        "materialize_selection_engine_v2": "선정 엔진 v2 생성",
+        "validate_alpha_model_v1": "알파 모델 검증",
+        "compare_selection_engines": "선정 엔진 비교",
+        "render_model_diagnostic_report": "모델 진단 리포트 렌더",
+    }
+)
+UI_VALUE_LABELS.setdefault("split_name", {}).update(
+    {
+        "train": "학습",
+        "validation": "검증",
+        "inference": "추론",
+    }
+)
+UI_VALUE_LABELS.setdefault("member_name", {}).update(
+    {
+        "elasticnet": "ElasticNet",
+        "hist_gbm": "HistGBM",
+        "extra_trees": "ExtraTrees",
+        "ensemble": "Ensemble",
+    }
+)
+UI_COLUMN_LABELS.update(
+    {
+        "latest_selection_v2_ranking_version": "최신 Selection v2 버전",
+        "latest_alpha_model_version": "최신 알파 모델 버전",
+        "latest_alpha_prediction_version": "최신 알파 예측 버전",
+        "uncertainty_score": "불확실성 점수",
+        "disagreement_score": "불일치 점수",
+        "fallback_flag": "Fallback 여부",
+        "fallback_reason": "Fallback 사유",
+        "latest_model_train_date": "최신 모델 학습일",
+        "latest_model_train_rows": "최신 모델 학습 행수",
+        "latest_model_prediction_date": "최신 알파 예측일",
+        "latest_model_prediction_rows": "최신 알파 예측 행수",
+        "latest_selection_v2_date": "최신 Selection v2 일자",
+        "latest_selection_v2_rows": "최신 Selection v2 행수",
+        "d1_selection_v2_value": "D+1 Selection v2 점수",
+        "d1_selection_v2_grade": "D+1 Selection v2 등급",
+        "d5_selection_v2_value": "D+5 Selection v2 점수",
+        "d5_selection_v2_grade": "D+5 Selection v2 등급",
+        "d5_alpha_expected_excess_return": "D+5 알파 예상 초과수익률",
+        "d5_alpha_lower_band": "D+5 알파 하단 밴드",
+        "d5_alpha_upper_band": "D+5 알파 상단 밴드",
+        "d5_alpha_uncertainty_score": "D+5 알파 불확실성",
+        "d5_alpha_disagreement_score": "D+5 알파 불일치",
+        "d5_alpha_fallback_flag": "D+5 알파 fallback 여부",
+        "d5_selection_v2_realized_excess_return": "D+5 Selection v2 실현 초과수익률",
+        "d5_selection_v2_band_status": "D+5 Selection v2 밴드 판정",
+        "train_row_count": "학습 행수",
+        "validation_row_count": "검증 행수",
+        "member_name": "모델 구성원",
+        "split_name": "분할",
+        "metric_name": "지표명",
+        "metric_value": "지표값",
+        "sample_count": "표본 수",
+        "selection_v2_avg_excess": "Selection v2 평균 초과수익률",
+        "selection_v1_avg_excess": "Selection v1 평균 초과수익률",
+        "explanatory_v0_avg_excess": "설명형 v0 평균 초과수익률",
+        "v2_vs_v1_gap": "v2-v1 차이",
+        "v2_vs_explanatory_gap": "v2-설명형 차이",
+    }
+)
+
 UI_REASON_TAG_LABELS: dict[str, str] = {
     "short_term_momentum_strong": "단기 모멘텀 강함",
     "breakout_near_20d_high": "20일 고점 근접",
@@ -345,6 +428,21 @@ UI_NOTE_TAG_LABELS: dict[str, str] = {
     "feature_missingness_high": "피처 결손 높음",
     **UI_RISK_TAG_LABELS,
 }
+
+UI_REASON_TAG_LABELS.update(
+    {
+        "ml_alpha_supportive": "ML 알파 지지",
+        "prediction_fallback_used": "예측 fallback 사용",
+    }
+)
+UI_RISK_TAG_LABELS.update(
+    {
+        "model_uncertainty_high": "모델 불확실성 높음",
+        "model_disagreement_high": "모델 불일치 높음",
+        "prediction_fallback": "예측 fallback 사용",
+    }
+)
+UI_NOTE_TAG_LABELS.update(UI_RISK_TAG_LABELS)
 
 
 def _translate_scalar(column: str, value: object) -> object:
@@ -471,20 +569,42 @@ def watermark_frame(settings: Settings) -> pd.DataFrame:
     )
 
 
+def _preferred_ranking_versions() -> list[str]:
+    return [
+        SELECTION_ENGINE_V2_VERSION,
+        SELECTION_ENGINE_VERSION,
+        EXPLANATORY_RANKING_VERSION,
+    ]
+
+
+def _prediction_version_for_ranking(ranking_version: str | None) -> str | None:
+    if ranking_version == SELECTION_ENGINE_V2_VERSION:
+        return ALPHA_PREDICTION_VERSION
+    if ranking_version == SELECTION_ENGINE_VERSION:
+        return PREDICTION_VERSION
+    return None
+
+
 def _resolve_latest_ranking_version(connection, ranking_version: str | None) -> str | None:
     if ranking_version:
         return ranking_version
+    preferred_versions = _preferred_ranking_versions()
+    order_clause = " ".join(
+        [
+            f"WHEN ranking_version = '{value}' THEN {index}"
+            for index, value in enumerate(preferred_versions)
+        ]
+    )
     row = connection.execute(
-        """
+        f"""
         SELECT ranking_version
         FROM fact_ranking
         ORDER BY
-            CASE WHEN ranking_version = ? THEN 0 ELSE 1 END,
+            CASE {order_clause} ELSE {len(preferred_versions)} END,
             as_of_date DESC,
             created_at DESC
         LIMIT 1
-        """,
-        [SELECTION_ENGINE_VERSION],
+        """
     ).fetchone()
     return None if row is None else str(row[0])
 
@@ -654,6 +774,37 @@ def research_data_summary_frame(settings: Settings) -> pd.DataFrame:
                 (SELECT COUNT(*) FROM fact_prediction WHERE as_of_date = (
                     SELECT MAX(as_of_date) FROM fact_prediction WHERE prediction_version = ?
                 ) AND prediction_version = ?) AS latest_prediction_rows,
+                (
+                    SELECT MAX(as_of_date)
+                    FROM fact_prediction
+                    WHERE prediction_version = ?
+                ) AS latest_model_prediction_date,
+                (SELECT COUNT(*) FROM fact_prediction WHERE as_of_date = (
+                    SELECT MAX(as_of_date) FROM fact_prediction WHERE prediction_version = ?
+                ) AND prediction_version = ?) AS latest_model_prediction_rows,
+                (
+                    SELECT MAX(as_of_date)
+                    FROM fact_ranking
+                    WHERE ranking_version = ?
+                ) AS latest_selection_v2_date,
+                (SELECT COUNT(*) FROM fact_ranking WHERE as_of_date = (
+                    SELECT MAX(as_of_date) FROM fact_ranking WHERE ranking_version = ?
+                ) AND ranking_version = ?) AS latest_selection_v2_rows,
+                (
+                    SELECT MAX(train_end_date)
+                    FROM fact_model_training_run
+                    WHERE model_version = ?
+                ) AS latest_model_train_date,
+                (
+                    SELECT COALESCE(SUM(train_row_count), 0)
+                    FROM fact_model_training_run
+                    WHERE train_end_date = (
+                        SELECT MAX(train_end_date)
+                        FROM fact_model_training_run
+                        WHERE model_version = ?
+                    )
+                      AND model_version = ?
+                ) AS latest_model_train_rows,
                 (SELECT MAX(evaluation_date) FROM fact_selection_outcome) AS latest_outcome_date,
                 (SELECT COUNT(*) FROM fact_selection_outcome WHERE evaluation_date = (
                     SELECT MAX(evaluation_date) FROM fact_selection_outcome
@@ -680,6 +831,15 @@ def research_data_summary_frame(settings: Settings) -> pd.DataFrame:
                 PREDICTION_VERSION,
                 PREDICTION_VERSION,
                 PREDICTION_VERSION,
+                ALPHA_PREDICTION_VERSION,
+                ALPHA_PREDICTION_VERSION,
+                ALPHA_PREDICTION_VERSION,
+                SELECTION_ENGINE_V2_VERSION,
+                SELECTION_ENGINE_V2_VERSION,
+                SELECTION_ENGINE_V2_VERSION,
+                ALPHA_MODEL_VERSION,
+                ALPHA_MODEL_VERSION,
+                ALPHA_MODEL_VERSION,
             ],
         ).fetchdf()
 
@@ -899,6 +1059,15 @@ def latest_version_frame(settings: Settings) -> pd.DataFrame:
                     LIMIT 1
                 ) AS latest_selection_ranking_version,
                 (
+                    SELECT ranking_version
+                    FROM ops_run_manifest
+                    WHERE run_type = 'materialize_selection_engine_v2'
+                      AND status = 'success'
+                      AND ranking_version IS NOT NULL
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                ) AS latest_selection_v2_ranking_version,
+                (
                     SELECT model_version
                     FROM ops_run_manifest
                     WHERE run_type = 'calibrate_proxy_prediction_bands'
@@ -907,6 +1076,26 @@ def latest_version_frame(settings: Settings) -> pd.DataFrame:
                     ORDER BY started_at DESC
                     LIMIT 1
                 ) AS latest_prediction_version
+                ,
+                (
+                    SELECT model_version
+                    FROM ops_run_manifest
+                    WHERE run_type = 'train_alpha_model_v1'
+                      AND status = 'success'
+                      AND model_version IS NOT NULL
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                ) AS latest_alpha_model_version
+                ,
+                (
+                    SELECT model_version
+                    FROM ops_run_manifest
+                    WHERE run_type = 'materialize_alpha_predictions_v1'
+                      AND status = 'success'
+                      AND model_version IS NOT NULL
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                ) AS latest_alpha_prediction_version
             """
         ).fetchdf()
 
@@ -940,15 +1129,21 @@ def available_ranking_versions(settings: Settings) -> list[str]:
     if not settings.paths.duckdb_path.exists():
         return []
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        preferred_versions = _preferred_ranking_versions()
+        order_clause = " ".join(
+            [
+                f"WHEN ranking_version = '{value}' THEN {index}"
+                for index, value in enumerate(preferred_versions)
+            ]
+        )
         rows = connection.execute(
-            """
+            f"""
             SELECT DISTINCT ranking_version
             FROM fact_ranking
             ORDER BY
-                CASE WHEN ranking_version = ? THEN 0 ELSE 1 END,
+                CASE {order_clause} ELSE {len(preferred_versions)} END,
                 ranking_version
-            """,
-            [SELECTION_ENGINE_VERSION],
+            """
         ).fetchall()
     return [str(row[0]) for row in rows]
 
@@ -1002,6 +1197,7 @@ def leaderboard_frame(
         effective_version = _resolve_latest_ranking_version(connection, ranking_version)
         if effective_version is None:
             return pd.DataFrame()
+        prediction_version = _prediction_version_for_ranking(effective_version)
         selected_date = as_of_date or _resolve_latest_ranking_date(connection, effective_version)
         if selected_date is None:
             return pd.DataFrame()
@@ -1025,6 +1221,10 @@ def leaderboard_frame(
                 prediction.lower_band,
                 prediction.median_band,
                 prediction.upper_band,
+                prediction.uncertainty_score,
+                prediction.disagreement_score,
+                prediction.fallback_flag,
+                prediction.fallback_reason,
                 outcome.outcome_status,
                 outcome.realized_excess_return,
                 outcome.band_status
@@ -1047,7 +1247,7 @@ def leaderboard_frame(
               AND ranking.ranking_version = ?
             ORDER BY ranking.final_selection_value DESC, ranking.symbol
             """,
-            [PREDICTION_VERSION, selected_date, horizon, effective_version],
+            [prediction_version, selected_date, horizon, effective_version],
         ).fetchdf()
     if frame.empty:
         return frame
@@ -1124,23 +1324,122 @@ def latest_prediction_summary_frame(settings: Settings) -> pd.DataFrame:
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
         return connection.execute(
             """
-            WITH latest_date AS (
-                SELECT MAX(as_of_date) AS as_of_date
+            WITH latest_dates AS (
+                SELECT
+                    prediction_version,
+                    MAX(as_of_date) AS as_of_date
                 FROM fact_prediction
-                WHERE prediction_version = ?
+                WHERE prediction_version IN (?, ?)
+                GROUP BY prediction_version
             )
             SELECT
+                prediction.prediction_version,
                 horizon,
                 COUNT(*) AS row_count,
                 AVG(expected_excess_return) AS avg_expected_excess_return,
-                AVG(upper_band - lower_band) AS avg_band_width
-            FROM fact_prediction
-            WHERE prediction_version = ?
-              AND as_of_date = (SELECT as_of_date FROM latest_date)
-            GROUP BY horizon
+                AVG(upper_band - lower_band) AS avg_band_width,
+                AVG(uncertainty_score) AS uncertainty_score,
+                AVG(disagreement_score) AS disagreement_score
+            FROM fact_prediction AS prediction
+            JOIN latest_dates
+              ON prediction.prediction_version = latest_dates.prediction_version
+             AND prediction.as_of_date = latest_dates.as_of_date
+            GROUP BY prediction.prediction_version, horizon
+            ORDER BY prediction.prediction_version, horizon
+            """,
+            [PREDICTION_VERSION, ALPHA_PREDICTION_VERSION],
+        ).fetchdf()
+
+
+def latest_model_training_summary_frame(settings: Settings) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                horizon,
+                train_end_date,
+                train_row_count,
+                validation_row_count,
+                fallback_flag,
+                fallback_reason
+            FROM vw_latest_model_training_run
+            WHERE model_version = ?
             ORDER BY horizon
             """,
-            [PREDICTION_VERSION, PREDICTION_VERSION],
+            [ALPHA_MODEL_VERSION],
+        ).fetchdf()
+
+
+def latest_model_metric_summary_frame(settings: Settings) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                horizon,
+                member_name,
+                split_name,
+                metric_name,
+                metric_value,
+                sample_count
+            FROM vw_latest_model_metric_summary
+            WHERE model_version = ?
+              AND split_name = 'validation'
+            ORDER BY horizon, member_name, metric_name
+            """,
+            [ALPHA_MODEL_VERSION],
+        ).fetchdf()
+
+
+def latest_selection_engine_comparison_frame(settings: Settings) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            WITH latest_summary AS (
+                SELECT *
+                FROM vw_latest_evaluation_summary
+                WHERE segment_type = 'coverage'
+                  AND segment_value = 'all'
+                  AND ranking_version IN (?, ?, ?)
+            )
+            SELECT
+                v2.summary_date,
+                v2.window_type,
+                v2.horizon,
+                v2.mean_realized_excess_return AS selection_v2_avg_excess,
+                v1.mean_realized_excess_return AS selection_v1_avg_excess,
+                expl.mean_realized_excess_return AS explanatory_v0_avg_excess,
+                v2.mean_realized_excess_return - v1.mean_realized_excess_return
+                    AS v2_vs_v1_gap,
+                v2.mean_realized_excess_return - expl.mean_realized_excess_return
+                    AS v2_vs_explanatory_gap
+            FROM latest_summary AS v2
+            LEFT JOIN latest_summary AS v1
+              ON v2.summary_date = v1.summary_date
+             AND v2.window_type = v1.window_type
+             AND v2.horizon = v1.horizon
+             AND v1.ranking_version = ?
+            LEFT JOIN latest_summary AS expl
+              ON v2.summary_date = expl.summary_date
+             AND v2.window_type = expl.window_type
+             AND v2.horizon = expl.horizon
+             AND expl.ranking_version = ?
+            WHERE v2.ranking_version = ?
+            ORDER BY v2.window_type, v2.horizon
+            """,
+            [
+                SELECTION_ENGINE_V2_VERSION,
+                SELECTION_ENGINE_VERSION,
+                EXPLANATORY_RANKING_VERSION,
+                SELECTION_ENGINE_VERSION,
+                EXPLANATORY_RANKING_VERSION,
+                SELECTION_ENGINE_V2_VERSION,
+            ],
         ).fetchdf()
 
 
@@ -1446,36 +1745,64 @@ def stock_workbench_summary_frame(settings: Settings, *, symbol: str) -> pd.Data
                 feature.foreign_net_value_ratio_5d,
                 feature.smart_money_flow_ratio_20d,
                 feature.flow_coverage_flag,
+                selection_v2_1.final_selection_value AS d1_selection_v2_value,
+                selection_v2_1.grade AS d1_selection_v2_grade,
                 selection_1.final_selection_value AS d1_selection_value,
                 selection_1.grade AS d1_grade,
+                selection_v2_5.final_selection_value AS d5_selection_v2_value,
+                selection_v2_5.grade AS d5_selection_v2_grade,
                 selection_5.final_selection_value AS d5_selection_value,
                 selection_5.grade AS d5_grade,
+                prediction_alpha_5.expected_excess_return AS d5_alpha_expected_excess_return,
+                prediction_alpha_5.lower_band AS d5_alpha_lower_band,
+                prediction_alpha_5.upper_band AS d5_alpha_upper_band,
+                prediction_alpha_5.uncertainty_score AS d5_alpha_uncertainty_score,
+                prediction_alpha_5.disagreement_score AS d5_alpha_disagreement_score,
+                prediction_alpha_5.fallback_flag AS d5_alpha_fallback_flag,
                 prediction_5.expected_excess_return AS d5_expected_excess_return,
                 prediction_5.lower_band AS d5_lower_band,
                 prediction_5.upper_band AS d5_upper_band,
                 outcome_1.realized_excess_return AS d1_realized_excess_return,
                 outcome_1.band_status AS d1_band_status,
+                outcome_v2_5.realized_excess_return AS d5_selection_v2_realized_excess_return,
+                outcome_v2_5.band_status AS d5_selection_v2_band_status,
                 outcome_5.realized_excess_return AS d5_realized_excess_return,
                 outcome_5.band_status AS d5_band_status
             FROM vw_feature_matrix_latest AS feature
             JOIN dim_symbol AS symbol_meta
               ON feature.symbol = symbol_meta.symbol
+            LEFT JOIN vw_ranking_latest AS selection_v2_1
+              ON feature.symbol = selection_v2_1.symbol
+             AND selection_v2_1.horizon = 1
+             AND selection_v2_1.ranking_version = ?
             LEFT JOIN vw_ranking_latest AS selection_1
               ON feature.symbol = selection_1.symbol
              AND selection_1.horizon = 1
              AND selection_1.ranking_version = ?
+            LEFT JOIN vw_ranking_latest AS selection_v2_5
+              ON feature.symbol = selection_v2_5.symbol
+             AND selection_v2_5.horizon = 5
+             AND selection_v2_5.ranking_version = ?
             LEFT JOIN vw_ranking_latest AS selection_5
               ON feature.symbol = selection_5.symbol
              AND selection_5.horizon = 5
              AND selection_5.ranking_version = ?
+            LEFT JOIN vw_prediction_latest AS prediction_alpha_5
+              ON feature.symbol = prediction_alpha_5.symbol
+             AND prediction_alpha_5.horizon = 5
+             AND prediction_alpha_5.prediction_version = ?
             LEFT JOIN vw_prediction_latest AS prediction_5
               ON feature.symbol = prediction_5.symbol
              AND prediction_5.horizon = 5
              AND prediction_5.prediction_version = ?
             LEFT JOIN vw_selection_outcome_latest AS outcome_1
-              ON feature.symbol = outcome_1.symbol
+             ON feature.symbol = outcome_1.symbol
              AND outcome_1.horizon = 1
              AND outcome_1.ranking_version = ?
+            LEFT JOIN vw_selection_outcome_latest AS outcome_v2_5
+              ON feature.symbol = outcome_v2_5.symbol
+             AND outcome_v2_5.horizon = 5
+             AND outcome_v2_5.ranking_version = ?
             LEFT JOIN vw_selection_outcome_latest AS outcome_5
               ON feature.symbol = outcome_5.symbol
              AND outcome_5.horizon = 5
@@ -1483,10 +1810,14 @@ def stock_workbench_summary_frame(settings: Settings, *, symbol: str) -> pd.Data
             WHERE feature.symbol = ?
             """,
             [
+                SELECTION_ENGINE_V2_VERSION,
                 SELECTION_ENGINE_VERSION,
+                SELECTION_ENGINE_V2_VERSION,
                 SELECTION_ENGINE_VERSION,
+                ALPHA_PREDICTION_VERSION,
                 PREDICTION_VERSION,
                 SELECTION_ENGINE_VERSION,
+                SELECTION_ENGINE_V2_VERSION,
                 SELECTION_ENGINE_VERSION,
                 symbol,
             ],
