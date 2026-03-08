@@ -1086,6 +1086,66 @@ Current known limitations:
 - Discord ops alert publish is optional and should be dry-run first
 - cleanup defaults stay conservative by design; the framework prefers false negatives over accidental deletion
 
+## TICKET-013 final workflow / dashboard / report polish
+
+TICKET-013 closes the user-facing workflow layer. The main rule is that the UI should
+read existing materialized outputs instead of recomputing heavy logic on page load.
+
+New presentation contracts:
+
+- `fact_latest_app_snapshot`
+- `fact_latest_report_index`
+- `fact_release_candidate_check`
+- `fact_ui_data_freshness_snapshot`
+
+New release / report scripts:
+
+```powershell
+python scripts/render_daily_research_report.py --as-of-date 2026-03-06 --dry-run
+python scripts/render_portfolio_report.py --as-of-date 2026-03-06 --dry-run
+python scripts/render_evaluation_report.py --as-of-date 2026-03-06 --dry-run
+python scripts/render_intraday_summary_report.py --session-date 2026-03-09 --dry-run
+python scripts/build_report_index.py
+python scripts/build_ui_freshness_snapshot.py
+python scripts/build_latest_app_snapshot.py --as-of-date 2026-03-06
+python scripts/validate_page_contracts.py
+python scripts/validate_report_artifacts.py
+python scripts/validate_navigation_integrity.py
+python scripts/validate_release_candidate.py --as-of-date 2026-03-08
+python scripts/render_release_candidate_checklist.py --as-of-date 2026-03-08 --dry-run
+```
+
+TICKET-013 page structure:
+
+- `오늘`
+- `시장 현황`
+- `리더보드`
+- `포트폴리오`
+- `포트폴리오 평가`
+- `장중 콘솔`
+- `사후 평가`
+- `종목 분석`
+- `리서치 랩`
+- `운영`
+- `헬스 대시보드`
+- `문서 / 도움말`
+
+TICKET-013 docs:
+
+- [docs/USER_GUIDE.md](/d:/MyApps/StockMaster/docs/USER_GUIDE.md)
+- [docs/WORKFLOW_DAILY.md](/d:/MyApps/StockMaster/docs/WORKFLOW_DAILY.md)
+- [docs/GLOSSARY.md](/d:/MyApps/StockMaster/docs/GLOSSARY.md)
+- [docs/KNOWN_LIMITATIONS.md](/d:/MyApps/StockMaster/docs/KNOWN_LIMITATIONS.md)
+- [docs/REPORTS_AND_PAGES.md](/d:/MyApps/StockMaster/docs/REPORTS_AND_PAGES.md)
+
+Presentation rules:
+
+- page-specific stale / warning states come from `fact_ui_data_freshness_snapshot`
+- current truth badges come from `fact_latest_app_snapshot`
+- canonical report center comes from `fact_latest_report_index`
+- release candidate checklist is append-only and stored in `fact_release_candidate_check`
+- dashboard and reports should agree on the same materialized truth; no page-local recomputation
+
 ## Grade rules
 
 Current grade assignment:

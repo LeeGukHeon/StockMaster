@@ -1,7 +1,8 @@
-# ruff: noqa: E402
+# ruff: noqa: E402, E501
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -13,443 +14,255 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
+from app.ui.components import (
+    inject_app_styles,
+    render_narrative_card,
+    render_page_footer,
+    render_release_candidate_summary,
+    render_report_center,
+    render_status_badges,
+    render_top_actionable_badges,
+    render_warning_banner,
+)
 from app.ui.helpers import (
-    calendar_summary_frame,
-    disk_report,
-    format_disk_status_label,
-    latest_calibration_diagnostic_frame,
-    latest_discord_preview,
-    latest_evaluation_comparison_frame,
-    latest_evaluation_summary_frame,
-    latest_feature_coverage_frame,
-    latest_feature_sample_frame,
-    latest_flow_summary_frame,
+    latest_alert_event_frame,
+    latest_app_snapshot_frame,
     latest_market_news_frame,
-    latest_outcome_summary_frame,
-    latest_postmortem_preview,
-    latest_prediction_summary_frame,
-    latest_regime_frame,
-    latest_selection_validation_summary_frame,
-    latest_sync_runs_frame,
-    latest_validation_summary_frame,
-    latest_version_frame,
+    latest_release_candidate_preview,
+    latest_report_index_frame,
+    latest_ui_freshness_frame,
     leaderboard_frame,
-    leaderboard_grade_count_frame,
     load_ui_settings,
     localize_frame,
-    market_pulse_frame,
-    provider_health_frame,
-    recent_runs_frame,
-    research_data_summary_frame,
-    universe_summary_frame,
 )
+from app.ui.navigation import build_navigation_pages
 
 
-def _disk_message(report) -> str:
-    status = str(report.status)
-    usage = f"{report.usage_ratio:.1%}"
-    if status == "limit":
-        return f"디스크 사용률이 {usage}입니다. 고빈도 수집을 줄여야 합니다."
-    if status == "prune":
-        return f"디스크 사용률이 {usage}입니다. 지금 정리 작업이 필요합니다."
-    if status == "warning":
-        return f"디스크 사용률이 {usage}입니다. 저장 공간을 주의 깊게 봐야 합니다."
-    return f"디스크 사용률이 {usage}입니다. 현재는 정상 범위입니다."
+def _snapshot_row(settings):
+    frame = latest_app_snapshot_frame(settings)
+    if frame.empty:
+        return None
+    return frame.iloc[0]
 
 
-def render_home() -> None:
+def _parse_json_list(raw_value: object) -> list[dict[str, object]]:
+    if raw_value in (None, "", "[]"):
+        return []
+    try:
+        parsed = json.loads(str(raw_value))
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _policy_badges(snapshot_row) -> list[tuple[str, str]]:
+    if snapshot_row is None:
+        return []
+    badges: list[tuple[str, str]] = [("Selection v2", "INFO")]
+    if snapshot_row.get("latest_daily_bundle_status"):
+        badges.append((f"데일리 번들 {snapshot_row['latest_daily_bundle_status']}", str(snapshot_row["latest_daily_bundle_status"])))
+    if snapshot_row.get("health_status"):
+        badges.append((f"헬스 {snapshot_row['health_status']}", str(snapshot_row["health_status"])))
+    if snapshot_row.get("active_intraday_policy_id"):
+        badges.append((f"타이밍 정책 {snapshot_row['active_intraday_policy_id']}", "INFO"))
+    if snapshot_row.get("active_portfolio_policy_id"):
+        badges.append((f"포트폴리오 정책 {snapshot_row['active_portfolio_policy_id']}", "INFO"))
+    if snapshot_row.get("active_ops_policy_id"):
+        badges.append((f"운영 정책 {snapshot_row['active_ops_policy_id']}", "INFO"))
+    meta_models = _parse_json_list(snapshot_row.get("active_meta_model_ids_json"))
+    if meta_models:
+        badges.append((f"메타 모델 {len(meta_models)}개", "INFO"))
+    return badges
+
+
+def _today_narrative(snapshot_row, alerts: pd.DataFrame, freshness: pd.DataFrame) -> str:
+    if snapshot_row is None:
+        return (
+            "Current truth snapshot이 아직 없습니다. "
+            "build_latest_app_snapshot, build_report_index, build_ui_freshness_snapshot을 먼저 실행해야 합니다."
+        )
+    stale_count = int(freshness["stale_flag"].fillna(False).sum()) if not freshness.empty else 0
+    critical_alert_count = int(snapshot_row.get("critical_alert_count") or 0)
+    regime = snapshot_row.get("market_regime_family") or "unknown"
+    parts = [
+        f"현재 기준일은 {snapshot_row.get('as_of_date') or 'unknown'} 입니다.",
+        f"시장 regime은 {regime} 입니다.",
+    ]
+    if critical_alert_count > 0:
+        parts.append(f"치명 알림 {critical_alert_count}건이 열려 있습니다.")
+    elif not alerts.empty:
+        parts.append(f"열린 알림 {len(alerts)}건이 있습니다.")
+    else:
+        parts.append("현재 열린 치명 알림은 없습니다.")
+    if stale_count > 0:
+        parts.append(f"stale dataset {stale_count}건이 있어 일부 숫자는 보수적으로 해석해야 합니다.")
+    else:
+        parts.append("핵심 화면의 freshness 경고는 현재 허용 범위 안입니다.")
+    return " ".join(parts)
+
+
+def _quick_link(label: str, page: str, description: str) -> None:
+    st.markdown(f"**{label}**")
+    st.caption(description)
+    st.page_link(page, label=f"{label} 열기", icon=":material/open_in_new:")
+
+
+def render_today_page() -> None:
     settings = load_ui_settings(PROJECT_ROOT)
-    runs = recent_runs_frame(settings, limit=10)
-    storage_report = disk_report(settings)
-    provider_health = provider_health_frame(settings)
-    universe_summary = universe_summary_frame(settings)
-    calendar_summary = calendar_summary_frame(settings)
-    latest_sync_runs = latest_sync_runs_frame(settings)
-    research_summary = research_data_summary_frame(settings)
-    latest_flow_summary = latest_flow_summary_frame(settings)
-    latest_prediction_summary = latest_prediction_summary_frame(settings)
-    latest_outcomes = latest_outcome_summary_frame(settings)
-    latest_evaluation_summary = latest_evaluation_summary_frame(settings, limit=12)
-    latest_evaluation_comparison = latest_evaluation_comparison_frame(settings)
-    latest_calibration = latest_calibration_diagnostic_frame(settings, limit=12)
-    market_pulse = market_pulse_frame(settings)
-    latest_market_news = latest_market_news_frame(settings, limit=5)
-    latest_feature_sample = latest_feature_sample_frame(settings, limit=5)
-    latest_feature_coverage = latest_feature_coverage_frame(settings)
-    latest_regime = latest_regime_frame(settings)
-    latest_versions = latest_version_frame(settings)
+    inject_app_styles()
+
+    snapshot_row = _snapshot_row(settings)
+    alerts = latest_alert_event_frame(settings, limit=10)
+    freshness = latest_ui_freshness_frame(settings, limit=30)
+    critical_freshness = freshness[freshness["warning_level"].astype(str).str.upper() == "CRITICAL"]
+    warning_freshness = freshness[freshness["warning_level"].astype(str).str.upper() == "WARNING"]
     selection_preview = leaderboard_frame(
         settings,
         horizon=5,
-        limit=10,
+        limit=12,
         ranking_version=SELECTION_ENGINE_V2_VERSION,
     )
-    selection_grades = leaderboard_grade_count_frame(
-        settings,
-        horizon=5,
-        ranking_version=SELECTION_ENGINE_V2_VERSION,
-    )
-    explanatory_validation = latest_validation_summary_frame(settings, limit=8)
-    selection_validation = latest_selection_validation_summary_frame(settings, limit=8)
-    discord_preview = latest_discord_preview(settings)
-    postmortem_preview = latest_postmortem_preview(settings)
+    latest_reports = latest_report_index_frame(settings, limit=12, latest_only=True)
+    latest_news = latest_market_news_frame(settings, limit=6)
+    release_preview = latest_release_candidate_preview(settings)
 
-    st.title(f"{settings.app.display_name} 홈")
+    st.title("오늘")
     st.caption(
-        "국내주식 리서치 스택의 운영 현황을 보는 기본 화면입니다. "
-        "설명형 순위와 선정 엔진 v1 상태를 함께 확인할 수 있습니다."
+        "현재 truth snapshot, active policy, 핵심 알림, top actionable names, 최신 리포트와 freshness를 먼저 확인하는 시작 화면입니다."
     )
 
-    col_env, col_disk, col_status = st.columns(3)
-    col_env.metric("환경", settings.app.env.upper(), settings.app.timezone)
-    col_disk.metric(
-        "디스크 사용률",
-        f"{storage_report.usage_ratio:.1%}",
-        f"{storage_report.used_gb:.2f} GB 사용 중",
-    )
-    col_status.metric(
-        "워터마크",
-        format_disk_status_label(storage_report.status).upper(),
-        _disk_message(storage_report),
-    )
+    if snapshot_row is None:
+        render_warning_banner(
+            "CRITICAL",
+            "latest app snapshot이 없습니다. build_latest_app_snapshot / build_report_index / build_ui_freshness_snapshot을 먼저 실행하세요.",
+        )
+    elif not critical_freshness.empty:
+        render_warning_banner(
+            "CRITICAL",
+            "오늘 화면 기준 critical stale dataset이 있습니다. 숫자와 리포트 링크를 보수적으로 해석해야 합니다.",
+        )
+    elif not warning_freshness.empty:
+        render_warning_banner(
+            "WARNING",
+            "일부 데이터셋이 warning 임계치를 넘었습니다. 최신 run과 freshness 상태를 함께 확인하세요.",
+        )
 
-    path_col, db_col = st.columns(2)
-    with path_col:
-        st.subheader("데이터 루트")
-        st.code(str(settings.paths.data_dir))
-    with db_col:
-        st.subheader("DuckDB 경로")
-        st.code(str(settings.paths.duckdb_path))
+    render_status_badges(_policy_badges(snapshot_row))
 
-    st.subheader("기준 데이터 요약")
-    summary_left, summary_right = st.columns(2)
-    with summary_left:
-        if universe_summary.empty:
-            st.info(
-                "종목 유니버스가 아직 없습니다. "
-                "`python scripts/sync_universe.py`를 실행하세요."
-            )
-        else:
-            row = universe_summary.iloc[0]
-            metric_cols = st.columns(3)
-            metric_cols[0].metric("전체 종목", int(row["total_symbols"]))
-            metric_cols[1].metric("코스피", int(row["kospi_symbols"]))
-            metric_cols[2].metric("코스닥", int(row["kosdaq_symbols"]))
-            metric_cols = st.columns(2)
-            metric_cols[0].metric("활성 보통주", int(row["active_common_stock_count"]))
-            metric_cols[1].metric("DART 매핑", int(row["dart_mapped_symbols"]))
-    with summary_right:
-        if calendar_summary.empty or pd.isna(calendar_summary.iloc[0]["min_trading_date"]):
-            st.info(
-                "거래일 캘린더가 아직 없습니다. "
-                "`python scripts/sync_trading_calendar.py`를 실행하세요."
-            )
-        else:
-            row = calendar_summary.iloc[0]
-            metric_cols = st.columns(2)
-            metric_cols[0].metric("캘린더 시작", str(row["min_trading_date"]))
-            metric_cols[1].metric("캘린더 종료", str(row["max_trading_date"]))
-            metric_cols = st.columns(2)
-            metric_cols[0].metric("거래일 수", int(row["trading_days"]))
-            metric_cols[1].metric("오버라이드 일수", int(row["override_days"]))
-
-    st.subheader("최근 동기화")
-    if latest_sync_runs.empty:
-        st.info("아직 동기화 이력이 없습니다.")
+    top_left, top_mid, top_right = st.columns(3)
+    if snapshot_row is not None:
+        top_left.metric("현재 기준일", str(snapshot_row.get("as_of_date") or "-"))
+        top_mid.metric("최신 평가일", str(snapshot_row.get("latest_evaluation_date") or "-"))
+        top_right.metric("최신 장중 세션", str(snapshot_row.get("latest_intraday_session_date") or "-"))
     else:
-        st.dataframe(localize_frame(latest_sync_runs), width="stretch", hide_index=True)
+        top_left.metric("현재 기준일", "-")
+        top_mid.metric("최신 평가일", "-")
+        top_right.metric("최신 장중 세션", "-")
 
-    st.subheader("연구 데이터 신선도")
-    if research_summary.empty or research_summary.iloc[0].isna().all():
-        st.info("핵심 연구 데이터가 아직 적재되지 않았습니다.")
+    bottom_left, bottom_mid, bottom_right = st.columns(3)
+    if snapshot_row is not None:
+        bottom_left.metric("치명 알림", int(snapshot_row.get("critical_alert_count") or 0))
+        bottom_mid.metric("경고 알림", int(snapshot_row.get("warning_alert_count") or 0))
+        bottom_right.metric("최신 리포트 번들", str(snapshot_row.get("latest_report_bundle_id") or "-"))
     else:
-        row = research_summary.iloc[0]
-        top, mid, bottom = st.columns(3)
-        top.metric("최신 OHLCV", str(row["latest_ohlcv_date"]), int(row["latest_ohlcv_rows"] or 0))
-        mid.metric(
-            "최신 재무",
-            str(row["latest_fundamentals_date"]),
-            int(row["latest_fundamentals_rows"] or 0),
-        )
-        bottom.metric(
-            "최신 뉴스",
-            str(row["latest_news_date"]),
-            (
-                f"rows={int(row['latest_news_rows'] or 0)} "
-                f"미매칭={int(row['latest_news_unmatched'] or 0)}"
-            ),
-        )
-        top, mid, bottom = st.columns(3)
-        top.metric("최신 수급", str(row["latest_flow_date"]), int(row["latest_flow_rows"] or 0))
-        mid.metric(
-            "최신 피처 스냅샷",
-            str(row["latest_feature_date"]),
-            int(row["latest_feature_rows"] or 0),
-        )
-        bottom.metric(
-            "최신 라벨",
-            str(row["latest_label_date"]),
-            int(row["latest_available_label_rows"] or 0),
-        )
-        top, mid, bottom = st.columns(3)
-        top.metric(
-            "최신 선정 엔진 v1",
-            str(row["latest_selection_date"]),
-            int(row["latest_selection_rows"] or 0),
-        )
-        mid.metric(
-            "최신 예측 밴드",
-            str(row["latest_prediction_date"]),
-            int(row["latest_prediction_rows"] or 0),
-        )
-        bottom.metric(
-            "최신 설명형 순위 v0",
-            str(row["latest_explanatory_ranking_date"]),
-            int(row["latest_explanatory_ranking_rows"] or 0),
-        )
-        top, mid, bottom = st.columns(3)
-        top.metric(
-            "최신 모델 학습",
-            str(row["latest_model_train_date"]),
-            int(row["latest_model_train_rows"] or 0),
-        )
-        mid.metric(
-            "최신 알파 예측",
-            str(row["latest_model_prediction_date"]),
-            int(row["latest_model_prediction_rows"] or 0),
-        )
-        bottom.metric(
-            "최신 Selection v2",
-            str(row["latest_selection_v2_date"]),
-            int(row["latest_selection_v2_rows"] or 0),
-        )
-        top, mid, bottom = st.columns(3)
-        top.metric(
-            "최신 Outcome",
-            str(row["latest_outcome_date"]),
-            int(row["latest_outcome_rows"] or 0),
-        )
-        mid.metric(
-            "최신 평가 요약",
-            str(row["latest_evaluation_summary_date"]),
-            int(row["latest_evaluation_summary_rows"] or 0),
-        )
-        bottom.metric(
-            "최신 Calibration",
-            str(row["latest_calibration_date"]),
-            int(row["latest_calibration_rows"] or 0),
-        )
+        bottom_left.metric("치명 알림", 0)
+        bottom_mid.metric("경고 알림", 0)
+        bottom_right.metric("최신 리포트 번들", "-")
 
-    st.subheader("시장 현황과 선정 엔진")
-    pulse_left, pulse_right = st.columns((1, 2))
-    with pulse_left:
-        if market_pulse.empty:
-            st.info("시장 상태, 수급, 선정 엔진 스크립트를 실행하면 시장 현황이 표시됩니다.")
-        else:
-            st.dataframe(localize_frame(market_pulse), width="stretch", hide_index=True)
-        st.markdown("**최신 수급 커버리지**")
-        if latest_flow_summary.empty:
-            st.info("수급 요약이 아직 없습니다.")
-        else:
-            st.dataframe(localize_frame(latest_flow_summary), width="stretch", hide_index=True)
-        st.markdown("**최신 프록시 예측 요약**")
-        if latest_prediction_summary.empty:
-            st.info("프록시 예측 밴드가 아직 없습니다.")
-        else:
-            st.dataframe(
-                localize_frame(latest_prediction_summary),
-                width="stretch",
-                hide_index=True,
-            )
-    with pulse_right:
-        st.markdown("**Selection 엔진 v2 미리보기 (D+5)**")
+    render_narrative_card("Current Truth Summary", _today_narrative(snapshot_row, alerts, freshness))
+
+    link_left, link_mid, link_right = st.columns(3)
+    with link_left:
+        _quick_link("리더보드", "app/ui/pages/03_Leaderboard.py", "오늘 바로 볼 종목 선별 결과와 위험 플래그를 확인합니다.")
+        _quick_link("포트폴리오", "app/ui/pages/08_Portfolio_Studio.py", "목표 보유, 리밸런스, 현금 비중과 제약 사유를 봅니다.")
+    with link_mid:
+        _quick_link("장중 콘솔", "app/ui/pages/07_Intraday_Console.py", "raw/adjusted/final action과 stale 경고를 확인합니다.")
+        _quick_link("사후 평가", "app/ui/pages/06_Evaluation.py", "D+1/D+5 성숙 결과와 calibration을 점검합니다.")
+    with link_right:
+        _quick_link("운영", "app/ui/pages/01_Ops.py", "최근 run, 알림, 정책, 보고서 상태를 점검합니다.")
+        _quick_link("문서 / 도움말", "app/ui/pages/11_Docs_Help.py", "용어집, 사용자 가이드, known limitations를 봅니다.")
+
+    actionable_left, actionable_right = st.columns((2, 1))
+    with actionable_left:
+        st.subheader("Top Actionable Names")
+        render_top_actionable_badges(settings)
         if selection_preview.empty:
-            st.info("Selection 엔진 v2 스냅샷이 아직 없습니다.")
+            st.info("Selection v2 preview가 없습니다.")
         else:
-            preview = selection_preview[
+            columns = [
+                "symbol",
+                "company_name",
+                "grade",
+                "final_selection_value",
+                "expected_excess_return",
+                "uncertainty_score",
+                "disagreement_score",
+                "implementation_penalty_score",
+                "flow_score",
+                "lower_band",
+                "upper_band",
+                "risks",
+            ]
+            display = selection_preview[[column for column in columns if column in selection_preview.columns]].copy()
+            st.dataframe(localize_frame(display), width="stretch", hide_index=True)
+    with actionable_right:
+        st.subheader("Critical Alerts")
+        if alerts.empty:
+            st.success("열린 알림이 없습니다.")
+        else:
+            display = alerts[
+                ["created_at", "alert_type", "severity", "component_name", "message", "status"]
+            ].copy()
+            st.dataframe(localize_frame(display), width="stretch", hide_index=True)
+
+    report_left, report_right = st.columns((2, 1))
+    with report_left:
+        st.subheader("Canonical Report Center")
+        render_report_center(settings, limit=12)
+    with report_right:
+        st.subheader("Freshness Watch")
+        if freshness.empty:
+            st.info("UI freshness snapshot이 없습니다.")
+        else:
+            display = freshness[
                 [
-                    "symbol",
-                    "company_name",
-                    "market",
-                    "final_selection_value",
-                    "final_selection_rank_pct",
-                    "grade",
-                    "expected_excess_return",
-                    "lower_band",
-                    "upper_band",
-                    "reasons",
-                    "risks",
+                    "page_name",
+                    "dataset_name",
+                    "warning_level",
+                    "stale_flag",
+                    "latest_available_ts",
                 ]
             ].copy()
-            preview["final_selection_rank_pct"] = (
-                pd.to_numeric(preview["final_selection_rank_pct"], errors="coerce") * 100.0
-            ).round(1)
-            st.dataframe(localize_frame(preview), width="stretch", hide_index=True)
-        st.markdown("**Selection 엔진 v2 등급 분포 (D+5)**")
-        if selection_grades.empty:
-            st.info("Selection 엔진 v2 등급 분포가 아직 없습니다.")
-        else:
-            st.dataframe(localize_frame(selection_grades), width="stretch", hide_index=True)
+            st.dataframe(localize_frame(display), width="stretch", hide_index=True)
 
-    coverage_left, coverage_right = st.columns(2)
-    with coverage_left:
-        st.subheader("피처 커버리지")
-        if latest_feature_coverage.empty:
-            st.info("피처 스토어를 만들면 피처 커버리지가 표시됩니다.")
+    summary_left, summary_right = st.columns(2)
+    with summary_left:
+        st.subheader("Market Narrative")
+        if latest_news.empty:
+            st.info("시장 뉴스 메타데이터가 없습니다.")
         else:
-            st.dataframe(localize_frame(latest_feature_coverage), width="stretch", hide_index=True)
-    with coverage_right:
-        st.subheader("최신 피처 샘플")
-        if latest_feature_sample.empty:
-            st.info("피처 매트릭스 샘플이 아직 없습니다.")
-        else:
-            st.dataframe(localize_frame(latest_feature_sample), width="stretch", hide_index=True)
+            st.dataframe(localize_frame(latest_news), width="stretch", hide_index=True)
+    with summary_right:
+        st.subheader("Release Candidate Status")
+        render_release_candidate_summary(settings, limit=8)
+        if release_preview:
+            with st.expander("최신 릴리즈 체크리스트 미리보기", expanded=False):
+                st.code(release_preview)
 
-    validation_left, validation_right = st.columns(2)
-    with validation_left:
-        st.subheader("선정 엔진 검증")
-        if selection_validation.empty:
-            st.info("선정 엔진 검증 요약이 아직 없습니다.")
-        else:
-            st.dataframe(localize_frame(selection_validation), width="stretch", hide_index=True)
-    with validation_right:
-        st.subheader("설명형 순위 검증")
-        if explanatory_validation.empty:
-            st.info("설명형 순위 검증 요약이 아직 없습니다.")
-        else:
-            st.dataframe(
-                localize_frame(explanatory_validation),
-                width="stretch",
-                hide_index=True,
-            )
+    if not latest_reports.empty:
+        st.subheader("Latest Reports")
+        display = latest_reports[
+            ["report_type", "as_of_date", "generated_ts", "status", "artifact_path"]
+        ].copy()
+        st.dataframe(localize_frame(display), width="stretch", hide_index=True)
 
-    evaluation_left, evaluation_right = st.columns(2)
-    with evaluation_left:
-        st.subheader("최신 성과")
-        if latest_outcomes.empty:
-            st.info("평가 완료된 성과 요약이 아직 없습니다.")
-        else:
-            st.dataframe(localize_frame(latest_outcomes), width="stretch", hide_index=True)
-        st.subheader("평가 비교")
-        if latest_evaluation_comparison.empty:
-            st.info("선정 엔진과 설명형 순위 비교가 아직 없습니다.")
-        else:
-            st.dataframe(
-                localize_frame(latest_evaluation_comparison),
-                width="stretch",
-                hide_index=True,
-            )
-    with evaluation_right:
-        st.subheader("Rolling 평가 요약")
-        if latest_evaluation_summary.empty:
-            st.info("평가 요약 행이 아직 없습니다.")
-        else:
-            st.dataframe(
-                localize_frame(latest_evaluation_summary),
-                width="stretch",
-                hide_index=True,
-            )
-        st.subheader("보정 진단")
-        if latest_calibration.empty:
-            st.info("보정 진단이 아직 없습니다.")
-        else:
-            st.dataframe(localize_frame(latest_calibration), width="stretch", hide_index=True)
-
-    news_left, news_right = st.columns(2)
-    with news_left:
-        st.subheader("최신 시장 뉴스")
-        st.dataframe(localize_frame(latest_market_news), width="stretch", hide_index=True)
-    with news_right:
-        st.subheader("버전 추적")
-        st.dataframe(localize_frame(latest_versions), width="stretch", hide_index=True)
-
-    st.subheader("최신 시장 상태 스냅샷")
-    st.dataframe(localize_frame(latest_regime), width="stretch", hide_index=True)
-
-    if discord_preview:
-        with st.expander("최신 디스코드 미리보기", expanded=False):
-            st.code(discord_preview)
-
-    if postmortem_preview:
-        with st.expander("최신 사후 분석 미리보기", expanded=False):
-            st.code(postmortem_preview)
-
-    st.subheader("최근 실행 이력")
-    if runs.empty:
-        st.info("아직 실행 이력이 없습니다. `python scripts/bootstrap.py`를 먼저 실행하세요.")
-    else:
-        st.dataframe(localize_frame(runs), width="stretch", hide_index=True)
-
-    st.subheader("프로바이더 상태")
-    st.dataframe(localize_frame(provider_health), width="stretch", hide_index=True)
+    render_page_footer(settings, page_name="오늘")
 
 
 st.set_page_config(page_title="StockMaster", page_icon="SM", layout="wide")
 
 navigation = st.navigation(
-    [
-        st.Page(render_home, title="홈", icon=":material/home:", url_path="home"),
-        st.Page(
-            PROJECT_ROOT / "app/ui/pages/01_Ops.py",
-            title="운영",
-            icon=":material/settings:",
-            url_path="ops",
-        ),
-        st.Page(
-            PROJECT_ROOT / "app/ui/pages/02_Placeholder_Research.py",
-            title="연구",
-            icon=":material/science:",
-            url_path="research",
-        ),
-        st.Page(
-            PROJECT_ROOT / "app/ui/pages/03_Leaderboard.py",
-            title="순위표",
-            icon=":material/leaderboard:",
-            url_path="leaderboard",
-        ),
-        st.Page(
-            PROJECT_ROOT / "app/ui/pages/04_Market_Pulse.py",
-            title="시장 현황",
-            icon=":material/monitoring:",
-            url_path="market-pulse",
-        ),
-        st.Page(
-            PROJECT_ROOT / "app/ui/pages/05_Stock_Workbench.py",
-            title="종목 분석",
-            icon=":material/query_stats:",
-            url_path="stock-workbench",
-        ),
-        st.Page(
-            PROJECT_ROOT / "app/ui/pages/06_Evaluation.py",
-            title="사후 평가",
-            icon=":material/fact_check:",
-            url_path="evaluation",
-        ),
-        st.Page(
-            PROJECT_ROOT / "app/ui/pages/07_Intraday_Console.py",
-            title="장중 콘솔",
-            icon=":material/timeline:",
-            url_path="intraday-console",
-        ),
-        st.Page(
-            PROJECT_ROOT / "app/ui/pages/08_Portfolio_Studio.py",
-            title="포트폴리오 스튜디오",
-            icon=":material/account_balance:",
-            url_path="portfolio-studio",
-        ),
-        st.Page(
-            PROJECT_ROOT / "app/ui/pages/09_Portfolio_Evaluation.py",
-            title="포트폴리오 평가",
-            icon=":material/analytics:",
-            url_path="portfolio-evaluation",
-        ),
-        st.Page(
-            PROJECT_ROOT / "app/ui/pages/10_Health_Dashboard.py",
-            title="Health",
-            icon=":material/health_metrics:",
-            url_path="health-dashboard",
-        ),
-    ],
+    build_navigation_pages(PROJECT_ROOT, render_today_page=render_today_page),
     position="sidebar",
 )
 navigation.run()

@@ -264,11 +264,151 @@ def latest_successful_pipeline_output_frame(settings: Settings, limit: int = 20)
         ).fetchdf()
 
 
+def latest_app_snapshot_frame(settings: Settings) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT *
+            FROM vw_latest_app_snapshot
+            """
+        ).fetchdf()
+
+
+def latest_report_index_frame(
+    settings: Settings,
+    *,
+    limit: int = 20,
+    report_type: str | None = None,
+    latest_only: bool = False,
+) -> pd.DataFrame:
+    source = "vw_latest_report_index" if latest_only else "fact_latest_report_index"
+    where_clause = ""
+    params: list[object] = []
+    if report_type:
+        where_clause = "WHERE report_type = ?"
+        params.append(report_type)
+    params.append(limit)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            f"""
+            SELECT
+                report_type,
+                report_key,
+                as_of_date,
+                generated_ts,
+                status,
+                run_id,
+                artifact_path,
+                artifact_format,
+                published_flag,
+                dry_run_flag,
+                summary_json
+            FROM {source}
+            {where_clause}
+            ORDER BY generated_ts DESC, created_at DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchdf()
+
+
+def latest_release_candidate_check_frame(settings: Settings, *, limit: int = 20) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                check_ts,
+                check_name,
+                status,
+                severity,
+                recommended_action,
+                detail_json
+            FROM fact_release_candidate_check
+            ORDER BY check_ts DESC, check_name
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_ui_freshness_frame(
+    settings: Settings,
+    *,
+    page_name: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    where_clause = ""
+    params: list[object] = []
+    if page_name:
+        where_clause = "WHERE page_name = ?"
+        params.append(page_name)
+    params.append(limit)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            f"""
+            SELECT
+                snapshot_ts,
+                page_name,
+                dataset_name,
+                latest_available_ts,
+                freshness_seconds,
+                stale_flag,
+                warning_level,
+                notes
+            FROM vw_latest_ui_data_freshness_snapshot
+            {where_clause}
+            ORDER BY page_name, dataset_name
+            LIMIT ?
+            """,
+            params,
+        ).fetchdf()
+
+
 def latest_ops_report_preview(settings: Settings) -> str | None:
     report_root = settings.paths.artifacts_dir / "ops" / "report"
     if not report_root.exists():
         return None
     previews = sorted(report_root.rglob("ops_report_preview.md"), reverse=True)
+    if not previews:
+        return None
+    return previews[0].read_text(encoding="utf-8")
+
+
+def latest_daily_research_report_preview(settings: Settings) -> str | None:
+    report_root = settings.paths.artifacts_dir / "daily_research_report"
+    if not report_root.exists():
+        return None
+    previews = sorted(report_root.rglob("daily_research_report_preview.md"), reverse=True)
+    if not previews:
+        return None
+    return previews[0].read_text(encoding="utf-8")
+
+
+def latest_evaluation_report_preview(settings: Settings) -> str | None:
+    report_root = settings.paths.artifacts_dir / "evaluation_report"
+    if not report_root.exists():
+        return None
+    previews = sorted(report_root.rglob("evaluation_report_preview.md"), reverse=True)
+    if not previews:
+        return None
+    return previews[0].read_text(encoding="utf-8")
+
+
+def latest_intraday_summary_report_preview(settings: Settings) -> str | None:
+    report_root = settings.paths.artifacts_dir / "intraday_summary_report"
+    if not report_root.exists():
+        return None
+    previews = sorted(report_root.rglob("intraday_summary_report_preview.md"), reverse=True)
+    if not previews:
+        return None
+    return previews[0].read_text(encoding="utf-8")
+
+
+def latest_release_candidate_preview(settings: Settings) -> str | None:
+    report_root = settings.paths.artifacts_dir / "release_candidate_checklist"
+    if not report_root.exists():
+        return None
+    previews = sorted(report_root.rglob("release_candidate_checklist_preview.md"), reverse=True)
     if not previews:
         return None
     return previews[0].read_text(encoding="utf-8")
@@ -284,6 +424,42 @@ def load_ui_settings(project_root: Path) -> Settings:
 
 
 UI_COLUMN_LABELS: dict[str, str] = {
+    "page_name": "페이지",
+    "dataset_name": "데이터셋",
+    "warning_level": "경고 수준",
+    "stale_flag": "stale 여부",
+    "freshness_seconds": "신선도 초",
+    "latest_available_ts": "최신 가용 시각",
+    "check_ts": "점검 시각",
+    "check_name": "체크 이름",
+    "severity": "심각도",
+    "recommended_action": "권장 조치",
+    "report_type": "리포트 종류",
+    "report_key": "리포트 키",
+    "generated_ts": "생성 시각",
+    "artifact_path": "artifact 경로",
+    "artifact_format": "artifact 형식",
+    "published_flag": "발행 여부",
+    "dry_run_flag": "dry-run 여부",
+    "summary_json": "요약 JSON",
+    "snapshot_ts": "스냅샷 시각",
+    "latest_daily_bundle_run_id": "최근 daily bundle run",
+    "latest_daily_bundle_status": "최근 daily bundle 상태",
+    "latest_evaluation_run_id": "최근 평가 run",
+    "latest_intraday_session_date": "최근 장중 세션일",
+    "latest_intraday_run_id": "최근 장중 run",
+    "latest_portfolio_as_of_date": "최근 포트폴리오 기준일",
+    "latest_portfolio_run_id": "최근 포트폴리오 run",
+    "active_intraday_policy_id": "활성 장중 정책",
+    "active_meta_model_ids_json": "활성 메타 모델",
+    "active_portfolio_policy_id": "활성 포트폴리오 정책",
+    "active_ops_policy_id": "활성 운영 정책",
+    "health_status": "헬스 상태",
+    "market_regime_family": "시장 regime",
+    "top_actionable_symbol_list_json": "상단 actionable 종목",
+    "latest_report_bundle_id": "최근 리포트 bundle",
+    "critical_alert_count": "치명 알림 수",
+    "warning_alert_count": "경고 알림 수",
     "threshold": "임계치",
     "ratio": "비율",
     "provider": "제공처",

@@ -1610,6 +1610,78 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         created_at TIMESTAMPTZ NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_latest_app_snapshot (
+        snapshot_id VARCHAR PRIMARY KEY,
+        snapshot_ts TIMESTAMPTZ NOT NULL,
+        as_of_date DATE,
+        latest_daily_bundle_run_id VARCHAR,
+        latest_daily_bundle_status VARCHAR,
+        latest_evaluation_date DATE,
+        latest_evaluation_run_id VARCHAR,
+        latest_intraday_session_date DATE,
+        latest_intraday_run_id VARCHAR,
+        latest_portfolio_as_of_date DATE,
+        latest_portfolio_run_id VARCHAR,
+        active_intraday_policy_id VARCHAR,
+        active_meta_model_ids_json VARCHAR,
+        active_portfolio_policy_id VARCHAR,
+        active_ops_policy_id VARCHAR,
+        health_status VARCHAR,
+        market_regime_family VARCHAR,
+        top_actionable_symbol_list_json VARCHAR,
+        latest_report_bundle_id VARCHAR,
+        critical_alert_count BIGINT NOT NULL DEFAULT 0,
+        warning_alert_count BIGINT NOT NULL DEFAULT 0,
+        notes VARCHAR,
+        details_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_latest_report_index (
+        report_index_id VARCHAR PRIMARY KEY,
+        report_type VARCHAR NOT NULL,
+        report_key VARCHAR NOT NULL,
+        as_of_date DATE,
+        generated_ts TIMESTAMPTZ NOT NULL,
+        status VARCHAR NOT NULL,
+        run_id VARCHAR,
+        artifact_path VARCHAR NOT NULL,
+        artifact_format VARCHAR NOT NULL,
+        published_flag BOOLEAN NOT NULL DEFAULT FALSE,
+        dry_run_flag BOOLEAN NOT NULL DEFAULT FALSE,
+        summary_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_release_candidate_check (
+        release_candidate_check_id VARCHAR PRIMARY KEY,
+        check_ts TIMESTAMPTZ NOT NULL,
+        environment VARCHAR NOT NULL,
+        check_name VARCHAR NOT NULL,
+        status VARCHAR NOT NULL,
+        severity VARCHAR NOT NULL,
+        detail_json VARCHAR,
+        recommended_action VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_ui_data_freshness_snapshot (
+        freshness_snapshot_id VARCHAR PRIMARY KEY,
+        snapshot_ts TIMESTAMPTZ NOT NULL,
+        page_name VARCHAR NOT NULL,
+        dataset_name VARCHAR NOT NULL,
+        latest_available_ts TIMESTAMPTZ,
+        freshness_seconds DOUBLE,
+        stale_flag BOOLEAN NOT NULL,
+        warning_level VARCHAR NOT NULL,
+        notes VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
 )
 
 SYMBOL_COLUMN_MIGRATIONS: tuple[str, ...] = (
@@ -2271,6 +2343,41 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY lock_name
         ORDER BY acquired_at DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_app_snapshot AS
+    SELECT *
+    FROM fact_latest_app_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        ORDER BY snapshot_ts DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_report_index AS
+    SELECT *
+    FROM fact_latest_report_index
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY report_type
+        ORDER BY generated_ts DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_release_candidate_check AS
+    SELECT *
+    FROM fact_release_candidate_check
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY check_name
+        ORDER BY check_ts DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_ui_data_freshness_snapshot AS
+    SELECT *
+    FROM fact_ui_data_freshness_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY page_name, dataset_name
+        ORDER BY snapshot_ts DESC, created_at DESC
     ) = 1
     """,
 )

@@ -1,4 +1,4 @@
-# ruff: noqa: E402
+# ruff: noqa: E402, E501
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.ui.components import render_narrative_card, render_page_footer, render_page_header
 from app.ui.helpers import (
     latest_portfolio_evaluation_frame,
     latest_portfolio_nav_frame,
@@ -22,22 +23,30 @@ settings = load_ui_settings(PROJECT_ROOT)
 nav_frame = latest_portfolio_nav_frame(settings, limit=60)
 evaluation_frame = latest_portfolio_evaluation_frame(settings, limit=80)
 
-st.title("포트폴리오 평가")
-st.caption(
-    "NAV, 드로다운, 회전율, 평균 보유수, "
-    "OPEN_ALL vs TIMING_ASSISTED vs 동일가중 기준선을 비교합니다."
+render_page_header(
+    settings,
+    page_name="포트폴리오",
+    title="포트폴리오 평가",
+    description="NAV, drawdown, turnover, holding count와 OPEN_ALL vs TIMING_ASSISTED 비교를 보는 포트폴리오 평가 화면입니다.",
+)
+
+render_narrative_card(
+    "Portfolio Evaluation Narrative",
+    "포트폴리오 평가는 deterministic allocator 결과를 기준으로 합니다. 자동매매가 아니라 목표 포트폴리오 제안의 품질을 사후로 비교하는 레이어입니다.",
 )
 
 top_left, top_right = st.columns(2)
 with top_left:
-    st.subheader("NAV 스냅샷")
+    st.subheader("NAV Timeline")
     if nav_frame.empty:
-        st.info("포트폴리오 NAV 스냅샷이 아직 없습니다.")
+        st.info("포트폴리오 NAV 이력이 아직 없습니다.")
     else:
         st.dataframe(localize_frame(nav_frame), width="stretch", hide_index=True)
 with top_right:
-    st.subheader("평가 요약")
+    st.subheader("Evaluation Summary")
     if evaluation_frame.empty:
         st.info("포트폴리오 평가 요약이 아직 없습니다.")
     else:
         st.dataframe(localize_frame(evaluation_frame), width="stretch", hide_index=True)
+
+render_page_footer(settings, page_name="포트폴리오")
