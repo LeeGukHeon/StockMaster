@@ -397,13 +397,27 @@ def recover_incomplete_runs(
             continue
         result = None
         from app.ops.bundles import (
+            run_daily_audit_lite_bundle,
+            run_daily_close_bundle,
             run_daily_evaluation_bundle,
             run_daily_post_close_bundle,
             run_daily_research_pipeline,
+            run_evaluation_bundle,
+            run_intraday_assist_bundle,
+            run_news_sync_bundle,
             run_ops_maintenance_bundle,
+            run_weekly_calibration_bundle,
+            run_weekly_training_bundle,
         )
 
         bundle_map = {
+            "run_news_sync_bundle": run_news_sync_bundle,
+            "run_daily_close_bundle": run_daily_close_bundle,
+            "run_evaluation_bundle": run_evaluation_bundle,
+            "run_intraday_assist_bundle": run_intraday_assist_bundle,
+            "run_weekly_training_bundle": run_weekly_training_bundle,
+            "run_weekly_calibration_bundle": run_weekly_calibration_bundle,
+            "run_daily_audit_lite_bundle": run_daily_audit_lite_bundle,
             "run_daily_research_pipeline": run_daily_research_pipeline,
             "run_daily_post_close_bundle": run_daily_post_close_bundle,
             "run_daily_evaluation_bundle": run_daily_evaluation_bundle,

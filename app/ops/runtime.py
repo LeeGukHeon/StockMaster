@@ -84,6 +84,7 @@ class JobRunContext:
         policy_config_path: str | None = None,
         lock_name: str | None = None,
         notes: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         self.settings = settings
         self.connection = connection
@@ -97,6 +98,7 @@ class JobRunContext:
         self.policy_config_path = policy_config_path
         self.lock_name = lock_name or job_name
         self.notes = notes
+        self.details = details or {}
         self._context_cm = activate_run_context(job_name, as_of_date=as_of_date)
         self._artifacts: list[str] = []
         self._step_count = 0
@@ -140,6 +142,7 @@ class JobRunContext:
             details={
                 "policy_source": self.resolved_policy.source,
                 "policy_path": self.resolved_policy.policy_path,
+                **self.details,
             },
         )
         record_run_start(
@@ -239,8 +242,12 @@ class JobRunContext:
         self._status_override = JobStatus.DEGRADED_SUCCESS
         self._extra_notes.append(note)
 
-    def skip(self, note: str) -> None:
-        self._status_override = JobStatus.SKIPPED
+    def skip(self, note: str, *, status: str = JobStatus.SKIPPED) -> None:
+        self._status_override = status
+        self._extra_notes.append(note)
+
+    def block(self, note: str) -> None:
+        self._status_override = JobStatus.BLOCKED
         self._extra_notes.append(note)
 
     def run_step(
@@ -296,6 +303,7 @@ class JobRunContext:
             "artifact_paths": self._artifacts,
             "trigger_type": self.trigger_type,
             "dry_run": self.dry_run,
+            **self.details,
         }
         record_job_run_finish(
             self.connection,

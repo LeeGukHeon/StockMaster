@@ -70,6 +70,28 @@ FORCE_BUILD=true bash scripts/server/start_server.sh
 bash scripts/server/tail_server_logs.sh
 ```
 
+## 자동 스케줄러 운영
+
+TICKET-017 이후 서버 자동 실행은 host `systemd timer`가 담당합니다.
+
+기본 명령:
+
+```bash
+bash scripts/server/install_scheduler_units.sh
+bash scripts/server/status_scheduler_units.sh
+bash scripts/server/uninstall_scheduler_units.sh
+```
+
+수동 1회 실행:
+
+```bash
+bash scripts/server/run_scheduler_job.sh daily-close
+bash scripts/server/run_scheduler_job.sh news-morning
+bash scripts/server/run_scheduler_job.sh weekly-training
+```
+
+자세한 스케줄, 락 규칙, 장애 대응은 [SCHEDULER_SERVER_RUNBOOK.md](d:/MyApps/StockMaster/docs/SCHEDULER_SERVER_RUNBOOK.md)와 [SCHEDULER_AUTOMATION.md](d:/MyApps/StockMaster/docs/SCHEDULER_AUTOMATION.md)를 기준으로 확인합니다.
+
 ## 장애 분류
 
 - `healthz` 실패: nginx 또는 호스트 포트 문제

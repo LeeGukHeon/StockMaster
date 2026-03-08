@@ -2,7 +2,7 @@
 
 StockMaster is a Korea-focused personal stock research platform for post-market analysis, explanatory ranking, reporting, and retrospective evaluation.
 
-Implemented through TICKET-012:
+Implemented through TICKET-017:
 
 - foundation, settings, logging, bootstrap, and disk guard
 - provider activation for KIS, DART, and Naver News
@@ -18,7 +18,11 @@ Implemented through TICKET-012:
 - intraday policy meta-model / ML timing classifier v1 with panel-specific training, threshold calibration, bounded overlay scoring, and manual active-meta freeze/rollback
 - integrated long-only portfolio candidate, allocation, rebalance, NAV, evaluation, and reporting layer
 - ops stability layer with job/step metadata, dependency readiness, health snapshots, disk watermark tracking, recovery queue, active lock management, ops policy registry, and Health Dashboard
-- Streamlit Home, Ops, Health Dashboard, Research, Leaderboard, Market Pulse, Stock Workbench, Evaluation, Intraday Console, Portfolio Studio, and Portfolio Evaluation pages
+- final workflow polish with latest snapshot, report index, release candidate checks, Docs/Help, and Korean UI vocabulary
+- OCI deployment assets with server compose, nginx reverse proxy, backup/runbook, and external access checklist
+- DB contract audit / latest layer integrity checks / artifact reference validation
+- host systemd timer based scheduler orchestration with serial lock discipline, scheduled news sync, daily close/evaluation, weekly candidate generation, and maintenance automation
+- Streamlit Today, Ops, Health Dashboard, Research, Leaderboard, Market Pulse, Stock Workbench, Evaluation, Intraday Console, Portfolio Studio, Portfolio Evaluation, and Docs/Help pages
 
 Out of scope:
 
@@ -106,6 +110,8 @@ Key assets:
 - `docs/RUNBOOK_SERVER_OPERATIONS.md`
 - `docs/BACKUP_AND_RESTORE.md`
 - `docs/EXTERNAL_ACCESS_CHECKLIST.md`
+- `docs/SCHEDULER_AUTOMATION.md`
+- `docs/SCHEDULER_SERVER_RUNBOOK.md`
 
 Local vs server:
 
@@ -127,6 +133,50 @@ The server stack expects:
 - runtime data under `/opt/stockmaster/runtime`
 - backups under `/opt/stockmaster/backups`
 - Docker Engine + Docker Compose plugin installed on the OCI instance
+
+## Scheduler automation
+
+TICKET-017 adds host `systemd timer` based automation for server operation. Production scheduling is intentionally outside Streamlit and outside in-app APScheduler.
+
+Key scheduler assets:
+
+- `deploy/systemd/stockmaster-scheduler@.service`
+- `deploy/systemd/stockmaster-ops-maintenance.timer`
+- `deploy/systemd/stockmaster-news-morning.timer`
+- `deploy/systemd/stockmaster-intraday-assist.timer`
+- `deploy/systemd/stockmaster-news-after-close.timer`
+- `deploy/systemd/stockmaster-evaluation.timer`
+- `deploy/systemd/stockmaster-daily-close.timer`
+- `deploy/systemd/stockmaster-daily-audit-lite.timer`
+- `deploy/systemd/stockmaster-weekly-training.timer`
+- `deploy/systemd/stockmaster-weekly-calibration.timer`
+- `scripts/server/install_scheduler_units.sh`
+- `scripts/server/uninstall_scheduler_units.sh`
+- `scripts/server/status_scheduler_units.sh`
+- `scripts/server/run_scheduler_job.sh`
+- `docs/SCHEDULER_AUTOMATION.md`
+- `docs/SCHEDULER_SERVER_RUNBOOK.md`
+
+Initial schedule:
+
+- ops maintenance: daily `02:30`
+- morning news sync: Mon-Fri `08:30`
+- intraday assist: Mon-Fri `08:55-15:15`, every 5 minutes
+- after-close news sync: Mon-Fri `16:10`
+- evaluation bundle: Mon-Fri `16:20`
+- daily close bundle: Mon-Fri `18:40`
+- daily audit lite: Mon-Fri `19:05`
+- weekly training candidate: Sat `03:30`
+- weekly calibration: Sat `06:30`
+
+Automation rules:
+
+- non-trading day => self-skip
+- already completed identity => idempotent skip
+- lock occupied => skip/defer
+- missing upstream readiness => blocked/degraded
+- weekly retrain/calibration results are generated automatically but never auto-applied
+- active model/policy changes remain manual via UI compare-and-confirm or explicit freeze scripts
 
 ## Initial bootstrap and reference data
 

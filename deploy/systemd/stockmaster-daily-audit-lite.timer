@@ -1,0 +1,11 @@
+[Unit]
+Description=StockMaster Daily Audit Lite Timer
+
+[Timer]
+Unit=stockmaster-scheduler@daily-audit-lite.service
+OnCalendar=Mon..Fri *-*-* 19:05:00
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

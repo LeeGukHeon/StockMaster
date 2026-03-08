@@ -1,0 +1,18 @@
+[Unit]
+Description=StockMaster Intraday Assist Timer
+
+[Timer]
+Unit=stockmaster-scheduler@intraday-assist.service
+OnCalendar=Mon..Fri *-*-* 08:55:00
+OnCalendar=Mon..Fri *-*-* 09:00/5:00
+OnCalendar=Mon..Fri *-*-* 10:00/5:00
+OnCalendar=Mon..Fri *-*-* 11:00/5:00
+OnCalendar=Mon..Fri *-*-* 12:00/5:00
+OnCalendar=Mon..Fri *-*-* 13:00/5:00
+OnCalendar=Mon..Fri *-*-* 14:00/5:00
+OnCalendar=Mon..Fri *-*-* 15:00/5:00
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

@@ -23,10 +23,13 @@ from app.ui.helpers import (
     latest_pipeline_dependency_frame,
     latest_recovery_queue_frame,
     latest_retention_cleanup_frame,
+    latest_scheduler_bundle_result_frame,
+    latest_scheduler_state_frame,
     latest_step_failure_frame,
     latest_successful_pipeline_output_frame,
     load_ui_settings,
     localize_frame,
+    scheduler_job_catalog_frame,
 )
 
 settings = load_ui_settings(PROJECT_ROOT)
@@ -42,6 +45,9 @@ alerts = latest_alert_event_frame(settings, limit=30)
 active_policy = latest_active_ops_policy_frame(settings, limit=20)
 latest_outputs = latest_successful_pipeline_output_frame(settings, limit=20)
 ops_preview = latest_ops_report_preview(settings)
+scheduler_catalog = scheduler_job_catalog_frame(settings)
+scheduler_state = latest_scheduler_state_frame(settings, limit=30)
+scheduler_runs = latest_scheduler_bundle_result_frame(settings, limit=30)
 
 render_page_header(
     settings,
@@ -72,6 +78,22 @@ with summary_right:
 
 st.subheader("의존성 준비 상태")
 st.dataframe(localize_frame(dependencies), width="stretch", hide_index=True)
+
+st.subheader("스케줄러 개요")
+scheduler_left, scheduler_right = st.columns(2)
+with scheduler_left:
+    st.dataframe(localize_frame(scheduler_catalog), width="stretch", hide_index=True)
+with scheduler_right:
+    if scheduler_state.empty:
+        st.info("최근 스케줄러 상태가 없습니다.")
+    else:
+        st.dataframe(localize_frame(scheduler_state), width="stretch", hide_index=True)
+
+with st.expander("최근 스케줄러 번들 결과", expanded=False):
+    if scheduler_runs.empty:
+        st.info("최근 스케줄러 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(scheduler_runs), width="stretch", hide_index=True)
 
 run_left, run_right = st.columns(2)
 with run_left:

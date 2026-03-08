@@ -1,0 +1,11 @@
+[Unit]
+Description=StockMaster Weekly Calibration Timer
+
+[Timer]
+Unit=stockmaster-scheduler@weekly-calibration.service
+OnCalendar=Sat *-*-* 06:30:00
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

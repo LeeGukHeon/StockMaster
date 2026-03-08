@@ -202,7 +202,12 @@ def _is_optional_calibration_error(exc: RuntimeError) -> bool:
     )
 
 
-def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
+def run_daily_pipeline_job(
+    settings: Settings,
+    *,
+    run_training: bool = True,
+    publish_discord: bool = True,
+) -> JobExecutionResult:
     ensure_storage_layout(settings)
     pipeline_date = _resolve_pipeline_date(settings)
     calibration_start_date = _resolve_lookback_start_date(
@@ -216,27 +221,30 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
     with activate_run_context("daily_pipeline", as_of_date=pipeline_date) as run_context:
         with duckdb_connection(settings.paths.duckdb_path) as manifest_connection:
             bootstrap_core_tables(manifest_connection)
+            input_sources = [
+                "sync_daily_ohlcv",
+                "sync_fundamentals_snapshot",
+                "sync_news_metadata",
+                "sync_investor_flow",
+                "build_feature_store",
+                "build_market_regime_snapshot",
+                "materialize_explanatory_ranking",
+                "materialize_selection_engine_v1",
+                "materialize_alpha_predictions_v1",
+                "materialize_selection_engine_v2",
+                "calibrate_proxy_prediction_bands",
+            ]
+            if run_training:
+                input_sources.insert(8, "train_alpha_model_v1")
+            if publish_discord:
+                input_sources.append("publish_discord_eod_report")
             record_run_start(
                 manifest_connection,
                 run_id=run_context.run_id,
                 run_type=run_context.run_type,
                 started_at=run_context.started_at,
                 as_of_date=run_context.as_of_date,
-                input_sources=[
-                    "sync_daily_ohlcv",
-                    "sync_fundamentals_snapshot",
-                    "sync_news_metadata",
-                    "sync_investor_flow",
-                    "build_feature_store",
-                    "build_market_regime_snapshot",
-                    "materialize_explanatory_ranking",
-                    "materialize_selection_engine_v1",
-                    "train_alpha_model_v1",
-                    "materialize_alpha_predictions_v1",
-                    "materialize_selection_engine_v2",
-                    "calibrate_proxy_prediction_bands",
-                    "publish_discord_eod_report",
-                ],
+                input_sources=input_sources,
                 notes=(
                     f"Run the TICKET-004 daily research pipeline for {pipeline_date.isoformat()}"
                 ),
@@ -274,12 +282,16 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
                 as_of_date=pipeline_date,
                 horizons=[1, 5],
             )
-            alpha_training_result = train_alpha_model_v1(
-                settings,
-                train_end_date=pipeline_date,
-                horizons=[1, 5],
-                min_train_days=120,
-                validation_days=20,
+            alpha_training_result = (
+                train_alpha_model_v1(
+                    settings,
+                    train_end_date=pipeline_date,
+                    horizons=[1, 5],
+                    min_train_days=120,
+                    validation_days=20,
+                )
+                if run_training
+                else None
             )
             alpha_prediction_result = materialize_alpha_predictions_v1(
                 settings,
@@ -303,10 +315,14 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
                     raise
                 calibration_result = None
                 calibration_note = f" calibration_skipped={exc}"
-            discord_result = publish_discord_eod_report(
-                settings,
-                as_of_date=pipeline_date,
-                dry_run=not settings.discord.enabled,
+            discord_result = (
+                publish_discord_eod_report(
+                    settings,
+                    as_of_date=pipeline_date,
+                    dry_run=not settings.discord.enabled,
+                )
+                if publish_discord
+                else None
             )
             artifact_paths.extend(ohlcv_result.artifact_paths)
             artifact_paths.extend(fundamentals_result.artifact_paths)
@@ -316,12 +332,14 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
             artifact_paths.extend(regime_result.artifact_paths)
             artifact_paths.extend(ranking_result.artifact_paths)
             artifact_paths.extend(selection_result.artifact_paths)
-            artifact_paths.extend(alpha_training_result.artifact_paths)
+            if alpha_training_result is not None:
+                artifact_paths.extend(alpha_training_result.artifact_paths)
             artifact_paths.extend(alpha_prediction_result.artifact_paths)
             artifact_paths.extend(selection_v2_result.artifact_paths)
             if calibration_result is not None:
                 artifact_paths.extend(calibration_result.artifact_paths)
-            artifact_paths.extend(discord_result.artifact_paths)
+            if discord_result is not None:
+                artifact_paths.extend(discord_result.artifact_paths)
 
             notes = (
                 f"Daily pipeline completed for {pipeline_date.isoformat()}. "
@@ -333,11 +351,11 @@ def run_daily_pipeline_job(settings: Settings) -> JobExecutionResult:
                 f"regime_rows={regime_result.row_count}, "
                 f"ranking_rows={ranking_result.row_count}, "
                 f"selection_rows={selection_result.row_count}, "
-                f"alpha_training_runs={alpha_training_result.training_run_count}, "
+                f"alpha_training_runs={alpha_training_result.training_run_count if alpha_training_result else 0}, "
                 f"alpha_prediction_rows={alpha_prediction_result.row_count}, "
                 f"selection_v2_rows={selection_v2_result.row_count}, "
                 f"prediction_rows={calibration_result.row_count if calibration_result else 0}, "
-                f"discord_published={discord_result.published}"
+                f"discord_published={discord_result.published if discord_result else False}"
             )
             if calibration_note:
                 notes = f"{notes}.{calibration_note}"

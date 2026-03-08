@@ -18,6 +18,15 @@ from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ml.registry import load_model_artifact
+from app.ops.scheduler import (
+    bundle_last_result_frame as scheduler_bundle_last_result_frame,
+)
+from app.ops.scheduler import (
+    schedule_job_catalog_frame as scheduled_job_catalog_frame,
+)
+from app.ops.scheduler import (
+    scheduler_state_frame as scheduled_state_frame,
+)
 from app.providers.base import ProviderHealth
 from app.providers.dart.client import DartProvider
 from app.providers.kis.client import KISProvider
@@ -242,6 +251,190 @@ def latest_active_ops_policy_frame(settings: Settings, limit: int = 20) -> pd.Da
             LIMIT ?
             """,
             [limit],
+        ).fetchdf()
+
+
+def scheduler_job_catalog_frame(settings: Settings) -> pd.DataFrame:
+    return scheduled_job_catalog_frame(settings)
+
+
+def latest_scheduler_state_frame(settings: Settings, limit: int = 50) -> pd.DataFrame:
+    return scheduled_state_frame(settings, limit=limit)
+
+
+def latest_scheduler_bundle_result_frame(settings: Settings, limit: int = 50) -> pd.DataFrame:
+    return scheduler_bundle_last_result_frame(settings, limit=limit)
+
+
+def latest_intraday_policy_apply_compare_frame(settings: Settings, limit: int = 30) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            WITH latest_recommendation AS (
+                SELECT *
+                FROM vw_latest_intraday_policy_selection_recommendation
+                WHERE recommendation_rank = 1
+            ),
+            active_policy AS (
+                SELECT
+                    active.horizon,
+                    active.scope_type,
+                    active.scope_key,
+                    active.policy_candidate_id AS active_policy_candidate_id,
+                    candidate.template_id AS active_template_id,
+                    active.source_recommendation_date,
+                    active.effective_from_date,
+                    active.note AS active_note
+                FROM fact_intraday_active_policy AS active
+                LEFT JOIN fact_intraday_policy_candidate AS candidate
+                  ON active.policy_candidate_id = candidate.policy_candidate_id
+                WHERE active.active_flag = TRUE
+            ),
+            latest_metrics AS (
+                SELECT *
+                FROM vw_latest_intraday_policy_evaluation
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY policy_candidate_id
+                    ORDER BY
+                        CASE split_name
+                            WHEN 'test' THEN 1
+                            WHEN 'validation' THEN 2
+                            ELSE 3
+                        END,
+                        window_end_date DESC,
+                        created_at DESC
+                ) = 1
+            )
+            SELECT
+                COALESCE(active_policy.horizon, latest_recommendation.horizon) AS horizon,
+                COALESCE(active_policy.scope_type, latest_recommendation.scope_type) AS scope_type,
+                COALESCE(active_policy.scope_key, latest_recommendation.scope_key) AS scope_key,
+                active_policy.active_policy_candidate_id,
+                active_policy.active_template_id,
+                active_policy.source_recommendation_date,
+                active_policy.effective_from_date,
+                latest_recommendation.recommendation_date,
+                latest_recommendation.policy_candidate_id AS recommended_policy_candidate_id,
+                latest_recommendation.template_id AS recommended_template_id,
+                active_metric.objective_score AS before_objective_score,
+                latest_metric.objective_score AS after_objective_score,
+                latest_metric.objective_score - active_metric.objective_score
+                    AS objective_score_delta,
+                active_metric.mean_realized_excess_return AS before_mean_excess_return,
+                latest_metric.mean_realized_excess_return AS after_mean_excess_return,
+                latest_metric.mean_realized_excess_return
+                    - active_metric.mean_realized_excess_return
+                    AS mean_excess_return_delta,
+                active_metric.hit_rate AS before_hit_rate,
+                latest_metric.hit_rate AS after_hit_rate,
+                latest_metric.hit_rate - active_metric.hit_rate AS hit_rate_delta,
+                active_metric.execution_rate AS before_execution_rate,
+                latest_metric.execution_rate AS after_execution_rate,
+                latest_metric.execution_rate - active_metric.execution_rate
+                    AS execution_rate_delta,
+                COALESCE(latest_metric.manual_review_required_flag, FALSE)
+                    AS manual_review_required_flag
+            FROM active_policy
+            FULL OUTER JOIN latest_recommendation
+              ON active_policy.horizon = latest_recommendation.horizon
+             AND active_policy.scope_type = latest_recommendation.scope_type
+             AND COALESCE(active_policy.scope_key, '') = COALESCE(
+                 latest_recommendation.scope_key,
+                 ''
+             )
+            LEFT JOIN latest_metrics AS active_metric
+              ON active_policy.active_policy_candidate_id = active_metric.policy_candidate_id
+            LEFT JOIN latest_metrics AS latest_metric
+              ON latest_recommendation.policy_candidate_id = latest_metric.policy_candidate_id
+            ORDER BY horizon, scope_type, scope_key
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_intraday_meta_apply_compare_frame(settings: Settings, limit: int = 30) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            WITH latest_candidate AS (
+                SELECT
+                    training_run_id,
+                    horizon,
+                    panel_name,
+                    train_end_date,
+                    validation_row_count,
+                    validation_session_count,
+                    feature_count,
+                    fallback_flag,
+                    fallback_reason
+                FROM vw_latest_model_training_run
+                WHERE model_domain = ?
+                  AND model_version = ?
+            ),
+            active_model AS (
+                SELECT
+                    horizon,
+                    panel_name,
+                    active_meta_model_id,
+                    training_run_id AS active_training_run_id,
+                    effective_from_date,
+                    note AS active_note
+                FROM vw_latest_intraday_active_meta_model
+            ),
+            metric_panel AS (
+                SELECT
+                    training_run_id,
+                    MAX(CASE WHEN metric_name = 'macro_f1' THEN metric_value END) AS macro_f1,
+                    MAX(CASE WHEN metric_name = 'log_loss' THEN metric_value END) AS log_loss
+                FROM vw_latest_model_metric_summary
+                WHERE model_domain = ?
+                  AND model_version = ?
+                  AND split_name = 'validation'
+                  AND metric_scope = 'panel'
+                GROUP BY training_run_id
+            )
+            SELECT
+                COALESCE(active_model.horizon, latest_candidate.horizon) AS horizon,
+                COALESCE(active_model.panel_name, latest_candidate.panel_name) AS panel_name,
+                active_model.active_meta_model_id,
+                active_model.active_training_run_id,
+                active_model.effective_from_date,
+                latest_candidate.training_run_id AS candidate_training_run_id,
+                latest_candidate.train_end_date,
+                active_metric.macro_f1 AS before_macro_f1,
+                candidate_metric.macro_f1 AS after_macro_f1,
+                candidate_metric.macro_f1 - active_metric.macro_f1 AS macro_f1_delta,
+                active_metric.log_loss AS before_log_loss,
+                candidate_metric.log_loss AS after_log_loss,
+                candidate_metric.log_loss - active_metric.log_loss AS log_loss_delta,
+                latest_candidate.validation_row_count,
+                latest_candidate.validation_session_count,
+                latest_candidate.feature_count,
+                latest_candidate.fallback_flag,
+                latest_candidate.fallback_reason
+            FROM active_model
+            FULL OUTER JOIN latest_candidate
+              ON active_model.horizon = latest_candidate.horizon
+             AND active_model.panel_name = latest_candidate.panel_name
+            LEFT JOIN metric_panel AS active_metric
+              ON active_model.active_training_run_id = active_metric.training_run_id
+            LEFT JOIN metric_panel AS candidate_metric
+              ON latest_candidate.training_run_id = candidate_metric.training_run_id
+            ORDER BY horizon, panel_name
+            LIMIT ?
+            """,
+            [
+                INTRADAY_META_MODEL_DOMAIN,
+                INTRADAY_META_MODEL_VERSION,
+                INTRADAY_META_MODEL_DOMAIN,
+                INTRADAY_META_MODEL_VERSION,
+                limit,
+            ],
         ).fetchdf()
 
 
@@ -753,6 +946,82 @@ UI_VALUE_LABELS.setdefault("ranking_version", {}).update(
 UI_VALUE_LABELS.setdefault("prediction_version", {}).update(
     {
         ALPHA_PREDICTION_VERSION: "ML 알파 예측 v1",
+    }
+)
+UI_VALUE_LABELS.setdefault("status", {}).update(
+    {
+        "SKIPPED_NON_TRADING_DAY": "휴장일로 건너뜀",
+        "SKIPPED_ALREADY_DONE": "이미 완료되어 건너뜀",
+        "SKIPPED_LOCKED": "다른 쓰기 작업 진행 중",
+    }
+)
+UI_VALUE_LABELS.setdefault("job_key", {}).update(
+    {
+        "ops_maintenance": "운영 유지보수",
+        "news_morning": "아침 뉴스 수집",
+        "intraday_assist": "장중 후보군 보조",
+        "news_after_close": "마감 직후 뉴스 수집",
+        "evaluation": "장후 평가",
+        "daily_close": "장후 추천 생성",
+        "daily_audit_lite": "일일 경량 감사",
+        "weekly_training_candidate": "주간 학습 후보 생성",
+        "weekly_calibration": "주간 보정/정책 실험",
+    }
+)
+UI_VALUE_LABELS.setdefault("job_name", {}).update(
+    {
+        "run_news_sync_bundle": "뉴스 수집 번들",
+        "run_daily_close_bundle": "장후 추천 번들",
+        "run_evaluation_bundle": "장후 평가 번들",
+        "run_intraday_assist_bundle": "장중 후보군 보조 번들",
+        "run_weekly_training_bundle": "주간 학습 후보 번들",
+        "run_weekly_calibration_bundle": "주간 보정 번들",
+        "run_daily_audit_lite_bundle": "일일 경량 감사 번들",
+    }
+)
+UI_COLUMN_LABELS.update(
+    {
+        "schedule_label": "실행 주기",
+        "next_run_at": "다음 실행 예정",
+        "last_status": "최근 상태",
+        "last_finished_at": "최근 종료 시각",
+        "last_notes": "최근 메모",
+        "last_run_id": "최근 실행 ID",
+        "trading_day_required": "거래일 전용",
+        "heavy_job": "무거운 작업",
+        "manual_local_command": "로컬 수동 실행",
+        "manual_server_command": "서버 수동 실행",
+        "timer_name": "systemd 타이머",
+        "service_name": "systemd 서비스",
+        "on_calendar": "OnCalendar",
+        "identity_json": "실행 식별자",
+        "active_policy_candidate_id": "현재 활성 정책 후보 ID",
+        "active_template_id": "현재 활성 템플릿",
+        "source_recommendation_date": "현재 반영 추천일",
+        "recommendation_date": "새 추천일",
+        "recommended_policy_candidate_id": "새 추천 정책 후보 ID",
+        "recommended_template_id": "새 추천 템플릿",
+        "before_objective_score": "현재 목표 점수",
+        "after_objective_score": "추천 목표 점수",
+        "objective_score_delta": "목표 점수 변화",
+        "before_mean_excess_return": "현재 평균 초과수익률",
+        "after_mean_excess_return": "추천 평균 초과수익률",
+        "mean_excess_return_delta": "평균 초과수익률 변화",
+        "before_hit_rate": "현재 적중률",
+        "after_hit_rate": "추천 적중률",
+        "hit_rate_delta": "적중률 변화",
+        "before_execution_rate": "현재 실행률",
+        "after_execution_rate": "추천 실행률",
+        "execution_rate_delta": "실행률 변화",
+        "active_training_run_id": "현재 활성 학습 실행 ID",
+        "candidate_training_run_id": "새 학습 후보 실행 ID",
+        "before_macro_f1": "현재 Macro F1",
+        "after_macro_f1": "후보 Macro F1",
+        "macro_f1_delta": "Macro F1 변화",
+        "before_log_loss": "현재 Log Loss",
+        "after_log_loss": "후보 Log Loss",
+        "log_loss_delta": "Log Loss 변화",
+        "validation_session_count": "검증 세션 수",
     }
 )
 UI_VALUE_LABELS.setdefault("run_type", {}).update(

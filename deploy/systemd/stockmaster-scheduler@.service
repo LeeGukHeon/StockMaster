@@ -1,0 +1,14 @@
+[Unit]
+Description=StockMaster Scheduler Job (%i)
+Requires=docker.service stockmaster-compose.service
+After=docker.service stockmaster-compose.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/stockmaster/app
+ExecStart=/bin/bash /opt/stockmaster/app/scripts/server/run_scheduler_job.sh %i
+TimeoutStartSec=7200
+
+[Install]
+WantedBy=multi-user.target

@@ -2,7 +2,35 @@ from __future__ import annotations
 
 from datetime import date
 
+from app.audit.checks import run_artifact_reference_checks, run_latest_layer_checks
 from app.common.time import today_local
+from app.intraday.adjusted_decisions import materialize_intraday_adjusted_entry_decisions
+from app.intraday.data import (
+    backfill_intraday_candidate_bars,
+    backfill_intraday_candidate_quote_summary,
+    backfill_intraday_candidate_trade_summary,
+)
+from app.intraday.decisions import materialize_intraday_entry_decisions
+from app.intraday.meta_inference import (
+    evaluate_intraday_meta_models,
+    materialize_intraday_final_actions,
+    materialize_intraday_meta_predictions,
+)
+from app.intraday.meta_training import (
+    calibrate_intraday_meta_thresholds,
+    run_intraday_meta_walkforward,
+    train_intraday_meta_models,
+)
+from app.intraday.policy import (
+    evaluate_intraday_policy_ablation,
+    materialize_intraday_policy_candidates,
+    materialize_intraday_policy_recommendations,
+    run_intraday_policy_calibration,
+    run_intraday_policy_walkforward,
+)
+from app.intraday.session import materialize_intraday_candidate_session
+from app.intraday.signals import materialize_intraday_signal_snapshots
+from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ops.common import OpsJobResult, TriggerType
 from app.ops.health import check_pipeline_dependencies, materialize_health_snapshots
 from app.ops.maintenance import (
@@ -14,6 +42,16 @@ from app.ops.maintenance import (
 )
 from app.ops.report import publish_discord_ops_alerts
 from app.ops.runtime import JobRunContext, job_result_from_context
+from app.ops.scheduler import (
+    DEFAULT_INTRADAY_CHECKPOINTS,
+    bundle_already_completed,
+    is_trading_day,
+    resolve_due_intraday_checkpoint,
+    resolve_news_collection_dates,
+    resolve_previous_trading_date,
+    resolve_reference_trading_date,
+)
+from app.pipelines.news_metadata import sync_news_metadata
 from app.portfolio.allocation import (
     evaluate_portfolio_policies,
     materialize_portfolio_nav,
@@ -26,16 +64,35 @@ from app.portfolio.candidate_book import (
     validate_portfolio_candidate_book,
 )
 from app.portfolio.report import render_portfolio_report
+from app.release.reporting import (
+    render_daily_research_report,
+    render_evaluation_report,
+    render_intraday_summary_report,
+    render_release_candidate_checklist,
+)
+from app.release.snapshot import (
+    build_latest_app_snapshot,
+    build_report_index,
+    build_ui_freshness_snapshot,
+)
+from app.release.validation import validate_release_candidate
 from app.scheduler.jobs import run_daily_pipeline_job, run_evaluation_job
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 
+DEFAULT_HORIZONS: tuple[int, ...] = (1, 5)
+SCHEDULER_GLOBAL_LOCK = "scheduler_global_write"
 
-def _resolve_pipeline_date(settings: Settings, *, fallback: date | None = None) -> date:
+
+def _resolve_pipeline_date(
+    settings: Settings,
+    *,
+    fallback: date | None = None,
+    connection=None,
+) -> date:
     target_date = fallback or today_local(settings.app.timezone)
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        bootstrap_core_tables(connection)
+    if connection is not None:
         row = connection.execute(
             """
             SELECT trading_date
@@ -47,13 +104,24 @@ def _resolve_pipeline_date(settings: Settings, *, fallback: date | None = None) 
             """,
             [target_date],
         ).fetchone()
-    return row[0] if row and row[0] is not None else target_date
+        return row[0] if row and row[0] is not None else target_date
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as read_connection:
+        bootstrap_core_tables(read_connection)
+        return _resolve_pipeline_date(
+            settings,
+            fallback=target_date,
+            connection=read_connection,
+        )
 
 
-def _resolve_latest_selection_date(settings: Settings, *, fallback: date | None = None) -> date:
+def _resolve_latest_selection_date(
+    settings: Settings,
+    *,
+    fallback: date | None = None,
+    connection=None,
+) -> date:
     target_date = fallback or today_local(settings.app.timezone)
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        bootstrap_core_tables(connection)
+    if connection is not None:
         row = connection.execute(
             """
             SELECT MAX(as_of_date)
@@ -61,12 +129,24 @@ def _resolve_latest_selection_date(settings: Settings, *, fallback: date | None 
             WHERE ranking_version = 'selection_engine_v2'
             """,
         ).fetchone()
-    return row[0] if row and row[0] is not None else target_date
+        return row[0] if row and row[0] is not None else target_date
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as read_connection:
+        bootstrap_core_tables(read_connection)
+        return _resolve_latest_selection_date(
+            settings,
+            fallback=target_date,
+            connection=read_connection,
+        )
 
 
-def _resolve_recent_start_date(settings: Settings, *, end_date: date, trading_days: int) -> date:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        bootstrap_core_tables(connection)
+def _resolve_recent_start_date(
+    settings: Settings,
+    *,
+    end_date: date,
+    trading_days: int,
+    connection=None,
+) -> date:
+    if connection is not None:
         row = connection.execute(
             """
             SELECT MIN(trading_date)
@@ -81,7 +161,88 @@ def _resolve_recent_start_date(settings: Settings, *, end_date: date, trading_da
             """,
             [end_date, trading_days],
         ).fetchone()
-    return row[0] if row and row[0] is not None else end_date
+        return row[0] if row and row[0] is not None else end_date
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as read_connection:
+        bootstrap_core_tables(read_connection)
+        return _resolve_recent_start_date(
+            settings,
+            end_date=end_date,
+            trading_days=trading_days,
+            connection=read_connection,
+        )
+
+
+def _skip_if_non_trading_day(
+    job: JobRunContext,
+    *,
+    target_date: date,
+    label: str,
+) -> OpsJobResult | None:
+    if is_trading_day(job.settings, target_date=target_date, connection=job.connection):
+        return None
+    note = f"{label}: non-trading day self-skip for {target_date.isoformat()}."
+    job.skip(note, status="SKIPPED_NON_TRADING_DAY")
+    return job_result_from_context(job, notes=note, row_count=0)
+
+
+def _skip_if_already_completed(
+    job: JobRunContext,
+    *,
+    bundle_phase: str,
+    checkpoint_time: str | None = None,
+    profile: str | None = None,
+) -> OpsJobResult | None:
+    if job.dry_run:
+        return None
+    if bundle_already_completed(
+        job.connection,
+        job_name=job.job_name,
+        as_of_date=job.as_of_date,
+        bundle_phase=bundle_phase,
+        checkpoint_time=checkpoint_time,
+        profile=profile,
+    ):
+        note = (
+            f"{job.job_name}: already completed for as_of_date={job.as_of_date} "
+            f"phase={bundle_phase} checkpoint={checkpoint_time or '-'} profile={profile or '-'}."
+        )
+        job.skip(note, status="SKIPPED_ALREADY_DONE")
+        return job_result_from_context(job, notes=note, row_count=0)
+    return None
+
+
+def _refresh_release_views(
+    job: JobRunContext,
+    *,
+    settings: Settings,
+    connection,
+    as_of_date: date,
+) -> None:
+    job.run_step(
+        "build_report_index",
+        build_report_index,
+        settings,
+        connection=connection,
+        job_run_id=job.run_id,
+        critical=False,
+    )
+    job.run_step(
+        "build_ui_freshness_snapshot",
+        build_ui_freshness_snapshot,
+        settings,
+        connection=connection,
+        job_run_id=job.run_id,
+        critical=False,
+    )
+    job.run_step(
+        "build_latest_app_snapshot",
+        build_latest_app_snapshot,
+        settings,
+        connection=connection,
+        as_of_date=as_of_date,
+        job_run_id=job.run_id,
+        critical=False,
+    )
 
 
 def run_daily_research_pipeline(
@@ -90,6 +251,8 @@ def run_daily_research_pipeline(
     as_of_date: date | None = None,
     trigger_type: str = TriggerType.MANUAL,
     dry_run: bool = False,
+    run_training: bool = True,
+    publish_discord: bool = True,
     parent_run_id: str | None = None,
     root_run_id: str | None = None,
     recovery_of_run_id: str | None = None,
@@ -115,7 +278,13 @@ def run_daily_research_pipeline(
             if dry_run:
                 job.skip("Dry-run: research pipeline step skipped.")
             else:
-                job.run_step("daily_pipeline", run_daily_pipeline_job, settings)
+                job.run_step(
+                    "daily_pipeline",
+                    run_daily_pipeline_job,
+                    settings,
+                    run_training=run_training,
+                    publish_discord=publish_discord,
+                )
             job.run_step(
                 "check_pipeline_dependencies",
                 check_pipeline_dependencies,
@@ -404,4 +573,918 @@ def run_ops_maintenance_bundle(
             return job_result_from_context(
                 job,
                 notes=f"Ops maintenance bundle completed for {target_date.isoformat()}.",
+            )
+
+
+def _scheduler_target_date(
+    settings: Settings,
+    *,
+    requested_date: date | None,
+    connection,
+) -> date:
+    target = requested_date or today_local(settings.app.timezone)
+    return resolve_reference_trading_date(settings, target_date=target, connection=connection)
+
+
+def _mark_audit_suite(
+    job: JobRunContext,
+    *,
+    label: str,
+    suite,
+) -> None:
+    if suite.fail_count:
+        job.mark_degraded(f"{label}: fail={suite.fail_count}")
+    elif suite.warn_count:
+        job.mark_degraded(f"{label}: warn={suite.warn_count}")
+
+
+def run_news_sync_bundle(
+    settings: Settings,
+    *,
+    as_of_date: date | None = None,
+    profile: str = "after_close",
+    trigger_type: str = TriggerType.MANUAL,
+    dry_run: bool = False,
+    force: bool = False,
+    parent_run_id: str | None = None,
+    root_run_id: str | None = None,
+    recovery_of_run_id: str | None = None,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    ensure_storage_layout(settings)
+    requested_date = as_of_date or today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        target_date = _scheduler_target_date(
+            settings,
+            requested_date=requested_date,
+            connection=connection,
+        )
+        with JobRunContext(
+            settings,
+            connection,
+            job_name="run_news_sync_bundle",
+            as_of_date=target_date,
+            trigger_type=trigger_type,
+            dry_run=dry_run,
+            parent_run_id=parent_run_id,
+            root_run_id=root_run_id,
+            recovery_of_run_id=recovery_of_run_id,
+            policy_config_path=policy_config_path,
+            lock_name=SCHEDULER_GLOBAL_LOCK,
+            notes=f"Scheduler news sync bundle profile={profile} for {requested_date.isoformat()}",
+            details={"bundle_phase": "news_sync", "profile": profile},
+        ) as job:
+            skipped = _skip_if_non_trading_day(
+                job,
+                target_date=requested_date,
+                label=f"run_news_sync_bundle[{profile}]",
+            )
+            if skipped is not None:
+                return skipped
+            completed = _skip_if_already_completed(
+                job,
+                bundle_phase="news_sync",
+                profile=profile,
+            )
+            if completed is not None and not force:
+                return completed
+            collection_dates = resolve_news_collection_dates(
+                settings,
+                target_date=requested_date,
+                profile=profile,
+                connection=connection,
+            )
+            if dry_run:
+                job.skip(
+                    f"Dry-run: news sync skipped for profile={profile} dates="
+                    f"{', '.join(item.isoformat() for item in collection_dates)}.",
+                )
+            else:
+                for index, signal_date in enumerate(collection_dates, start=1):
+                    job.run_step(
+                        f"sync_news_metadata_{index:02d}",
+                        sync_news_metadata,
+                        settings,
+                        signal_date=signal_date,
+                        mode="market_and_focus",
+                        critical=False,
+                    )
+                _refresh_release_views(
+                    job,
+                    settings=settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                )
+                job.run_step(
+                    "materialize_health_snapshots",
+                    materialize_health_snapshots,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    policy_config_path=policy_config_path,
+                    critical=False,
+                )
+            notes = (
+                f"News sync bundle completed. profile={profile} "
+                f"dates={', '.join(item.isoformat() for item in collection_dates)}"
+            )
+            return job_result_from_context(job, notes=notes, row_count=len(collection_dates))
+
+
+def run_daily_close_bundle(
+    settings: Settings,
+    *,
+    as_of_date: date | None = None,
+    trigger_type: str = TriggerType.MANUAL,
+    dry_run: bool = False,
+    force: bool = False,
+    publish_discord: bool = True,
+    parent_run_id: str | None = None,
+    root_run_id: str | None = None,
+    recovery_of_run_id: str | None = None,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    ensure_storage_layout(settings)
+    requested_date = as_of_date or today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        target_date = _scheduler_target_date(
+            settings,
+            requested_date=requested_date,
+            connection=connection,
+        )
+        with JobRunContext(
+            settings,
+            connection,
+            job_name="run_daily_close_bundle",
+            as_of_date=target_date,
+            trigger_type=trigger_type,
+            dry_run=dry_run,
+            parent_run_id=parent_run_id,
+            root_run_id=root_run_id,
+            recovery_of_run_id=recovery_of_run_id,
+            policy_config_path=policy_config_path,
+            lock_name=SCHEDULER_GLOBAL_LOCK,
+            notes=f"Scheduler daily close bundle for {target_date.isoformat()}",
+            details={"bundle_phase": "daily_close", "profile": "final_news_and_report"},
+        ) as job:
+            skipped = _skip_if_non_trading_day(
+                job,
+                target_date=requested_date,
+                label="run_daily_close_bundle",
+            )
+            if skipped is not None:
+                return skipped
+            completed = _skip_if_already_completed(job, bundle_phase="daily_close")
+            if completed is not None and not force:
+                return completed
+            if dry_run:
+                job.skip("Dry-run: daily close bundle skipped.")
+            else:
+                job.run_step(
+                    "daily_pipeline",
+                    run_daily_pipeline_job,
+                    settings,
+                    run_training=False,
+                    publish_discord=publish_discord,
+                )
+                job.run_step(
+                    "build_portfolio_candidate_book",
+                    build_portfolio_candidate_book,
+                    settings,
+                    as_of_date=target_date,
+                    policy_config_path=policy_config_path,
+                )
+                job.run_step(
+                    "validate_portfolio_candidate_book",
+                    validate_portfolio_candidate_book,
+                    settings,
+                    as_of_date=target_date,
+                    critical=False,
+                )
+                job.run_step(
+                    "materialize_portfolio_target_book",
+                    materialize_portfolio_target_book,
+                    settings,
+                    as_of_date=target_date,
+                    policy_config_path=policy_config_path,
+                )
+                plan_result = job.run_step(
+                    "materialize_portfolio_rebalance_plan",
+                    materialize_portfolio_rebalance_plan,
+                    settings,
+                    as_of_date=target_date,
+                    policy_config_path=policy_config_path,
+                )
+                job.run_step(
+                    "materialize_portfolio_position_snapshots",
+                    materialize_portfolio_position_snapshots,
+                    settings,
+                    as_of_date=target_date,
+                    policy_config_path=policy_config_path,
+                )
+                session_row = connection.execute(
+                    """
+                    SELECT MAX(session_date)
+                    FROM fact_portfolio_rebalance_plan
+                    WHERE as_of_date = ?
+                    """,
+                    [target_date],
+                ).fetchone()
+                if plan_result is not None and session_row and session_row[0] is not None:
+                    job.run_step(
+                        "materialize_portfolio_nav",
+                        materialize_portfolio_nav,
+                        settings,
+                        start_date=session_row[0],
+                        end_date=session_row[0],
+                        policy_config_path=policy_config_path,
+                    )
+                job.run_step(
+                    "render_daily_research_report",
+                    render_daily_research_report,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    dry_run=dry_run,
+                    critical=False,
+                )
+                job.run_step(
+                    "render_portfolio_report",
+                    render_portfolio_report,
+                    settings,
+                    as_of_date=target_date,
+                    dry_run=dry_run,
+                    critical=False,
+                )
+                _refresh_release_views(
+                    job,
+                    settings=settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                )
+                job.run_step(
+                    "materialize_health_snapshots",
+                    materialize_health_snapshots,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    policy_config_path=policy_config_path,
+                    critical=False,
+                )
+            return job_result_from_context(
+                job,
+                notes=(
+                    "Daily close bundle completed with final news recollect, "
+                    "selection, portfolio, and post-close reports."
+                ),
+            )
+
+
+def run_evaluation_bundle(
+    settings: Settings,
+    *,
+    as_of_date: date | None = None,
+    trigger_type: str = TriggerType.MANUAL,
+    dry_run: bool = False,
+    force: bool = False,
+    parent_run_id: str | None = None,
+    root_run_id: str | None = None,
+    recovery_of_run_id: str | None = None,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    ensure_storage_layout(settings)
+    requested_date = as_of_date or today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        target_date = _scheduler_target_date(
+            settings,
+            requested_date=requested_date,
+            connection=connection,
+        )
+        start_date = _resolve_recent_start_date(
+            settings,
+            end_date=target_date,
+            trading_days=60,
+            connection=connection,
+        )
+        with JobRunContext(
+            settings,
+            connection,
+            job_name="run_evaluation_bundle",
+            as_of_date=target_date,
+            trigger_type=trigger_type,
+            dry_run=dry_run,
+            parent_run_id=parent_run_id,
+            root_run_id=root_run_id,
+            recovery_of_run_id=recovery_of_run_id,
+            policy_config_path=policy_config_path,
+            lock_name=SCHEDULER_GLOBAL_LOCK,
+            notes=f"Scheduler evaluation bundle through {target_date.isoformat()}",
+            details={"bundle_phase": "evaluation"},
+        ) as job:
+            skipped = _skip_if_non_trading_day(
+                job,
+                target_date=requested_date,
+                label="run_evaluation_bundle",
+            )
+            if skipped is not None:
+                return skipped
+            completed = _skip_if_already_completed(job, bundle_phase="evaluation")
+            if completed is not None and not force:
+                return completed
+            if dry_run:
+                job.skip("Dry-run: evaluation bundle skipped.")
+            else:
+                job.run_step("evaluation_pipeline", run_evaluation_job, settings)
+                job.run_step(
+                    "evaluate_portfolio_policies",
+                    evaluate_portfolio_policies,
+                    settings,
+                    start_date=start_date,
+                    end_date=target_date,
+                    policy_config_path=policy_config_path,
+                    critical=False,
+                )
+                job.run_step(
+                    "render_evaluation_report",
+                    render_evaluation_report,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    dry_run=dry_run,
+                    critical=False,
+                )
+                _refresh_release_views(
+                    job,
+                    settings=settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                )
+                job.run_step(
+                    "materialize_health_snapshots",
+                    materialize_health_snapshots,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    policy_config_path=policy_config_path,
+                    critical=False,
+                )
+            return job_result_from_context(
+                job,
+                notes=f"Evaluation bundle completed for {target_date.isoformat()}.",
+            )
+
+
+def run_intraday_assist_bundle(
+    settings: Settings,
+    *,
+    as_of_date: date | None = None,
+    checkpoint_time: str | None = None,
+    trigger_type: str = TriggerType.MANUAL,
+    dry_run: bool = False,
+    force: bool = False,
+    parent_run_id: str | None = None,
+    root_run_id: str | None = None,
+    recovery_of_run_id: str | None = None,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    ensure_storage_layout(settings)
+    requested_date = as_of_date or today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        due_checkpoint = checkpoint_time or resolve_due_intraday_checkpoint(settings)
+        checkpoint_key = due_checkpoint or "PREP"
+        with JobRunContext(
+            settings,
+            connection,
+            job_name="run_intraday_assist_bundle",
+            as_of_date=requested_date,
+            trigger_type=trigger_type,
+            dry_run=dry_run,
+            parent_run_id=parent_run_id,
+            root_run_id=root_run_id,
+            recovery_of_run_id=recovery_of_run_id,
+            policy_config_path=policy_config_path,
+            lock_name=SCHEDULER_GLOBAL_LOCK,
+            notes=f"Scheduler intraday assist bundle for {requested_date.isoformat()}",
+            details={"bundle_phase": "intraday_assist", "checkpoint_time": checkpoint_key},
+        ) as job:
+            skipped = _skip_if_non_trading_day(
+                job,
+                target_date=requested_date,
+                label="run_intraday_assist_bundle",
+            )
+            if skipped is not None:
+                return skipped
+            completed = _skip_if_already_completed(
+                job,
+                bundle_phase="intraday_assist",
+                checkpoint_time=checkpoint_key,
+            )
+            if completed is not None and not force:
+                return completed
+            selection_date = resolve_previous_trading_date(
+                settings,
+                target_date=requested_date,
+                connection=connection,
+            )
+            if selection_date is None:
+                job.block(
+                    "run_intraday_assist_bundle: "
+                    f"no previous trading date for {requested_date.isoformat()}."
+                )
+                return job_result_from_context(
+                    job,
+                    notes="Intraday assist blocked: missing previous trading day.",
+                )
+            if dry_run:
+                job.skip(
+                    "Dry-run: intraday assist skipped for "
+                    f"session={requested_date.isoformat()} checkpoint={checkpoint_key}."
+                )
+            else:
+                job.run_step(
+                    "materialize_intraday_candidate_session",
+                    materialize_intraday_candidate_session,
+                    settings,
+                    selection_date=selection_date,
+                    horizons=list(DEFAULT_HORIZONS),
+                    max_candidates=30,
+                    ranking_version=SELECTION_ENGINE_V2_VERSION,
+                    critical=False,
+                )
+                job.run_step(
+                    "backfill_intraday_candidate_bars",
+                    backfill_intraday_candidate_bars,
+                    settings,
+                    session_date=requested_date,
+                    horizons=list(DEFAULT_HORIZONS),
+                    ranking_version=SELECTION_ENGINE_V2_VERSION,
+                    critical=False,
+                )
+                job.run_step(
+                    "backfill_intraday_candidate_trade_summary",
+                    backfill_intraday_candidate_trade_summary,
+                    settings,
+                    session_date=requested_date,
+                    horizons=list(DEFAULT_HORIZONS),
+                    ranking_version=SELECTION_ENGINE_V2_VERSION,
+                    checkpoint_times=list(DEFAULT_INTRADAY_CHECKPOINTS),
+                    critical=False,
+                )
+                job.run_step(
+                    "backfill_intraday_candidate_quote_summary",
+                    backfill_intraday_candidate_quote_summary,
+                    settings,
+                    session_date=requested_date,
+                    horizons=list(DEFAULT_HORIZONS),
+                    ranking_version=SELECTION_ENGINE_V2_VERSION,
+                    checkpoint_times=list(DEFAULT_INTRADAY_CHECKPOINTS),
+                    critical=False,
+                )
+                if due_checkpoint is None:
+                    job.mark_degraded(
+                        "Intraday assist prepared candidate session but checkpoint is not due yet."
+                    )
+                else:
+                    job.run_step(
+                        "materialize_intraday_signal_snapshots",
+                        materialize_intraday_signal_snapshots,
+                        settings,
+                        session_date=requested_date,
+                        checkpoint=due_checkpoint,
+                        horizons=list(DEFAULT_HORIZONS),
+                        ranking_version=SELECTION_ENGINE_V2_VERSION,
+                        critical=False,
+                    )
+                    job.run_step(
+                        "materialize_intraday_entry_decisions",
+                        materialize_intraday_entry_decisions,
+                        settings,
+                        session_date=requested_date,
+                        checkpoint=due_checkpoint,
+                        horizons=list(DEFAULT_HORIZONS),
+                        ranking_version=SELECTION_ENGINE_V2_VERSION,
+                        critical=False,
+                    )
+                    job.run_step(
+                        "materialize_intraday_adjusted_entry_decisions",
+                        materialize_intraday_adjusted_entry_decisions,
+                        settings,
+                        session_date=requested_date,
+                        checkpoint=due_checkpoint,
+                        horizons=list(DEFAULT_HORIZONS),
+                        ranking_version=SELECTION_ENGINE_V2_VERSION,
+                        critical=False,
+                    )
+                    job.run_step(
+                        "materialize_intraday_meta_predictions",
+                        materialize_intraday_meta_predictions,
+                        settings,
+                        session_date=requested_date,
+                        horizons=list(DEFAULT_HORIZONS),
+                        ranking_version=SELECTION_ENGINE_V2_VERSION,
+                        critical=False,
+                    )
+                    job.run_step(
+                        "materialize_intraday_final_actions",
+                        materialize_intraday_final_actions,
+                        settings,
+                        session_date=requested_date,
+                        horizons=list(DEFAULT_HORIZONS),
+                        ranking_version=SELECTION_ENGINE_V2_VERSION,
+                        critical=False,
+                    )
+                    job.run_step(
+                        "render_intraday_summary_report",
+                        render_intraday_summary_report,
+                        settings,
+                        connection=connection,
+                        session_date=requested_date,
+                        job_run_id=job.run_id,
+                        dry_run=dry_run,
+                        critical=False,
+                    )
+                _refresh_release_views(
+                    job,
+                    settings=settings,
+                    connection=connection,
+                    as_of_date=requested_date,
+                )
+                job.run_step(
+                    "materialize_health_snapshots",
+                    materialize_health_snapshots,
+                    settings,
+                    connection=connection,
+                    as_of_date=requested_date,
+                    job_run_id=job.run_id,
+                    policy_config_path=policy_config_path,
+                    critical=False,
+                )
+            return job_result_from_context(
+                job,
+                notes=(
+                    f"Intraday assist bundle completed for {requested_date.isoformat()} "
+                    f"checkpoint={checkpoint_key}."
+                ),
+            )
+
+
+def run_weekly_training_bundle(
+    settings: Settings,
+    *,
+    as_of_date: date | None = None,
+    trigger_type: str = TriggerType.MANUAL,
+    dry_run: bool = False,
+    force: bool = False,
+    parent_run_id: str | None = None,
+    root_run_id: str | None = None,
+    recovery_of_run_id: str | None = None,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    ensure_storage_layout(settings)
+    requested_date = as_of_date or today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        target_date = _scheduler_target_date(
+            settings,
+            requested_date=requested_date,
+            connection=connection,
+        )
+        start_date = _resolve_recent_start_date(
+            settings,
+            end_date=target_date,
+            trading_days=60,
+            connection=connection,
+        )
+        with JobRunContext(
+            settings,
+            connection,
+            job_name="run_weekly_training_bundle",
+            as_of_date=target_date,
+            trigger_type=trigger_type,
+            dry_run=dry_run,
+            parent_run_id=parent_run_id,
+            root_run_id=root_run_id,
+            recovery_of_run_id=recovery_of_run_id,
+            policy_config_path=policy_config_path,
+            lock_name=SCHEDULER_GLOBAL_LOCK,
+            notes=f"Scheduler weekly training candidate bundle through {target_date.isoformat()}",
+            details={"bundle_phase": "weekly_training_candidate"},
+        ) as job:
+            completed = _skip_if_already_completed(job, bundle_phase="weekly_training_candidate")
+            if completed is not None and not force:
+                return completed
+            if dry_run:
+                job.skip("Dry-run: weekly training candidate bundle skipped.")
+            else:
+                job.run_step(
+                    "train_intraday_meta_models",
+                    train_intraday_meta_models,
+                    settings,
+                    train_end_date=target_date,
+                    horizons=list(DEFAULT_HORIZONS),
+                    start_session_date=start_date,
+                    validation_sessions=10,
+                    critical=False,
+                )
+                job.run_step(
+                    "run_intraday_meta_walkforward",
+                    run_intraday_meta_walkforward,
+                    settings,
+                    start_session_date=start_date,
+                    end_session_date=target_date,
+                    mode="rolling",
+                    train_sessions=40,
+                    validation_sessions=10,
+                    test_sessions=10,
+                    step_sessions=5,
+                    horizons=list(DEFAULT_HORIZONS),
+                    critical=False,
+                )
+                job.run_step(
+                    "evaluate_intraday_meta_models",
+                    evaluate_intraday_meta_models,
+                    settings,
+                    start_session_date=start_date,
+                    end_session_date=target_date,
+                    horizons=list(DEFAULT_HORIZONS),
+                    critical=False,
+                )
+                job.mark_degraded(
+                    "Automatic weekly training only creates retrain candidates. "
+                    "Active meta-model is never auto-promoted."
+                )
+                job.run_step(
+                    "materialize_health_snapshots",
+                    materialize_health_snapshots,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    policy_config_path=policy_config_path,
+                    critical=False,
+                )
+            return job_result_from_context(
+                job,
+                notes=(
+                    "Weekly training candidate bundle completed. "
+                    "Candidates were generated without activating any model."
+                ),
+            )
+
+
+def run_weekly_calibration_bundle(
+    settings: Settings,
+    *,
+    as_of_date: date | None = None,
+    trigger_type: str = TriggerType.MANUAL,
+    dry_run: bool = False,
+    force: bool = False,
+    parent_run_id: str | None = None,
+    root_run_id: str | None = None,
+    recovery_of_run_id: str | None = None,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    ensure_storage_layout(settings)
+    requested_date = as_of_date or today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        target_date = _scheduler_target_date(
+            settings,
+            requested_date=requested_date,
+            connection=connection,
+        )
+        start_date = _resolve_recent_start_date(
+            settings,
+            end_date=target_date,
+            trading_days=60,
+            connection=connection,
+        )
+        checkpoints = list(DEFAULT_INTRADAY_CHECKPOINTS)
+        scopes = ["GLOBAL", "HORIZON", "HORIZON_CHECKPOINT", "HORIZON_REGIME_CLUSTER"]
+        with JobRunContext(
+            settings,
+            connection,
+            job_name="run_weekly_calibration_bundle",
+            as_of_date=target_date,
+            trigger_type=trigger_type,
+            dry_run=dry_run,
+            parent_run_id=parent_run_id,
+            root_run_id=root_run_id,
+            recovery_of_run_id=recovery_of_run_id,
+            policy_config_path=policy_config_path,
+            lock_name=SCHEDULER_GLOBAL_LOCK,
+            notes=f"Scheduler weekly calibration bundle through {target_date.isoformat()}",
+            details={"bundle_phase": "weekly_calibration"},
+        ) as job:
+            completed = _skip_if_already_completed(job, bundle_phase="weekly_calibration")
+            if completed is not None and not force:
+                return completed
+            if dry_run:
+                job.skip("Dry-run: weekly calibration bundle skipped.")
+            else:
+                job.run_step(
+                    "materialize_intraday_policy_candidates",
+                    materialize_intraday_policy_candidates,
+                    settings,
+                    search_space_version="pcal_v1",
+                    horizons=list(DEFAULT_HORIZONS),
+                    checkpoints=checkpoints,
+                    scopes=scopes,
+                    critical=False,
+                )
+                job.run_step(
+                    "run_intraday_policy_calibration",
+                    run_intraday_policy_calibration,
+                    settings,
+                    start_session_date=start_date,
+                    end_session_date=target_date,
+                    horizons=list(DEFAULT_HORIZONS),
+                    checkpoints=checkpoints,
+                    objective_version="ip_obj_v1",
+                    split_version="wf_40_10_10_step5",
+                    search_space_version="pcal_v1",
+                    train_sessions=40,
+                    validation_sessions=10,
+                    test_sessions=10,
+                    step_sessions=5,
+                    critical=False,
+                )
+                job.run_step(
+                    "run_intraday_policy_walkforward",
+                    run_intraday_policy_walkforward,
+                    settings,
+                    start_session_date=start_date,
+                    end_session_date=target_date,
+                    mode="rolling",
+                    train_sessions=40,
+                    validation_sessions=10,
+                    test_sessions=10,
+                    step_sessions=5,
+                    horizons=list(DEFAULT_HORIZONS),
+                    checkpoints=checkpoints,
+                    objective_version="ip_obj_v1",
+                    split_version="wf_40_10_10_step5",
+                    search_space_version="pcal_v1",
+                    critical=False,
+                )
+                job.run_step(
+                    "evaluate_intraday_policy_ablation",
+                    evaluate_intraday_policy_ablation,
+                    settings,
+                    start_session_date=start_date,
+                    end_session_date=target_date,
+                    horizons=list(DEFAULT_HORIZONS),
+                    base_policy_source="latest_recommendation",
+                    critical=False,
+                )
+                job.run_step(
+                    "materialize_intraday_policy_recommendations",
+                    materialize_intraday_policy_recommendations,
+                    settings,
+                    as_of_date=target_date,
+                    horizons=list(DEFAULT_HORIZONS),
+                    minimum_test_sessions=10,
+                    critical=False,
+                )
+                job.run_step(
+                    "calibrate_intraday_meta_thresholds",
+                    calibrate_intraday_meta_thresholds,
+                    settings,
+                    as_of_date=target_date,
+                    horizons=list(DEFAULT_HORIZONS),
+                    critical=False,
+                )
+                job.mark_degraded(
+                    "Automatic weekly calibration updates recommendations and thresholds only. "
+                    "Active policy and active meta-model are never auto-activated."
+                )
+                job.run_step(
+                    "materialize_health_snapshots",
+                    materialize_health_snapshots,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    policy_config_path=policy_config_path,
+                    critical=False,
+                )
+            return job_result_from_context(
+                job,
+                notes=(
+                    "Weekly calibration bundle completed. "
+                    "Recommendations were refreshed without automatic activation."
+                ),
+            )
+
+
+def run_daily_audit_lite_bundle(
+    settings: Settings,
+    *,
+    as_of_date: date | None = None,
+    trigger_type: str = TriggerType.MANUAL,
+    dry_run: bool = False,
+    force: bool = False,
+    parent_run_id: str | None = None,
+    root_run_id: str | None = None,
+    recovery_of_run_id: str | None = None,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    ensure_storage_layout(settings)
+    requested_date = as_of_date or today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        target_date = _scheduler_target_date(
+            settings,
+            requested_date=requested_date,
+            connection=connection,
+        )
+        with JobRunContext(
+            settings,
+            connection,
+            job_name="run_daily_audit_lite_bundle",
+            as_of_date=target_date,
+            trigger_type=trigger_type,
+            dry_run=dry_run,
+            parent_run_id=parent_run_id,
+            root_run_id=root_run_id,
+            recovery_of_run_id=recovery_of_run_id,
+            policy_config_path=policy_config_path,
+            lock_name=SCHEDULER_GLOBAL_LOCK,
+            notes=f"Scheduler daily audit-lite bundle for {target_date.isoformat()}",
+            details={"bundle_phase": "daily_audit_lite"},
+        ) as job:
+            completed = _skip_if_already_completed(job, bundle_phase="daily_audit_lite")
+            if completed is not None and not force:
+                return completed
+            if dry_run:
+                job.skip("Dry-run: daily audit-lite bundle skipped.")
+            else:
+                latest_suite = job.run_step(
+                    "run_latest_layer_checks",
+                    run_latest_layer_checks,
+                    settings,
+                    connection=connection,
+                    critical=False,
+                )
+                artifact_suite = job.run_step(
+                    "run_artifact_reference_checks",
+                    run_artifact_reference_checks,
+                    settings,
+                    connection=connection,
+                    critical=False,
+                )
+                release_validation = job.run_step(
+                    "validate_release_candidate",
+                    validate_release_candidate,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    critical=False,
+                )
+                if latest_suite is not None:
+                    _mark_audit_suite(job, label="latest_layer_checks", suite=latest_suite)
+                if artifact_suite is not None:
+                    _mark_audit_suite(job, label="artifact_reference_checks", suite=artifact_suite)
+                if release_validation is not None and release_validation.warning_count:
+                    job.mark_degraded(
+                        f"release_candidate_validation: warnings={release_validation.warning_count}"
+                    )
+                job.run_step(
+                    "render_release_candidate_checklist",
+                    render_release_candidate_checklist,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    dry_run=dry_run,
+                    critical=False,
+                )
+                _refresh_release_views(
+                    job,
+                    settings=settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                )
+                job.run_step(
+                    "materialize_health_snapshots",
+                    materialize_health_snapshots,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    policy_config_path=policy_config_path,
+                    critical=False,
+                )
+            return job_result_from_context(
+                job,
+                notes=f"Daily audit-lite bundle completed for {target_date.isoformat()}.",
             )

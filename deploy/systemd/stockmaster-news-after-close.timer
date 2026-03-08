@@ -1,0 +1,11 @@
+[Unit]
+Description=StockMaster Post-close News Sync Timer
+
+[Timer]
+Unit=stockmaster-scheduler@news-after-close.service
+OnCalendar=Mon..Fri *-*-* 16:10:00
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

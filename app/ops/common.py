@@ -11,6 +11,9 @@ class JobStatus(StrEnum):
     PARTIAL_SUCCESS = "PARTIAL_SUCCESS"
     DEGRADED_SUCCESS = "DEGRADED_SUCCESS"
     SKIPPED = "SKIPPED"
+    SKIPPED_NON_TRADING_DAY = "SKIPPED_NON_TRADING_DAY"
+    SKIPPED_ALREADY_DONE = "SKIPPED_ALREADY_DONE"
+    SKIPPED_LOCKED = "SKIPPED_LOCKED"
     BLOCKED = "BLOCKED"
     FAILED = "FAILED"
 
@@ -81,7 +84,12 @@ def manifest_status(status: str) -> str:
     normalized = str(status).upper()
     if normalized in {JobStatus.SUCCESS, JobStatus.PARTIAL_SUCCESS, JobStatus.DEGRADED_SUCCESS}:
         return "success"
-    if normalized == JobStatus.SKIPPED:
+    if normalized in {
+        JobStatus.SKIPPED,
+        JobStatus.SKIPPED_NON_TRADING_DAY,
+        JobStatus.SKIPPED_ALREADY_DONE,
+        JobStatus.SKIPPED_LOCKED,
+    }:
         return "skipped"
     if normalized == JobStatus.BLOCKED:
         return "blocked"

@@ -1,0 +1,11 @@
+[Unit]
+Description=StockMaster Morning News Sync Timer
+
+[Timer]
+Unit=stockmaster-scheduler@news-morning.service
+OnCalendar=Mon..Fri *-*-* 08:30:00
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target
