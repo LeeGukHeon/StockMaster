@@ -1,0 +1,51 @@
+portfolio_policy_id: defensive_long_only
+portfolio_policy_version: defensive_long_only_v1
+display_name: 방어형 롱온리 v1
+description: >
+  현금 비중과 single-name 제약을 강화해 drawdown 완화에 집중하는
+  보수형 포트폴리오 정책입니다.
+primary_horizon: 5
+tactical_horizon: 1
+virtual_capital_krw: 100000000
+execution_modes:
+  - OPEN_ALL
+  - TIMING_ASSISTED
+rank_universe_limit: 20
+min_names: 4
+max_names: 6
+entry_score_floor: 0.010
+hold_score_floor: 0.000
+hard_exit_score_floor: -0.015
+lower_band_floor: -0.025
+vol_floor: 0.025
+max_single_weight: 0.15
+max_sector_weight: 0.30
+max_kosdaq_weight: 0.20
+max_turnover_ratio: 0.28
+adv20_participation_limit: 0.015
+liquidity_min_adv20_krw: 3000000000
+hold_hysteresis: 0.80
+current_holding_bonus: 0.020
+waitlist_rank_limit: 8
+target_cash_floor_by_regime:
+  panic: 0.40
+  risk_off: 0.25
+  neutral: 0.15
+  risk_on: 0.08
+  euphoria: 0.12
+target_cash_ceiling_by_regime:
+  panic: 0.50
+  risk_off: 0.32
+  neutral: 0.20
+  risk_on: 0.10
+  euphoria: 0.16
+weights:
+  tactical_alpha: 0.20
+  lower_band: 0.25
+  flow: 0.12
+  regime: 0.10
+  current_holding_bonus: 0.08
+  data_confidence_bonus: 0.05
+  uncertainty_penalty: 0.40
+  disagreement_penalty: 0.30
+  implementation_penalty: 0.35

@@ -905,6 +905,91 @@ python scripts/publish_discord_intraday_meta_summary.py --as-of-date 2026-03-09 
 python scripts/validate_intraday_meta_model_framework.py --as-of-date 2026-03-09 --horizons 1 5
 ```
 
+## TICKET-011 integrated portfolio / capital allocation / risk budget
+
+TICKET-011 adds a deterministic long-only portfolio proposal layer downstream of selection engine v2 and the intraday timing overlay.
+
+Execution modes:
+
+- `OPEN_ALL`: enter all eligible names without timing gating
+- `TIMING_ASSISTED`: gate new entries and adds with intraday final action, while hold/trim/exit still follow deterministic portfolio rules
+
+Policy configs:
+
+- [balanced_long_only_v1.yaml](/d:/MyApps/StockMaster/config/portfolio_policies/balanced_long_only_v1.yaml)
+- [defensive_long_only_v1.yaml](/d:/MyApps/StockMaster/config/portfolio_policies/defensive_long_only_v1.yaml)
+
+Allocation flow:
+
+1. Build `fact_portfolio_candidate` from selection v2, alpha bands, flow, regime, and intraday final action.
+2. Compute `effective_alpha_long` and `risk_scaled_conviction`.
+3. Rank candidates with explicit tie-break order:
+   `current_holding_flag DESC -> candidate_rank ASC -> symbol ASC`
+4. Allocate deterministic target weights with regime-aware cash, single-name cap, sector cap, KOSDAQ cap, turnover cap, and liquidity cap.
+5. Materialize rebalance actions in this order:
+   `EXIT -> TRIM -> HOLD -> ADD -> BUY_NEW -> SKIP -> NO_ACTION`
+6. Build position snapshots and NAV snapshots.
+7. Evaluate policy performance for `OPEN_ALL`, `TIMING_ASSISTED`, and an equal-weight comparison baseline.
+
+Weight calculation:
+
+- `effective_alpha_long` starts from primary-horizon alpha
+- tactical alpha, lower band, flow, and regime fit can add support
+- uncertainty, disagreement, and implementation penalty reduce conviction
+- `risk_scaled_conviction = effective_alpha_long / max(volatility_proxy, vol_floor)`
+- target weights are normalized from positive conviction only and then clipped by cap-aware iterative allocation
+- fractional shares are forbidden and residual cash is tracked explicitly
+
+Policy constraints:
+
+- long-only only
+- no leverage / no margin / no short / no derivatives
+- gross exposure cannot exceed 100%
+- negative weights are forbidden
+- hold hysteresis reduces churn
+- turnover overflow becomes waitlist / `SKIP`, not forced entry
+
+TICKET-011 commands:
+
+```powershell
+python scripts/freeze_active_portfolio_policy.py --as-of-date 2026-03-06 --policy-config-path config/portfolio_policies/balanced_long_only_v1.yaml
+python scripts/build_portfolio_candidate_book.py --as-of-date 2026-03-06
+python scripts/validate_portfolio_candidate_book.py --as-of-date 2026-03-06
+python scripts/materialize_portfolio_target_book.py --as-of-date 2026-03-06
+python scripts/materialize_portfolio_rebalance_plan.py --as-of-date 2026-03-06
+python scripts/materialize_portfolio_position_snapshots.py --as-of-date 2026-03-06
+python scripts/materialize_portfolio_nav.py --start-date 2026-03-03 --end-date 2026-03-09
+python scripts/run_portfolio_walkforward.py --start-as-of-date 2026-03-03 --end-as-of-date 2026-03-06
+python scripts/evaluate_portfolio_policies.py --start-date 2026-03-03 --end-date 2026-03-09
+python scripts/render_portfolio_report.py --as-of-date 2026-03-06 --dry-run
+python scripts/publish_discord_portfolio_summary.py --as-of-date 2026-03-06 --dry-run
+python scripts/validate_portfolio_framework.py --as-of-date 2026-03-06
+```
+
+Stored contracts:
+
+- `fact_portfolio_policy_registry`
+- `fact_portfolio_candidate`
+- `fact_portfolio_target_book`
+- `fact_portfolio_rebalance_plan`
+- `fact_portfolio_position_snapshot`
+- `fact_portfolio_nav_snapshot`
+- `fact_portfolio_constraint_event`
+- `fact_portfolio_evaluation_summary`
+
+Portfolio UI:
+
+- `포트폴리오 스튜디오`: active policy, target holdings, waitlist, blocked names, constraint summary
+- `포트폴리오 평가`: NAV, drawdown, turnover, holding count, policy comparison
+- `운영`: active portfolio policy registry, latest target/rebalance/nav/evaluation run state, rollback/report status
+
+Current known limitations:
+
+- this is still a proposal layer, not an execution system
+- the equal-weight comparison is a simple deterministic baseline, not a full optimizer benchmark
+- `TIMING_ASSISTED` only gates new entry and add actions
+- DuckDB remains effectively single-writer, so portfolio batch runs are safest when executed sequentially
+
 ### Stored contracts
 
 - `fact_model_training_run` extended for `model_domain = intraday_meta`

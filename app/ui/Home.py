@@ -431,6 +431,18 @@ navigation = st.navigation(
             icon=":material/timeline:",
             url_path="intraday-console",
         ),
+        st.Page(
+            PROJECT_ROOT / "app/ui/pages/08_Portfolio_Studio.py",
+            title="포트폴리오 스튜디오",
+            icon=":material/account_balance:",
+            url_path="portfolio-studio",
+        ),
+        st.Page(
+            PROJECT_ROOT / "app/ui/pages/09_Portfolio_Evaluation.py",
+            title="포트폴리오 평가",
+            icon=":material/analytics:",
+            url_path="portfolio-evaluation",
+        ),
     ],
     position="sidebar",
 )

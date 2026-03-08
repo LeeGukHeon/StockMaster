@@ -1,0 +1,51 @@
+portfolio_policy_id: balanced_long_only
+portfolio_policy_version: balanced_long_only_v1
+display_name: 균형형 롱온리 v1
+description: >
+  Selection v2와 intraday timing overlay를 downstream으로 받아
+  재현 가능한 장기 보유 제안 포트폴리오를 구성하는 기본 정책입니다.
+primary_horizon: 5
+tactical_horizon: 1
+virtual_capital_krw: 100000000
+execution_modes:
+  - OPEN_ALL
+  - TIMING_ASSISTED
+rank_universe_limit: 24
+min_names: 4
+max_names: 8
+entry_score_floor: 0.008
+hold_score_floor: -0.002
+hard_exit_score_floor: -0.020
+lower_band_floor: -0.030
+vol_floor: 0.020
+max_single_weight: 0.18
+max_sector_weight: 0.38
+max_kosdaq_weight: 0.30
+max_turnover_ratio: 0.35
+adv20_participation_limit: 0.02
+liquidity_min_adv20_krw: 2000000000
+hold_hysteresis: 0.70
+current_holding_bonus: 0.015
+waitlist_rank_limit: 6
+target_cash_floor_by_regime:
+  panic: 0.30
+  risk_off: 0.18
+  neutral: 0.10
+  risk_on: 0.05
+  euphoria: 0.08
+target_cash_ceiling_by_regime:
+  panic: 0.40
+  risk_off: 0.25
+  neutral: 0.14
+  risk_on: 0.08
+  euphoria: 0.12
+weights:
+  tactical_alpha: 0.25
+  lower_band: 0.20
+  flow: 0.15
+  regime: 0.10
+  current_holding_bonus: 0.05
+  data_confidence_bonus: 0.05
+  uncertainty_penalty: 0.35
+  disagreement_penalty: 0.25
+  implementation_penalty: 0.30

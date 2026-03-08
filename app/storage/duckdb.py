@@ -1060,6 +1060,254 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_portfolio_policy_registry (
+        active_portfolio_policy_id VARCHAR PRIMARY KEY,
+        portfolio_policy_id VARCHAR NOT NULL,
+        portfolio_policy_version VARCHAR NOT NULL,
+        display_name VARCHAR,
+        config_path VARCHAR,
+        config_hash VARCHAR,
+        policy_payload_json VARCHAR,
+        source_type VARCHAR,
+        promotion_type VARCHAR,
+        effective_from_date DATE NOT NULL,
+        effective_to_date DATE,
+        active_flag BOOLEAN NOT NULL,
+        rollback_of_active_portfolio_policy_id VARCHAR,
+        note VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_portfolio_candidate (
+        run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        session_date DATE,
+        execution_mode VARCHAR NOT NULL,
+        portfolio_policy_id VARCHAR NOT NULL,
+        portfolio_policy_version VARCHAR NOT NULL,
+        active_portfolio_policy_id VARCHAR,
+        symbol VARCHAR NOT NULL,
+        company_name VARCHAR,
+        market VARCHAR,
+        sector VARCHAR,
+        ranking_version VARCHAR,
+        primary_horizon INTEGER,
+        tactical_horizon INTEGER,
+        candidate_rank BIGINT,
+        current_holding_flag BOOLEAN,
+        current_shares BIGINT,
+        current_weight DOUBLE,
+        final_selection_value DOUBLE,
+        effective_alpha_long DOUBLE,
+        tactical_alpha DOUBLE,
+        lower_band DOUBLE,
+        flow_score DOUBLE,
+        regime_score DOUBLE,
+        uncertainty_score DOUBLE,
+        disagreement_score DOUBLE,
+        implementation_penalty_score DOUBLE,
+        volatility_proxy DOUBLE,
+        adv20_krw DOUBLE,
+        risk_scaled_conviction DOUBLE,
+        candidate_state VARCHAR,
+        timing_action VARCHAR,
+        timing_gate_status VARCHAR,
+        entry_eligible_flag BOOLEAN,
+        hold_eligible_flag BOOLEAN,
+        hard_exit_flag BOOLEAN,
+        blocked_reason VARCHAR,
+        tie_breaker_json VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, execution_mode, symbol)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_portfolio_target_book (
+        run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        session_date DATE,
+        execution_mode VARCHAR NOT NULL,
+        portfolio_policy_id VARCHAR NOT NULL,
+        portfolio_policy_version VARCHAR NOT NULL,
+        active_portfolio_policy_id VARCHAR,
+        symbol VARCHAR NOT NULL,
+        company_name VARCHAR,
+        market VARCHAR,
+        sector VARCHAR,
+        candidate_state VARCHAR,
+        target_rank BIGINT,
+        target_weight DOUBLE,
+        target_notional DOUBLE,
+        target_shares BIGINT,
+        target_price DOUBLE,
+        current_shares BIGINT,
+        current_weight DOUBLE,
+        score_value DOUBLE,
+        gate_status VARCHAR,
+        included_flag BOOLEAN,
+        blocked_flag BOOLEAN,
+        waitlist_flag BOOLEAN,
+        waitlist_rank BIGINT,
+        constraint_flags_json VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, execution_mode, symbol)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_portfolio_rebalance_plan (
+        run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        session_date DATE,
+        execution_mode VARCHAR NOT NULL,
+        portfolio_policy_id VARCHAR NOT NULL,
+        portfolio_policy_version VARCHAR NOT NULL,
+        active_portfolio_policy_id VARCHAR,
+        symbol VARCHAR NOT NULL,
+        company_name VARCHAR,
+        market VARCHAR,
+        sector VARCHAR,
+        rebalance_action VARCHAR,
+        action_sequence BIGINT,
+        gate_status VARCHAR,
+        candidate_state VARCHAR,
+        current_shares BIGINT,
+        target_shares BIGINT,
+        delta_shares BIGINT,
+        reference_price DOUBLE,
+        current_notional DOUBLE,
+        target_notional DOUBLE,
+        notional_delta DOUBLE,
+        turnover_contribution DOUBLE,
+        cash_delta DOUBLE,
+        waitlist_flag BOOLEAN,
+        blocked_reason VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, execution_mode, symbol)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_portfolio_position_snapshot (
+        run_id VARCHAR NOT NULL,
+        snapshot_date DATE NOT NULL,
+        execution_mode VARCHAR NOT NULL,
+        portfolio_policy_id VARCHAR NOT NULL,
+        portfolio_policy_version VARCHAR NOT NULL,
+        active_portfolio_policy_id VARCHAR,
+        symbol VARCHAR NOT NULL,
+        company_name VARCHAR,
+        market VARCHAR,
+        sector VARCHAR,
+        shares BIGINT,
+        average_cost DOUBLE,
+        close_price DOUBLE,
+        market_value DOUBLE,
+        target_weight DOUBLE,
+        actual_weight DOUBLE,
+        cash_like_flag BOOLEAN,
+        source_rebalance_run_id VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            snapshot_date,
+            execution_mode,
+            portfolio_policy_id,
+            portfolio_policy_version,
+            symbol
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_portfolio_nav_snapshot (
+        run_id VARCHAR NOT NULL,
+        snapshot_date DATE NOT NULL,
+        execution_mode VARCHAR NOT NULL,
+        portfolio_policy_id VARCHAR NOT NULL,
+        portfolio_policy_version VARCHAR NOT NULL,
+        active_portfolio_policy_id VARCHAR,
+        nav_value DOUBLE,
+        invested_value DOUBLE,
+        cash_value DOUBLE,
+        gross_exposure DOUBLE,
+        net_exposure DOUBLE,
+        daily_return DOUBLE,
+        cumulative_return DOUBLE,
+        drawdown DOUBLE,
+        turnover_ratio DOUBLE,
+        cash_weight DOUBLE,
+        holding_count BIGINT,
+        max_single_weight DOUBLE,
+        top3_weight DOUBLE,
+        source_position_run_id VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            snapshot_date,
+            execution_mode,
+            portfolio_policy_id,
+            portfolio_policy_version
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_portfolio_constraint_event (
+        run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        session_date DATE,
+        execution_mode VARCHAR NOT NULL,
+        portfolio_policy_id VARCHAR NOT NULL,
+        portfolio_policy_version VARCHAR NOT NULL,
+        symbol VARCHAR NOT NULL,
+        constraint_type VARCHAR NOT NULL,
+        severity VARCHAR,
+        event_code VARCHAR NOT NULL,
+        requested_value DOUBLE,
+        applied_value DOUBLE,
+        limit_value DOUBLE,
+        message VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            as_of_date,
+            execution_mode,
+            symbol,
+            constraint_type,
+            event_code
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_portfolio_evaluation_summary (
+        evaluation_date DATE NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        portfolio_policy_id VARCHAR NOT NULL,
+        portfolio_policy_version VARCHAR NOT NULL,
+        execution_mode VARCHAR NOT NULL,
+        comparison_key VARCHAR NOT NULL,
+        metric_name VARCHAR NOT NULL,
+        metric_value DOUBLE,
+        sample_count BIGINT,
+        notes_json VARCHAR,
+        evaluation_run_id VARCHAR NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            evaluation_date,
+            start_date,
+            end_date,
+            portfolio_policy_id,
+            portfolio_policy_version,
+            execution_mode,
+            comparison_key,
+            metric_name
+        )
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS fact_evaluation_summary (
         summary_date DATE NOT NULL,
         window_type VARCHAR NOT NULL,
@@ -1666,6 +1914,86 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY horizon, panel_name
         ORDER BY effective_from_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_portfolio_policy_registry AS
+    SELECT *
+    FROM fact_portfolio_policy_registry
+    WHERE active_flag
+      AND effective_from_date <= CURRENT_DATE
+      AND (effective_to_date IS NULL OR effective_to_date >= CURRENT_DATE)
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY portfolio_policy_id, portfolio_policy_version
+        ORDER BY effective_from_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_portfolio_candidate AS
+    SELECT *
+    FROM fact_portfolio_candidate
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY execution_mode, symbol
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_portfolio_target_book AS
+    SELECT *
+    FROM fact_portfolio_target_book
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY execution_mode, symbol
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_portfolio_rebalance_plan AS
+    SELECT *
+    FROM fact_portfolio_rebalance_plan
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY execution_mode, symbol
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_portfolio_position_snapshot AS
+    SELECT *
+    FROM fact_portfolio_position_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY execution_mode, symbol
+        ORDER BY snapshot_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_portfolio_nav_snapshot AS
+    SELECT *
+    FROM fact_portfolio_nav_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY execution_mode, portfolio_policy_id, portfolio_policy_version
+        ORDER BY snapshot_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_portfolio_constraint_event AS
+    SELECT *
+    FROM fact_portfolio_constraint_event
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY execution_mode, symbol, constraint_type, event_code
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_portfolio_evaluation_summary AS
+    SELECT *
+    FROM fact_portfolio_evaluation_summary
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY
+            portfolio_policy_id,
+            portfolio_policy_version,
+            execution_mode,
+            comparison_key,
+            metric_name
+        ORDER BY evaluation_date DESC, created_at DESC
     ) = 1
     """,
     """

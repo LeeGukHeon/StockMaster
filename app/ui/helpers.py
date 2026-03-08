@@ -358,6 +358,368 @@ UI_VALUE_LABELS.setdefault("run_type", {}).update(
         "validate_intraday_strategy_pipeline": "장중 전략 파이프라인 검증",
     }
 )
+
+
+def _latest_portfolio_as_of_date(settings: Settings):
+    if not settings.paths.duckdb_path.exists():
+        return None
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        row = connection.execute(
+            "SELECT MAX(as_of_date) FROM fact_portfolio_target_book"
+        ).fetchone()
+    return None if not row or row[0] is None else pd.Timestamp(row[0]).date()
+
+
+def _latest_portfolio_snapshot_date(settings: Settings):
+    if not settings.paths.duckdb_path.exists():
+        return None
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        row = connection.execute(
+            "SELECT MAX(snapshot_date) FROM fact_portfolio_nav_snapshot"
+        ).fetchone()
+    return None if not row or row[0] is None else pd.Timestamp(row[0]).date()
+
+
+def latest_portfolio_policy_registry_frame(
+    settings: Settings,
+    *,
+    active_only: bool = False,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    query = """
+        SELECT
+            active_portfolio_policy_id,
+            portfolio_policy_id,
+            portfolio_policy_version,
+            display_name,
+            source_type,
+            promotion_type,
+            effective_from_date,
+            effective_to_date,
+            active_flag,
+            rollback_of_active_portfolio_policy_id,
+            note,
+            created_at
+        FROM fact_portfolio_policy_registry
+    """
+    if active_only:
+        query += """
+            WHERE active_flag = TRUE
+              AND effective_from_date <= CURRENT_DATE
+              AND (effective_to_date IS NULL OR effective_to_date >= CURRENT_DATE)
+        """
+    query += " ORDER BY effective_from_date DESC, created_at DESC LIMIT ?"
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(query, [limit]).fetchdf()
+
+
+def latest_portfolio_candidate_frame(
+    settings: Settings,
+    *,
+    as_of_date=None,
+    execution_mode: str | None = None,
+    limit: int = 30,
+) -> pd.DataFrame:
+    target_date = as_of_date or _latest_portfolio_as_of_date(settings)
+    if target_date is None or not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    filters = ["as_of_date = ?"]
+    params: list[object] = [target_date]
+    if execution_mode:
+        filters.append("execution_mode = ?")
+        params.append(str(execution_mode).upper())
+    query = f"""
+        SELECT
+            as_of_date,
+            session_date,
+            execution_mode,
+            symbol,
+            company_name,
+            market,
+            sector,
+            candidate_rank,
+            candidate_state,
+            final_selection_value,
+            effective_alpha_long,
+            risk_scaled_conviction,
+            timing_action,
+            timing_gate_status,
+            current_holding_flag
+        FROM fact_portfolio_candidate
+        WHERE {' AND '.join(filters)}
+        ORDER BY execution_mode, candidate_rank, symbol
+        LIMIT ?
+    """
+    params.append(limit)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(query, params).fetchdf()
+
+
+def latest_portfolio_target_book_frame(
+    settings: Settings,
+    *,
+    as_of_date=None,
+    execution_mode: str | None = None,
+    include_cash: bool = False,
+    limit: int = 30,
+) -> pd.DataFrame:
+    target_date = as_of_date or _latest_portfolio_as_of_date(settings)
+    if target_date is None or not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    filters = ["as_of_date = ?"]
+    params: list[object] = [target_date]
+    if execution_mode:
+        filters.append("execution_mode = ?")
+        params.append(str(execution_mode).upper())
+    if not include_cash:
+        filters.append("symbol <> '__CASH__'")
+    query = f"""
+        SELECT
+            as_of_date,
+            session_date,
+            execution_mode,
+            symbol,
+            company_name,
+            market,
+            sector,
+            candidate_state,
+            target_rank,
+            target_weight,
+            target_notional,
+            target_shares,
+            target_price,
+            current_shares,
+            current_weight,
+            score_value,
+            gate_status,
+            waitlist_flag,
+            waitlist_rank,
+            blocked_flag,
+            blocked_reason
+        FROM fact_portfolio_target_book
+        WHERE {' AND '.join(filters)}
+        ORDER BY execution_mode, target_rank, symbol
+        LIMIT ?
+    """
+    params.append(limit)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(query, params).fetchdf()
+
+
+def latest_portfolio_waitlist_frame(
+    settings: Settings,
+    *,
+    as_of_date=None,
+    execution_mode: str | None = None,
+    limit: int = 20,
+) -> pd.DataFrame:
+    target_date = as_of_date or _latest_portfolio_as_of_date(settings)
+    if target_date is None or not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    filters = ["as_of_date = ?", "(waitlist_flag = TRUE OR blocked_flag = TRUE)"]
+    params: list[object] = [target_date]
+    if execution_mode:
+        filters.append("execution_mode = ?")
+        params.append(str(execution_mode).upper())
+    query = f"""
+        SELECT
+            as_of_date,
+            execution_mode,
+            symbol,
+            company_name,
+            candidate_state,
+            gate_status,
+            waitlist_flag,
+            waitlist_rank,
+            blocked_flag,
+            blocked_reason
+        FROM fact_portfolio_target_book
+        WHERE {' AND '.join(filters)}
+        ORDER BY execution_mode, blocked_flag DESC, waitlist_rank, symbol
+        LIMIT ?
+    """
+    params.append(limit)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(query, params).fetchdf()
+
+
+def latest_portfolio_rebalance_plan_frame(
+    settings: Settings,
+    *,
+    as_of_date=None,
+    execution_mode: str | None = None,
+    limit: int = 40,
+) -> pd.DataFrame:
+    target_date = as_of_date or _latest_portfolio_as_of_date(settings)
+    if target_date is None or not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    filters = ["as_of_date = ?"]
+    params: list[object] = [target_date]
+    if execution_mode:
+        filters.append("execution_mode = ?")
+        params.append(str(execution_mode).upper())
+    query = f"""
+        SELECT
+            as_of_date,
+            session_date,
+            execution_mode,
+            symbol,
+            company_name,
+            rebalance_action,
+            action_sequence,
+            gate_status,
+            current_shares,
+            target_shares,
+            delta_shares,
+            reference_price,
+            notional_delta,
+            cash_delta,
+            blocked_reason
+        FROM fact_portfolio_rebalance_plan
+        WHERE {' AND '.join(filters)}
+        ORDER BY execution_mode, action_sequence, symbol
+        LIMIT ?
+    """
+    params.append(limit)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(query, params).fetchdf()
+
+
+def latest_portfolio_nav_frame(
+    settings: Settings,
+    *,
+    limit: int = 30,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                snapshot_date,
+                execution_mode,
+                portfolio_policy_id,
+                portfolio_policy_version,
+                nav_value,
+                cumulative_return,
+                drawdown,
+                turnover_ratio,
+                cash_weight,
+                holding_count,
+                max_single_weight,
+                top3_weight
+            FROM fact_portfolio_nav_snapshot
+            ORDER BY snapshot_date DESC, execution_mode
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_portfolio_evaluation_frame(
+    settings: Settings,
+    *,
+    limit: int = 40,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                evaluation_date,
+                start_date,
+                end_date,
+                execution_mode,
+                comparison_key,
+                metric_name,
+                metric_value,
+                sample_count
+            FROM fact_portfolio_evaluation_summary
+            ORDER BY evaluation_date DESC, execution_mode, comparison_key, metric_name
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_portfolio_constraint_frame(
+    settings: Settings,
+    *,
+    as_of_date=None,
+    limit: int = 30,
+) -> pd.DataFrame:
+    target_date = as_of_date or _latest_portfolio_as_of_date(settings)
+    if target_date is None or not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                as_of_date,
+                execution_mode,
+                symbol,
+                constraint_type,
+                event_code,
+                requested_value,
+                applied_value,
+                limit_value,
+                message
+            FROM fact_portfolio_constraint_event
+            WHERE as_of_date = ?
+            ORDER BY execution_mode, symbol, constraint_type
+            LIMIT ?
+            """,
+            [target_date, limit],
+        ).fetchdf()
+
+
+def latest_portfolio_run_status_frame(settings: Settings, *, limit: int = 12) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                run_type,
+                status,
+                as_of_date,
+                started_at,
+                finished_at,
+                error_message
+            FROM ops_run_manifest
+            WHERE run_type IN (
+                'build_portfolio_candidate_book',
+                'validate_portfolio_candidate_book',
+                'freeze_active_portfolio_policy',
+                'rollback_active_portfolio_policy',
+                'materialize_portfolio_target_book',
+                'materialize_portfolio_rebalance_plan',
+                'materialize_portfolio_position_snapshots',
+                'materialize_portfolio_nav',
+                'run_portfolio_walkforward',
+                'evaluate_portfolio_policies',
+                'render_portfolio_report',
+                'publish_discord_portfolio_summary',
+                'validate_portfolio_framework'
+            )
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_portfolio_report_preview(settings: Settings) -> str | None:
+    artifact_root = settings.paths.artifacts_dir / "portfolio_report"
+    if not artifact_root.exists():
+        return None
+    previews = sorted(artifact_root.glob("**/portfolio_report_preview.md"))
+    if not previews:
+        return None
+    return previews[-1].read_text(encoding="utf-8")
 UI_VALUE_LABELS.setdefault("split_name", {}).update(
     {
         "train": "학습",
@@ -4109,3 +4471,124 @@ def intraday_meta_calibration_frame(
     )
     output["calibration_bucket"] = output["calibration_bucket"].astype(str)
     return output.sort_values(["predicted_class", "calibration_bucket"]).reset_index(drop=True)
+
+
+UI_COLUMN_LABELS.update(
+    {
+        "portfolio_policy_id": "포트폴리오 정책 ID",
+        "portfolio_policy_version": "포트폴리오 정책 버전",
+        "active_portfolio_policy_id": "활성 포트폴리오 정책 ID",
+        "target_weight": "목표 비중",
+        "target_notional": "목표 금액",
+        "target_shares": "목표 수량",
+        "target_price": "목표 기준가",
+        "current_shares": "현재 수량",
+        "current_weight": "현재 비중",
+        "score_value": "할당 점수",
+        "candidate_state": "후보 상태",
+        "timing_gate_status": "타이밍 게이트",
+        "rebalance_action": "리밸런스 액션",
+        "action_sequence": "리밸런스 순서",
+        "delta_shares": "수량 변화",
+        "reference_price": "기준 가격",
+        "notional_delta": "금액 변화",
+        "cash_delta": "현금 변화",
+        "waitlist_flag": "대기열 여부",
+        "waitlist_rank": "대기열 순번",
+        "blocked_flag": "차단 여부",
+        "blocked_reason": "차단 사유",
+        "constraint_type": "제약 유형",
+        "event_code": "제약 코드",
+        "requested_value": "요청 값",
+        "applied_value": "적용 값",
+        "limit_value": "한도 값",
+        "active_flag": "활성 여부",
+        "rollback_of_active_portfolio_policy_id": "롤백 대상 정책 ID",
+        "snapshot_date": "스냅샷 일자",
+        "average_cost": "평균 단가",
+        "close_price": "종가",
+        "market_value": "평가 금액",
+        "actual_weight": "실제 비중",
+        "cash_like_flag": "현금 행 여부",
+        "nav_value": "NAV",
+        "invested_value": "투자 금액",
+        "cash_value": "현금 금액",
+        "gross_exposure": "총 익스포저",
+        "net_exposure": "순 익스포저",
+        "daily_return": "일간 수익률",
+        "cumulative_return": "누적 수익률",
+        "drawdown": "드로다운",
+        "turnover_ratio": "회전율",
+        "cash_weight": "현금 비중",
+        "holding_count": "보유 종목 수",
+        "max_single_weight": "최대 단일 비중",
+        "top3_weight": "상위 3종목 비중",
+        "comparison_key": "비교 키",
+        "metric_name": "지표명",
+        "metric_value": "지표값",
+        "sample_count": "표본 수",
+    }
+)
+
+UI_VALUE_LABELS.setdefault("execution_mode", {}).update(
+    {
+        "OPEN_ALL": "시가 일괄 진입",
+        "TIMING_ASSISTED": "장중 타이밍 보조",
+    }
+)
+UI_VALUE_LABELS.setdefault("candidate_state", {}).update(
+    {
+        "NEW_ENTRY_CANDIDATE": "신규 진입 후보",
+        "HOLD_CANDIDATE": "보유 유지 후보",
+        "TRIM_CANDIDATE": "비중 축소 후보",
+        "EXIT_CANDIDATE": "청산 후보",
+        "WATCH_ONLY": "관찰 전용",
+        "BLOCKED": "차단",
+        "CASH": "현금",
+    }
+)
+UI_VALUE_LABELS.setdefault("timing_gate_status", {}).update(
+    {
+        "OPEN_ALL": "시가 진입 모드",
+        "TIMING_UNAVAILABLE": "타이밍 없음",
+        "ENTER_ALLOWED": "진입 허용",
+        "WAIT_GATE": "재확인 대기",
+        "BLOCKED_BY_TIMING": "타이밍 차단",
+        "CASH_BUFFER": "현금 버퍼",
+    }
+)
+UI_VALUE_LABELS.setdefault("rebalance_action", {}).update(
+    {
+        "BUY_NEW": "신규 매수",
+        "ADD": "추가 매수",
+        "HOLD": "보유 유지",
+        "TRIM": "비중 축소",
+        "EXIT": "청산",
+        "SKIP": "건너뜀",
+        "NO_ACTION": "조치 없음",
+    }
+)
+UI_VALUE_LABELS.setdefault("comparison_key", {}).update(
+    {
+        "OPEN_ALL": "시가 일괄 진입",
+        "TIMING_ASSISTED": "타이밍 보조",
+        "EQUAL_WEIGHT_BASELINE": "동일가중 기준선",
+    }
+)
+UI_VALUE_LABELS.setdefault("run_type", {}).update(
+    {
+        "build_portfolio_candidate_book": "포트폴리오 후보군 생성",
+        "validate_portfolio_candidate_book": "포트폴리오 후보군 검증",
+        "freeze_active_portfolio_policy": "포트폴리오 정책 freeze",
+        "rollback_active_portfolio_policy": "포트폴리오 정책 rollback",
+        "materialize_portfolio_target_book": "포트폴리오 목표북 생성",
+        "materialize_portfolio_rebalance_plan": "포트폴리오 리밸런스 계획",
+        "materialize_portfolio_position_snapshots": "포트폴리오 포지션 스냅샷",
+        "materialize_portfolio_nav": "포트폴리오 NAV 생성",
+        "run_portfolio_walkforward": "포트폴리오 워크포워드",
+        "evaluate_portfolio_policies": "포트폴리오 정책 평가",
+        "render_portfolio_report": "포트폴리오 리포트 렌더",
+        "publish_discord_portfolio_summary": "포트폴리오 디스코드 발행",
+        "validate_portfolio_framework": "포트폴리오 프레임워크 검증",
+    }
+)

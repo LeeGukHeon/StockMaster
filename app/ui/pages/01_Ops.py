@@ -48,6 +48,15 @@ from app.ui.helpers import (
     latest_model_metric_summary_frame,
     latest_model_training_summary_frame,
     latest_outcome_summary_frame,
+    latest_portfolio_candidate_frame,
+    latest_portfolio_constraint_frame,
+    latest_portfolio_evaluation_frame,
+    latest_portfolio_nav_frame,
+    latest_portfolio_policy_registry_frame,
+    latest_portfolio_rebalance_plan_frame,
+    latest_portfolio_report_preview,
+    latest_portfolio_run_status_frame,
+    latest_portfolio_target_book_frame,
     latest_postmortem_preview,
     latest_prediction_summary_frame,
     latest_regime_frame,
@@ -125,10 +134,31 @@ meta_run_status = latest_intraday_meta_run_status_frame(settings, limit=12)
 meta_prediction = latest_intraday_meta_prediction_frame(settings, limit=20)
 meta_decision = latest_intraday_meta_decision_frame(settings, limit=20)
 meta_overlay = latest_intraday_meta_overlay_comparison_frame(settings, limit=20)
+portfolio_policy_registry = latest_portfolio_policy_registry_frame(settings, limit=20)
+portfolio_target_book = latest_portfolio_target_book_frame(
+    settings,
+    execution_mode="TIMING_ASSISTED",
+    limit=20,
+)
+portfolio_rebalance_plan = latest_portfolio_rebalance_plan_frame(
+    settings,
+    execution_mode="TIMING_ASSISTED",
+    limit=20,
+)
+portfolio_nav = latest_portfolio_nav_frame(settings, limit=20)
+portfolio_evaluation = latest_portfolio_evaluation_frame(settings, limit=30)
+portfolio_candidate_book = latest_portfolio_candidate_frame(
+    settings,
+    execution_mode="TIMING_ASSISTED",
+    limit=20,
+)
+portfolio_constraint = latest_portfolio_constraint_frame(settings, limit=20)
+portfolio_run_status = latest_portfolio_run_status_frame(settings, limit=12)
 discord_preview = latest_discord_preview(settings)
 postmortem_preview = latest_postmortem_preview(settings)
 intraday_postmortem_preview = latest_intraday_postmortem_preview(settings)
 policy_report_preview = latest_intraday_policy_report_preview(settings)
+portfolio_report_preview = latest_portfolio_report_preview(settings)
 
 st.title("운영")
 st.caption(
@@ -308,6 +338,55 @@ with publish_right:
     else:
         st.dataframe(localize_frame(policy_publish_status), width="stretch", hide_index=True)
 
+st.subheader("포트폴리오 운영 상태")
+portfolio_left, portfolio_right = st.columns(2)
+with portfolio_left:
+    st.subheader("활성 포트폴리오 정책 레지스트리")
+    if portfolio_policy_registry.empty:
+        st.info("활성 포트폴리오 정책 레지스트리가 없습니다.")
+    else:
+        st.dataframe(localize_frame(portfolio_policy_registry), width="stretch", hide_index=True)
+    st.subheader("포트폴리오 실행 상태")
+    if portfolio_run_status.empty:
+        st.info("포트폴리오 실행 상태가 없습니다.")
+    else:
+        st.dataframe(localize_frame(portfolio_run_status), width="stretch", hide_index=True)
+    st.subheader("최신 포트폴리오 후보군")
+    if portfolio_candidate_book.empty:
+        st.info("포트폴리오 후보군이 없습니다.")
+    else:
+        st.dataframe(localize_frame(portfolio_candidate_book), width="stretch", hide_index=True)
+with portfolio_right:
+    st.subheader("최신 목표 보유 / 리밸런스")
+    if portfolio_target_book.empty:
+        st.info("목표 보유 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(portfolio_target_book), width="stretch", hide_index=True)
+    if portfolio_rebalance_plan.empty:
+        st.info("리밸런스 계획이 없습니다.")
+    else:
+        st.dataframe(localize_frame(portfolio_rebalance_plan), width="stretch", hide_index=True)
+    st.subheader("NAV / 평가")
+    if not portfolio_nav.empty:
+        st.dataframe(localize_frame(portfolio_nav), width="stretch", hide_index=True)
+    if not portfolio_evaluation.empty:
+        st.dataframe(localize_frame(portfolio_evaluation), width="stretch", hide_index=True)
+    if portfolio_nav.empty and portfolio_evaluation.empty:
+        st.info("포트폴리오 NAV 또는 평가 결과가 없습니다.")
+
+st.subheader("포트폴리오 제약 / 리포트")
+portfolio_detail_left, portfolio_detail_right = st.columns(2)
+with portfolio_detail_left:
+    if portfolio_constraint.empty:
+        st.info("제약 이벤트가 없습니다.")
+    else:
+        st.dataframe(localize_frame(portfolio_constraint), width="stretch", hide_index=True)
+with portfolio_detail_right:
+    if portfolio_report_preview:
+        st.code(portfolio_report_preview)
+    else:
+        st.info("포트폴리오 리포트 미리보기가 없습니다.")
+
 evaluation_left, evaluation_right = st.columns(2)
 with evaluation_left:
     st.subheader("Outcome summary")
@@ -350,6 +429,10 @@ if intraday_postmortem_preview:
 if policy_report_preview:
     with st.expander("최신 정책 연구 리포트 미리보기", expanded=False):
         st.code(policy_report_preview)
+
+if portfolio_report_preview:
+    with st.expander("최신 포트폴리오 리포트 미리보기", expanded=False):
+        st.code(portfolio_report_preview)
 
 st.subheader("실행 이력")
 st.dataframe(localize_frame(runs), width="stretch", hide_index=True)
