@@ -28,7 +28,10 @@ settings = load_ui_settings(PROJECT_ROOT)
 symbols = available_symbols(settings)
 
 st.title("종목 분석")
-st.caption("하나의 종목을 기준으로 피처, 수급, 가격, 순위, 연결 뉴스까지 확인합니다.")
+st.caption(
+    "하나의 종목을 기준으로 피처, 수급, 가격, 순위, 연결 뉴스, "
+    "장중 raw/adjusted 판단과 realized edge까지 확인합니다."
+)
 
 if not symbols:
     st.info("아직 조회 가능한 종목이 없습니다.")
@@ -62,10 +65,10 @@ else:
 
     intraday_left, intraday_right = st.columns(2)
     with intraday_left:
-        st.subheader("장중 판단 이력")
+        st.subheader("장중 raw/adjusted 판단 이력")
         st.dataframe(localize_frame(intraday_decisions), width="stretch", hide_index=True)
     with intraday_right:
-        st.subheader("장중 타이밍 평가")
+        st.subheader("장중 전략별 realized edge")
         st.dataframe(localize_frame(intraday_timing), width="stretch", hide_index=True)
 
     st.subheader("연결된 뉴스 메타데이터")

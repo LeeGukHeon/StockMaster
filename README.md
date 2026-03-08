@@ -2,7 +2,7 @@
 
 StockMaster is a Korea-focused personal stock research platform for post-market analysis, explanatory ranking, reporting, and retrospective evaluation.
 
-Implemented through TICKET-005:
+Implemented through TICKET-008:
 
 - foundation, settings, logging, bootstrap, and disk guard
 - provider activation for KIS, DART, and Naver News
@@ -11,16 +11,19 @@ Implemented through TICKET-005:
 - feature store, forward return labels, market regime snapshot, and explanatory ranking v0
 - investor flow ingestion, selection engine v1, calibrated proxy prediction bands, and Discord EOD report draft
 - selection outcome freezing, cohort/rolling evaluation summaries, calibration diagnostics, and Discord postmortem draft
-- Streamlit Home, Ops, Research, Leaderboard, Market Pulse, Stock Workbench, and Evaluation pages
+- ML alpha model v1, model-aware uncertainty/disagreement, and selection engine v2
+- intraday candidate assist engine v1 with candidate-only 1m bars, trade summary, quote summary, and deterministic timing decisions
+- intraday postmortem, regime-aware adjusted timing, strategy comparison, and timing calibration
+- Streamlit Home, Ops, Research, Leaderboard, Market Pulse, Stock Workbench, Evaluation, and Intraday Console pages
 
 Out of scope:
 
 - auto-trading, order routing, and execution
 - full news article storage
-- ML alpha model training or prediction
-- fake uncertainty or fake model disagreement scores
+- online-learning / RL intraday policy
+- full-market raw tick or websocket archival
 
-The current ranking is an explanatory layer. It is not a predictive engine.
+The platform contains explanatory ranking, ML-assisted selection, and deterministic intraday timing support. It is still not an execution engine.
 
 ## Repository layout
 
@@ -653,6 +656,101 @@ python scripts/evaluate_intraday_timing_layer.py --start-session-date 2026-02-17
 python scripts/render_intraday_monitor_report.py --session-date 2026-03-09 --checkpoint 09:30 --dry-run
 ```
 
+## TICKET-008 intraday postmortem and regime-aware comparison
+
+Intraday market context:
+
+- checkpoint-level market snapshot built only from the active candidate set plus candidate-only bars, trade summaries, and quote summaries
+- captures breadth, candidate return dispersion, relative activity, spread, execution strength, shock proxy, and source coverage
+- stored in `fact_intraday_market_context_snapshot`
+
+Regime families:
+
+- `PANIC_OPEN`
+- `WEAK_RISK_OFF`
+- `NEUTRAL_CHOP`
+- `HEALTHY_TREND`
+- `OVERHEATED_GAP_CHASE`
+- `DATA_WEAK`
+
+Adjustment profiles:
+
+- `DEFENSIVE`
+- `NEUTRAL`
+- `SELECTIVE_RISK_ON`
+- `GAP_CHASE_GUARD`
+- `DATA_WEAK_GUARD`
+
+Raw timing vs adjusted timing:
+
+- raw timing comes from TICKET-007 deterministic checkpoint decisions in `fact_intraday_entry_decision`
+- adjusted timing keeps the raw row frozen and writes regime-aware action changes into `fact_intraday_adjusted_entry_decision`
+- `DATA_INSUFFICIENT -> ENTER_NOW` is forbidden
+- `AVOID_TODAY -> ENTER_NOW` is not allowed in the default implementation
+
+Selection v2 and intraday timing coupling:
+
+- stock picking remains downstream of `selection_engine_v2`
+- the intraday layer only changes entry timing for the already-selected candidate set
+- there is no independent intraday stock picking universe
+
+Strategy IDs:
+
+- `SEL_V2_OPEN_ALL`
+- `SEL_V2_TIMING_RAW_FIRST_ENTER`
+- `SEL_V2_TIMING_ADJ_FIRST_ENTER`
+- `SEL_V2_TIMING_ADJ_0930_ONLY`
+- `SEL_V2_TIMING_ADJ_1000_ONLY`
+
+Same-exit comparison rule:
+
+- all strategy results reuse the same exit date and exit price from `fact_forward_return_label`
+- only the entry timing changes
+- this keeps the comparison centered on timing edge instead of mixing different exit policies
+
+No-entry and skip diagnostics:
+
+- `no_entry` rows are stored and evaluated, not dropped
+- `skip_saved_loss_flag` tracks cases where skipping avoided a negative open-baseline result
+- `missed_winner_flag` tracks cases where skipping missed a positive open-baseline result
+
+Candidate-only storage and data-quality fallback:
+
+- candidate-only intraday storage remains mandatory
+- no full-market intraday sweep is added
+- weak quote/trade coverage lowers signal quality and can push the adjusted layer into `WAIT_RECHECK`, `AVOID_TODAY`, or `DATA_INSUFFICIENT`
+- market context, adjusted decisions, strategy results, and timing calibration all preserve explicit reason codes or quality flags
+
+Dry-run and publish:
+
+```powershell
+python scripts/render_intraday_postmortem_report.py --session-date 2026-03-09 --horizons 1 5 --dry-run
+python scripts/publish_discord_intraday_postmortem.py --session-date 2026-03-09 --horizons 1 5 --dry-run
+```
+
+- render always writes preview artifacts under `data/artifacts/intraday_postmortem/...`
+- publish is optional and downgraded to a warning on failure
+
+Current known limitations:
+
+- the intraday timing layer is deterministic and rule-based, not ML-optimized
+- future session dates can legitimately materialize sparse bars and `DATA_INSUFFICIENT` outcomes
+- evaluation is still pre-cost and does not simulate execution slippage beyond entry-timing proxies
+
+### TICKET-008 commands
+
+```powershell
+python scripts/materialize_intraday_market_context_snapshots.py --session-date 2026-03-09 --checkpoints 09:05 09:15 09:30 10:00 11:00
+python scripts/materialize_intraday_regime_adjustments.py --session-date 2026-03-09 --checkpoints 09:05 09:15 09:30 10:00 11:00 --horizons 1 5
+python scripts/materialize_intraday_adjusted_entry_decisions.py --session-date 2026-03-09 --checkpoint 09:30 --horizons 1 5
+python scripts/materialize_intraday_decision_outcomes.py --start-session-date 2026-02-17 --end-session-date 2026-03-09 --horizons 1 5
+python scripts/evaluate_intraday_strategy_comparison.py --start-session-date 2026-02-17 --end-session-date 2026-03-09 --horizons 1 5 --cutoff 11:00
+python scripts/materialize_intraday_timing_calibration.py --start-session-date 2026-02-17 --end-session-date 2026-03-09 --horizons 1 5
+python scripts/render_intraday_postmortem_report.py --session-date 2026-03-09 --horizons 1 5 --dry-run
+python scripts/publish_discord_intraday_postmortem.py --session-date 2026-03-09 --horizons 1 5 --dry-run
+python scripts/validate_intraday_strategy_pipeline.py --session-date 2026-03-09 --horizons 1 5
+```
+
 ## Grade rules
 
 Current grade assignment:
@@ -664,7 +762,7 @@ Current grade assignment:
 
 Grades are presentation buckets, not probability estimates.
 
-## Tables and views added through TICKET-006
+## Tables and views added through TICKET-008
 
 Tables:
 
@@ -687,6 +785,12 @@ Tables:
 - `fact_intraday_signal_snapshot`
 - `fact_intraday_entry_decision`
 - `fact_intraday_timing_outcome`
+- `fact_intraday_market_context_snapshot`
+- `fact_intraday_regime_adjustment`
+- `fact_intraday_adjusted_entry_decision`
+- `fact_intraday_strategy_result`
+- `fact_intraday_strategy_comparison`
+- `fact_intraday_timing_calibration`
 - `ops_ranking_validation_summary`
 - `ops_selection_validation_summary`
 
@@ -712,6 +816,12 @@ Views:
 - `vw_latest_intraday_signal_snapshot`
 - `vw_latest_intraday_entry_decision`
 - `vw_latest_intraday_timing_outcome`
+- `vw_latest_intraday_market_context_snapshot`
+- `vw_latest_intraday_regime_adjustment`
+- `vw_latest_intraday_adjusted_entry_decision`
+- `vw_latest_intraday_strategy_result`
+- `vw_latest_intraday_strategy_comparison`
+- `vw_latest_intraday_timing_calibration`
 - `vw_latest_ranking_validation_summary`
 - `vw_latest_selection_validation_summary`
 
@@ -741,11 +851,18 @@ data/curated/intraday/quote_summary/session_date=YYYY-MM-DD/quote_summary.parque
 data/curated/intraday/signal_snapshot/session_date=YYYY-MM-DD/checkpoint=HHMM/signal_snapshot.parquet
 data/curated/intraday/entry_decision/session_date=YYYY-MM-DD/checkpoint=HHMM/entry_decision.parquet
 data/curated/intraday/timing_outcome/session_date=YYYY-MM-DD/horizon=N/timing_outcome.parquet
+data/curated/intraday/market_context/session_date=YYYY-MM-DD/market_context_snapshot.parquet
+data/curated/intraday/regime_adjustment/session_date=YYYY-MM-DD/regime_adjustment.parquet
+data/curated/intraday/adjusted_entry_decision/session_date=YYYY-MM-DD/checkpoint=HHMM/adjusted_entry_decision.parquet
+data/curated/intraday/strategy_result/session_date=YYYY-MM-DD/strategy_result.parquet
+data/curated/intraday/strategy_comparison/end_session_date=YYYY-MM-DD/strategy_comparison.parquet
+data/curated/intraday/timing_calibration/window_end_date=YYYY-MM-DD/timing_calibration.parquet
 data/artifacts/model/training/train_end_date=YYYY-MM-DD/horizon=N/alpha_model_v1.pkl
 data/artifacts/model_validation/<run_id>.md
 data/artifacts/selection_engine_comparison/<run_id>.md
 data/artifacts/model_diagnostics/train_end_date=YYYY-MM-DD/<run_id>/model_diagnostic_report.md
 data/artifacts/intraday_monitor/session_date=YYYY-MM-DD/<run_id>/intraday_monitor_preview.md
+data/artifacts/intraday_postmortem/session_date=YYYY-MM-DD/<run_id>/intraday_postmortem_preview.md
 data/artifacts/validation/ranking/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/ranking_validation_summary.parquet
 data/artifacts/validation/selection_engine_v1/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/selection_validation_summary.parquet
 data/artifacts/discord/as_of_date=YYYY-MM-DD/<run_id>/discord_preview.md

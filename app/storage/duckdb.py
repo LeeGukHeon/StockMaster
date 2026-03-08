@@ -554,6 +554,211 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_intraday_market_context_snapshot (
+        run_id VARCHAR NOT NULL,
+        selection_date DATE,
+        session_date DATE NOT NULL,
+        checkpoint_time VARCHAR NOT NULL,
+        context_scope VARCHAR NOT NULL,
+        market_session_state VARCHAR,
+        prior_daily_regime_state VARCHAR,
+        prior_daily_regime_score DOUBLE,
+        candidate_count BIGINT,
+        advancers_count BIGINT,
+        decliners_count BIGINT,
+        market_breadth_ratio DOUBLE,
+        kospi_return_from_open DOUBLE,
+        kosdaq_return_from_open DOUBLE,
+        candidate_mean_return_from_open DOUBLE,
+        candidate_median_return_from_open DOUBLE,
+        candidate_hit_ratio_from_open DOUBLE,
+        candidate_mean_relative_volume DOUBLE,
+        candidate_mean_spread_bps DOUBLE,
+        candidate_mean_execution_strength DOUBLE,
+        candidate_mean_orderbook_imbalance DOUBLE,
+        candidate_mean_gap_score DOUBLE,
+        candidate_mean_signal_quality DOUBLE,
+        market_shock_proxy DOUBLE,
+        intraday_volatility_proxy DOUBLE,
+        dispersion_proxy DOUBLE,
+        bar_coverage_ratio DOUBLE,
+        trade_coverage_ratio DOUBLE,
+        quote_coverage_ratio DOUBLE,
+        provider_latency_ms DOUBLE,
+        data_quality_flag VARCHAR,
+        context_reason_codes_json VARCHAR,
+        source_notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (session_date, checkpoint_time, context_scope)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_regime_adjustment (
+        run_id VARCHAR NOT NULL,
+        selection_date DATE,
+        session_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        checkpoint_time VARCHAR NOT NULL,
+        ranking_version VARCHAR NOT NULL,
+        market_regime_family VARCHAR NOT NULL,
+        adjustment_profile VARCHAR NOT NULL,
+        selection_confidence_bucket VARCHAR,
+        signal_quality_flag VARCHAR,
+        raw_action VARCHAR,
+        raw_timing_score DOUBLE,
+        adjusted_timing_score DOUBLE,
+        regime_support_delta DOUBLE,
+        regime_risk_penalty DOUBLE,
+        gap_chase_penalty DOUBLE,
+        data_quality_penalty DOUBLE,
+        friction_penalty_delta DOUBLE,
+        regime_adjustment_delta DOUBLE,
+        eligible_to_execute_flag BOOLEAN,
+        context_reason_codes_json VARCHAR,
+        adjustment_reason_codes_json VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (session_date, symbol, horizon, checkpoint_time, ranking_version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_adjusted_entry_decision (
+        run_id VARCHAR NOT NULL,
+        selection_date DATE,
+        session_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        checkpoint_time VARCHAR NOT NULL,
+        ranking_version VARCHAR NOT NULL,
+        market_regime_family VARCHAR NOT NULL,
+        adjustment_profile VARCHAR NOT NULL,
+        raw_action VARCHAR NOT NULL,
+        adjusted_action VARCHAR NOT NULL,
+        raw_timing_score DOUBLE,
+        adjusted_timing_score DOUBLE,
+        selection_confidence_bucket VARCHAR,
+        signal_quality_flag VARCHAR,
+        eligible_to_execute_flag BOOLEAN,
+        fallback_flag BOOLEAN,
+        adjustment_reason_codes_json VARCHAR,
+        risk_flags_json VARCHAR,
+        decision_notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (session_date, symbol, horizon, checkpoint_time, ranking_version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_strategy_result (
+        selection_date DATE,
+        session_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        market VARCHAR,
+        company_name VARCHAR,
+        horizon INTEGER NOT NULL,
+        strategy_id VARCHAR NOT NULL,
+        strategy_family VARCHAR,
+        cutoff_checkpoint_time VARCHAR,
+        entry_checkpoint_time VARCHAR,
+        entry_action_source VARCHAR,
+        raw_action VARCHAR,
+        adjusted_action VARCHAR,
+        market_regime_family VARCHAR,
+        adjustment_profile VARCHAR,
+        executed_flag BOOLEAN,
+        no_entry_flag BOOLEAN,
+        eligible_to_execute_flag BOOLEAN,
+        entry_timestamp TIMESTAMPTZ,
+        entry_price DOUBLE,
+        exit_trade_date DATE,
+        exit_price DOUBLE,
+        baseline_open_price DOUBLE,
+        baseline_open_return DOUBLE,
+        baseline_open_excess_return DOUBLE,
+        realized_return DOUBLE,
+        realized_excess_return DOUBLE,
+        timing_edge_vs_open_return DOUBLE,
+        timing_edge_vs_open_bps DOUBLE,
+        skip_reason_code VARCHAR,
+        skip_saved_loss_flag BOOLEAN,
+        missed_winner_flag BOOLEAN,
+        outcome_status VARCHAR,
+        source_decision_run_id VARCHAR,
+        evaluation_run_id VARCHAR NOT NULL,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (session_date, symbol, horizon, strategy_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_strategy_comparison (
+        start_session_date DATE NOT NULL,
+        end_session_date DATE NOT NULL,
+        horizon INTEGER NOT NULL,
+        strategy_id VARCHAR NOT NULL,
+        comparison_scope VARCHAR NOT NULL,
+        comparison_value VARCHAR NOT NULL,
+        cutoff_checkpoint_time VARCHAR NOT NULL,
+        sample_count BIGINT NOT NULL,
+        matured_count BIGINT NOT NULL,
+        executed_count BIGINT NOT NULL,
+        no_entry_count BIGINT NOT NULL,
+        execution_rate DOUBLE,
+        mean_realized_excess_return DOUBLE,
+        median_realized_excess_return DOUBLE,
+        hit_rate DOUBLE,
+        mean_timing_edge_vs_open_bps DOUBLE,
+        median_timing_edge_vs_open_bps DOUBLE,
+        positive_timing_edge_rate DOUBLE,
+        skip_saved_loss_rate DOUBLE,
+        missed_winner_rate DOUBLE,
+        coverage_ok_rate DOUBLE,
+        evaluation_run_id VARCHAR NOT NULL,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            start_session_date,
+            end_session_date,
+            horizon,
+            strategy_id,
+            comparison_scope,
+            comparison_value,
+            cutoff_checkpoint_time
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_timing_calibration (
+        window_start_date DATE NOT NULL,
+        window_end_date DATE NOT NULL,
+        horizon INTEGER NOT NULL,
+        grouping_key VARCHAR NOT NULL,
+        grouping_value VARCHAR NOT NULL,
+        sample_count BIGINT NOT NULL,
+        executed_count BIGINT NOT NULL,
+        execution_rate DOUBLE,
+        mean_realized_excess_return DOUBLE,
+        median_realized_excess_return DOUBLE,
+        hit_rate DOUBLE,
+        mean_timing_edge_vs_open_bps DOUBLE,
+        positive_timing_edge_rate DOUBLE,
+        skip_saved_loss_rate DOUBLE,
+        missed_winner_rate DOUBLE,
+        quality_flag VARCHAR,
+        evaluation_run_id VARCHAR NOT NULL,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            window_start_date,
+            window_end_date,
+            horizon,
+            grouping_key,
+            grouping_value
+        )
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS fact_evaluation_summary (
         summary_date DATE NOT NULL,
         window_type VARCHAR NOT NULL,
@@ -978,6 +1183,65 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY symbol, horizon, ranking_version
         ORDER BY session_date DESC, updated_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_market_context_snapshot AS
+    SELECT *
+    FROM fact_intraday_market_context_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY checkpoint_time, context_scope
+        ORDER BY session_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_regime_adjustment AS
+    SELECT *
+    FROM fact_intraday_regime_adjustment
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, horizon, checkpoint_time, ranking_version
+        ORDER BY session_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_adjusted_entry_decision AS
+    SELECT *
+    FROM fact_intraday_adjusted_entry_decision
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, horizon, checkpoint_time, ranking_version
+        ORDER BY session_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_strategy_result AS
+    SELECT *
+    FROM fact_intraday_strategy_result
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, horizon, strategy_id
+        ORDER BY session_date DESC, updated_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_strategy_comparison AS
+    SELECT *
+    FROM fact_intraday_strategy_comparison
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY
+            horizon,
+            strategy_id,
+            comparison_scope,
+            comparison_value,
+            cutoff_checkpoint_time
+        ORDER BY end_session_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_timing_calibration AS
+    SELECT *
+    FROM fact_intraday_timing_calibration
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, grouping_key, grouping_value
+        ORDER BY window_end_date DESC, created_at DESC
     ) = 1
     """,
     """

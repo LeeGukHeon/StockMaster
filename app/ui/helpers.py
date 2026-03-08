@@ -339,6 +339,15 @@ UI_VALUE_LABELS.setdefault("run_type", {}).update(
         "validate_alpha_model_v1": "알파 모델 검증",
         "compare_selection_engines": "선정 엔진 비교",
         "render_model_diagnostic_report": "모델 진단 리포트 렌더",
+        "materialize_intraday_market_context_snapshots": "장중 시장 컨텍스트 생성",
+        "materialize_intraday_regime_adjustments": "장중 레짐 조정 생성",
+        "materialize_intraday_adjusted_entry_decisions": "장중 조정 진입 판단 생성",
+        "materialize_intraday_decision_outcomes": "장중 판단 성과 생성",
+        "evaluate_intraday_strategy_comparison": "장중 전략 비교 평가",
+        "materialize_intraday_timing_calibration": "장중 타이밍 보정 진단 생성",
+        "render_intraday_postmortem_report": "장중 사후 분석 리포트 렌더",
+        "publish_discord_intraday_postmortem": "장중 사후 분석 Discord 발행",
+        "validate_intraday_strategy_pipeline": "장중 전략 파이프라인 검증",
     }
 )
 UI_VALUE_LABELS.setdefault("split_name", {}).update(
@@ -395,6 +404,177 @@ UI_COLUMN_LABELS.update(
         "explanatory_v0_avg_excess": "설명형 v0 평균 초과수익률",
         "v2_vs_v1_gap": "v2-v1 차이",
         "v2_vs_explanatory_gap": "v2-설명형 차이",
+        "adjusted_symbols": "조정 판단 종목 수",
+        "adjusted_enter_now_count": "조정 즉시 진입 수",
+        "adjusted_wait_recheck_count": "조정 재확인 수",
+        "adjusted_avoid_today_count": "조정 오늘 회피 수",
+        "adjusted_data_insufficient_count": "조정 데이터 부족 수",
+        "context_scope": "컨텍스트 범위",
+        "market_session_state": "장중 세션 상태",
+        "prior_daily_regime_state": "전일 일간 레짐",
+        "prior_daily_regime_score": "전일 레짐 점수",
+        "advancers_count": "상승 종목 수",
+        "decliners_count": "하락 종목 수",
+        "market_breadth_ratio": "시장 상승 비율",
+        "kospi_return_from_open": "코스피 시가 대비 수익률",
+        "kosdaq_return_from_open": "코스닥 시가 대비 수익률",
+        "candidate_mean_return_from_open": "후보 평균 시가 대비 수익률",
+        "candidate_median_return_from_open": "후보 중앙값 시가 대비 수익률",
+        "candidate_hit_ratio_from_open": "후보 플러스 비율",
+        "candidate_mean_relative_volume": "후보 평균 상대 거래활동",
+        "candidate_mean_spread_bps": "후보 평균 스프레드(bps)",
+        "candidate_mean_execution_strength": "후보 평균 체결 강도",
+        "candidate_mean_orderbook_imbalance": "후보 평균 호가 불균형",
+        "candidate_mean_gap_score": "후보 평균 갭 점수",
+        "candidate_mean_signal_quality": "후보 평균 신호 품질",
+        "market_shock_proxy": "시장 충격 프록시",
+        "intraday_volatility_proxy": "장중 변동성 프록시",
+        "dispersion_proxy": "분산도 프록시",
+        "bar_coverage_ratio": "1분봉 커버리지",
+        "trade_coverage_ratio": "체결 요약 커버리지",
+        "quote_coverage_ratio": "호가 요약 커버리지",
+        "provider_latency_ms": "프로바이더 지연(ms)",
+        "context_reason_codes_json": "컨텍스트 사유",
+        "market_regime_family": "장중 레짐 가족",
+        "adjustment_profile": "조정 프로파일",
+        "raw_action": "원판 액션",
+        "adjusted_action": "조정 액션",
+        "raw_timing_score": "원판 타이밍 점수",
+        "adjusted_timing_score": "조정 타이밍 점수",
+        "selection_confidence_bucket": "선정 신뢰 구간",
+        "signal_quality_flag": "신호 품질 구간",
+        "eligible_to_execute_flag": "실행 가능 여부",
+        "adjustment_reason_codes_json": "조정 사유",
+        "decision_notes_json": "판단 메모",
+        "strategy_id": "전략 ID",
+        "strategy_family": "전략 계열",
+        "cutoff_checkpoint_time": "컷오프 체크포인트",
+        "entry_checkpoint_time": "진입 체크포인트",
+        "entry_action_source": "진입 액션 소스",
+        "executed_flag": "실행 여부",
+        "no_entry_flag": "미진입 여부",
+        "entry_timestamp": "진입 시각",
+        "entry_price": "진입 가격",
+        "exit_trade_date": "청산 거래일",
+        "exit_price": "청산 가격",
+        "baseline_open_price": "기준 시가",
+        "baseline_open_return": "기준 시가 수익률",
+        "baseline_open_excess_return": "기준 시가 초과수익률",
+        "realized_return": "실현 수익률",
+        "timing_edge_vs_open_return": "시가 대비 타이밍 엣지 수익률",
+        "timing_edge_vs_open_bps": "시가 대비 타이밍 엣지(bps)",
+        "skip_reason_code": "스킵 사유",
+        "skip_saved_loss_flag": "스킵 손실 회피 여부",
+        "missed_winner_flag": "스킵 후 승자 놓침 여부",
+        "comparison_scope": "비교 범위",
+        "comparison_value": "비교 값",
+        "matured_count": "평가 완료 수",
+        "executed_count": "실행 수",
+        "no_entry_count": "미진입 수",
+        "execution_rate": "실행 비율",
+        "mean_realized_excess_return": "평균 실현 초과수익률",
+        "median_realized_excess_return": "중앙값 실현 초과수익률",
+        "mean_timing_edge_vs_open_bps": "평균 시가 대비 타이밍 엣지(bps)",
+        "median_timing_edge_vs_open_bps": "중앙값 시가 대비 타이밍 엣지(bps)",
+        "positive_timing_edge_rate": "양의 타이밍 엣지 비율",
+        "skip_saved_loss_rate": "스킵 손실 회피 비율",
+        "missed_winner_rate": "놓친 승자 비율",
+        "coverage_ok_rate": "커버리지 양호 비율",
+        "window_start_date": "평가 창 시작일",
+        "window_end_date": "평가 창 종료일",
+        "grouping_key": "진단 그룹 기준",
+        "grouping_value": "진단 그룹 값",
+    }
+)
+UI_VALUE_LABELS.setdefault("action", {}).update(
+    {
+        "ENTER_NOW": "즉시 진입",
+        "WAIT_RECHECK": "재확인 대기",
+        "AVOID_TODAY": "오늘 회피",
+        "DATA_INSUFFICIENT": "데이터 부족",
+    }
+)
+UI_VALUE_LABELS["raw_action"] = UI_VALUE_LABELS["action"]
+UI_VALUE_LABELS["adjusted_action"] = UI_VALUE_LABELS["action"]
+UI_VALUE_LABELS["selected_action"] = UI_VALUE_LABELS["action"]
+UI_VALUE_LABELS.setdefault("session_status", {}).update(
+    {"planned": "예정", "active": "진행 중", "historical": "과거"}
+)
+UI_VALUE_LABELS.setdefault("market_session_state", {}).update(
+    {"planned": "예정", "active": "진행 중", "historical": "과거"}
+)
+UI_VALUE_LABELS.setdefault("context_scope", {}).update({"market": "시장"})
+UI_VALUE_LABELS.setdefault("data_quality_flag", {}).update(
+    {"weak": "약함", "partial": "부분", "strong": "양호"}
+)
+UI_VALUE_LABELS.setdefault("signal_quality_flag", {}).update(
+    {"critical": "치명", "low": "낮음", "medium": "보통", "high": "높음"}
+)
+UI_VALUE_LABELS.setdefault("selection_confidence_bucket", {}).update(
+    {"top": "최상위", "high": "상위", "medium": "중간", "low": "낮음", "unknown": "미상"}
+)
+UI_VALUE_LABELS.setdefault("market_regime_family", {}).update(
+    {
+        "PANIC_OPEN": "패닉 오픈",
+        "WEAK_RISK_OFF": "약한 리스크오프",
+        "NEUTRAL_CHOP": "중립 박스권",
+        "HEALTHY_TREND": "건강한 추세",
+        "OVERHEATED_GAP_CHASE": "과열 갭 추격",
+        "DATA_WEAK": "데이터 약함",
+        "unknown": "미상",
+    }
+)
+UI_VALUE_LABELS.setdefault("adjustment_profile", {}).update(
+    {
+        "DEFENSIVE": "방어형",
+        "NEUTRAL": "중립형",
+        "SELECTIVE_RISK_ON": "선별 리스크온",
+        "GAP_CHASE_GUARD": "갭 추격 방지",
+        "DATA_WEAK_GUARD": "데이터 약함 방어",
+    }
+)
+UI_VALUE_LABELS.setdefault("strategy_id", {}).update(
+    {
+        "SEL_V2_OPEN_ALL": "Selection v2 시가 일괄",
+        "SEL_V2_TIMING_RAW_FIRST_ENTER": "Selection v2 원판 첫 진입",
+        "SEL_V2_TIMING_ADJ_FIRST_ENTER": "Selection v2 조정 첫 진입",
+        "SEL_V2_TIMING_ADJ_0930_ONLY": "Selection v2 조정 09:30 고정",
+        "SEL_V2_TIMING_ADJ_1000_ONLY": "Selection v2 조정 10:00 고정",
+    }
+)
+UI_VALUE_LABELS.setdefault("strategy_family", {}).update(
+    {
+        "open_baseline": "시가 기준",
+        "raw_timing": "원판 타이밍",
+        "adjusted_timing": "조정 타이밍",
+        "adjusted_timing_fixed": "조정 고정 체크포인트",
+    }
+)
+UI_VALUE_LABELS.setdefault("entry_action_source", {}).update(UI_VALUE_LABELS["strategy_family"])
+UI_VALUE_LABELS.setdefault("comparison_scope", {}).update(
+    {
+        "all": "전체",
+        "regime_family": "레짐 가족",
+        "strategy_id": "전략 ID",
+        "selection_confidence_bucket": "선정 신뢰 구간",
+    }
+)
+UI_VALUE_LABELS.setdefault("grouping_key", {}).update(
+    {
+        "overall": "전체",
+        "strategy_id": "전략 ID",
+        "regime_family": "레짐 가족",
+        "selection_confidence_bucket": "선정 신뢰 구간",
+    }
+)
+UI_VALUE_LABELS.setdefault("quality_flag", {}).update({"thin_sample": "표본 부족"})
+UI_VALUE_LABELS.setdefault("skip_reason_code", {}).update(
+    {
+        "baseline_open_missing": "기준 시가 없음",
+        "no_raw_enter_before_cutoff": "컷오프 전 원판 진입 없음",
+        "no_adjusted_enter_before_cutoff": "컷오프 전 조정 진입 없음",
+        "0930_not_enter": "09:30 진입 아님",
+        "1000_not_enter": "10:00 진입 아님",
     }
 )
 
@@ -443,6 +623,40 @@ UI_RISK_TAG_LABELS.update(
     }
 )
 UI_NOTE_TAG_LABELS.update(UI_RISK_TAG_LABELS)
+UI_NOTE_TAG_LABELS.update(
+    {
+        "panic_open_guard": "패닉 오픈 방어",
+        "weak_risk_off_guard": "약한 리스크오프 방어",
+        "healthy_trend_support": "건강한 추세 지지",
+        "gap_chase_guard": "갭 추격 방어",
+        "data_weak_guard": "데이터 약함 방어",
+        "critical_signal_quality": "신호 품질 치명",
+        "low_signal_quality": "신호 품질 낮음",
+        "friction_penalty": "마찰 패널티",
+        "quote_unavailable": "호가 미가용",
+        "trade_unavailable": "체결 미가용",
+        "selection_fallback_penalty": "Selection fallback 패널티",
+        "uncertainty_high": "불확실성 높음",
+        "disagreement_high": "불일치 높음",
+        "raw_data_insufficient_locked": "원판 데이터 부족 유지",
+        "raw_avoid_preserved": "원판 회피 유지",
+        "critical_signal_quality_guard": "신호 품질 치명 방어",
+        "signal_quality_requires_recheck": "신호 품질 재확인 필요",
+        "signal_quality_guard": "신호 품질 방어",
+        "eligibility_gate_block": "실행 가능성 차단",
+        "adjusted_score_below_avoid": "조정 점수 회피 구간",
+        "profile_blocks_enter": "프로파일상 진입 차단",
+        "adjusted_enter_threshold_hit": "조정 진입 기준 충족",
+        "enter_downgraded_to_wait": "즉시 진입에서 대기로 하향",
+        "adjusted_wait_zone": "조정 대기 구간",
+        "checkpoint_recheck_needed": "체크포인트 재확인 필요",
+        "avoid_by_risk_rule": "리스크 규칙상 회피",
+        "momentum_confirmed": "모멘텀 확인",
+        "timing_supportive": "타이밍 우호",
+        "late_checkpoint_entry": "늦은 체크포인트 진입",
+        "final_checkpoint_not_strong_enough": "마지막 체크포인트 강도 부족",
+    }
+)
 
 
 def _translate_scalar(column: str, value: object) -> object:
@@ -479,9 +693,15 @@ def localize_frame(frame: pd.DataFrame) -> pd.DataFrame:
         return frame
     localized = frame.copy()
     for column in localized.columns:
-        if column in {"reasons", "top_reason_tags_json"}:
+        if column in {
+            "reasons",
+            "top_reason_tags_json",
+            "action_reason_json",
+            "context_reason_codes_json",
+            "adjustment_reason_codes_json",
+        }:
             localized[column] = localized[column].map(
-                lambda value: _translate_json_list(value, UI_REASON_TAG_LABELS)
+                lambda value: _translate_json_list(value, UI_NOTE_TAG_LABELS)
             )
             continue
         if column in {"risks", "risk_flags_json"}:
@@ -2043,6 +2263,7 @@ def latest_intraday_status_frame(settings: Settings) -> pd.DataFrame:
                 COUNT(DISTINCT quote.symbol) AS quote_symbols,
                 COUNT(DISTINCT signal.symbol) AS signal_symbols,
                 COUNT(DISTINCT decision.symbol) AS decision_symbols,
+                COUNT(DISTINCT adjusted.symbol) AS adjusted_symbols,
                 AVG(bar.fetch_latency_ms) AS avg_bar_latency_ms,
                 AVG(quote.fetch_latency_ms) AS avg_quote_latency_ms
             FROM fact_intraday_candidate_session AS candidate
@@ -2061,6 +2282,9 @@ def latest_intraday_status_frame(settings: Settings) -> pd.DataFrame:
             LEFT JOIN fact_intraday_entry_decision AS decision
               ON candidate.session_date = decision.session_date
              AND candidate.symbol = decision.symbol
+            LEFT JOIN fact_intraday_adjusted_entry_decision AS adjusted
+              ON candidate.session_date = adjusted.session_date
+             AND candidate.symbol = adjusted.symbol
             WHERE candidate.session_date = ?
             GROUP BY candidate.session_date
             """,
@@ -2089,6 +2313,18 @@ def latest_intraday_checkpoint_health_frame(settings: Settings) -> pd.DataFrame:
                     CASE WHEN decision.action = 'DATA_INSUFFICIENT' THEN 1 ELSE 0 END
                 ) AS data_insufficient_count,
                 SUM(
+                    CASE WHEN adjusted.adjusted_action = 'ENTER_NOW' THEN 1 ELSE 0 END
+                ) AS adjusted_enter_now_count,
+                SUM(
+                    CASE WHEN adjusted.adjusted_action = 'WAIT_RECHECK' THEN 1 ELSE 0 END
+                ) AS adjusted_wait_recheck_count,
+                SUM(
+                    CASE WHEN adjusted.adjusted_action = 'AVOID_TODAY' THEN 1 ELSE 0 END
+                ) AS adjusted_avoid_today_count,
+                SUM(
+                    CASE WHEN adjusted.adjusted_action = 'DATA_INSUFFICIENT' THEN 1 ELSE 0 END
+                ) AS adjusted_data_insufficient_count,
+                SUM(
                     CASE WHEN quote.quote_status = 'unavailable' THEN 1 ELSE 0 END
                 ) AS quote_unavailable_count,
                 SUM(
@@ -2109,6 +2345,12 @@ def latest_intraday_checkpoint_health_frame(settings: Settings) -> pd.DataFrame:
               ON signal.session_date = trade.session_date
              AND signal.symbol = trade.symbol
              AND signal.checkpoint_time = trade.checkpoint_time
+            LEFT JOIN fact_intraday_adjusted_entry_decision AS adjusted
+              ON signal.session_date = adjusted.session_date
+             AND signal.symbol = adjusted.symbol
+             AND signal.horizon = adjusted.horizon
+             AND signal.checkpoint_time = adjusted.checkpoint_time
+             AND signal.ranking_version = adjusted.ranking_version
             WHERE signal.session_date = ?
             GROUP BY signal.checkpoint_time
             ORDER BY signal.checkpoint_time
@@ -2272,6 +2514,365 @@ def intraday_console_timing_frame(settings: Settings, *, limit: int = 30) -> pd.
         ).fetchdf()
 
 
+def latest_intraday_market_context_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    limit: int = 20,
+) -> pd.DataFrame:
+    target_date = session_date or _latest_intraday_session_date(settings)
+    if target_date is None:
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                session_date,
+                checkpoint_time,
+                context_scope,
+                market_session_state,
+                prior_daily_regime_state,
+                market_breadth_ratio,
+                candidate_mean_return_from_open,
+                candidate_mean_relative_volume,
+                candidate_mean_signal_quality,
+                bar_coverage_ratio,
+                trade_coverage_ratio,
+                quote_coverage_ratio,
+                data_quality_flag
+            FROM fact_intraday_market_context_snapshot
+            WHERE session_date = ?
+            ORDER BY checkpoint_time, context_scope
+            LIMIT ?
+            """,
+            [target_date, limit],
+        ).fetchdf()
+
+
+def latest_intraday_adjustment_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    checkpoint: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    target_date = session_date or _latest_intraday_session_date(settings)
+    if target_date is None:
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        if checkpoint is None:
+            row = connection.execute(
+                """
+                SELECT MAX(checkpoint_time)
+                FROM fact_intraday_adjusted_entry_decision
+                WHERE session_date = ?
+                """,
+                [target_date],
+            ).fetchone()
+            checkpoint = row[0] if row and row[0] else None
+        if checkpoint is None:
+            return pd.DataFrame()
+        return connection.execute(
+            """
+            SELECT
+                adjusted.session_date,
+                adjusted.checkpoint_time,
+                adjusted.symbol,
+                candidate.company_name,
+                adjusted.horizon,
+                adjusted.market_regime_family,
+                adjusted.adjustment_profile,
+                adjusted.raw_action,
+                adjusted.adjusted_action,
+                adjusted.raw_timing_score,
+                adjusted.adjusted_timing_score,
+                adjusted.selection_confidence_bucket,
+                adjusted.signal_quality_flag,
+                adjusted.eligible_to_execute_flag,
+                adjusted.fallback_flag
+            FROM fact_intraday_adjusted_entry_decision AS adjusted
+            LEFT JOIN fact_intraday_candidate_session AS candidate
+              ON adjusted.session_date = candidate.session_date
+             AND adjusted.symbol = candidate.symbol
+             AND adjusted.horizon = candidate.horizon
+             AND adjusted.ranking_version = candidate.ranking_version
+            WHERE adjusted.session_date = ?
+              AND adjusted.checkpoint_time = ?
+            ORDER BY adjusted.horizon, adjusted.adjusted_timing_score DESC, adjusted.symbol
+            LIMIT ?
+            """,
+            [target_date, checkpoint, limit],
+        ).fetchdf()
+
+
+def latest_intraday_adjustment_summary_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    limit: int = 30,
+) -> pd.DataFrame:
+    target_date = session_date or _latest_intraday_session_date(settings)
+    if target_date is None:
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                session_date,
+                checkpoint_time,
+                market_regime_family,
+                adjustment_profile,
+                adjusted_action,
+                COUNT(*) AS row_count
+            FROM fact_intraday_adjusted_entry_decision
+            WHERE session_date = ?
+            GROUP BY
+                session_date,
+                checkpoint_time,
+                market_regime_family,
+                adjustment_profile,
+                adjusted_action
+            ORDER BY checkpoint_time, market_regime_family, adjustment_profile, adjusted_action
+            LIMIT ?
+            """,
+            [target_date, limit],
+        ).fetchdf()
+
+
+def latest_intraday_strategy_comparison_frame(
+    settings: Settings,
+    *,
+    end_session_date=None,
+    comparison_scope: str = "all",
+    limit: int = 30,
+) -> pd.DataFrame:
+    target_date = end_session_date or _latest_intraday_session_date(settings)
+    if target_date is None:
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                end_session_date,
+                horizon,
+                strategy_id,
+                comparison_scope,
+                comparison_value,
+                cutoff_checkpoint_time,
+                sample_count,
+                matured_count,
+                executed_count,
+                no_entry_count,
+                execution_rate,
+                mean_realized_excess_return,
+                median_realized_excess_return,
+                hit_rate,
+                mean_timing_edge_vs_open_bps,
+                positive_timing_edge_rate,
+                skip_saved_loss_rate,
+                missed_winner_rate,
+                coverage_ok_rate
+            FROM fact_intraday_strategy_comparison
+            WHERE end_session_date = ?
+              AND comparison_scope = ?
+            ORDER BY horizon, comparison_value, strategy_id
+            LIMIT ?
+            """,
+            [target_date, comparison_scope, limit],
+        ).fetchdf()
+
+
+def latest_intraday_timing_calibration_frame(
+    settings: Settings,
+    *,
+    window_end_date=None,
+    grouping_key: str | None = None,
+    limit: int = 30,
+) -> pd.DataFrame:
+    target_date = window_end_date or _latest_intraday_session_date(settings)
+    if target_date is None:
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        if grouping_key is None:
+            return connection.execute(
+                """
+                SELECT
+                    window_end_date,
+                    horizon,
+                    grouping_key,
+                    grouping_value,
+                    sample_count,
+                    executed_count,
+                    execution_rate,
+                    mean_realized_excess_return,
+                    hit_rate,
+                    mean_timing_edge_vs_open_bps,
+                    skip_saved_loss_rate,
+                    missed_winner_rate,
+                    quality_flag
+                FROM fact_intraday_timing_calibration
+                WHERE window_end_date = ?
+                  AND grouping_key IN ('overall', 'strategy_id', 'regime_family')
+                ORDER BY horizon, grouping_key, grouping_value
+                LIMIT ?
+                """,
+                [target_date, limit],
+            ).fetchdf()
+        return connection.execute(
+            """
+            SELECT
+                window_end_date,
+                horizon,
+                grouping_key,
+                grouping_value,
+                sample_count,
+                executed_count,
+                execution_rate,
+                mean_realized_excess_return,
+                hit_rate,
+                mean_timing_edge_vs_open_bps,
+                skip_saved_loss_rate,
+                missed_winner_rate,
+                quality_flag
+            FROM fact_intraday_timing_calibration
+            WHERE window_end_date = ?
+              AND grouping_key = ?
+            ORDER BY horizon, grouping_value
+            LIMIT ?
+            """,
+            [target_date, grouping_key, limit],
+        ).fetchdf()
+
+
+def latest_intraday_publish_status_frame(
+    settings: Settings,
+    *,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                run_type,
+                started_at,
+                finished_at,
+                status,
+                notes
+            FROM ops_run_manifest
+            WHERE run_type IN (
+                'materialize_intraday_market_context_snapshots',
+                'materialize_intraday_regime_adjustments',
+                'materialize_intraday_adjusted_entry_decisions',
+                'materialize_intraday_decision_outcomes',
+                'evaluate_intraday_strategy_comparison',
+                'materialize_intraday_timing_calibration',
+                'render_intraday_postmortem_report',
+                'publish_discord_intraday_postmortem',
+                'validate_intraday_strategy_pipeline'
+            )
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY run_type
+                ORDER BY started_at DESC
+            ) = 1
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_intraday_postmortem_preview(settings: Settings) -> str | None:
+    if not settings.paths.duckdb_path.exists():
+        return None
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT output_artifacts_json
+            FROM ops_run_manifest
+            WHERE run_type = 'render_intraday_postmortem_report'
+              AND status = 'success'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None or not row[0]:
+        return None
+    artifacts = json.loads(row[0])
+    preview_candidates = [Path(item) for item in artifacts if str(item).endswith(".md")]
+    if not preview_candidates:
+        return None
+    preview_path = preview_candidates[-1]
+    if not preview_path.exists():
+        return None
+    return preview_path.read_text(encoding="utf-8")
+
+
+def intraday_console_market_context_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    limit: int = 20,
+) -> pd.DataFrame:
+    return latest_intraday_market_context_frame(
+        settings,
+        session_date=session_date,
+        limit=limit,
+    )
+
+
+def intraday_console_adjusted_decision_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    checkpoint: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    return latest_intraday_adjustment_frame(
+        settings,
+        session_date=session_date,
+        checkpoint=checkpoint,
+        limit=limit,
+    )
+
+
+def intraday_console_strategy_trace_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    target_date = session_date or _latest_intraday_session_date(settings)
+    if target_date is None:
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                session_date,
+                symbol,
+                company_name,
+                horizon,
+                strategy_id,
+                entry_checkpoint_time,
+                market_regime_family,
+                adjustment_profile,
+                executed_flag,
+                no_entry_flag,
+                realized_excess_return,
+                timing_edge_vs_open_bps,
+                skip_reason_code,
+                outcome_status
+            FROM fact_intraday_strategy_result
+            WHERE session_date = ?
+            ORDER BY horizon, symbol, strategy_id
+            LIMIT ?
+            """,
+            [target_date, limit],
+        ).fetchdf()
+
+
 def stock_workbench_intraday_decision_frame(
     settings: Settings,
     *,
@@ -2284,16 +2885,26 @@ def stock_workbench_intraday_decision_frame(
         return connection.execute(
             """
             SELECT
-                session_date,
-                checkpoint_time,
-                horizon,
-                action,
-                action_score,
-                signal_quality_score,
-                entry_reference_price
-            FROM fact_intraday_entry_decision
-            WHERE symbol = ?
-            ORDER BY session_date DESC, checkpoint_time DESC, horizon
+                raw.session_date,
+                raw.checkpoint_time,
+                raw.horizon,
+                raw.action AS raw_action,
+                adjusted.adjusted_action,
+                adjusted.market_regime_family,
+                adjusted.adjustment_profile,
+                raw.action_score AS raw_timing_score,
+                adjusted.adjusted_timing_score,
+                adjusted.signal_quality_flag,
+                adjusted.fallback_flag
+            FROM fact_intraday_entry_decision AS raw
+            LEFT JOIN fact_intraday_adjusted_entry_decision AS adjusted
+              ON raw.session_date = adjusted.session_date
+             AND raw.symbol = adjusted.symbol
+             AND raw.horizon = adjusted.horizon
+             AND raw.checkpoint_time = adjusted.checkpoint_time
+             AND raw.ranking_version = adjusted.ranking_version
+            WHERE raw.symbol = ?
+            ORDER BY raw.session_date DESC, raw.checkpoint_time DESC, raw.horizon
             LIMIT ?
             """,
             [symbol, limit],
@@ -2314,15 +2925,18 @@ def stock_workbench_intraday_timing_frame(
             SELECT
                 session_date,
                 horizon,
-                selected_checkpoint_time,
-                selected_action,
-                timing_edge_bps,
-                realized_return_from_open,
-                realized_return_from_decision,
+                strategy_id,
+                entry_checkpoint_time,
+                market_regime_family,
+                adjustment_profile,
+                executed_flag,
+                no_entry_flag,
+                realized_excess_return,
+                timing_edge_vs_open_bps,
                 outcome_status
-            FROM fact_intraday_timing_outcome
+            FROM fact_intraday_strategy_result
             WHERE symbol = ?
-            ORDER BY session_date DESC, horizon
+            ORDER BY session_date DESC, horizon, strategy_id
             LIMIT ?
             """,
             [symbol, limit],

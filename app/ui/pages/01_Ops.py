@@ -21,8 +21,14 @@ from app.ui.helpers import (
     latest_evaluation_summary_frame,
     latest_feature_coverage_frame,
     latest_flow_summary_frame,
+    latest_intraday_adjustment_summary_frame,
     latest_intraday_checkpoint_health_frame,
+    latest_intraday_market_context_frame,
+    latest_intraday_postmortem_preview,
+    latest_intraday_publish_status_frame,
     latest_intraday_status_frame,
+    latest_intraday_strategy_comparison_frame,
+    latest_intraday_timing_calibration_frame,
     latest_label_coverage_frame,
     latest_model_metric_summary_frame,
     latest_model_training_summary_frame,
@@ -85,8 +91,14 @@ selection_validation = latest_selection_validation_summary_frame(settings, limit
 explanatory_validation = latest_validation_summary_frame(settings, limit=20)
 intraday_status = latest_intraday_status_frame(settings)
 intraday_checkpoint_health = latest_intraday_checkpoint_health_frame(settings)
+intraday_market_context = latest_intraday_market_context_frame(settings, limit=12)
+intraday_adjustment_summary = latest_intraday_adjustment_summary_frame(settings, limit=20)
+intraday_strategy_comparison = latest_intraday_strategy_comparison_frame(settings, limit=20)
+intraday_timing_calibration = latest_intraday_timing_calibration_frame(settings, limit=20)
+intraday_publish_status = latest_intraday_publish_status_frame(settings, limit=12)
 discord_preview = latest_discord_preview(settings)
 postmortem_preview = latest_postmortem_preview(settings)
+intraday_postmortem_preview = latest_intraday_postmortem_preview(settings)
 
 st.title("운영")
 st.caption(
@@ -155,6 +167,48 @@ with intraday_right:
     else:
         st.dataframe(localize_frame(intraday_checkpoint_health), width="stretch", hide_index=True)
 
+intraday_detail_left, intraday_detail_right = st.columns(2)
+with intraday_detail_left:
+    st.subheader("장중 시장 컨텍스트")
+    if intraday_market_context.empty:
+        st.info("장중 시장 컨텍스트가 아직 없습니다.")
+    else:
+        st.dataframe(localize_frame(intraday_market_context), width="stretch", hide_index=True)
+    st.subheader("장중 조정 요약")
+    if intraday_adjustment_summary.empty:
+        st.info("장중 조정 요약이 아직 없습니다.")
+    else:
+        st.dataframe(
+            localize_frame(intraday_adjustment_summary),
+            width="stretch",
+            hide_index=True,
+        )
+with intraday_detail_right:
+    st.subheader("장중 전략 비교")
+    if intraday_strategy_comparison.empty:
+        st.info("장중 전략 비교 결과가 아직 없습니다.")
+    else:
+        st.dataframe(
+            localize_frame(intraday_strategy_comparison),
+            width="stretch",
+            hide_index=True,
+        )
+    st.subheader("장중 타이밍 보정 진단")
+    if intraday_timing_calibration.empty:
+        st.info("장중 타이밍 보정 진단이 아직 없습니다.")
+    else:
+        st.dataframe(
+            localize_frame(intraday_timing_calibration),
+            width="stretch",
+            hide_index=True,
+        )
+
+st.subheader("장중 리포트/발행 상태")
+if intraday_publish_status.empty:
+    st.info("장중 postmortem 렌더/발행 상태가 아직 없습니다.")
+else:
+    st.dataframe(localize_frame(intraday_publish_status), width="stretch", hide_index=True)
+
 evaluation_left, evaluation_right = st.columns(2)
 with evaluation_left:
     st.subheader("성과 요약")
@@ -189,6 +243,10 @@ if discord_preview:
 if postmortem_preview:
     with st.expander("최신 사후 분석 미리보기", expanded=False):
         st.code(postmortem_preview)
+
+if intraday_postmortem_preview:
+    with st.expander("최신 장중 사후 분석 미리보기", expanded=False):
+        st.code(intraday_postmortem_preview)
 
 st.subheader("실행 이력")
 st.dataframe(localize_frame(runs), width="stretch", hide_index=True)

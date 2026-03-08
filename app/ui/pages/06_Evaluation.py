@@ -21,6 +21,9 @@ from app.ui.helpers import (
     latest_calibration_diagnostic_frame,
     latest_evaluation_comparison_frame,
     latest_evaluation_summary_frame,
+    latest_intraday_postmortem_preview,
+    latest_intraday_strategy_comparison_frame,
+    latest_intraday_timing_calibration_frame,
     latest_postmortem_preview,
     latest_selection_engine_comparison_frame,
     load_ui_settings,
@@ -34,6 +37,14 @@ latest_comparison = latest_evaluation_comparison_frame(settings)
 latest_selection_v2_comparison = latest_selection_engine_comparison_frame(settings)
 latest_calibration = latest_calibration_diagnostic_frame(settings, limit=30)
 postmortem_preview = latest_postmortem_preview(settings)
+intraday_strategy_comparison = latest_intraday_strategy_comparison_frame(settings, limit=30)
+intraday_regime_matrix = latest_intraday_strategy_comparison_frame(
+    settings,
+    comparison_scope="regime_family",
+    limit=30,
+)
+intraday_timing_calibration = latest_intraday_timing_calibration_frame(settings, limit=30)
+intraday_postmortem_preview = latest_intraday_postmortem_preview(settings)
 
 st.title("사후 평가")
 st.caption(
@@ -85,3 +96,33 @@ else:
 
     st.subheader("평가 가능 성과 행")
     st.dataframe(localize_frame(outcomes), width="stretch", hide_index=True)
+
+    intraday_left, intraday_right = st.columns(2)
+    with intraday_left:
+        st.subheader("장중 전략 비교")
+        if intraday_strategy_comparison.empty:
+            st.info("장중 전략 비교 결과가 아직 없습니다.")
+        else:
+            st.dataframe(
+                localize_frame(intraday_strategy_comparison),
+                width="stretch",
+                hide_index=True,
+            )
+        st.subheader("장중 레짐 매트릭스")
+        if intraday_regime_matrix.empty:
+            st.info("장중 레짐 매트릭스가 아직 없습니다.")
+        else:
+            st.dataframe(localize_frame(intraday_regime_matrix), width="stretch", hide_index=True)
+    with intraday_right:
+        st.subheader("장중 타이밍 보정 진단")
+        if intraday_timing_calibration.empty:
+            st.info("장중 타이밍 보정 진단이 아직 없습니다.")
+        else:
+            st.dataframe(
+                localize_frame(intraday_timing_calibration),
+                width="stretch",
+                hide_index=True,
+            )
+        if intraday_postmortem_preview:
+            with st.expander("최신 장중 사후 분석 미리보기", expanded=False):
+                st.code(intraday_postmortem_preview)

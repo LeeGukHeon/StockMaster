@@ -14,6 +14,28 @@ INTRADAY_ACTIONS: tuple[str, ...] = (
     "AVOID_TODAY",
     "DATA_INSUFFICIENT",
 )
+INTRADAY_REGIME_FAMILIES: tuple[str, ...] = (
+    "PANIC_OPEN",
+    "WEAK_RISK_OFF",
+    "NEUTRAL_CHOP",
+    "HEALTHY_TREND",
+    "OVERHEATED_GAP_CHASE",
+    "DATA_WEAK",
+)
+ADJUSTMENT_PROFILES: tuple[str, ...] = (
+    "DEFENSIVE",
+    "NEUTRAL",
+    "SELECTIVE_RISK_ON",
+    "GAP_CHASE_GUARD",
+    "DATA_WEAK_GUARD",
+)
+INTRADAY_STRATEGY_IDS: tuple[str, ...] = (
+    "SEL_V2_OPEN_ALL",
+    "SEL_V2_TIMING_RAW_FIRST_ENTER",
+    "SEL_V2_TIMING_ADJ_FIRST_ENTER",
+    "SEL_V2_TIMING_ADJ_0930_ONLY",
+    "SEL_V2_TIMING_ADJ_1000_ONLY",
+)
 
 _CHECKPOINT_FRACTIONS = {
     "09:05": 0.08,
@@ -105,3 +127,19 @@ def session_status(session_date: date, *, today: date) -> str:
 
 def rank_list(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys([str(value) for value in values if str(value)]))
+
+
+def selection_confidence_bucket(
+    *,
+    final_selection_value: float | int | None,
+    percentile: float | int | None,
+) -> str:
+    score = clip_score(final_selection_value)
+    pct = 0.0 if percentile is None or pd.isna(percentile) else float(percentile)
+    if score >= 80 or pct >= 0.97:
+        return "top"
+    if score >= 68 or pct >= 0.90:
+        return "high"
+    if score >= 55 or pct >= 0.80:
+        return "medium"
+    return "low"
