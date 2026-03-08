@@ -108,35 +108,45 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
     )
 
 
-def build_navigation_pages(
+def build_navigation_registry(
     project_root: Path,
     *,
     render_today_page: Callable[[], None],
 ):
     import streamlit as st
 
-    pages = []
+    registry: dict[str, object] = {}
     for spec in page_specs(project_root):
         if spec.callable_name is not None:
-            pages.append(
-                st.Page(
-                    render_today_page,
-                    title=spec.title,
-                    icon=spec.icon,
-                    url_path=spec.url_path,
-                )
-            )
-            continue
-        assert spec.path is not None
-        pages.append(
-            st.Page(
-                spec.path,
+            registry[spec.key] = st.Page(
+                render_today_page,
                 title=spec.title,
                 icon=spec.icon,
                 url_path=spec.url_path,
             )
+            continue
+
+        assert spec.path is not None
+        registry[spec.key] = st.Page(
+            spec.path,
+            title=spec.title,
+            icon=spec.icon,
+            url_path=spec.url_path,
         )
-    return pages
+    return registry
+
+
+def build_navigation_pages(
+    project_root: Path,
+    *,
+    render_today_page: Callable[[], None],
+):
+    return list(
+        build_navigation_registry(
+            project_root,
+            render_today_page=render_today_page,
+        ).values()
+    )
 
 
 PAGE_SPECS = page_specs(Path(__file__).resolve().parents[2])

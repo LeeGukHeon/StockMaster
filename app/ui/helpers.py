@@ -915,7 +915,10 @@ def latest_portfolio_target_book_frame(
             waitlist_flag,
             waitlist_rank,
             blocked_flag,
-            blocked_reason
+            CASE
+                WHEN blocked_flag THEN constraint_flags_json
+                ELSE NULL
+            END AS blocked_reason
         FROM fact_portfolio_target_book
         WHERE {' AND '.join(filters)}
         ORDER BY execution_mode, target_rank, symbol
@@ -952,7 +955,10 @@ def latest_portfolio_waitlist_frame(
             waitlist_flag,
             waitlist_rank,
             blocked_flag,
-            blocked_reason
+            CASE
+                WHEN blocked_flag THEN constraint_flags_json
+                ELSE NULL
+            END AS blocked_reason
         FROM fact_portfolio_target_book
         WHERE {' AND '.join(filters)}
         ORDER BY execution_mode, blocked_flag DESC, waitlist_rank, symbol

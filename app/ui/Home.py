@@ -35,7 +35,7 @@ from app.ui.helpers import (
     load_ui_settings,
     localize_frame,
 )
-from app.ui.navigation import build_navigation_pages
+from app.ui.navigation import build_navigation_registry
 
 
 def _snapshot_row(settings):
@@ -101,9 +101,13 @@ def _today_narrative(snapshot_row, alerts: pd.DataFrame, freshness: pd.DataFrame
     return " ".join(parts)
 
 
-def _quick_link(label: str, page: str, description: str) -> None:
+def _quick_link(label: str, page_key: str, description: str) -> None:
     st.markdown(f"**{label}**")
     st.caption(description)
+    page = NAVIGATION_REGISTRY.get(page_key)
+    if page is None:
+        st.caption("페이지 연결 정보를 찾지 못했습니다.")
+        return
     st.page_link(page, label=f"{label} 열기", icon=":material/open_in_new:")
 
 
@@ -173,14 +177,14 @@ def render_today_page() -> None:
 
     link_left, link_mid, link_right = st.columns(3)
     with link_left:
-        _quick_link("리더보드", "app/ui/pages/03_Leaderboard.py", "오늘 바로 볼 종목 선별 결과와 위험 플래그를 확인합니다.")
-        _quick_link("포트폴리오", "app/ui/pages/08_Portfolio_Studio.py", "목표 보유, 리밸런스, 현금 비중과 제약 사유를 봅니다.")
+        _quick_link("리더보드", "leaderboard", "오늘 바로 볼 종목 선별 결과와 위험 플래그를 확인합니다.")
+        _quick_link("포트폴리오", "portfolio", "목표 보유, 리밸런스, 현금 비중과 제약 사유를 봅니다.")
     with link_mid:
-        _quick_link("장중 콘솔", "app/ui/pages/07_Intraday_Console.py", "raw/adjusted/final action과 stale 경고를 확인합니다.")
-        _quick_link("사후 평가", "app/ui/pages/06_Evaluation.py", "D+1/D+5 성숙 결과와 calibration을 점검합니다.")
+        _quick_link("장중 콘솔", "intraday_console", "raw/adjusted/final action과 stale 경고를 확인합니다.")
+        _quick_link("사후 평가", "evaluation", "D+1/D+5 성숙 결과와 calibration을 점검합니다.")
     with link_right:
-        _quick_link("운영", "app/ui/pages/01_Ops.py", "최근 run, 알림, 정책, 보고서 상태를 점검합니다.")
-        _quick_link("문서 / 도움말", "app/ui/pages/11_Docs_Help.py", "용어집, 사용자 가이드, known limitations를 봅니다.")
+        _quick_link("운영", "ops", "최근 run, 알림, 정책, 보고서 상태를 점검합니다.")
+        _quick_link("문서 / 도움말", "docs", "용어집, 사용자 가이드, known limitations를 봅니다.")
 
     actionable_left, actionable_right = st.columns((2, 1))
     with actionable_left:
@@ -261,8 +265,13 @@ def render_today_page() -> None:
 
 st.set_page_config(page_title="StockMaster", page_icon="SM", layout="wide")
 
+NAVIGATION_REGISTRY = build_navigation_registry(
+    PROJECT_ROOT,
+    render_today_page=render_today_page,
+)
+
 navigation = st.navigation(
-    build_navigation_pages(PROJECT_ROOT, render_today_page=render_today_page),
+    list(NAVIGATION_REGISTRY.values()),
     position="sidebar",
 )
 navigation.run()
