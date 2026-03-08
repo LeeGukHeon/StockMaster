@@ -48,6 +48,36 @@ def _cleanup_targets(settings: Settings) -> list[tuple[str, Path, int]]:
     ]
 
 
+def _latest_referenced_artifact_paths(
+    connection: duckdb.DuckDBPyConnection,
+    settings: Settings,
+) -> set[str]:
+    protected_paths: set[str] = set()
+    rows = connection.execute(
+        """
+        SELECT artifact_path, summary_json
+        FROM vw_latest_report_index
+        """
+    ).fetchall()
+    for artifact_path, summary_json in rows:
+        if artifact_path:
+            protected_paths.add(
+                _safe_relative(Path(str(artifact_path)), settings.paths.project_root),
+            )
+        if not summary_json:
+            continue
+        try:
+            payload = json.loads(str(summary_json))
+        except json.JSONDecodeError:
+            continue
+        payload_path = payload.get("payload_path")
+        if payload_path:
+            protected_paths.add(
+                _safe_relative(Path(str(payload_path)), settings.paths.project_root),
+            )
+    return protected_paths
+
+
 def summarize_storage_usage(
     settings: Settings,
     *,
@@ -106,6 +136,7 @@ def enforce_retention_policies(
     )
     allowlist = {item.strip("/").replace("\\", "/") for item in resolved.policy.cleanup_allowlist}
     protected = {item.strip("/").replace("\\", "/") for item in resolved.policy.protected_prefixes}
+    protected |= _latest_referenced_artifact_paths(connection, settings)
     now = datetime.now(tz=timezone.utc)
     stats = _CleanupStats()
     touched_paths: list[str] = []

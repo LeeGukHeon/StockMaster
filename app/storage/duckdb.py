@@ -2146,6 +2146,39 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     ) = 1
     """,
     """
+    CREATE OR REPLACE VIEW fact_intraday_final_action AS
+    SELECT
+        run_id,
+        session_date,
+        symbol,
+        horizon,
+        checkpoint_time,
+        ranking_version,
+        raw_action,
+        adjusted_action,
+        tuned_action,
+        final_action,
+        panel_name,
+        predicted_class,
+        predicted_class_probability,
+        confidence_margin,
+        uncertainty_score,
+        disagreement_score,
+        active_policy_candidate_id,
+        active_meta_model_id,
+        active_meta_training_run_id,
+        hard_guard_block_flag,
+        override_applied_flag,
+        override_type,
+        fallback_flag,
+        fallback_reason,
+        decision_reason_codes_json,
+        risk_flags_json,
+        source_notes_json,
+        created_at
+    FROM fact_intraday_meta_decision
+    """,
+    """
     CREATE OR REPLACE VIEW vw_latest_intraday_active_meta_model AS
     SELECT *
     FROM fact_intraday_active_meta_model
@@ -2331,6 +2364,9 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     CREATE OR REPLACE VIEW vw_latest_active_ops_policy AS
     SELECT *
     FROM fact_active_ops_policy
+    WHERE active_flag
+      AND effective_from_at <= CURRENT_TIMESTAMP
+      AND (effective_to_at IS NULL OR effective_to_at >= CURRENT_TIMESTAMP)
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY policy_id, policy_version
         ORDER BY effective_from_at DESC, created_at DESC

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
@@ -25,6 +26,9 @@ class FreshnessSpec:
     warning_seconds: int
     critical_seconds: int
     notes: str
+    trading_day_aware: bool = False
+    warning_trading_days: int | None = None
+    critical_trading_days: int | None = None
 
 
 REPORT_TYPE_BY_PREVIEW_NAME: dict[str, str] = {
@@ -54,7 +58,10 @@ FRESHNESS_SPECS: tuple[FreshnessSpec, ...] = (
         """,
         warning_seconds=36 * 3600,
         critical_seconds=72 * 3600,
-        notes="오늘 화면의 핵심 선별 결과",
+        notes="오늘 화면의 대표 선별 결과",
+        trading_day_aware=True,
+        warning_trading_days=1,
+        critical_trading_days=2,
     ),
     FreshnessSpec(
         page_name="오늘",
@@ -62,7 +69,7 @@ FRESHNESS_SPECS: tuple[FreshnessSpec, ...] = (
         sql="SELECT MAX(generated_ts) FROM fact_latest_report_index",
         warning_seconds=24 * 3600,
         critical_seconds=72 * 3600,
-        notes="최신 리포트 인덱스",
+        notes="최신 보고서 인덱스",
     ),
     FreshnessSpec(
         page_name="시장 현황",
@@ -70,7 +77,10 @@ FRESHNESS_SPECS: tuple[FreshnessSpec, ...] = (
         sql="SELECT MAX(CAST(as_of_date AS TIMESTAMPTZ)) FROM fact_market_regime_snapshot",
         warning_seconds=36 * 3600,
         critical_seconds=72 * 3600,
-        notes="시장 regime 스냅샷",
+        notes="시장 regime 요약",
+        trading_day_aware=True,
+        warning_trading_days=1,
+        critical_trading_days=2,
     ),
     FreshnessSpec(
         page_name="시장 현황",
@@ -91,6 +101,9 @@ FRESHNESS_SPECS: tuple[FreshnessSpec, ...] = (
         warning_seconds=36 * 3600,
         critical_seconds=72 * 3600,
         notes="selection v2 순위표",
+        trading_day_aware=True,
+        warning_trading_days=1,
+        critical_trading_days=2,
     ),
     FreshnessSpec(
         page_name="리더보드",
@@ -103,6 +116,9 @@ FRESHNESS_SPECS: tuple[FreshnessSpec, ...] = (
         warning_seconds=36 * 3600,
         critical_seconds=72 * 3600,
         notes="ML 알파 예측",
+        trading_day_aware=True,
+        warning_trading_days=1,
+        critical_trading_days=2,
     ),
     FreshnessSpec(
         page_name="포트폴리오",
@@ -111,6 +127,9 @@ FRESHNESS_SPECS: tuple[FreshnessSpec, ...] = (
         warning_seconds=36 * 3600,
         critical_seconds=72 * 3600,
         notes="포트폴리오 목표 비중",
+        trading_day_aware=True,
+        warning_trading_days=1,
+        critical_trading_days=2,
     ),
     FreshnessSpec(
         page_name="포트폴리오",
@@ -119,6 +138,9 @@ FRESHNESS_SPECS: tuple[FreshnessSpec, ...] = (
         warning_seconds=36 * 3600,
         critical_seconds=72 * 3600,
         notes="포트폴리오 NAV",
+        trading_day_aware=True,
+        warning_trading_days=1,
+        critical_trading_days=2,
     ),
     FreshnessSpec(
         page_name="장중 콘솔",
@@ -143,6 +165,9 @@ FRESHNESS_SPECS: tuple[FreshnessSpec, ...] = (
         warning_seconds=48 * 3600,
         critical_seconds=96 * 3600,
         notes="사후 평가 요약",
+        trading_day_aware=True,
+        warning_trading_days=2,
+        critical_trading_days=4,
     ),
     FreshnessSpec(
         page_name="사후 평가",
@@ -151,6 +176,9 @@ FRESHNESS_SPECS: tuple[FreshnessSpec, ...] = (
         warning_seconds=48 * 3600,
         critical_seconds=96 * 3600,
         notes="예측 band calibration",
+        trading_day_aware=True,
+        warning_trading_days=2,
+        critical_trading_days=4,
     ),
     FreshnessSpec(
         page_name="종목 분석",
@@ -159,6 +187,9 @@ FRESHNESS_SPECS: tuple[FreshnessSpec, ...] = (
         warning_seconds=48 * 3600,
         critical_seconds=96 * 3600,
         notes="종목별 사후 결과",
+        trading_day_aware=True,
+        warning_trading_days=2,
+        critical_trading_days=4,
     ),
     FreshnessSpec(
         page_name="리서치 랩",
@@ -240,7 +271,28 @@ def _normalize_timestamp(value: Any) -> datetime | None:
 
 
 def _path_hash(path: Path) -> str:
-    return str(abs(hash(path.as_posix())))
+    return hashlib.sha1(path.as_posix().encode("utf-8")).hexdigest()[:16]
+
+
+def _deduplicate_report_index(connection: duckdb.DuckDBPyConnection) -> None:
+    connection.execute(
+        """
+        DELETE FROM fact_latest_report_index
+        WHERE report_index_id IN (
+            SELECT report_index_id
+            FROM (
+                SELECT
+                    report_index_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY report_key
+                        ORDER BY generated_ts DESC, created_at DESC, report_index_id DESC
+                    ) AS row_number
+                FROM fact_latest_report_index
+            )
+            WHERE row_number > 1
+        )
+        """
+    )
 
 
 def _parse_as_of_date(path: Path) -> date | None:
@@ -308,6 +360,104 @@ def _payload_summary(preview_path: Path) -> dict[str, Any]:
     return summary
 
 
+def _latest_trading_day(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    on_or_before: date,
+    inclusive: bool,
+) -> date | None:
+    operator = "<=" if inclusive else "<"
+    row = connection.execute(
+        f"""
+        SELECT MAX(trading_date)
+        FROM dim_trading_calendar
+        WHERE is_trading_day = TRUE
+          AND trading_date {operator} ?
+        """,
+        [on_or_before],
+    ).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def _expected_trading_data_date(
+    connection: duckdb.DuckDBPyConnection,
+    snapshot_ts: datetime,
+) -> date:
+    snapshot_local = snapshot_ts.astimezone()
+    snapshot_date = snapshot_local.date()
+    market_close_cutoff = time(16, 30)
+    same_day = connection.execute(
+        """
+        SELECT is_trading_day
+        FROM dim_trading_calendar
+        WHERE trading_date = ?
+        """,
+        [snapshot_date],
+    ).fetchone()
+    is_trading_day = bool(same_day and same_day[0])
+    if is_trading_day and snapshot_local.time() >= market_close_cutoff:
+        return snapshot_date
+    previous_trading_date = _latest_trading_day(
+        connection,
+        on_or_before=snapshot_date,
+        inclusive=not is_trading_day,
+    )
+    return previous_trading_date or snapshot_date
+
+
+def _trading_day_lag(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    latest_date: date,
+    expected_date: date,
+) -> int:
+    if latest_date >= expected_date:
+        return 0
+    row = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM dim_trading_calendar
+        WHERE is_trading_day = TRUE
+          AND trading_date > ?
+          AND trading_date <= ?
+        """,
+        [latest_date, expected_date],
+    ).fetchone()
+    return int(row[0]) if row and row[0] else 0
+
+
+def _classify_freshness(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    spec: FreshnessSpec,
+    latest_ts: datetime | None,
+    snapshot_ts: datetime,
+) -> tuple[float | None, bool, str]:
+    if latest_ts is None:
+        return None, True, "CRITICAL"
+    freshness_seconds = max((snapshot_ts - latest_ts).total_seconds(), 0.0)
+    if spec.trading_day_aware:
+        latest_date = latest_ts.astimezone().date()
+        expected_date = _expected_trading_data_date(connection, snapshot_ts)
+        lag_days = _trading_day_lag(
+            connection,
+            latest_date=latest_date,
+            expected_date=expected_date,
+        )
+        warning_days = spec.warning_trading_days or 1
+        critical_days = spec.critical_trading_days or (warning_days + 1)
+        if lag_days >= critical_days:
+            return freshness_seconds, True, "CRITICAL"
+        if lag_days >= warning_days:
+            return freshness_seconds, False, "WARNING"
+        return freshness_seconds, False, "OK"
+    if freshness_seconds >= spec.critical_seconds:
+        return freshness_seconds, True, "CRITICAL"
+    if freshness_seconds >= spec.warning_seconds:
+        return freshness_seconds, False, "WARNING"
+    return freshness_seconds, False, "OK"
+
+
 def build_latest_app_snapshot(
     settings: Settings,
     *,
@@ -326,6 +476,8 @@ def build_latest_app_snapshot(
         """,
     )
     snapshot_as_of_date = as_of_date or latest_selection_date
+    snapshot_effective_date = snapshot_as_of_date or snapshot_ts.date()
+
     daily_bundle = connection.execute(
         """
         SELECT run_id, status
@@ -379,17 +531,23 @@ def build_latest_app_snapshot(
         SELECT active_policy_id
         FROM fact_intraday_active_policy
         WHERE active_flag = TRUE
+          AND effective_from_date <= ?
+          AND (effective_to_date IS NULL OR effective_to_date >= ?)
         ORDER BY effective_from_date DESC, updated_at DESC
         LIMIT 1
         """,
+        [snapshot_effective_date, snapshot_effective_date],
     )
     active_meta_models = connection.execute(
         """
         SELECT horizon, panel_name, active_meta_model_id
         FROM fact_intraday_active_meta_model
         WHERE active_flag = TRUE
+          AND effective_from_date <= ?
+          AND (effective_to_date IS NULL OR effective_to_date >= ?)
         ORDER BY horizon, panel_name
-        """
+        """,
+        [snapshot_effective_date, snapshot_effective_date],
     ).fetchdf()
     active_portfolio_policy_id = _scalar(
         connection,
@@ -397,9 +555,12 @@ def build_latest_app_snapshot(
         SELECT active_portfolio_policy_id
         FROM fact_portfolio_policy_registry
         WHERE active_flag = TRUE
+          AND effective_from_date <= ?
+          AND (effective_to_date IS NULL OR effective_to_date >= ?)
         ORDER BY effective_from_date DESC, updated_at DESC
         LIMIT 1
         """,
+        [snapshot_effective_date, snapshot_effective_date],
     )
     active_ops_policy_id = _scalar(
         connection,
@@ -407,9 +568,12 @@ def build_latest_app_snapshot(
         SELECT policy_id
         FROM fact_active_ops_policy
         WHERE active_flag = TRUE
+          AND effective_from_at <= ?
+          AND (effective_to_at IS NULL OR effective_to_at >= ?)
         ORDER BY effective_from_at DESC, created_at DESC
         LIMIT 1
         """,
+        [snapshot_ts, snapshot_ts],
     )
     health_status = _scalar(
         connection,
@@ -577,6 +741,7 @@ def build_report_index(
             """,
             [[row[column] for column in columns] for row in rows],
         )
+        _deduplicate_report_index(connection)
     return OpsJobResult(
         run_id=job_run_id or "embedded",
         job_name="build_report_index",
@@ -598,21 +763,12 @@ def build_ui_freshness_snapshot(
     for spec in FRESHNESS_SPECS:
         latest_value = _scalar(connection, spec.sql)
         latest_ts = _normalize_timestamp(latest_value)
-        if latest_ts is None:
-            freshness_seconds = None
-            stale_flag = True
-            warning_level = "CRITICAL"
-        else:
-            freshness_seconds = max((snapshot_ts - latest_ts).total_seconds(), 0.0)
-            if freshness_seconds >= spec.critical_seconds:
-                stale_flag = True
-                warning_level = "CRITICAL"
-            elif freshness_seconds >= spec.warning_seconds:
-                stale_flag = False
-                warning_level = "WARNING"
-            else:
-                stale_flag = False
-                warning_level = "OK"
+        freshness_seconds, stale_flag, warning_level = _classify_freshness(
+            connection,
+            spec=spec,
+            latest_ts=latest_ts,
+            snapshot_ts=snapshot_ts,
+        )
         rows.append(
             {
                 "freshness_snapshot_id": (

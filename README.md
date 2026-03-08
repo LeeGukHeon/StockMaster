@@ -1138,6 +1138,13 @@ TICKET-013 docs:
 - [docs/KNOWN_LIMITATIONS.md](/d:/MyApps/StockMaster/docs/KNOWN_LIMITATIONS.md)
 - [docs/REPORTS_AND_PAGES.md](/d:/MyApps/StockMaster/docs/REPORTS_AND_PAGES.md)
 
+TICKET-016 audit docs:
+
+- [docs/AUDIT_T000_T013_STATUS.md](/d:/MyApps/StockMaster/docs/AUDIT_T000_T013_STATUS.md)
+- [docs/DB_CONTRACT_MATRIX.md](/d:/MyApps/StockMaster/docs/DB_CONTRACT_MATRIX.md)
+- [docs/GAP_REMEDIATION_BACKLOG.md](/d:/MyApps/StockMaster/docs/GAP_REMEDIATION_BACKLOG.md)
+- [docs/CASE_RUNBOOK_T000_T013.md](/d:/MyApps/StockMaster/docs/CASE_RUNBOOK_T000_T013.md)
+
 Presentation rules:
 
 - page-specific stale / warning states come from `fact_ui_data_freshness_snapshot`
