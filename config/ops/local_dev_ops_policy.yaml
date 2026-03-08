@@ -1,0 +1,18 @@
+policy_id: local_dev_ops_policy
+policy_version: v1
+policy_name: Local Dev Ops Policy
+warn_ratio: 0.80
+cleanup_ratio: 0.90
+emergency_ratio: 0.95
+stale_lock_minutes: 30
+default_dry_run: true
+log_compression_after_days: 3
+high_frequency_blocked_jobs: []
+cleanup_allowlist:
+  - data/cache
+  - data/logs
+  - data/artifacts
+protected_prefixes:
+  - data/raw
+  - data/curated
+  - data/marts

@@ -2,7 +2,7 @@
 
 StockMaster is a Korea-focused personal stock research platform for post-market analysis, explanatory ranking, reporting, and retrospective evaluation.
 
-Implemented through TICKET-010:
+Implemented through TICKET-012:
 
 - foundation, settings, logging, bootstrap, and disk guard
 - provider activation for KIS, DART, and Naver News
@@ -16,7 +16,9 @@ Implemented through TICKET-010:
 - intraday postmortem, regime-aware adjusted timing, strategy comparison, and timing calibration
 - intraday policy calibration, walk-forward tuning, ablation analysis, recommendation registry, and manual active-policy freeze/rollback
 - intraday policy meta-model / ML timing classifier v1 with panel-specific training, threshold calibration, bounded overlay scoring, and manual active-meta freeze/rollback
-- Streamlit Home, Ops, Research, Leaderboard, Market Pulse, Stock Workbench, Evaluation, and Intraday Console pages
+- integrated long-only portfolio candidate, allocation, rebalance, NAV, evaluation, and reporting layer
+- ops stability layer with job/step metadata, dependency readiness, health snapshots, disk watermark tracking, recovery queue, active lock management, ops policy registry, and Health Dashboard
+- Streamlit Home, Ops, Health Dashboard, Research, Leaderboard, Market Pulse, Stock Workbench, Evaluation, Intraday Console, Portfolio Studio, and Portfolio Evaluation pages
 
 Out of scope:
 
@@ -1005,6 +1007,85 @@ Current known limitations:
 - uncertainty/disagreement are proxy scores, not probabilistic guarantees
 - the final action layer is bounded by the active policy and hard guards by design
 
+## TICKET-012 operational stability / batch recovery / disk guard / health dashboard
+
+TICKET-012 adds a protective ops layer around the existing research, evaluation, intraday,
+meta-model, and portfolio pipelines. It does not redesign alpha, selection, or portfolio logic.
+
+Run and step metadata:
+
+- `fact_job_run` stores job-level status, trigger type, lineage, lock key, policy reference, and error summary
+- `fact_job_step_run` stores step order, status, records/artifacts, retry count, skip reason, and per-step error text
+- statuses supported: `SUCCESS`, `PARTIAL_SUCCESS`, `DEGRADED_SUCCESS`, `SKIPPED`, `BLOCKED`, `FAILED`
+- trigger types supported: `MANUAL`, `SCHEDULED`, `RECOVERY`, `VALIDATION`, `DRY_RUN`
+- run lineage keeps `root_run_id`, `parent_run_id`, and `recovery_of_run_id`
+
+Dependency and health materialization:
+
+- `fact_pipeline_dependency_state` stores pipeline-level readiness for research, post-close, evaluation, and maintenance bundles
+- `fact_health_snapshot` stores layered health metrics instead of one boolean
+- current health summary includes failed-run counts, active/stale locks, open alerts, disk usage ratio, and latest successful report/evaluation/portfolio outputs
+- `fact_alert_event` stores visible warnings instead of relying on stdout-only behavior
+
+Disk watermark and retention policy:
+
+- warn watermark: `70%`
+- cleanup watermark: `80%`
+- emergency watermark: `90%`
+- cleanup is allowlist-driven and protected-prefix aware
+- curated core data, predictions, evaluations, and portfolio snapshots are not auto-deleted
+- retention supports both dry-run and actual-run tracking through `fact_retention_cleanup_run`
+- disk events are written to `fact_disk_watermark_event`
+
+Recovery and locking:
+
+- duplicate execution guard uses `fact_active_lock`
+- stale lock release is explicit and script-driven
+- failed or blocked runs can be queued through `fact_recovery_action`
+- recovery creates new runs and preserves lineage; it never overwrites the original failed run
+- active ops behavior is resolved from `fact_active_ops_policy` or safe default YAML config
+
+Ops policy configs:
+
+- [default_ops_policy.yaml](/d:/MyApps/StockMaster/config/ops/default_ops_policy.yaml)
+- [conservative_ops_policy.yaml](/d:/MyApps/StockMaster/config/ops/conservative_ops_policy.yaml)
+- [local_dev_ops_policy.yaml](/d:/MyApps/StockMaster/config/ops/local_dev_ops_policy.yaml)
+
+TICKET-012 commands:
+
+```powershell
+python scripts/freeze_active_ops_policy.py --as-of-at 2026-03-08T18:00:00 --policy-config-path config/ops/default_ops_policy.yaml --promotion-type MANUAL_FREEZE --note "Initial default ops policy"
+python scripts/check_pipeline_dependencies.py --as-of-date 2026-03-08
+python scripts/materialize_health_snapshots.py --as-of-date 2026-03-08
+python scripts/run_daily_research_pipeline.py --as-of-date 2026-03-08 --dry-run
+python scripts/run_daily_post_close_bundle.py --as-of-date 2026-03-08 --dry-run
+python scripts/run_daily_evaluation_bundle.py --as-of-date 2026-03-08 --dry-run
+python scripts/run_ops_maintenance_bundle.py --as-of-date 2026-03-08 --dry-run
+python scripts/enforce_retention_policies.py --as-of-date 2026-03-08 --dry-run
+python scripts/cleanup_disk_watermark.py --as-of-date 2026-03-08 --dry-run
+python scripts/rotate_and_compress_logs.py --as-of-date 2026-03-08 --dry-run
+python scripts/summarize_storage_usage.py --as-of-date 2026-03-08
+python scripts/reconcile_failed_runs.py --as-of-date 2026-03-08
+python scripts/recover_incomplete_runs.py --as-of-date 2026-03-08 --dry-run
+python scripts/force_release_stale_lock.py --as-of-date 2026-03-08
+python scripts/render_ops_report.py --as-of-date 2026-03-08 --dry-run
+python scripts/publish_discord_ops_alerts.py --as-of-date 2026-03-08 --dry-run
+python scripts/validate_health_framework.py --as-of-date 2026-03-08
+python scripts/validate_ops_framework.py --as-of-date 2026-03-08
+```
+
+Dashboard coverage:
+
+- `Health Dashboard`: overall health summary, recent runs, failed steps, dependency readiness, disk watermark, cleanup history, active locks, recovery queue, alerts, and latest successful outputs
+- `Ops`: keeps the broader research/intraday/policy/portfolio operational view while Health Dashboard focuses on TICKET-012 reliability state
+
+Current known limitations:
+
+- DuckDB is still effectively single-writer, so ops bundles and validation scripts should run sequentially
+- recovery routing is deterministic and rule-based; it does not infer business-safe replay for every possible future pipeline
+- Discord ops alert publish is optional and should be dry-run first
+- cleanup defaults stay conservative by design; the framework prefers false negatives over accidental deletion
+
 ## Grade rules
 
 Current grade assignment:
@@ -1016,7 +1097,7 @@ Current grade assignment:
 
 Grades are presentation buckets, not probability estimates.
 
-## Tables and views added through TICKET-009
+## Tables and views added through TICKET-012
 
 Tables:
 
@@ -1051,6 +1132,16 @@ Tables:
 - `fact_intraday_policy_ablation_result`
 - `fact_intraday_policy_selection_recommendation`
 - `fact_intraday_active_policy`
+- `fact_job_run`
+- `fact_job_step_run`
+- `fact_pipeline_dependency_state`
+- `fact_health_snapshot`
+- `fact_disk_watermark_event`
+- `fact_retention_cleanup_run`
+- `fact_alert_event`
+- `fact_recovery_action`
+- `fact_active_ops_policy`
+- `fact_active_lock`
 - `ops_ranking_validation_summary`
 - `ops_selection_validation_summary`
 
@@ -1088,6 +1179,16 @@ Views:
 - `vw_latest_intraday_policy_ablation_result`
 - `vw_latest_intraday_policy_selection_recommendation`
 - `vw_latest_intraday_active_policy`
+- `vw_latest_job_run`
+- `vw_latest_job_step_run`
+- `vw_latest_pipeline_dependency_state`
+- `vw_latest_health_snapshot`
+- `vw_latest_disk_watermark_event`
+- `vw_latest_retention_cleanup_run`
+- `vw_latest_alert_event`
+- `vw_latest_recovery_action`
+- `vw_latest_active_ops_policy`
+- `vw_latest_active_lock`
 - `vw_latest_ranking_validation_summary`
 - `vw_latest_selection_validation_summary`
 
@@ -1135,6 +1236,9 @@ data/artifacts/model_diagnostics/train_end_date=YYYY-MM-DD/<run_id>/model_diagno
 data/artifacts/intraday_monitor/session_date=YYYY-MM-DD/<run_id>/intraday_monitor_preview.md
 data/artifacts/intraday_postmortem/session_date=YYYY-MM-DD/<run_id>/intraday_postmortem_preview.md
 data/artifacts/intraday_policy/as_of_date=YYYY-MM-DD/<run_id>/intraday_policy_research_report.md
+data/artifacts/ops/storage_usage/storage_usage_summary.json
+data/artifacts/ops/report/as_of_date=YYYY-MM-DD/<run_id>/ops_report_preview.md
+data/artifacts/ops/report/as_of_date=YYYY-MM-DD/<run_id>/ops_report_payload.json
 data/artifacts/validation/ranking/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/ranking_validation_summary.parquet
 data/artifacts/validation/selection_engine_v1/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/selection_validation_summary.parquet
 data/artifacts/discord/as_of_date=YYYY-MM-DD/<run_id>/discord_preview.md
@@ -1225,6 +1329,7 @@ After `streamlit run app/ui/Home.py`, verify:
 
 - Home shows reference data, research freshness, feature/ranking snapshot, and validation summary
 - Ops shows version tracking, flow/prediction coverage, model training summary, validation status, experiment runs, active-policy registry state, rollback history, and policy publish/report status
+- Health Dashboard shows overall health summary, recent job runs, failed steps, dependency readiness, disk watermark, cleanup history, active locks, recovery queue, alerts, and latest successful outputs
 - Research shows feature store, flow, regime, labels, selection validation, and intraday policy lab outputs
 - Research also shows intraday meta-model training rows, calibration summary, confusion matrix, feature importance, and overlay comparison
 - Leaderboard compares explanatory ranking v0, selection engine v1, and selection engine v2
@@ -1233,7 +1338,9 @@ After `streamlit run app/ui/Home.py`, verify:
 - Research also acts as the policy lab and shows walk-forward evidence, ablation deltas, recommendations, and policy-report previews
 - Evaluation shows outcome cohorts, rolling summaries, calibration diagnostics, selection-engine comparison, intraday strategy comparison, policy walk-forward/ablation evidence, and policy-only vs meta-overlay comparison
 - Intraday Console shows candidate session coverage, checkpoint health, raw vs tuned actions, active policy trace, ML class probabilities, final action, and fallback
-- Ops shows active meta-model registry, latest meta training/scoring runs, fallback traces, and rollback history
+- Portfolio Studio shows active portfolio policy, target holdings, waitlist, blocked names, and constraint summary
+- Portfolio Evaluation shows NAV, drawdown, turnover, holding count, and policy comparison
+- Ops also shows active meta-model registry, latest meta training/scoring runs, fallback traces, and rollback history
 
 ## Docker
 

@@ -1,0 +1,20 @@
+policy_id: default_ops_policy
+policy_version: v1
+policy_name: Default Ops Policy
+warn_ratio: 0.70
+cleanup_ratio: 0.80
+emergency_ratio: 0.90
+stale_lock_minutes: 180
+default_dry_run: false
+log_compression_after_days: 1
+high_frequency_blocked_jobs:
+  - run_intraday_candidate_collector
+  - sync_investor_flow
+cleanup_allowlist:
+  - data/raw
+  - data/cache
+  - data/logs
+  - data/artifacts
+protected_prefixes:
+  - data/curated
+  - data/marts

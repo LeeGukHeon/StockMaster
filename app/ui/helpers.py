@@ -32,6 +32,248 @@ from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from app.storage.manifests import fetch_recent_runs
 
 
+def latest_job_runs_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                run_id,
+                job_name,
+                trigger_type,
+                status,
+                as_of_date,
+                started_at,
+                finished_at,
+                step_count,
+                failed_step_count,
+                notes,
+                error_message
+            FROM fact_job_run
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_step_failure_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                job_run_id,
+                step_name,
+                status,
+                started_at,
+                finished_at,
+                error_message,
+                notes
+            FROM fact_job_step_run
+            WHERE status = 'FAILED'
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_pipeline_dependency_frame(settings: Settings, limit: int = 50) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                pipeline_name,
+                dependency_name,
+                status,
+                ready_flag,
+                required_state,
+                observed_state,
+                checked_at
+            FROM vw_latest_pipeline_dependency_state
+            ORDER BY pipeline_name, dependency_name
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_health_snapshot_frame(settings: Settings, limit: int = 100) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                health_scope,
+                component_name,
+                status,
+                metric_name,
+                metric_value_double,
+                metric_value_text,
+                snapshot_at
+            FROM vw_latest_health_snapshot
+            ORDER BY health_scope, component_name, metric_name
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_disk_watermark_event_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                measured_at,
+                disk_status,
+                usage_ratio,
+                used_gb,
+                available_gb,
+                cleanup_required_flag,
+                emergency_block_flag,
+                notes
+            FROM fact_disk_watermark_event
+            ORDER BY measured_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_retention_cleanup_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                started_at,
+                finished_at,
+                status,
+                dry_run,
+                cleanup_scope,
+                removed_file_count,
+                reclaimed_bytes,
+                notes
+            FROM fact_retention_cleanup_run
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_active_lock_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                lock_name,
+                job_name,
+                owner_run_id,
+                acquired_at,
+                expires_at,
+                status,
+                release_reason
+            FROM fact_active_lock
+            WHERE released_at IS NULL
+            ORDER BY acquired_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_recovery_queue_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                recovery_action_id,
+                action_type,
+                status,
+                target_job_run_id,
+                triggered_by_run_id,
+                recovery_run_id,
+                lock_name,
+                created_at,
+                finished_at,
+                notes
+            FROM fact_recovery_action
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_alert_event_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                created_at,
+                alert_type,
+                severity,
+                component_name,
+                status,
+                message,
+                resolved_at
+            FROM fact_alert_event
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_active_ops_policy_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                policy_id,
+                policy_version,
+                policy_name,
+                policy_path,
+                active_flag,
+                promotion_type,
+                effective_from_at,
+                effective_to_at,
+                note
+            FROM fact_active_ops_policy
+            ORDER BY effective_from_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_successful_pipeline_output_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                component_name,
+                status,
+                metric_value_text,
+                snapshot_at
+            FROM vw_latest_health_snapshot
+            WHERE health_scope = 'pipeline'
+              AND metric_name = 'latest_successful_output'
+            ORDER BY component_name
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_ops_report_preview(settings: Settings) -> str | None:
+    report_root = settings.paths.artifacts_dir / "ops" / "report"
+    if not report_root.exists():
+        return None
+    previews = sorted(report_root.rglob("ops_report_preview.md"), reverse=True)
+    if not previews:
+        return None
+    return previews[0].read_text(encoding="utf-8")
+
+
 def load_ui_settings(project_root: Path) -> Settings:
     settings = load_settings(project_root=project_root)
     ensure_storage_layout(settings)

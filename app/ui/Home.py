@@ -443,6 +443,12 @@ navigation = st.navigation(
             icon=":material/analytics:",
             url_path="portfolio-evaluation",
         ),
+        st.Page(
+            PROJECT_ROOT / "app/ui/pages/10_Health_Dashboard.py",
+            title="Health",
+            icon=":material/health_metrics:",
+            url_path="health-dashboard",
+        ),
     ],
     position="sidebar",
 )

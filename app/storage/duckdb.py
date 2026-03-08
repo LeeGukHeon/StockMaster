@@ -1441,6 +1441,175 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         created_at TIMESTAMPTZ NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_job_run (
+        run_id VARCHAR PRIMARY KEY,
+        job_name VARCHAR NOT NULL,
+        trigger_type VARCHAR NOT NULL,
+        status VARCHAR NOT NULL,
+        as_of_date DATE,
+        started_at TIMESTAMPTZ NOT NULL,
+        finished_at TIMESTAMPTZ,
+        root_run_id VARCHAR NOT NULL,
+        parent_run_id VARCHAR,
+        recovery_of_run_id VARCHAR,
+        lock_name VARCHAR,
+        policy_id VARCHAR,
+        policy_version VARCHAR,
+        dry_run BOOLEAN NOT NULL,
+        step_count INTEGER NOT NULL,
+        failed_step_count INTEGER NOT NULL,
+        artifact_count INTEGER NOT NULL,
+        notes VARCHAR,
+        error_message VARCHAR,
+        details_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_job_step_run (
+        step_run_id VARCHAR PRIMARY KEY,
+        job_run_id VARCHAR NOT NULL,
+        step_name VARCHAR NOT NULL,
+        step_order INTEGER NOT NULL,
+        status VARCHAR NOT NULL,
+        started_at TIMESTAMPTZ NOT NULL,
+        finished_at TIMESTAMPTZ,
+        critical_flag BOOLEAN NOT NULL,
+        notes VARCHAR,
+        error_message VARCHAR,
+        details_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_pipeline_dependency_state (
+        checked_at TIMESTAMPTZ NOT NULL,
+        pipeline_name VARCHAR NOT NULL,
+        dependency_name VARCHAR NOT NULL,
+        status VARCHAR NOT NULL,
+        ready_flag BOOLEAN NOT NULL,
+        required_state VARCHAR,
+        observed_state VARCHAR,
+        as_of_date DATE,
+        details_json VARCHAR,
+        job_run_id VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (checked_at, pipeline_name, dependency_name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_health_snapshot (
+        snapshot_at TIMESTAMPTZ NOT NULL,
+        health_scope VARCHAR NOT NULL,
+        component_name VARCHAR NOT NULL,
+        status VARCHAR NOT NULL,
+        metric_name VARCHAR NOT NULL,
+        metric_value_double DOUBLE,
+        metric_value_text VARCHAR,
+        as_of_date DATE,
+        details_json VARCHAR,
+        job_run_id VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (snapshot_at, health_scope, component_name, metric_name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_disk_watermark_event (
+        event_id VARCHAR PRIMARY KEY,
+        measured_at TIMESTAMPTZ NOT NULL,
+        disk_status VARCHAR NOT NULL,
+        usage_ratio DOUBLE NOT NULL,
+        used_gb DOUBLE NOT NULL,
+        available_gb DOUBLE NOT NULL,
+        total_gb DOUBLE NOT NULL,
+        policy_id VARCHAR,
+        policy_version VARCHAR,
+        cleanup_required_flag BOOLEAN NOT NULL,
+        emergency_block_flag BOOLEAN NOT NULL,
+        notes VARCHAR,
+        details_json VARCHAR,
+        job_run_id VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_retention_cleanup_run (
+        cleanup_run_id VARCHAR PRIMARY KEY,
+        started_at TIMESTAMPTZ NOT NULL,
+        finished_at TIMESTAMPTZ NOT NULL,
+        status VARCHAR NOT NULL,
+        dry_run BOOLEAN NOT NULL,
+        cleanup_scope VARCHAR NOT NULL,
+        removed_file_count BIGINT NOT NULL,
+        reclaimed_bytes BIGINT NOT NULL,
+        target_paths_json VARCHAR,
+        notes VARCHAR,
+        details_json VARCHAR,
+        job_run_id VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_alert_event (
+        alert_id VARCHAR PRIMARY KEY,
+        created_at TIMESTAMPTZ NOT NULL,
+        alert_type VARCHAR NOT NULL,
+        severity VARCHAR NOT NULL,
+        component_name VARCHAR NOT NULL,
+        status VARCHAR NOT NULL,
+        message VARCHAR NOT NULL,
+        details_json VARCHAR,
+        job_run_id VARCHAR,
+        resolved_at TIMESTAMPTZ
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_recovery_action (
+        recovery_action_id VARCHAR PRIMARY KEY,
+        created_at TIMESTAMPTZ NOT NULL,
+        action_type VARCHAR NOT NULL,
+        status VARCHAR NOT NULL,
+        target_job_run_id VARCHAR,
+        triggered_by_run_id VARCHAR,
+        recovery_run_id VARCHAR,
+        lock_name VARCHAR,
+        notes VARCHAR,
+        details_json VARCHAR,
+        finished_at TIMESTAMPTZ
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_active_ops_policy (
+        ops_policy_registry_id VARCHAR PRIMARY KEY,
+        policy_id VARCHAR NOT NULL,
+        policy_version VARCHAR NOT NULL,
+        policy_name VARCHAR NOT NULL,
+        policy_path VARCHAR NOT NULL,
+        effective_from_at TIMESTAMPTZ NOT NULL,
+        effective_to_at TIMESTAMPTZ,
+        active_flag BOOLEAN NOT NULL,
+        promotion_type VARCHAR NOT NULL,
+        note VARCHAR,
+        rollback_of_registry_id VARCHAR,
+        config_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_active_lock (
+        lock_name VARCHAR PRIMARY KEY,
+        job_name VARCHAR NOT NULL,
+        owner_run_id VARCHAR NOT NULL,
+        acquired_at TIMESTAMPTZ NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        released_at TIMESTAMPTZ,
+        release_reason VARCHAR,
+        status VARCHAR NOT NULL,
+        details_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
 )
 
 SYMBOL_COLUMN_MIGRATIONS: tuple[str, ...] = (
@@ -2012,6 +2181,96 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY horizon, bucket_type, bucket_name, ranking_version
         ORDER BY created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_job_run AS
+    SELECT *
+    FROM fact_job_run
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY job_name, COALESCE(as_of_date, DATE '1900-01-01'), trigger_type
+        ORDER BY started_at DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_job_step_run AS
+    SELECT *
+    FROM fact_job_step_run
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY job_run_id, step_name
+        ORDER BY started_at DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_pipeline_dependency_state AS
+    SELECT *
+    FROM fact_pipeline_dependency_state
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY pipeline_name, dependency_name
+        ORDER BY checked_at DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_health_snapshot AS
+    SELECT *
+    FROM fact_health_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY health_scope, component_name, metric_name
+        ORDER BY snapshot_at DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_disk_watermark_event AS
+    SELECT *
+    FROM fact_disk_watermark_event
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY disk_status
+        ORDER BY measured_at DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_retention_cleanup_run AS
+    SELECT *
+    FROM fact_retention_cleanup_run
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY cleanup_scope, dry_run
+        ORDER BY started_at DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_alert_event AS
+    SELECT *
+    FROM fact_alert_event
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY alert_type, component_name, message
+        ORDER BY created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_recovery_action AS
+    SELECT *
+    FROM fact_recovery_action
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY target_job_run_id, action_type
+        ORDER BY created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_active_ops_policy AS
+    SELECT *
+    FROM fact_active_ops_policy
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY policy_id, policy_version
+        ORDER BY effective_from_at DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_active_lock AS
+    SELECT *
+    FROM fact_active_lock
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY lock_name
+        ORDER BY acquired_at DESC, created_at DESC
     ) = 1
     """,
 )
