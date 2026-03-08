@@ -16,7 +16,7 @@ from app.common.paths import resolve_path
 class AppConfig(BaseModel):
     name: str = "stockmaster"
     display_name: str = "KR Stock Research Platform v1"
-    env: Literal["local", "prod"] = "local"
+    env: Literal["local", "server", "prod", "prod_like"] = "local"
     timezone: str = "Asia/Seoul"
 
 
@@ -295,6 +295,16 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
     return config
 
 
+def _merge_dicts(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def load_settings(
     *,
     project_root: Path | None = None,
@@ -307,6 +317,11 @@ def load_settings(
 
     env_path = _resolve_env_file(root, env_file)
     env_values = _read_env_values(env_path)
+    env_name = env_values.get("APP_ENV", base_config.get("app", {}).get("env", "local"))
+    env_config_path = root / "config" / "app" / f"environment.{env_name}.yaml"
+    if env_config_path.exists():
+        base_config = _merge_dicts(base_config, _load_yaml(env_config_path))
+        base_config["paths"]["project_root"] = root
     config = _apply_env_overrides(base_config, env_values)
 
     try:

@@ -1,0 +1,19 @@
+[Unit]
+Description=StockMaster Docker Compose Stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/stockmaster/app
+Environment=COMPOSE_FILE=/opt/stockmaster/app/deploy/docker-compose.server.yml
+Environment=ENV_FILE=/opt/stockmaster/app/deploy/env/.env.server
+ExecStart=/bin/bash /opt/stockmaster/app/scripts/server/start_server.sh
+ExecStop=/bin/bash /opt/stockmaster/app/scripts/server/stop_server.sh
+TimeoutStartSec=600
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target

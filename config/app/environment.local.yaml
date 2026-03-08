@@ -1,0 +1,9 @@
+app:
+  env: local
+
+logging:
+  level: INFO
+
+discord:
+  enabled: false
+

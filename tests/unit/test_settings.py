@@ -40,3 +40,26 @@ def test_load_settings_applies_env_overrides(tmp_path):
 def test_load_settings_raises_for_missing_explicit_env_file():
     with pytest.raises(FileNotFoundError):
         load_settings(project_root=project_root(), env_file=Path("missing.env"))
+
+
+def test_load_settings_accepts_server_environment_profile(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "APP_ENV=server",
+                "APP_DATA_DIR=./server-data",
+                "APP_DUCKDB_PATH=./server-data/marts/server.duckdb",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(project_root=project_root(), env_file=env_file)
+
+    assert settings.app.env == "server"
+    assert settings.paths.data_dir == (project_root() / "server-data").resolve()
+    assert (
+        settings.paths.duckdb_path
+        == (project_root() / "server-data" / "marts" / "server.duckdb").resolve()
+    )

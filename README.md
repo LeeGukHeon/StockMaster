@@ -84,6 +84,50 @@ Notes:
 - `DISCORD_REPORT_ENABLED=false` keeps Discord in render-only mode. Live publish requires both `DISCORD_REPORT_ENABLED=true` and `DISCORD_WEBHOOK_URL`.
 - `DISCORD_WEBHOOK_URL` is optional for preview and dry-run workflows.
 
+## OCI / server deployment
+
+TICKET-014 adds a server-facing deployment bundle under `deploy/` and `scripts/server/`.
+
+Key assets:
+
+- `deploy/docker-compose.server.yml`
+- `deploy/nginx/default.conf`
+- `deploy/env/.env.server.example`
+- `deploy/systemd/stockmaster-compose.service`
+- `scripts/server/start_server.sh`
+- `scripts/server/stop_server.sh`
+- `scripts/server/restart_server.sh`
+- `scripts/server/tail_server_logs.sh`
+- `scripts/server/smoke_test_server.sh`
+- `scripts/server/check_public_access.sh`
+- `scripts/server/backup_server_data.sh`
+- `scripts/server/print_runtime_info.sh`
+- `docs/DEPLOY_OCI.md`
+- `docs/RUNBOOK_SERVER_OPERATIONS.md`
+- `docs/BACKUP_AND_RESTORE.md`
+- `docs/EXTERNAL_ACCESS_CHECKLIST.md`
+
+Local vs server:
+
+- local uses `.env`, direct Streamlit access, and optional source bind mounts
+- server uses `deploy/env/.env.server`, nginx reverse proxy, persistent runtime volumes, restart policies, and explicit smoke/backup scripts
+- local can expose `8501`; server should expose only `80` through nginx and keep `8501` internal
+
+Server quick start:
+
+```bash
+cp deploy/env/.env.server.example deploy/env/.env.server
+bash scripts/server/start_server.sh
+bash scripts/server/smoke_test_server.sh
+```
+
+The server stack expects:
+
+- code checkout under `/opt/stockmaster/app`
+- runtime data under `/opt/stockmaster/runtime`
+- backups under `/opt/stockmaster/backups`
+- Docker Engine + Docker Compose plugin installed on the OCI instance
+
 ## Initial bootstrap and reference data
 
 Run these first on a new machine:

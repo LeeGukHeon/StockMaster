@@ -11,6 +11,7 @@ COPY app ./app
 COPY config ./config
 COPY docs ./docs
 COPY scripts ./scripts
+COPY .streamlit ./.streamlit
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install -e .
