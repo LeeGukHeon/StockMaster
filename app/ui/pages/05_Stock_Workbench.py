@@ -18,6 +18,7 @@ from app.ui.helpers import (
     stock_workbench_flow_frame,
     stock_workbench_intraday_decision_frame,
     stock_workbench_intraday_timing_frame,
+    stock_workbench_intraday_tuned_frame,
     stock_workbench_news_frame,
     stock_workbench_outcome_frame,
     stock_workbench_price_frame,
@@ -29,12 +30,12 @@ symbols = available_symbols(settings)
 
 st.title("종목 분석")
 st.caption(
-    "하나의 종목을 기준으로 피처, 수급, 가격, 순위, 연결 뉴스, "
-    "장중 raw/adjusted 판단과 realized edge까지 확인합니다."
+    "개별 종목 기준으로 가격, 수급, selection outcome, 장중 raw/adjusted/tuned timeline과 "
+    "same-exit realized edge를 확인합니다."
 )
 
 if not symbols:
-    st.info("아직 조회 가능한 종목이 없습니다.")
+    st.info("조회 가능한 종목이 아직 없습니다.")
 else:
     selected_symbol = st.selectbox("종목코드", options=symbols, index=0)
     summary = stock_workbench_summary_frame(settings, symbol=selected_symbol)
@@ -43,33 +44,48 @@ else:
     news_history = stock_workbench_news_frame(settings, symbol=selected_symbol, limit=10)
     outcome_history = stock_workbench_outcome_frame(settings, symbol=selected_symbol, limit=20)
     intraday_decisions = stock_workbench_intraday_decision_frame(
-        settings, symbol=selected_symbol, limit=20
+        settings,
+        symbol=selected_symbol,
+        limit=20,
+    )
+    intraday_tuned = stock_workbench_intraday_tuned_frame(
+        settings,
+        symbol=selected_symbol,
+        limit=20,
     )
     intraday_timing = stock_workbench_intraday_timing_frame(
-        settings, symbol=selected_symbol, limit=20
+        settings,
+        symbol=selected_symbol,
+        limit=20,
     )
 
     st.subheader("요약")
     st.dataframe(localize_frame(summary), width="stretch", hide_index=True)
 
-    left, right = st.columns(2)
-    with left:
+    top_left, top_right = st.columns(2)
+    with top_left:
         st.subheader("최근 OHLCV")
         st.dataframe(localize_frame(price_history), width="stretch", hide_index=True)
-    with right:
+    with top_right:
         st.subheader("최근 투자자 수급")
         st.dataframe(localize_frame(flow_history), width="stretch", hide_index=True)
 
-    st.subheader("고정된 선정 성과")
+    st.subheader("Selection outcome")
     st.dataframe(localize_frame(outcome_history), width="stretch", hide_index=True)
 
     intraday_left, intraday_right = st.columns(2)
     with intraday_left:
-        st.subheader("장중 raw/adjusted 판단 이력")
+        st.subheader("장중 raw/adjusted timeline")
         st.dataframe(localize_frame(intraday_decisions), width="stretch", hide_index=True)
     with intraday_right:
-        st.subheader("장중 전략별 realized edge")
-        st.dataframe(localize_frame(intraday_timing), width="stretch", hide_index=True)
+        st.subheader("장중 tuned policy timeline")
+        if intraday_tuned.empty:
+            st.info("활성 정책 기준 tuned timeline이 없습니다.")
+        else:
+            st.dataframe(localize_frame(intraday_tuned), width="stretch", hide_index=True)
 
-    st.subheader("연결된 뉴스 메타데이터")
+    st.subheader("장중 realized edge")
+    st.dataframe(localize_frame(intraday_timing), width="stretch", hide_index=True)
+
+    st.subheader("관련 뉴스 메타데이터")
     st.dataframe(localize_frame(news_history), width="stretch", hide_index=True)

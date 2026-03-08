@@ -2,7 +2,7 @@
 
 StockMaster is a Korea-focused personal stock research platform for post-market analysis, explanatory ranking, reporting, and retrospective evaluation.
 
-Implemented through TICKET-008:
+Implemented through TICKET-009:
 
 - foundation, settings, logging, bootstrap, and disk guard
 - provider activation for KIS, DART, and Naver News
@@ -14,6 +14,7 @@ Implemented through TICKET-008:
 - ML alpha model v1, model-aware uncertainty/disagreement, and selection engine v2
 - intraday candidate assist engine v1 with candidate-only 1m bars, trade summary, quote summary, and deterministic timing decisions
 - intraday postmortem, regime-aware adjusted timing, strategy comparison, and timing calibration
+- intraday policy calibration, walk-forward tuning, ablation analysis, recommendation registry, and manual active-policy freeze/rollback
 - Streamlit Home, Ops, Research, Leaderboard, Market Pulse, Stock Workbench, Evaluation, and Intraday Console pages
 
 Out of scope:
@@ -751,6 +752,93 @@ python scripts/publish_discord_intraday_postmortem.py --session-date 2026-03-09 
 python scripts/validate_intraday_strategy_pipeline.py --session-date 2026-03-09 --horizons 1 5
 ```
 
+## TICKET-009 intraday policy calibration and experiment framework
+
+Intraday policy calibration purpose:
+
+- tune the deterministic intraday timing layer without changing the stock universe or exit logic
+- use only matured same-exit intraday outcomes as tuning input
+- separate research recommendations from the active production policy registry
+
+Matured-only tuning and same-exit rule:
+
+- calibration, walk-forward, ablation, and recommendation scoring read only matured intraday outcomes
+- raw and adjusted intraday decisions remain frozen; TICKET-009 does not overwrite them
+- policy comparison still reuses the same exit date and exit price from the existing forward-label baseline
+
+Policy templates and search space:
+
+- templates: `BASE_DEFAULT`, `DEFENSIVE_LIGHT`, `DEFENSIVE_STRONG`, `RISK_ON_LIGHT`, `GAP_GUARD_STRICT`, `FRICTION_GUARD_STRICT`, `COHORT_GUARD_STRICT`, `FULL_BALANCED`
+- scopes: `GLOBAL`, `HORIZON`, `HORIZON_CHECKPOINT`, `HORIZON_REGIME_CLUSTER`, `HORIZON_CHECKPOINT_REGIME_FAMILY`
+- search space version `pcal_v1` expands the base templates across horizon, checkpoint, and regime-aware scopes
+- parameters cover threshold deltas, confidence/signal/execution gates, uncertainty/spread/friction/gap/cohort/shock penalties, data-weak guard strength, and rank cap
+
+Objective function overview:
+
+- `objective_score` combines mean realized excess return, mean timing edge vs open, hit rate, execution rate, skip-saved-loss rate, and stability score
+- it penalizes missed-winner rate, left-tail proxy, and manual-review-required candidates
+- stability is derived from session-level dispersion of realized excess return, not a learned policy model
+
+Walk-forward split rules:
+
+- supported modes: `ANCHORED_WALKFORWARD`, `ROLLING_WALKFORWARD`
+- default split example: train `40` sessions, validation `10`, test `10`, step `5`
+- if sample is too small for a proper test window, recommendation logic can fall back to validation/all-style evidence and mark manual review when needed
+
+Regime cluster and fallback structure:
+
+- `RISK_OFF`: `PANIC_OPEN`, `WEAK_RISK_OFF`
+- `NEUTRAL`: `NEUTRAL_CHOP`
+- `RISK_ON`: `HEALTHY_TREND`, `OVERHEATED_GAP_CHASE`
+- `DATA_WEAK`: `DATA_WEAK`
+- family-level sample shortages can fall back to cluster scope, then horizon scope, then global scope, and the fallback source is stored explicitly
+
+Recommendation vs active policy:
+
+- recommendations are research outputs stored in `fact_intraday_policy_selection_recommendation`
+- active policy state is stored separately in `fact_intraday_active_policy`
+- auto-promotion is forbidden; activation happens only through explicit CLI freeze
+- rollback is also explicit and recorded separately from recommendation generation
+
+Freeze and rollback examples:
+
+```powershell
+python scripts/freeze_intraday_active_policy.py --as-of-date 2026-03-20 --promotion-type MANUAL_FREEZE --source latest_recommendation --note "Promote after review"
+python scripts/rollback_intraday_active_policy.py --as-of-date 2026-03-24 --horizons 1 5 --note "Rollback due to weak execution stability"
+```
+
+Research report and Discord summary:
+
+```powershell
+python scripts/render_intraday_policy_research_report.py --as-of-date 2026-03-20 --horizons 1 5 --dry-run
+python scripts/publish_discord_intraday_policy_summary.py --as-of-date 2026-03-20 --horizons 1 5 --dry-run
+```
+
+- render always writes preview artifacts under `data/artifacts/intraday_policy/...`
+- publish is optional, dry-run safe, and warning-tolerant on failure
+
+Current known limitations:
+
+- policy tuning is still deterministic template search; there is no intraday ML/RL/online-learning policy
+- promotion remains manual and conservative by design
+- weak or sparse matured samples can force fallback scope usage and `manual_review_required_flag`
+- candidate-only storage and same-exit comparison remain mandatory; no full-market intraday sweep is introduced
+
+### TICKET-009 commands
+
+```powershell
+python scripts/materialize_intraday_policy_candidates.py --search-space-version pcal_v1 --horizons 1 5 --checkpoints 09:05 09:15 09:30 10:00 11:00 --scopes GLOBAL HORIZON HORIZON_CHECKPOINT HORIZON_REGIME_CLUSTER
+python scripts/run_intraday_policy_calibration.py --start-session-date 2026-01-05 --end-session-date 2026-03-20 --horizons 1 5 --checkpoints 09:05 09:15 09:30 10:00 11:00 --objective-version ip_obj_v1 --split-version wf_40_10_10_step5 --search-space-version pcal_v1
+python scripts/run_intraday_policy_walkforward.py --start-session-date 2026-01-05 --end-session-date 2026-03-20 --mode rolling --train-sessions 40 --validation-sessions 10 --test-sessions 10 --step-sessions 5 --horizons 1 5
+python scripts/evaluate_intraday_policy_ablation.py --start-session-date 2026-01-05 --end-session-date 2026-03-20 --horizons 1 5 --base-policy-source latest_recommendation
+python scripts/materialize_intraday_policy_recommendations.py --as-of-date 2026-03-20 --horizons 1 5 --minimum-test-sessions 10
+python scripts/freeze_intraday_active_policy.py --as-of-date 2026-03-20 --promotion-type MANUAL_FREEZE --source latest_recommendation --note "Promote after review"
+python scripts/rollback_intraday_active_policy.py --as-of-date 2026-03-24 --horizons 1 5 --note "Rollback due to weak execution stability"
+python scripts/render_intraday_policy_research_report.py --as-of-date 2026-03-20 --horizons 1 5 --dry-run
+python scripts/publish_discord_intraday_policy_summary.py --as-of-date 2026-03-20 --horizons 1 5 --dry-run
+python scripts/validate_intraday_policy_framework.py --as-of-date 2026-03-20 --horizons 1 5
+```
+
 ## Grade rules
 
 Current grade assignment:
@@ -762,7 +850,7 @@ Current grade assignment:
 
 Grades are presentation buckets, not probability estimates.
 
-## Tables and views added through TICKET-008
+## Tables and views added through TICKET-009
 
 Tables:
 
@@ -791,6 +879,12 @@ Tables:
 - `fact_intraday_strategy_result`
 - `fact_intraday_strategy_comparison`
 - `fact_intraday_timing_calibration`
+- `fact_intraday_policy_experiment_run`
+- `fact_intraday_policy_candidate`
+- `fact_intraday_policy_evaluation`
+- `fact_intraday_policy_ablation_result`
+- `fact_intraday_policy_selection_recommendation`
+- `fact_intraday_active_policy`
 - `ops_ranking_validation_summary`
 - `ops_selection_validation_summary`
 
@@ -822,6 +916,12 @@ Views:
 - `vw_latest_intraday_strategy_result`
 - `vw_latest_intraday_strategy_comparison`
 - `vw_latest_intraday_timing_calibration`
+- `vw_latest_intraday_policy_experiment_run`
+- `vw_latest_intraday_policy_candidate`
+- `vw_latest_intraday_policy_evaluation`
+- `vw_latest_intraday_policy_ablation_result`
+- `vw_latest_intraday_policy_selection_recommendation`
+- `vw_latest_intraday_active_policy`
 - `vw_latest_ranking_validation_summary`
 - `vw_latest_selection_validation_summary`
 
@@ -857,12 +957,18 @@ data/curated/intraday/adjusted_entry_decision/session_date=YYYY-MM-DD/checkpoint
 data/curated/intraday/strategy_result/session_date=YYYY-MM-DD/strategy_result.parquet
 data/curated/intraday/strategy_comparison/end_session_date=YYYY-MM-DD/strategy_comparison.parquet
 data/curated/intraday/timing_calibration/window_end_date=YYYY-MM-DD/timing_calibration.parquet
+data/curated/intraday/policy_candidates/search_space_version=pcal_v1/policy_candidates.parquet
+data/curated/intraday/policy_evaluation/window_end_date=YYYY-MM-DD/policy_evaluation.parquet
+data/curated/intraday/policy_ablation/end_session_date=YYYY-MM-DD/policy_ablation.parquet
+data/curated/intraday/policy_recommendation/recommendation_date=YYYY-MM-DD/policy_recommendation.parquet
+data/curated/intraday/active_policy/effective_from_date=YYYY-MM-DD/active_policy.parquet
 data/artifacts/model/training/train_end_date=YYYY-MM-DD/horizon=N/alpha_model_v1.pkl
 data/artifacts/model_validation/<run_id>.md
 data/artifacts/selection_engine_comparison/<run_id>.md
 data/artifacts/model_diagnostics/train_end_date=YYYY-MM-DD/<run_id>/model_diagnostic_report.md
 data/artifacts/intraday_monitor/session_date=YYYY-MM-DD/<run_id>/intraday_monitor_preview.md
 data/artifacts/intraday_postmortem/session_date=YYYY-MM-DD/<run_id>/intraday_postmortem_preview.md
+data/artifacts/intraday_policy/as_of_date=YYYY-MM-DD/<run_id>/intraday_policy_research_report.md
 data/artifacts/validation/ranking/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/ranking_validation_summary.parquet
 data/artifacts/validation/selection_engine_v1/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/selection_validation_summary.parquet
 data/artifacts/discord/as_of_date=YYYY-MM-DD/<run_id>/discord_preview.md
@@ -952,13 +1058,14 @@ python -m ruff check .
 After `streamlit run app/ui/Home.py`, verify:
 
 - Home shows reference data, research freshness, feature/ranking snapshot, and validation summary
-- Ops shows version tracking, flow/prediction coverage, model training summary, validation status, and failures
-- Research shows feature store, flow, regime, labels, and selection validation
+- Ops shows version tracking, flow/prediction coverage, model training summary, validation status, experiment runs, active-policy registry state, rollback history, and policy publish/report status
+- Research shows feature store, flow, regime, labels, selection validation, and intraday policy lab outputs
 - Leaderboard compares explanatory ranking v0, selection engine v1, and selection engine v2
 - Market Pulse shows regime + flow breadth + latest top selections
 - Stock Workbench shows one symbol across features, alpha predictions, flow history, prices, frozen outcomes, and news metadata
-- Evaluation shows outcome cohorts, rolling summaries, calibration diagnostics, selection-engine comparison, and postmortem preview
-- Intraday Console shows candidate session coverage, checkpoint health, signal snapshots, decisions, and timing outcomes
+- Research also acts as the policy lab and shows walk-forward evidence, ablation deltas, recommendations, and policy-report previews
+- Evaluation shows outcome cohorts, rolling summaries, calibration diagnostics, selection-engine comparison, intraday strategy comparison, and policy walk-forward/ablation evidence
+- Intraday Console shows candidate session coverage, checkpoint health, raw vs tuned actions, active policy trace, and timing outcomes
 
 ## Docker
 

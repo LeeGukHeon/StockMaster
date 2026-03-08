@@ -293,7 +293,7 @@ def _parse_score_payload(value: object) -> dict[str, object]:
 
 
 def _derive_outcome_status(label_available: object, exclusion_reason: object) -> str:
-    if bool(label_available):
+    if pd.notna(label_available) and bool(label_available):
         return "matured"
     if exclusion_reason in {
         "insufficient_future_trading_days",

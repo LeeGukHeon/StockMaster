@@ -21,6 +21,9 @@ from app.ui.helpers import (
     latest_calibration_diagnostic_frame,
     latest_evaluation_comparison_frame,
     latest_evaluation_summary_frame,
+    latest_intraday_policy_ablation_frame,
+    latest_intraday_policy_evaluation_frame,
+    latest_intraday_policy_report_preview,
     latest_intraday_postmortem_preview,
     latest_intraday_strategy_comparison_frame,
     latest_intraday_timing_calibration_frame,
@@ -32,11 +35,11 @@ from app.ui.helpers import (
 
 settings = load_ui_settings(PROJECT_ROOT)
 evaluation_dates = available_evaluation_dates(settings)
+
 latest_summary = latest_evaluation_summary_frame(settings, limit=30)
 latest_comparison = latest_evaluation_comparison_frame(settings)
 latest_selection_v2_comparison = latest_selection_engine_comparison_frame(settings)
 latest_calibration = latest_calibration_diagnostic_frame(settings, limit=30)
-postmortem_preview = latest_postmortem_preview(settings)
 intraday_strategy_comparison = latest_intraday_strategy_comparison_frame(settings, limit=30)
 intraday_regime_matrix = latest_intraday_strategy_comparison_frame(
     settings,
@@ -44,16 +47,20 @@ intraday_regime_matrix = latest_intraday_strategy_comparison_frame(
     limit=30,
 )
 intraday_timing_calibration = latest_intraday_timing_calibration_frame(settings, limit=30)
+policy_walkforward = latest_intraday_policy_evaluation_frame(settings, split_name="test", limit=30)
+policy_ablation = latest_intraday_policy_ablation_frame(settings, limit=30)
+postmortem_preview = latest_postmortem_preview(settings)
 intraday_postmortem_preview = latest_intraday_postmortem_preview(settings)
+policy_report_preview = latest_intraday_policy_report_preview(settings)
 
 st.title("사후 평가")
 st.caption(
-    "선정 시점 Snapshot과 실제 성과를 비교하는 화면입니다. "
-    "표시되는 평가는 모두 Pre-Cost 기준입니다."
+    "일봉 selection outcome, calibrated prediction, 장중 timing layer, 정책 walk-forward를 "
+    "같은 화면에서 비교합니다. 모든 수치는 pre-cost 기준입니다."
 )
 
 if not evaluation_dates:
-    st.info("평가 성과가 아직 없습니다. TICKET-005 스크립트를 먼저 실행하세요.")
+    st.info("아직 selection evaluation 결과가 없습니다. 평가 스크립트를 먼저 실행하세요.")
 else:
     selected_date = st.selectbox("평가일", options=evaluation_dates, index=0)
     horizon = st.selectbox("기간", options=[1, 5], index=1, format_func=lambda value: f"D+{value}")
@@ -68,7 +75,6 @@ else:
         format_func=format_ranking_version_label,
     )
     limit = st.slider("표시 행수", min_value=10, max_value=100, value=25, step=5)
-
     outcomes = evaluation_outcomes_frame(
         settings,
         evaluation_date=selected_date,
@@ -77,52 +83,62 @@ else:
         limit=limit,
     )
 
-    left, right = st.columns(2)
-    with left:
+    top_left, top_right = st.columns(2)
+    with top_left:
         st.subheader("최신 평가 요약")
         st.dataframe(localize_frame(latest_summary), width="stretch", hide_index=True)
-        st.subheader("선정 엔진 대 설명형 순위")
+        st.subheader("Selection vs 설명형 랭킹")
         st.dataframe(localize_frame(latest_comparison), width="stretch", hide_index=True)
         st.subheader("Selection v2 비교")
         st.dataframe(
-            localize_frame(latest_selection_v2_comparison), width="stretch", hide_index=True
+            localize_frame(latest_selection_v2_comparison),
+            width="stretch",
+            hide_index=True,
         )
-    with right:
-        st.subheader("최신 보정 진단")
+    with top_right:
+        st.subheader("최신 calibration 진단")
         st.dataframe(localize_frame(latest_calibration), width="stretch", hide_index=True)
-        if postmortem_preview:
-            with st.expander("최신 사후 분석 미리보기", expanded=False):
-                st.code(postmortem_preview)
+        st.subheader("선택 결과 샘플")
+        st.dataframe(localize_frame(outcomes), width="stretch", hide_index=True)
 
-    st.subheader("평가 가능 성과 행")
-    st.dataframe(localize_frame(outcomes), width="stretch", hide_index=True)
+intraday_left, intraday_right = st.columns(2)
+with intraday_left:
+    st.subheader("장중 전략 비교")
+    if intraday_strategy_comparison.empty:
+        st.info("장중 strategy comparison 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(intraday_strategy_comparison), width="stretch", hide_index=True)
+    st.subheader("장중 레짐 매트릭스")
+    if intraday_regime_matrix.empty:
+        st.info("장중 regime matrix 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(intraday_regime_matrix), width="stretch", hide_index=True)
+with intraday_right:
+    st.subheader("장중 timing calibration")
+    if intraday_timing_calibration.empty:
+        st.info("장중 timing calibration 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(intraday_timing_calibration), width="stretch", hide_index=True)
+    st.subheader("정책 Walk-Forward")
+    if policy_walkforward.empty:
+        st.info("정책 walk-forward/test split 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(policy_walkforward), width="stretch", hide_index=True)
 
-    intraday_left, intraday_right = st.columns(2)
-    with intraday_left:
-        st.subheader("장중 전략 비교")
-        if intraday_strategy_comparison.empty:
-            st.info("장중 전략 비교 결과가 아직 없습니다.")
-        else:
-            st.dataframe(
-                localize_frame(intraday_strategy_comparison),
-                width="stretch",
-                hide_index=True,
-            )
-        st.subheader("장중 레짐 매트릭스")
-        if intraday_regime_matrix.empty:
-            st.info("장중 레짐 매트릭스가 아직 없습니다.")
-        else:
-            st.dataframe(localize_frame(intraday_regime_matrix), width="stretch", hide_index=True)
-    with intraday_right:
-        st.subheader("장중 타이밍 보정 진단")
-        if intraday_timing_calibration.empty:
-            st.info("장중 타이밍 보정 진단이 아직 없습니다.")
-        else:
-            st.dataframe(
-                localize_frame(intraday_timing_calibration),
-                width="stretch",
-                hide_index=True,
-            )
-        if intraday_postmortem_preview:
-            with st.expander("최신 장중 사후 분석 미리보기", expanded=False):
-                st.code(intraday_postmortem_preview)
+st.subheader("정책 Ablation")
+if policy_ablation.empty:
+    st.info("정책 ablation 결과가 없습니다.")
+else:
+    st.dataframe(localize_frame(policy_ablation), width="stretch", hide_index=True)
+
+if policy_report_preview:
+    with st.expander("최신 정책 연구 리포트 미리보기", expanded=False):
+        st.code(policy_report_preview)
+
+if intraday_postmortem_preview:
+    with st.expander("최신 장중 사후 분석 미리보기", expanded=False):
+        st.code(intraday_postmortem_preview)
+
+if postmortem_preview:
+    with st.expander("최신 Selection postmortem 미리보기", expanded=False):
+        st.code(postmortem_preview)

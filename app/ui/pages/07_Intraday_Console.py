@@ -19,7 +19,11 @@ from app.ui.helpers import (
     intraday_console_signal_frame,
     intraday_console_strategy_trace_frame,
     intraday_console_timing_frame,
+    intraday_console_tuned_action_frame,
+    latest_intraday_active_policy_frame,
     latest_intraday_checkpoint_health_frame,
+    latest_intraday_policy_recommendation_frame,
+    latest_intraday_policy_report_preview,
     latest_intraday_postmortem_preview,
     latest_intraday_status_frame,
     load_ui_settings,
@@ -27,6 +31,7 @@ from app.ui.helpers import (
 )
 
 settings = load_ui_settings(PROJECT_ROOT)
+
 status_frame = latest_intraday_status_frame(settings)
 checkpoint_health = latest_intraday_checkpoint_health_frame(settings)
 candidate_frame = intraday_console_candidate_frame(settings, limit=40)
@@ -34,47 +39,43 @@ market_context = intraday_console_market_context_frame(settings, limit=10)
 signal_frame = intraday_console_signal_frame(settings, limit=40)
 decision_frame = intraday_console_decision_frame(settings, limit=40)
 adjusted_decision_frame = intraday_console_adjusted_decision_frame(settings, limit=40)
+tuned_decision_frame = intraday_console_tuned_action_frame(settings, limit=40)
+active_policy_frame = latest_intraday_active_policy_frame(settings, limit=20)
+recommendation_frame = latest_intraday_policy_recommendation_frame(settings, limit=20)
 strategy_trace_frame = intraday_console_strategy_trace_frame(settings, limit=50)
 timing_frame = intraday_console_timing_frame(settings, limit=30)
 postmortem_preview = latest_intraday_postmortem_preview(settings)
+policy_preview = latest_intraday_policy_report_preview(settings)
 
 st.title("장중 콘솔")
 st.caption(
-    "selection engine v2 후보군을 기준으로 "
-    "1분봉, 체결 요약, 호가 요약, 체크포인트 액션, "
-    "레짐 조정 결과를 확인합니다. 자동매매 화면이 아니라 "
-    "후보군 보조/모니터링 화면입니다."
+    "Selection v2 후보군을 기준으로 장중 후보 세션, 체크포인트 신호, raw/adjusted/tuned "
+    "진입 판단, strategy trace를 확인하는 보조 화면입니다. 자동매매 화면이 아닙니다."
 )
 
-st.subheader("최신 장중 세션 상태")
 if status_frame.empty:
-    st.info("아직 장중 후보 세션이나 intraday 적재 결과가 없습니다.")
+    st.info("아직 장중 후보 세션이나 수집 결과가 없습니다.")
 else:
+    st.subheader("최신 장중 세션 상태")
     st.dataframe(localize_frame(status_frame), width="stretch", hide_index=True)
 
-left, right = st.columns(2)
-with left:
-    st.subheader("체크포인트 상태")
+top_left, top_right = st.columns(2)
+with top_left:
+    st.subheader("체크포인트 헬스")
     if checkpoint_health.empty:
-        st.info("체크포인트 상태 데이터가 아직 없습니다.")
+        st.info("체크포인트 상태 데이터가 없습니다.")
     else:
         st.dataframe(localize_frame(checkpoint_health), width="stretch", hide_index=True)
-with right:
-    st.subheader("최신 타이밍 평가")
-    if timing_frame.empty:
-        st.info("장중 타이밍 평가 결과가 아직 없습니다.")
+with top_right:
+    st.subheader("시장 컨텍스트")
+    if market_context.empty:
+        st.info("장중 market context snapshot이 없습니다.")
     else:
-        st.dataframe(localize_frame(timing_frame), width="stretch", hide_index=True)
+        st.dataframe(localize_frame(market_context), width="stretch", hide_index=True)
 
-st.subheader("시장 컨텍스트")
-if market_context.empty:
-    st.info("장중 시장 컨텍스트 스냅샷이 아직 없습니다.")
-else:
-    st.dataframe(localize_frame(market_context), width="stretch", hide_index=True)
-
-st.subheader("후보 세션 미리보기")
+st.subheader("후보 세션")
 if candidate_frame.empty:
-    st.info("후보 세션 데이터가 아직 없습니다.")
+    st.info("장중 후보 세션 데이터가 없습니다.")
 else:
     st.dataframe(localize_frame(candidate_frame), width="stretch", hide_index=True)
 
@@ -82,29 +83,61 @@ signal_left, signal_right = st.columns(2)
 with signal_left:
     st.subheader("신호 스냅샷")
     if signal_frame.empty:
-        st.info("신호 스냅샷이 아직 없습니다.")
+        st.info("장중 신호 스냅샷이 없습니다.")
     else:
         st.dataframe(localize_frame(signal_frame), width="stretch", hide_index=True)
 with signal_right:
-    st.subheader("원판 진입 판단")
+    st.subheader("Raw 진입 판단")
     if decision_frame.empty:
-        st.info("진입 판단 결과가 아직 없습니다.")
+        st.info("raw entry decision이 없습니다.")
     else:
         st.dataframe(localize_frame(decision_frame), width="stretch", hide_index=True)
 
-adjust_left, adjust_right = st.columns(2)
-with adjust_left:
-    st.subheader("조정 진입 판단")
+decision_left, decision_right = st.columns(2)
+with decision_left:
+    st.subheader("Adjusted 진입 판단")
     if adjusted_decision_frame.empty:
-        st.info("조정 진입 판단 결과가 아직 없습니다.")
+        st.info("adjusted entry decision이 없습니다.")
     else:
         st.dataframe(localize_frame(adjusted_decision_frame), width="stretch", hide_index=True)
-with adjust_right:
+with decision_right:
+    st.subheader("Tuned 진입 판단")
+    if tuned_decision_frame.empty:
+        st.info("active policy 기준 tuned action이 없습니다.")
+    else:
+        st.dataframe(localize_frame(tuned_decision_frame), width="stretch", hide_index=True)
+
+policy_left, policy_right = st.columns(2)
+with policy_left:
+    st.subheader("현재 활성 정책")
+    if active_policy_frame.empty:
+        st.info("활성 정책 레지스트리가 없습니다.")
+    else:
+        st.dataframe(localize_frame(active_policy_frame), width="stretch", hide_index=True)
+with policy_right:
+    st.subheader("최신 정책 추천")
+    if recommendation_frame.empty:
+        st.info("정책 추천 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(recommendation_frame), width="stretch", hide_index=True)
+
+trace_left, trace_right = st.columns(2)
+with trace_left:
     st.subheader("전략 추적")
     if strategy_trace_frame.empty:
-        st.info("전략 추적 결과가 아직 없습니다.")
+        st.info("strategy trace 결과가 없습니다.")
     else:
         st.dataframe(localize_frame(strategy_trace_frame), width="stretch", hide_index=True)
+with trace_right:
+    st.subheader("Timing outcome")
+    if timing_frame.empty:
+        st.info("장중 timing outcome 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(timing_frame), width="stretch", hide_index=True)
+
+if policy_preview:
+    with st.expander("최신 정책 연구 리포트 미리보기", expanded=False):
+        st.code(policy_preview)
 
 if postmortem_preview:
     with st.expander("최신 장중 사후 분석 미리보기", expanded=False):

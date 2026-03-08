@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.common.disk import DiskUsageReport, measure_disk_usage
+from app.intraday.policy import apply_active_intraday_policy_frame
 from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
@@ -2941,3 +2942,569 @@ def stock_workbench_intraday_timing_frame(
             """,
             [symbol, limit],
         ).fetchdf()
+
+
+UI_VALUE_LABELS.setdefault("run_type", {}).update(
+    {
+        "materialize_intraday_policy_candidates": "?μ쨷 ?뺤콉??후보 생성",
+        "run_intraday_policy_calibration": "?μ쨷 ?뺤콉??보정 실행",
+        "run_intraday_policy_walkforward": "?μ쨷 ?뺤콉??walk-forward 실행",
+        "evaluate_intraday_policy_ablation": "?μ쨷 ?뺤콉??ablation 평가",
+        "materialize_intraday_policy_recommendations": "?μ쨷 ?뺤콉??추천 생성",
+        "freeze_intraday_active_policy": "?μ쨷 ?뺤콉??freeze",
+        "rollback_intraday_active_policy": "?μ쨷 ?뺤콉??rollback",
+        "render_intraday_policy_research_report": "?μ쨷 ?뺤콉??연구 리포트 렌더",
+        "publish_discord_intraday_policy_summary": "?μ쨷 ?뺤콉??Discord 요약 발행",
+        "validate_intraday_policy_framework": "?μ쨷 ?뺤콉??프레임 검증",
+    }
+)
+UI_VALUE_LABELS.setdefault("scope_type", {}).update(
+    {
+        "GLOBAL": "전역",
+        "HORIZON": "기간별",
+        "HORIZON_CHECKPOINT": "기간+체크포인트",
+        "HORIZON_REGIME_CLUSTER": "기간+레짐 클러스터",
+        "HORIZON_CHECKPOINT_REGIME_FAMILY": "기간+체크포인트+레짐 패밀리",
+    }
+)
+UI_VALUE_LABELS.setdefault("promotion_type", {}).update(
+    {
+        "MANUAL_FREEZE": "수동 Freeze",
+        "ROLLBACK_RESTORE": "Rollback 복원",
+    }
+)
+UI_VALUE_LABELS.setdefault("experiment_type", {}).update(
+    {
+        "policy_calibration": "정책 보정",
+        "policy_walkforward": "정책 Walk-Forward",
+        "policy_ablation": "정책 Ablation",
+    }
+)
+UI_VALUE_LABELS.setdefault("split_mode", {}).update(
+    {
+        "ANCHORED_WALKFORWARD": "Anchored Walk-Forward",
+        "ROLLING_WALKFORWARD": "Rolling Walk-Forward",
+    }
+)
+UI_VALUE_LABELS.setdefault("split_name", {}).update(
+    {
+        "test": "테스트",
+        "all": "전체",
+    }
+)
+UI_COLUMN_LABELS.update(
+    {
+        "experiment_run_id": "실험 실행 ID",
+        "experiment_name": "실험명",
+        "experiment_type": "실험 유형",
+        "search_space_version": "검색 공간 버전",
+        "objective_version": "목표 함수 버전",
+        "split_version": "분할 버전",
+        "split_mode": "분할 방식",
+        "split_name": "분할 구간",
+        "split_index": "분할 순번",
+        "window_start_date": "윈도우 시작일",
+        "window_end_date": "윈도우 종료일",
+        "train_start_date": "학습 시작일",
+        "train_end_date": "학습 종료일",
+        "validation_start_date": "검증 시작일",
+        "validation_end_date": "검증 종료일",
+        "test_start_date": "테스트 시작일",
+        "test_end_date": "테스트 종료일",
+        "selected_policy_candidate_id": "선택 정책 후보 ID",
+        "policy_candidate_id": "정책 후보 ID",
+        "template_id": "정책 템플릿",
+        "scope_type": "적용 범위",
+        "scope_key": "범위 키",
+        "candidate_label": "후보 라벨",
+        "parameter_hash": "파라미터 해시",
+        "regime_cluster": "레짐 클러스터",
+        "regime_family": "레짐 패밀리",
+        "enter_threshold_delta": "진입 임계치 조정",
+        "wait_threshold_delta": "대기 임계치 조정",
+        "avoid_threshold_delta": "회피 임계치 조정",
+        "min_selection_confidence_gate": "최소 선별 신뢰도",
+        "min_signal_quality_gate": "최소 신호 품질",
+        "uncertainty_penalty_weight": "불확실성 패널티",
+        "spread_penalty_weight": "스프레드 패널티",
+        "friction_penalty_weight": "마찰 패널티",
+        "gap_chase_penalty_weight": "갭 추격 패널티",
+        "cohort_weakness_penalty_weight": "코호트 약세 패널티",
+        "market_shock_penalty_weight": "시장 충격 패널티",
+        "data_weak_guard_strength": "데이터 약세 가드",
+        "max_gap_up_allowance_pct": "최대 갭 상승 허용률",
+        "min_execution_strength_gate": "최소 체결 강도",
+        "min_orderbook_imbalance_gate": "최소 호가 불균형",
+        "allow_enter_under_data_weak": "데이터 약세 진입 허용",
+        "allow_wait_override": "대기 오버라이드 허용",
+        "selection_rank_cap": "선별 순위 상한",
+        "test_session_count": "테스트 세션 수",
+        "window_session_count": "윈도우 세션 수",
+        "no_entry_count": "미진입 수",
+        "mean_realized_excess_return": "평균 실현 초과수익률",
+        "median_realized_excess_return": "중앙 실현 초과수익률",
+        "mean_timing_edge_vs_open_bps": "평균 timing edge(bps)",
+        "median_timing_edge_vs_open_bps": "중앙 timing edge(bps)",
+        "positive_timing_edge_rate": "양수 timing edge 비율",
+        "skip_saved_loss_rate": "손실 회피 비율",
+        "missed_winner_rate": "상승 놓침 비율",
+        "left_tail_proxy": "좌측 꼬리 프록시",
+        "stability_score": "안정성 점수",
+        "objective_score": "목표 점수",
+        "manual_review_required_flag": "수동 검토 필요",
+        "fallback_scope_type": "Fallback 범위",
+        "fallback_scope_key": "Fallback 범위 키",
+        "recommendation_date": "추천일",
+        "recommendation_rank": "추천 순위",
+        "source_experiment_run_id": "원본 실험 실행 ID",
+        "source_recommendation_date": "원본 추천일",
+        "promotion_type": "승격 유형",
+        "source_type": "원본 유형",
+        "effective_from_date": "효력 시작일",
+        "effective_to_date": "효력 종료일",
+        "active_flag": "활성 여부",
+        "rollback_of_active_policy_id": "Rollback 대상 정책 ID",
+        "active_policy_id": "활성 정책 ID",
+        "active_policy_candidate_id": "활성 정책 후보 ID",
+        "active_policy_template_id": "활성 정책 템플릿",
+        "active_policy_scope_type": "활성 정책 범위",
+        "active_policy_scope_key": "활성 정책 범위 키",
+        "tuned_action": "튜닝 액션",
+        "tuned_score": "튜닝 점수",
+        "policy_trace": "정책 추적",
+        "policy_reason_codes_json": "정책 사유 코드",
+        "fallback_used_flag": "Fallback 사용",
+        "ablation_name": "Ablation 항목",
+        "base_policy_source": "기준 정책 소스",
+        "base_policy_candidate_id": "기준 정책 후보 ID",
+        "mean_realized_excess_return_delta": "평균 초과수익률 변화",
+        "median_realized_excess_return_delta": "중앙 초과수익률 변화",
+        "hit_rate_delta": "적중률 변화",
+        "mean_timing_edge_vs_open_bps_delta": "timing edge 변화(bps)",
+        "execution_rate_delta": "실행률 변화",
+        "skip_saved_loss_rate_delta": "손실 회피 변화",
+        "missed_winner_rate_delta": "상승 놓침 변화",
+        "left_tail_proxy_delta": "좌측 꼬리 변화",
+        "stability_score_delta": "안정성 변화",
+        "objective_score_delta": "목표 점수 변화",
+    }
+)
+
+
+def latest_intraday_policy_experiment_frame(
+    settings: Settings,
+    *,
+    limit: int = 30,
+    experiment_type: str | None = None,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        if experiment_type is None:
+            return connection.execute(
+                """
+                SELECT
+                    experiment_name,
+                    experiment_type,
+                    search_space_version,
+                    objective_version,
+                    split_version,
+                    split_mode,
+                    horizon,
+                    candidate_count,
+                    selected_policy_candidate_id,
+                    fallback_used_flag,
+                    status,
+                    created_at
+                FROM vw_latest_intraday_policy_experiment_run
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                [limit],
+            ).fetchdf()
+        return connection.execute(
+            """
+            SELECT
+                experiment_name,
+                experiment_type,
+                search_space_version,
+                objective_version,
+                split_version,
+                split_mode,
+                horizon,
+                candidate_count,
+                selected_policy_candidate_id,
+                fallback_used_flag,
+                status,
+                created_at
+            FROM vw_latest_intraday_policy_experiment_run
+            WHERE experiment_type = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            [experiment_type, limit],
+        ).fetchdf()
+
+
+def latest_intraday_policy_evaluation_frame(
+    settings: Settings,
+    *,
+    split_name: str = "test",
+    limit: int = 30,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        base_query = """
+            SELECT
+                experiment_run_id,
+                split_name,
+                split_index,
+                horizon,
+                template_id,
+                scope_type,
+                scope_key,
+                checkpoint_time,
+                regime_cluster,
+                regime_family,
+                window_session_count,
+                sample_count,
+                matured_count,
+                executed_count,
+                execution_rate,
+                mean_realized_excess_return,
+                hit_rate,
+                mean_timing_edge_vs_open_bps,
+                skip_saved_loss_rate,
+                missed_winner_rate,
+                left_tail_proxy,
+                stability_score,
+                objective_score,
+                manual_review_required_flag,
+                fallback_scope_type,
+                fallback_scope_key
+            FROM vw_latest_intraday_policy_evaluation
+            WHERE split_name = ?
+            ORDER BY window_end_date DESC, horizon, objective_score DESC NULLS LAST
+            LIMIT ?
+        """
+        split_order = [split_name]
+        if split_name == "test":
+            split_order.extend(["validation", "all"])
+        for target_split in split_order:
+            frame = connection.execute(base_query, [target_split, limit]).fetchdf()
+            if not frame.empty:
+                return frame
+        return pd.DataFrame()
+
+
+def latest_intraday_policy_ablation_frame(
+    settings: Settings,
+    *,
+    limit: int = 30,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                ablation_date,
+                horizon,
+                base_policy_source,
+                ablation_name,
+                sample_count,
+                mean_realized_excess_return_delta,
+                hit_rate_delta,
+                mean_timing_edge_vs_open_bps_delta,
+                execution_rate_delta,
+                skip_saved_loss_rate_delta,
+                missed_winner_rate_delta,
+                left_tail_proxy_delta,
+                stability_score_delta,
+                objective_score_delta
+            FROM vw_latest_intraday_policy_ablation_result
+            ORDER BY ablation_date DESC, horizon, ablation_name
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_intraday_policy_recommendation_frame(
+    settings: Settings,
+    *,
+    recommendation_date=None,
+    limit: int = 30,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        target_date = recommendation_date
+        if target_date is None:
+            row = connection.execute(
+                "SELECT MAX(recommendation_date) FROM fact_intraday_policy_selection_recommendation"
+            ).fetchone()
+            target_date = None if row is None or row[0] is None else pd.Timestamp(row[0]).date()
+        if target_date is None:
+            return pd.DataFrame()
+        return connection.execute(
+            """
+            SELECT
+                recommendation_date,
+                horizon,
+                scope_type,
+                scope_key,
+                recommendation_rank,
+                policy_candidate_id,
+                template_id,
+                test_session_count,
+                executed_count,
+                execution_rate,
+                mean_realized_excess_return,
+                hit_rate,
+                mean_timing_edge_vs_open_bps,
+                stability_score,
+                objective_score,
+                manual_review_required_flag,
+                fallback_scope_type,
+                fallback_scope_key
+            FROM fact_intraday_policy_selection_recommendation
+            WHERE recommendation_date = ?
+            ORDER BY horizon, recommendation_rank, scope_type, scope_key
+            LIMIT ?
+            """,
+            [target_date, limit],
+        ).fetchdf()
+
+
+def latest_intraday_active_policy_frame(
+    settings: Settings,
+    *,
+    as_of_date=None,
+    limit: int = 30,
+    active_only: bool = True,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        target_date = as_of_date
+        if target_date is None:
+            row = connection.execute(
+                "SELECT MAX(effective_from_date) FROM fact_intraday_active_policy"
+            ).fetchone()
+            target_date = None if row is None or row[0] is None else pd.Timestamp(row[0]).date()
+        if target_date is None:
+            return pd.DataFrame()
+        if active_only:
+            return connection.execute(
+                """
+                SELECT
+                    active.horizon,
+                    active.scope_type,
+                    active.scope_key,
+                    active.checkpoint_time,
+                    active.regime_cluster,
+                    active.regime_family,
+                    active.policy_candidate_id,
+                    candidate.template_id,
+                    active.source_recommendation_date,
+                    active.promotion_type,
+                    active.effective_from_date,
+                    active.effective_to_date,
+                    active.fallback_scope_type,
+                    active.fallback_scope_key,
+                    active.note
+                FROM fact_intraday_active_policy AS active
+                JOIN fact_intraday_policy_candidate AS candidate
+                  ON active.policy_candidate_id = candidate.policy_candidate_id
+                WHERE active.effective_from_date <= ?
+                  AND (active.effective_to_date IS NULL OR active.effective_to_date >= ?)
+                ORDER BY active.horizon, active.scope_type, active.scope_key
+                LIMIT ?
+                """,
+                [target_date, target_date, limit],
+            ).fetchdf()
+        return connection.execute(
+            """
+            SELECT
+                horizon,
+                scope_type,
+                scope_key,
+                policy_candidate_id,
+                promotion_type,
+                effective_from_date,
+                effective_to_date,
+                active_flag,
+                rollback_of_active_policy_id,
+                note,
+                updated_at
+            FROM fact_intraday_active_policy
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_intraday_policy_rollback_frame(
+    settings: Settings,
+    *,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                horizon,
+                scope_type,
+                scope_key,
+                policy_candidate_id,
+                promotion_type,
+                rollback_of_active_policy_id,
+                effective_from_date,
+                note,
+                updated_at
+            FROM fact_intraday_active_policy
+            WHERE promotion_type = 'ROLLBACK_RESTORE'
+               OR rollback_of_active_policy_id IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_intraday_policy_publish_status_frame(
+    settings: Settings,
+    *,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                run_type,
+                started_at,
+                finished_at,
+                status,
+                notes
+            FROM ops_run_manifest
+            WHERE run_type IN (
+                'materialize_intraday_policy_candidates',
+                'run_intraday_policy_calibration',
+                'run_intraday_policy_walkforward',
+                'evaluate_intraday_policy_ablation',
+                'materialize_intraday_policy_recommendations',
+                'freeze_intraday_active_policy',
+                'rollback_intraday_active_policy',
+                'render_intraday_policy_research_report',
+                'publish_discord_intraday_policy_summary',
+                'validate_intraday_policy_framework'
+            )
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY run_type
+                ORDER BY started_at DESC
+            ) = 1
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_intraday_policy_report_preview(settings: Settings) -> str | None:
+    if not settings.paths.duckdb_path.exists():
+        return None
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT output_artifacts_json
+            FROM ops_run_manifest
+            WHERE run_type = 'render_intraday_policy_research_report'
+              AND status = 'success'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None or not row[0]:
+        return None
+    artifacts = json.loads(row[0])
+    preview_candidates = [Path(item) for item in artifacts if str(item).endswith(".md")]
+    if not preview_candidates:
+        return None
+    preview_path = preview_candidates[-1]
+    if not preview_path.exists():
+        return None
+    return preview_path.read_text(encoding="utf-8")
+
+
+def intraday_console_tuned_action_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    symbol: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    target_date = session_date or _latest_intraday_session_date(settings)
+    if target_date is None:
+        return pd.DataFrame()
+    frame = apply_active_intraday_policy_frame(
+        settings,
+        session_date=target_date,
+        symbol=symbol,
+        limit=limit,
+    )
+    if frame.empty:
+        return frame
+    columns = [
+        "session_date",
+        "checkpoint_time",
+        "symbol",
+        "company_name",
+        "horizon",
+        "market_regime_family",
+        "adjusted_action",
+        "tuned_action",
+        "adjusted_timing_score",
+        "tuned_score",
+        "active_policy_candidate_id",
+        "active_policy_template_id",
+        "active_policy_scope_type",
+        "active_policy_scope_key",
+        "policy_trace",
+        "fallback_used_flag",
+    ]
+    available = [column for column in columns if column in frame.columns]
+    return frame.loc[:, available].copy()
+
+
+def stock_workbench_intraday_tuned_frame(
+    settings: Settings,
+    *,
+    symbol: str,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT MAX(session_date)
+            FROM fact_intraday_candidate_session
+            WHERE symbol = ?
+            """,
+            [symbol.zfill(6)],
+        ).fetchone()
+    if row is None or row[0] is None:
+        return pd.DataFrame()
+    return intraday_console_tuned_action_frame(
+        settings,
+        session_date=pd.Timestamp(row[0]).date(),
+        symbol=symbol.zfill(6),
+        limit=limit,
+    )

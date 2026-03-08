@@ -759,6 +759,212 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_intraday_policy_experiment_run (
+        experiment_run_id VARCHAR PRIMARY KEY,
+        experiment_name VARCHAR NOT NULL,
+        experiment_type VARCHAR NOT NULL,
+        search_space_version VARCHAR,
+        objective_version VARCHAR,
+        split_version VARCHAR,
+        split_mode VARCHAR,
+        as_of_date DATE,
+        start_session_date DATE,
+        end_session_date DATE,
+        train_start_date DATE,
+        train_end_date DATE,
+        validation_start_date DATE,
+        validation_end_date DATE,
+        test_start_date DATE,
+        test_end_date DATE,
+        horizon INTEGER,
+        checkpoint_scope VARCHAR,
+        regime_scope VARCHAR,
+        candidate_count BIGINT,
+        selected_policy_candidate_id VARCHAR,
+        fallback_used_flag BOOLEAN,
+        status VARCHAR NOT NULL,
+        artifact_path VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_policy_candidate (
+        policy_candidate_id VARCHAR PRIMARY KEY,
+        search_space_version VARCHAR NOT NULL,
+        template_id VARCHAR NOT NULL,
+        scope_type VARCHAR NOT NULL,
+        scope_key VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        checkpoint_time VARCHAR,
+        regime_cluster VARCHAR,
+        regime_family VARCHAR,
+        candidate_label VARCHAR,
+        parameter_hash VARCHAR NOT NULL,
+        enter_threshold_delta DOUBLE,
+        wait_threshold_delta DOUBLE,
+        avoid_threshold_delta DOUBLE,
+        min_selection_confidence_gate DOUBLE,
+        min_signal_quality_gate DOUBLE,
+        uncertainty_penalty_weight DOUBLE,
+        spread_penalty_weight DOUBLE,
+        friction_penalty_weight DOUBLE,
+        gap_chase_penalty_weight DOUBLE,
+        cohort_weakness_penalty_weight DOUBLE,
+        market_shock_penalty_weight DOUBLE,
+        data_weak_guard_strength DOUBLE,
+        max_gap_up_allowance_pct DOUBLE,
+        min_execution_strength_gate DOUBLE,
+        min_orderbook_imbalance_gate DOUBLE,
+        allow_enter_under_data_weak BOOLEAN,
+        allow_wait_override BOOLEAN,
+        selection_rank_cap INTEGER,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_policy_evaluation (
+        experiment_run_id VARCHAR NOT NULL,
+        experiment_type VARCHAR NOT NULL,
+        search_space_version VARCHAR,
+        objective_version VARCHAR,
+        split_version VARCHAR,
+        split_mode VARCHAR,
+        split_name VARCHAR NOT NULL,
+        split_index INTEGER NOT NULL,
+        window_start_date DATE,
+        window_end_date DATE,
+        horizon INTEGER NOT NULL,
+        policy_candidate_id VARCHAR NOT NULL,
+        template_id VARCHAR NOT NULL,
+        scope_type VARCHAR NOT NULL,
+        scope_key VARCHAR NOT NULL,
+        checkpoint_time VARCHAR,
+        regime_cluster VARCHAR,
+        regime_family VARCHAR,
+        window_session_count BIGINT NOT NULL,
+        sample_count BIGINT NOT NULL,
+        matured_count BIGINT NOT NULL,
+        executed_count BIGINT NOT NULL,
+        no_entry_count BIGINT NOT NULL,
+        execution_rate DOUBLE,
+        mean_realized_excess_return DOUBLE,
+        median_realized_excess_return DOUBLE,
+        hit_rate DOUBLE,
+        mean_timing_edge_vs_open_bps DOUBLE,
+        positive_timing_edge_rate DOUBLE,
+        skip_saved_loss_rate DOUBLE,
+        missed_winner_rate DOUBLE,
+        left_tail_proxy DOUBLE,
+        stability_score DOUBLE,
+        objective_score DOUBLE,
+        manual_review_required_flag BOOLEAN,
+        fallback_scope_type VARCHAR,
+        fallback_scope_key VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            experiment_run_id,
+            split_name,
+            split_index,
+            horizon,
+            policy_candidate_id
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_policy_ablation_result (
+        experiment_run_id VARCHAR NOT NULL,
+        ablation_date DATE NOT NULL,
+        start_session_date DATE NOT NULL,
+        end_session_date DATE NOT NULL,
+        horizon INTEGER NOT NULL,
+        base_policy_source VARCHAR NOT NULL,
+        base_policy_candidate_id VARCHAR NOT NULL,
+        ablation_name VARCHAR NOT NULL,
+        sample_count BIGINT NOT NULL,
+        mean_realized_excess_return_delta DOUBLE,
+        median_realized_excess_return_delta DOUBLE,
+        hit_rate_delta DOUBLE,
+        mean_timing_edge_vs_open_bps_delta DOUBLE,
+        execution_rate_delta DOUBLE,
+        skip_saved_loss_rate_delta DOUBLE,
+        missed_winner_rate_delta DOUBLE,
+        left_tail_proxy_delta DOUBLE,
+        stability_score_delta DOUBLE,
+        objective_score_delta DOUBLE,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (experiment_run_id, horizon, ablation_name, base_policy_candidate_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_policy_selection_recommendation (
+        recommendation_date DATE NOT NULL,
+        horizon INTEGER NOT NULL,
+        scope_type VARCHAR NOT NULL,
+        scope_key VARCHAR NOT NULL,
+        recommendation_rank INTEGER NOT NULL,
+        policy_candidate_id VARCHAR NOT NULL,
+        template_id VARCHAR NOT NULL,
+        source_experiment_run_id VARCHAR,
+        search_space_version VARCHAR,
+        objective_version VARCHAR,
+        split_version VARCHAR,
+        sample_count BIGINT NOT NULL,
+        test_session_count BIGINT NOT NULL,
+        executed_count BIGINT NOT NULL,
+        execution_rate DOUBLE,
+        mean_realized_excess_return DOUBLE,
+        median_realized_excess_return DOUBLE,
+        hit_rate DOUBLE,
+        mean_timing_edge_vs_open_bps DOUBLE,
+        positive_timing_edge_rate DOUBLE,
+        skip_saved_loss_rate DOUBLE,
+        missed_winner_rate DOUBLE,
+        left_tail_proxy DOUBLE,
+        stability_score DOUBLE,
+        objective_score DOUBLE,
+        manual_review_required_flag BOOLEAN,
+        fallback_scope_type VARCHAR,
+        fallback_scope_key VARCHAR,
+        recommendation_reason_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            recommendation_date,
+            horizon,
+            scope_type,
+            scope_key,
+            recommendation_rank
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_active_policy (
+        active_policy_id VARCHAR PRIMARY KEY,
+        horizon INTEGER NOT NULL,
+        scope_type VARCHAR NOT NULL,
+        scope_key VARCHAR NOT NULL,
+        checkpoint_time VARCHAR,
+        regime_cluster VARCHAR,
+        regime_family VARCHAR,
+        policy_candidate_id VARCHAR NOT NULL,
+        source_recommendation_date DATE,
+        promotion_type VARCHAR NOT NULL,
+        source_type VARCHAR NOT NULL,
+        effective_from_date DATE NOT NULL,
+        effective_to_date DATE,
+        active_flag BOOLEAN NOT NULL,
+        fallback_scope_type VARCHAR,
+        fallback_scope_key VARCHAR,
+        rollback_of_active_policy_id VARCHAR,
+        note VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS fact_evaluation_summary (
         summary_date DATE NOT NULL,
         window_type VARCHAR NOT NULL,
@@ -1242,6 +1448,67 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY horizon, grouping_key, grouping_value
         ORDER BY window_end_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_policy_experiment_run AS
+    SELECT *
+    FROM fact_intraday_policy_experiment_run
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY
+            experiment_type,
+            COALESCE(horizon, -1),
+            COALESCE(checkpoint_scope, 'all'),
+            COALESCE(regime_scope, 'all')
+        ORDER BY created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_policy_candidate AS
+    SELECT *
+    FROM fact_intraday_policy_candidate
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY policy_candidate_id
+        ORDER BY created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_policy_evaluation AS
+    SELECT *
+    FROM fact_intraday_policy_evaluation
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY split_name, split_index, horizon, policy_candidate_id
+        ORDER BY created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_policy_ablation_result AS
+    SELECT *
+    FROM fact_intraday_policy_ablation_result
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, base_policy_candidate_id, ablation_name
+        ORDER BY created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_policy_selection_recommendation AS
+    SELECT *
+    FROM fact_intraday_policy_selection_recommendation
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, scope_type, scope_key, recommendation_rank
+        ORDER BY recommendation_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_active_policy AS
+    SELECT *
+    FROM fact_intraday_active_policy
+    WHERE active_flag
+      AND effective_from_date <= CURRENT_DATE
+      AND (effective_to_date IS NULL OR effective_to_date >= CURRENT_DATE)
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, scope_type, scope_key
+        ORDER BY effective_from_date DESC, created_at DESC
     ) = 1
     """,
     """
