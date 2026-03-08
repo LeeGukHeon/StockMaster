@@ -1964,3 +1964,366 @@ def latest_postmortem_preview(settings: Settings) -> str | None:
     if not preview_path.exists():
         return None
     return preview_path.read_text(encoding="utf-8")
+
+
+UI_COLUMN_LABELS.update(
+    {
+        "session_date": "세션 날짜",
+        "selection_date": "선정 날짜",
+        "candidate_count": "후보 수",
+        "candidate_symbols": "후보 종목 수",
+        "bar_symbols": "1분봉 종목 수",
+        "trade_symbols": "체결 요약 종목 수",
+        "quote_symbols": "호가 요약 종목 수",
+        "signal_symbols": "신호 종목 수",
+        "decision_symbols": "판단 종목 수",
+        "avg_bar_latency_ms": "평균 1분봉 지연(ms)",
+        "avg_quote_latency_ms": "평균 호가 지연(ms)",
+        "checkpoint_time": "체크포인트",
+        "avg_signal_quality": "평균 신호 품질",
+        "enter_now_count": "즉시 진입 수",
+        "wait_recheck_count": "재확인 수",
+        "avoid_today_count": "오늘 회피 수",
+        "data_insufficient_count": "데이터 부족 수",
+        "quote_unavailable_count": "호가 미가용 수",
+        "trade_unavailable_count": "체결 미가용 수",
+        "candidate_rank": "후보 순위",
+        "session_status": "세션 상태",
+        "timing_adjustment_score": "타이밍 조정 점수",
+        "signal_quality_score": "신호 품질 점수",
+        "gap_opening_quality_score": "갭/시가 품질",
+        "micro_trend_score": "미세 추세",
+        "relative_activity_score": "상대 활동성",
+        "orderbook_score": "호가 점수",
+        "execution_strength_score": "체결 강도 점수",
+        "risk_friction_score": "마찰/충격 리스크",
+        "action": "액션",
+        "action_score": "액션 점수",
+        "entry_reference_price": "판단 기준 가격",
+        "selected_checkpoint_time": "선택 체크포인트",
+        "selected_action": "선택 액션",
+        "execution_flag": "진입 실행 여부",
+        "naive_open_price": "시가 기준 가격",
+        "decision_entry_price": "판단 진입 가격",
+        "future_exit_price": "미래 청산 가격",
+        "realized_return_from_open": "시가 기준 수익률",
+        "realized_return_from_decision": "판단 기준 수익률",
+        "timing_edge_return": "타이밍 엣지 수익률",
+        "timing_edge_bps": "타이밍 엣지(bps)",
+        "quote_status": "호가 상태",
+        "trade_summary_status": "체결 상태",
+    }
+)
+
+
+def _latest_intraday_session_date(settings: Settings):
+    if not settings.paths.duckdb_path.exists():
+        return None
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        row = connection.execute(
+            "SELECT MAX(session_date) FROM fact_intraday_candidate_session"
+        ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return pd.Timestamp(row[0]).date()
+
+
+def latest_intraday_status_frame(settings: Settings) -> pd.DataFrame:
+    session_date = _latest_intraday_session_date(settings)
+    if session_date is None:
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                candidate.session_date,
+                COUNT(DISTINCT candidate.symbol) AS candidate_symbols,
+                COUNT(DISTINCT bar.symbol) AS bar_symbols,
+                COUNT(DISTINCT trade.symbol) AS trade_symbols,
+                COUNT(DISTINCT quote.symbol) AS quote_symbols,
+                COUNT(DISTINCT signal.symbol) AS signal_symbols,
+                COUNT(DISTINCT decision.symbol) AS decision_symbols,
+                AVG(bar.fetch_latency_ms) AS avg_bar_latency_ms,
+                AVG(quote.fetch_latency_ms) AS avg_quote_latency_ms
+            FROM fact_intraday_candidate_session AS candidate
+            LEFT JOIN fact_intraday_bar_1m AS bar
+              ON candidate.session_date = bar.session_date
+             AND candidate.symbol = bar.symbol
+            LEFT JOIN fact_intraday_trade_summary AS trade
+              ON candidate.session_date = trade.session_date
+             AND candidate.symbol = trade.symbol
+            LEFT JOIN fact_intraday_quote_summary AS quote
+              ON candidate.session_date = quote.session_date
+             AND candidate.symbol = quote.symbol
+            LEFT JOIN fact_intraday_signal_snapshot AS signal
+              ON candidate.session_date = signal.session_date
+             AND candidate.symbol = signal.symbol
+            LEFT JOIN fact_intraday_entry_decision AS decision
+              ON candidate.session_date = decision.session_date
+             AND candidate.symbol = decision.symbol
+            WHERE candidate.session_date = ?
+            GROUP BY candidate.session_date
+            """,
+            [session_date],
+        ).fetchdf()
+
+
+def latest_intraday_checkpoint_health_frame(settings: Settings) -> pd.DataFrame:
+    session_date = _latest_intraday_session_date(settings)
+    if session_date is None:
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                signal.checkpoint_time,
+                AVG(signal.signal_quality_score) AS avg_signal_quality,
+                SUM(CASE WHEN decision.action = 'ENTER_NOW' THEN 1 ELSE 0 END) AS enter_now_count,
+                SUM(
+                    CASE WHEN decision.action = 'WAIT_RECHECK' THEN 1 ELSE 0 END
+                ) AS wait_recheck_count,
+                SUM(
+                    CASE WHEN decision.action = 'AVOID_TODAY' THEN 1 ELSE 0 END
+                ) AS avoid_today_count,
+                SUM(
+                    CASE WHEN decision.action = 'DATA_INSUFFICIENT' THEN 1 ELSE 0 END
+                ) AS data_insufficient_count,
+                SUM(
+                    CASE WHEN quote.quote_status = 'unavailable' THEN 1 ELSE 0 END
+                ) AS quote_unavailable_count,
+                SUM(
+                    CASE WHEN trade.trade_summary_status = 'unavailable' THEN 1 ELSE 0 END
+                ) AS trade_unavailable_count
+            FROM fact_intraday_signal_snapshot AS signal
+            LEFT JOIN fact_intraday_entry_decision AS decision
+              ON signal.session_date = decision.session_date
+             AND signal.symbol = decision.symbol
+             AND signal.horizon = decision.horizon
+             AND signal.checkpoint_time = decision.checkpoint_time
+             AND signal.ranking_version = decision.ranking_version
+            LEFT JOIN fact_intraday_quote_summary AS quote
+              ON signal.session_date = quote.session_date
+             AND signal.symbol = quote.symbol
+             AND signal.checkpoint_time = quote.checkpoint_time
+            LEFT JOIN fact_intraday_trade_summary AS trade
+              ON signal.session_date = trade.session_date
+             AND signal.symbol = trade.symbol
+             AND signal.checkpoint_time = trade.checkpoint_time
+            WHERE signal.session_date = ?
+            GROUP BY signal.checkpoint_time
+            ORDER BY signal.checkpoint_time
+            """,
+            [session_date],
+        ).fetchdf()
+
+
+def intraday_console_candidate_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    target_date = session_date or _latest_intraday_session_date(settings)
+    if target_date is None:
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                session_date,
+                selection_date,
+                symbol,
+                company_name,
+                market,
+                horizon,
+                candidate_rank,
+                final_selection_value,
+                grade,
+                expected_excess_return,
+                session_status
+            FROM fact_intraday_candidate_session
+            WHERE session_date = ?
+            ORDER BY horizon, candidate_rank, symbol
+            LIMIT ?
+            """,
+            [target_date, limit],
+        ).fetchdf()
+
+
+def intraday_console_signal_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    checkpoint: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    target_date = session_date or _latest_intraday_session_date(settings)
+    if target_date is None:
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        if checkpoint is None:
+            row = connection.execute(
+                """
+                SELECT MAX(checkpoint_time)
+                FROM fact_intraday_signal_snapshot
+                WHERE session_date = ?
+                """,
+                [target_date],
+            ).fetchone()
+            checkpoint = row[0] if row and row[0] else None
+        if checkpoint is None:
+            return pd.DataFrame()
+        return connection.execute(
+            """
+            SELECT
+                session_date,
+                checkpoint_time,
+                symbol,
+                horizon,
+                gap_opening_quality_score,
+                micro_trend_score,
+                relative_activity_score,
+                orderbook_score,
+                execution_strength_score,
+                risk_friction_score,
+                signal_quality_score,
+                timing_adjustment_score
+            FROM fact_intraday_signal_snapshot
+            WHERE session_date = ?
+              AND checkpoint_time = ?
+            ORDER BY horizon, timing_adjustment_score DESC, symbol
+            LIMIT ?
+            """,
+            [target_date, checkpoint, limit],
+        ).fetchdf()
+
+
+def intraday_console_decision_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    checkpoint: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    target_date = session_date or _latest_intraday_session_date(settings)
+    if target_date is None:
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        if checkpoint is None:
+            row = connection.execute(
+                """
+                SELECT MAX(checkpoint_time)
+                FROM fact_intraday_entry_decision
+                WHERE session_date = ?
+                """,
+                [target_date],
+            ).fetchone()
+            checkpoint = row[0] if row and row[0] else None
+        if checkpoint is None:
+            return pd.DataFrame()
+        return connection.execute(
+            """
+            SELECT
+                decision.session_date,
+                decision.checkpoint_time,
+                decision.symbol,
+                candidate.company_name,
+                decision.horizon,
+                decision.action,
+                decision.action_score,
+                decision.signal_quality_score,
+                decision.entry_reference_price
+            FROM fact_intraday_entry_decision AS decision
+            LEFT JOIN fact_intraday_candidate_session AS candidate
+              ON decision.session_date = candidate.session_date
+             AND decision.symbol = candidate.symbol
+             AND decision.horizon = candidate.horizon
+             AND decision.ranking_version = candidate.ranking_version
+            WHERE decision.session_date = ?
+              AND decision.checkpoint_time = ?
+            ORDER BY decision.horizon, decision.action_score DESC, decision.symbol
+            LIMIT ?
+            """,
+            [target_date, checkpoint, limit],
+        ).fetchdf()
+
+
+def intraday_console_timing_frame(settings: Settings, *, limit: int = 30) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                session_date,
+                symbol,
+                horizon,
+                selected_checkpoint_time,
+                selected_action,
+                timing_edge_bps,
+                realized_return_from_open,
+                realized_return_from_decision,
+                outcome_status
+            FROM fact_intraday_timing_outcome
+            ORDER BY session_date DESC, horizon, symbol
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def stock_workbench_intraday_decision_frame(
+    settings: Settings,
+    *,
+    symbol: str,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                session_date,
+                checkpoint_time,
+                horizon,
+                action,
+                action_score,
+                signal_quality_score,
+                entry_reference_price
+            FROM fact_intraday_entry_decision
+            WHERE symbol = ?
+            ORDER BY session_date DESC, checkpoint_time DESC, horizon
+            LIMIT ?
+            """,
+            [symbol, limit],
+        ).fetchdf()
+
+
+def stock_workbench_intraday_timing_frame(
+    settings: Settings,
+    *,
+    symbol: str,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                session_date,
+                horizon,
+                selected_checkpoint_time,
+                selected_action,
+                timing_edge_bps,
+                realized_return_from_open,
+                realized_return_from_decision,
+                outcome_status
+            FROM fact_intraday_timing_outcome
+            WHERE symbol = ?
+            ORDER BY session_date DESC, horizon
+            LIMIT ?
+            """,
+            [symbol, limit],
+        ).fetchdf()

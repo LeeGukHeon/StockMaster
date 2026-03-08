@@ -571,6 +571,88 @@ python scripts/compare_selection_engines.py --start-selection-date 2026-02-17 --
 python scripts/render_model_diagnostic_report.py --train-end-date 2026-03-06 --horizons 1 5 --dry-run
 ```
 
+## TICKET-007 intraday candidate assist
+
+Intraday candidate session concept:
+
+- the intraday layer is downstream of `selection_engine_v2`
+- session candidates follow `selection_date -> next trading day session_date`
+- this layer adjusts entry timing for the already-selected candidate list; it does not replace end-of-day selection
+- this is not automated trading and it does not send orders
+
+Candidate-only storage strategy:
+
+- only the candidate session universe is stored
+- there is no full-market intraday sweep
+- no raw websocket/tick packet long-term archive is kept
+- summary tables focus on candidate-only 1m bars, trade summary, quote summary, signal snapshots, and deterministic actions
+
+Data storage principles:
+
+- `fact_intraday_bar_1m`: candidate-only 1-minute bars
+- `fact_intraday_trade_summary`: checkpoint-level execution-strength and activity summary
+- `fact_intraday_quote_summary`: checkpoint-level orderbook summary, nullable when quote data is unavailable
+- `fact_intraday_signal_snapshot`: rule-based signal family snapshot
+- `fact_intraday_entry_decision`: deterministic action at each checkpoint
+- `fact_intraday_timing_outcome`: naive-open versus timing-layer postmortem
+
+Signal families:
+
+- gap/opening quality
+- VWAP and micro-trend
+- relative volume and activity
+- orderbook imbalance and spread
+- execution strength
+- risk, friction, and shock
+
+Actions:
+
+- `ENTER_NOW`: timing layer supports immediate entry
+- `WAIT_RECHECK`: candidate stays alive but needs the next checkpoint
+- `AVOID_TODAY`: timing layer vetoes the day
+- `DATA_INSUFFICIENT`: data quality is too weak to support a timing call
+
+Default checkpoints:
+
+- `09:05`
+- `09:15`
+- `09:30`
+- `10:00`
+- `11:00`
+
+Fallback and signal-quality policy:
+
+- quote summary can stay null; that lowers signal quality and orderbook score instead of being zero-filled
+- trade summary uses a 1m-bar proxy when direct trade summary is unavailable
+- future sessions or missing same-day bars materialize explicit `unavailable` rows
+- `DATA_INSUFFICIENT` stays visible in the decision table and UI
+
+TTL and storage policy:
+
+- candidate-only intraday parquet goes under `data/curated/intraday/...`
+- raw live KIS intraday probes go under `data/raw/kis/...`
+- proxy-generated intraday bars are marked `source=proxy_daily_ohlcv`
+- retention follows existing intraday and orderbook retention settings in `config/retention.yaml`
+
+Collector example:
+
+```powershell
+python scripts/run_intraday_candidate_collector.py --session-date 2026-03-09 --horizons 1 5 --poll-seconds 15 --dry-run
+```
+
+### TICKET-007 commands
+
+```powershell
+python scripts/materialize_intraday_candidate_session.py --selection-date 2026-03-06 --horizons 1 5 --max-candidates 30
+python scripts/backfill_intraday_candidate_bars.py --session-date 2026-03-09 --horizons 1 5
+python scripts/backfill_intraday_candidate_trade_summary.py --session-date 2026-03-09 --horizons 1 5
+python scripts/backfill_intraday_candidate_quote_summary.py --session-date 2026-03-09 --horizons 1 5
+python scripts/materialize_intraday_signal_snapshots.py --session-date 2026-03-09 --checkpoint 09:30 --horizons 1 5
+python scripts/materialize_intraday_entry_decisions.py --session-date 2026-03-09 --checkpoint 09:30 --horizons 1 5
+python scripts/evaluate_intraday_timing_layer.py --start-session-date 2026-02-17 --end-session-date 2026-03-09 --horizons 1 5
+python scripts/render_intraday_monitor_report.py --session-date 2026-03-09 --checkpoint 09:30 --dry-run
+```
+
 ## Grade rules
 
 Current grade assignment:
@@ -598,6 +680,13 @@ Tables:
 - `fact_model_training_run`
 - `fact_model_member_prediction`
 - `fact_model_metric_summary`
+- `fact_intraday_candidate_session`
+- `fact_intraday_bar_1m`
+- `fact_intraday_trade_summary`
+- `fact_intraday_quote_summary`
+- `fact_intraday_signal_snapshot`
+- `fact_intraday_entry_decision`
+- `fact_intraday_timing_outcome`
 - `ops_ranking_validation_summary`
 - `ops_selection_validation_summary`
 
@@ -616,6 +705,13 @@ Views:
 - `vw_selection_outcome_latest`
 - `vw_latest_evaluation_summary`
 - `vw_latest_calibration_diagnostic`
+- `vw_latest_intraday_candidate_session`
+- `vw_latest_intraday_bar_1m`
+- `vw_latest_intraday_trade_summary`
+- `vw_latest_intraday_quote_summary`
+- `vw_latest_intraday_signal_snapshot`
+- `vw_latest_intraday_entry_decision`
+- `vw_latest_intraday_timing_outcome`
 - `vw_latest_ranking_validation_summary`
 - `vw_latest_selection_validation_summary`
 
@@ -638,10 +734,18 @@ data/curated/prediction/as_of_date=YYYY-MM-DD/prediction_version=alpha_predictio
 data/curated/evaluation/selection_outcomes/selection_date=YYYY-MM-DD/ranking_version=.../horizon=N/selection_outcomes.parquet
 data/curated/evaluation/summary/start_selection_date=YYYY-MM-DD/end_selection_date=YYYY-MM-DD/evaluation_summary.parquet
 data/curated/evaluation/calibration_diagnostics/start_selection_date=YYYY-MM-DD/end_selection_date=YYYY-MM-DD/calibration_diagnostics.parquet
+data/curated/intraday/candidate_session/session_date=YYYY-MM-DD/horizon=N/ranking_version=selection_engine_v2/candidate_session.parquet
+data/curated/intraday/bar_1m/session_date=YYYY-MM-DD/bar_1m.parquet
+data/curated/intraday/trade_summary/session_date=YYYY-MM-DD/trade_summary.parquet
+data/curated/intraday/quote_summary/session_date=YYYY-MM-DD/quote_summary.parquet
+data/curated/intraday/signal_snapshot/session_date=YYYY-MM-DD/checkpoint=HHMM/signal_snapshot.parquet
+data/curated/intraday/entry_decision/session_date=YYYY-MM-DD/checkpoint=HHMM/entry_decision.parquet
+data/curated/intraday/timing_outcome/session_date=YYYY-MM-DD/horizon=N/timing_outcome.parquet
 data/artifacts/model/training/train_end_date=YYYY-MM-DD/horizon=N/alpha_model_v1.pkl
 data/artifacts/model_validation/<run_id>.md
 data/artifacts/selection_engine_comparison/<run_id>.md
 data/artifacts/model_diagnostics/train_end_date=YYYY-MM-DD/<run_id>/model_diagnostic_report.md
+data/artifacts/intraday_monitor/session_date=YYYY-MM-DD/<run_id>/intraday_monitor_preview.md
 data/artifacts/validation/ranking/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/ranking_validation_summary.parquet
 data/artifacts/validation/selection_engine_v1/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/selection_validation_summary.parquet
 data/artifacts/discord/as_of_date=YYYY-MM-DD/<run_id>/discord_preview.md
@@ -705,6 +809,8 @@ Operational behavior:
 - many 20d and 60d features will be null on shallow history windows
 - symbol linking for news is intentionally conservative and may leave `symbol_candidates = []`
 - investor flow coverage can be partial and stays null instead of being zero-filled
+- intraday quote summary is allowed to remain null for historical or future sessions; the timing layer lowers signal quality instead of fabricating quote depth
+- historical/future intraday 1m data can fall back to proxy or unavailable rows depending on session-date coverage
 - no full article body storage
 - validation is sparse unless historical ranking snapshots and forward labels have already been materialized
 - evaluation is pre-cost only; there is still no transaction-cost simulator
@@ -735,6 +841,7 @@ After `streamlit run app/ui/Home.py`, verify:
 - Market Pulse shows regime + flow breadth + latest top selections
 - Stock Workbench shows one symbol across features, alpha predictions, flow history, prices, frozen outcomes, and news metadata
 - Evaluation shows outcome cohorts, rolling summaries, calibration diagnostics, selection-engine comparison, and postmortem preview
+- Intraday Console shows candidate session coverage, checkpoint health, signal snapshots, decisions, and timing outcomes
 
 ## Docker
 

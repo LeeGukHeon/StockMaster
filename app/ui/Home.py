@@ -425,6 +425,12 @@ navigation = st.navigation(
             icon=":material/fact_check:",
             url_path="evaluation",
         ),
+        st.Page(
+            PROJECT_ROOT / "app/ui/pages/07_Intraday_Console.py",
+            title="장중 콘솔",
+            icon=":material/timeline:",
+            url_path="intraday-console",
+        ),
     ],
     position="sidebar",
 )

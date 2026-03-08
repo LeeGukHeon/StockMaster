@@ -16,6 +16,8 @@ from app.ui.helpers import (
     load_ui_settings,
     localize_frame,
     stock_workbench_flow_frame,
+    stock_workbench_intraday_decision_frame,
+    stock_workbench_intraday_timing_frame,
     stock_workbench_news_frame,
     stock_workbench_outcome_frame,
     stock_workbench_price_frame,
@@ -37,6 +39,12 @@ else:
     flow_history = stock_workbench_flow_frame(settings, symbol=selected_symbol, limit=30)
     news_history = stock_workbench_news_frame(settings, symbol=selected_symbol, limit=10)
     outcome_history = stock_workbench_outcome_frame(settings, symbol=selected_symbol, limit=20)
+    intraday_decisions = stock_workbench_intraday_decision_frame(
+        settings, symbol=selected_symbol, limit=20
+    )
+    intraday_timing = stock_workbench_intraday_timing_frame(
+        settings, symbol=selected_symbol, limit=20
+    )
 
     st.subheader("요약")
     st.dataframe(localize_frame(summary), width="stretch", hide_index=True)
@@ -51,6 +59,14 @@ else:
 
     st.subheader("고정된 선정 성과")
     st.dataframe(localize_frame(outcome_history), width="stretch", hide_index=True)
+
+    intraday_left, intraday_right = st.columns(2)
+    with intraday_left:
+        st.subheader("장중 판단 이력")
+        st.dataframe(localize_frame(intraday_decisions), width="stretch", hide_index=True)
+    with intraday_right:
+        st.subheader("장중 타이밍 평가")
+        st.dataframe(localize_frame(intraday_timing), width="stretch", hide_index=True)
 
     st.subheader("연결된 뉴스 메타데이터")
     st.dataframe(localize_frame(news_history), width="stretch", hide_index=True)

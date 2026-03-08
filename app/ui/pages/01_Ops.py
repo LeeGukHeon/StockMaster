@@ -21,6 +21,8 @@ from app.ui.helpers import (
     latest_evaluation_summary_frame,
     latest_feature_coverage_frame,
     latest_flow_summary_frame,
+    latest_intraday_checkpoint_health_frame,
+    latest_intraday_status_frame,
     latest_label_coverage_frame,
     latest_model_metric_summary_frame,
     latest_model_training_summary_frame,
@@ -81,6 +83,8 @@ latest_regime = latest_regime_frame(settings)
 latest_versions = latest_version_frame(settings)
 selection_validation = latest_selection_validation_summary_frame(settings, limit=20)
 explanatory_validation = latest_validation_summary_frame(settings, limit=20)
+intraday_status = latest_intraday_status_frame(settings)
+intraday_checkpoint_health = latest_intraday_checkpoint_health_frame(settings)
 discord_preview = latest_discord_preview(settings)
 postmortem_preview = latest_postmortem_preview(settings)
 
@@ -137,6 +141,19 @@ with ops_right:
     st.dataframe(localize_frame(model_training_summary), width="stretch", hide_index=True)
     st.subheader("최신 시장 상태")
     st.dataframe(localize_frame(latest_regime), width="stretch", hide_index=True)
+
+st.subheader("장중 수집 상태")
+intraday_left, intraday_right = st.columns(2)
+with intraday_left:
+    if intraday_status.empty:
+        st.info("장중 세션 상태가 아직 없습니다.")
+    else:
+        st.dataframe(localize_frame(intraday_status), width="stretch", hide_index=True)
+with intraday_right:
+    if intraday_checkpoint_health.empty:
+        st.info("장중 체크포인트 상태가 아직 없습니다.")
+    else:
+        st.dataframe(localize_frame(intraday_checkpoint_health), width="stretch", hide_index=True)
 
 evaluation_left, evaluation_right = st.columns(2)
 with evaluation_left:

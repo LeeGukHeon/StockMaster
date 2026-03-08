@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.providers.base import BaseProvider, ProviderHealth
 
 from .auth import KisTokenManager
+from .intraday import KisIntradayClient
 from .investor_flow import KisInvestorFlowClient
 from .market_data import KisMarketDataClient, SymbolMasterSnapshot
 
@@ -14,6 +15,9 @@ class KISProvider(BaseProvider):
         super().__init__(settings, timeout=timeout)
         self.token_manager = KisTokenManager(settings, self.client, self.logger)
         self.market_data = KisMarketDataClient(
+            settings, self.client, self.logger, self.token_manager
+        )
+        self.intraday = KisIntradayClient(
             settings, self.client, self.logger, self.token_manager
         )
         self.investor_flow = KisInvestorFlowClient(
@@ -73,6 +77,27 @@ class KISProvider(BaseProvider):
             symbol=symbol,
             start_date=start_date,
             end_date=end_date,
+        )
+
+    def fetch_intraday_bars(
+        self,
+        *,
+        symbol: str,
+        query_time: str = "153000",
+        include_past: bool = True,
+        session_date=None,
+    ):
+        return self.intraday.fetch_intraday_bars(
+            symbol=symbol,
+            query_time=query_time,
+            include_past=include_past,
+            session_date=session_date,
+        )
+
+    def fetch_orderbook_snapshot(self, *, symbol: str, session_date=None):
+        return self.intraday.fetch_orderbook_snapshot(
+            symbol=symbol,
+            session_date=session_date,
         )
 
     def fetch_investor_flow(self, *, symbol: str, trading_date=None):
