@@ -180,17 +180,37 @@ _FLOW_VALUE_SERIES = {
 def build_test_settings(tmp_path) -> Settings:
     data_dir = tmp_path / "data"
     duckdb_path = data_dir / "marts" / "integration.duckdb"
+    raw_dir = data_dir / "raw"
+    curated_dir = data_dir / "curated"
+    marts_dir = data_dir / "marts"
+    cache_dir = data_dir / "cache"
+    logs_dir = data_dir / "logs"
+    artifacts_dir = data_dir / "artifacts"
     env_file = tmp_path / ".env"
     env_file.write_text(
         "\n".join(
             [
                 f"APP_DATA_DIR={data_dir.as_posix()}",
                 f"APP_DUCKDB_PATH={duckdb_path.as_posix()}",
+                f"APP_RAW_DIR={raw_dir.as_posix()}",
+                f"APP_CURATED_DIR={curated_dir.as_posix()}",
+                f"APP_MARTS_DIR={marts_dir.as_posix()}",
+                f"APP_CACHE_DIR={cache_dir.as_posix()}",
+                f"APP_LOGS_DIR={logs_dir.as_posix()}",
+                f"APP_ARTIFACTS_DIR={artifacts_dir.as_posix()}",
             ]
         ),
         encoding="utf-8",
     )
     settings = load_settings(project_root=project_root(), env_file=env_file)
+    settings.paths.data_dir = data_dir
+    settings.paths.duckdb_path = duckdb_path
+    settings.paths.raw_dir = raw_dir
+    settings.paths.curated_dir = curated_dir
+    settings.paths.marts_dir = marts_dir
+    settings.paths.cache_dir = cache_dir
+    settings.paths.logs_dir = logs_dir
+    settings.paths.artifacts_dir = artifacts_dir
     bootstrap_storage(settings)
     return settings
 

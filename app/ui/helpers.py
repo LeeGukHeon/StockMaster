@@ -7,10 +7,17 @@ from pathlib import Path
 import pandas as pd
 
 from app.common.disk import DiskUsageReport, measure_disk_usage
+from app.intraday.meta_common import (
+    ENTER_PANEL,
+    INTRADAY_META_MODEL_DOMAIN,
+    INTRADAY_META_MODEL_VERSION,
+    WAIT_PANEL,
+)
 from app.intraday.policy import apply_active_intraday_policy_frame
 from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
+from app.ml.registry import load_model_artifact
 from app.providers.base import ProviderHealth
 from app.providers.dart.client import DartProvider
 from app.providers.kis.client import KISProvider
@@ -3508,3 +3515,597 @@ def stock_workbench_intraday_tuned_frame(
         symbol=symbol.zfill(6),
         limit=limit,
     )
+
+
+UI_COLUMN_LABELS.update(
+    {
+        "training_run_id": "학습 실행 ID",
+        "panel_name": "패널",
+        "predicted_class": "예측 클래스",
+        "predicted_class_probability": "예측 확률",
+        "confidence_margin": "신뢰도 마진",
+        "active_meta_model_id": "활성 메타모델 ID",
+        "active_meta_training_run_id": "활성 메타 학습 실행 ID",
+        "final_action": "최종 액션",
+        "override_applied_flag": "오버라이드 적용",
+        "override_type": "오버라이드 유형",
+        "hard_guard_block_flag": "하드가드 차단",
+        "rollback_of_active_meta_model_id": "롤백 대상 메타모델 ID",
+        "calibration_bucket": "보정 구간",
+        "avg_confidence": "평균 신뢰도",
+        "observed_accuracy": "관측 정확도",
+        "feature_name": "피처명",
+        "importance": "중요도",
+        "source_type": "출처",
+        "promotion_type": "반영 유형",
+    }
+)
+UI_VALUE_LABELS.setdefault("panel_name", {}).update(
+    {
+        ENTER_PANEL: "진입 패널",
+        WAIT_PANEL: "대기 패널",
+    }
+)
+UI_VALUE_LABELS.setdefault("predicted_class", {}).update(
+    {
+        "KEEP_ENTER": "진입 유지",
+        "DOWNGRADE_WAIT": "대기로 하향",
+        "DOWNGRADE_AVOID": "회피로 하향",
+        "KEEP_WAIT": "대기 유지",
+        "UPGRADE_ENTER": "진입으로 상향",
+    }
+)
+UI_VALUE_LABELS.setdefault("final_action", {}).update(
+    {
+        "ENTER_NOW": "지금 진입",
+        "WAIT_RECHECK": "재확인 대기",
+        "AVOID_TODAY": "오늘 회피",
+        "DATA_INSUFFICIENT": "데이터 부족",
+    }
+)
+
+
+def latest_intraday_meta_training_frame(
+    settings: Settings,
+    *,
+    limit: int = 30,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                training_run_id,
+                model_version,
+                horizon,
+                panel_name,
+                train_end_date,
+                train_row_count,
+                validation_row_count,
+                train_session_count,
+                validation_session_count,
+                feature_count,
+                fallback_flag,
+                fallback_reason,
+                created_at
+            FROM vw_latest_model_training_run
+            WHERE model_domain = ?
+              AND model_version = ?
+            ORDER BY train_end_date DESC, horizon, panel_name
+            LIMIT ?
+            """,
+            [INTRADAY_META_MODEL_DOMAIN, INTRADAY_META_MODEL_VERSION, limit],
+        ).fetchdf()
+
+
+def latest_intraday_meta_active_model_frame(
+    settings: Settings,
+    *,
+    as_of_date=None,
+    limit: int = 30,
+    active_only: bool = True,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        target_date = as_of_date
+        if target_date is None:
+            row = connection.execute(
+                "SELECT MAX(effective_from_date) FROM fact_intraday_active_meta_model"
+            ).fetchone()
+            target_date = None if row is None or row[0] is None else pd.Timestamp(row[0]).date()
+        if target_date is None:
+            return pd.DataFrame()
+        if active_only:
+            return connection.execute(
+                """
+                SELECT
+                    active.horizon,
+                    active.panel_name,
+                    active.active_meta_model_id,
+                    active.training_run_id,
+                    active.model_version,
+                    active.source_type,
+                    active.promotion_type,
+                    active.effective_from_date,
+                    active.effective_to_date,
+                    active.note,
+                    train.fallback_flag,
+                    train.fallback_reason
+                FROM fact_intraday_active_meta_model AS active
+                LEFT JOIN fact_model_training_run AS train
+                  ON active.training_run_id = train.training_run_id
+                WHERE active.effective_from_date <= ?
+                  AND (active.effective_to_date IS NULL OR active.effective_to_date >= ?)
+                  AND active.active_flag = TRUE
+                ORDER BY active.horizon, active.panel_name
+                LIMIT ?
+                """,
+                [target_date, target_date, limit],
+            ).fetchdf()
+        return connection.execute(
+            """
+            SELECT
+                horizon,
+                panel_name,
+                active_meta_model_id,
+                training_run_id,
+                model_version,
+                source_type,
+                promotion_type,
+                effective_from_date,
+                effective_to_date,
+                active_flag,
+                rollback_of_active_meta_model_id,
+                note,
+                updated_at
+            FROM fact_intraday_active_meta_model
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_intraday_meta_rollback_frame(
+    settings: Settings,
+    *,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                horizon,
+                panel_name,
+                active_meta_model_id,
+                training_run_id,
+                promotion_type,
+                rollback_of_active_meta_model_id,
+                effective_from_date,
+                note,
+                updated_at
+            FROM fact_intraday_active_meta_model
+            WHERE promotion_type = 'ROLLBACK_RESTORE'
+               OR rollback_of_active_meta_model_id IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_intraday_meta_run_status_frame(
+    settings: Settings,
+    *,
+    limit: int = 12,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                run_type,
+                started_at,
+                finished_at,
+                status,
+                notes
+            FROM ops_run_manifest
+            WHERE run_type IN (
+                'build_intraday_meta_training_dataset',
+                'validate_intraday_meta_dataset',
+                'train_intraday_meta_models',
+                'run_intraday_meta_walkforward',
+                'calibrate_intraday_meta_thresholds',
+                'evaluate_intraday_meta_models',
+                'materialize_intraday_meta_predictions',
+                'materialize_intraday_final_actions',
+                'freeze_intraday_active_meta_model',
+                'rollback_intraday_active_meta_model',
+                'render_intraday_meta_model_report',
+                'publish_discord_intraday_meta_summary',
+                'validate_intraday_meta_model_framework'
+            )
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY run_type
+                ORDER BY started_at DESC
+            ) = 1
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def _latest_intraday_meta_session_date(settings: Settings):
+    if not settings.paths.duckdb_path.exists():
+        return None
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT COALESCE(
+                (SELECT MAX(session_date) FROM fact_intraday_meta_decision),
+                (SELECT MAX(session_date) FROM fact_intraday_meta_prediction)
+            )
+            """
+        ).fetchone()
+    return None if row is None or row[0] is None else pd.Timestamp(row[0]).date()
+
+
+def latest_intraday_meta_prediction_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    symbol: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    target_date = session_date or _latest_intraday_meta_session_date(settings)
+    if target_date is None or not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    symbol_filter = ""
+    params: list[object] = [target_date]
+    if symbol:
+        symbol_filter = " AND prediction.symbol = ?"
+        params.append(symbol.zfill(6))
+    params.append(limit)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            f"""
+            SELECT
+                prediction.session_date,
+                prediction.checkpoint_time,
+                prediction.symbol,
+                symbol_dim.company_name,
+                prediction.horizon,
+                prediction.panel_name,
+                prediction.tuned_action,
+                prediction.predicted_class,
+                prediction.predicted_class_probability,
+                prediction.confidence_margin,
+                prediction.uncertainty_score,
+                prediction.disagreement_score,
+                prediction.fallback_flag,
+                prediction.fallback_reason
+            FROM fact_intraday_meta_prediction AS prediction
+            LEFT JOIN dim_symbol AS symbol_dim
+              ON prediction.symbol = symbol_dim.symbol
+            WHERE prediction.session_date = ?
+              {symbol_filter}
+            ORDER BY prediction.horizon, prediction.symbol, prediction.checkpoint_time
+            LIMIT ?
+            """,
+            params,
+        ).fetchdf()
+
+
+def latest_intraday_meta_decision_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    symbol: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    target_date = session_date or _latest_intraday_meta_session_date(settings)
+    if target_date is None or not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    symbol_filter = ""
+    params: list[object] = [target_date]
+    if symbol:
+        symbol_filter = " AND decision.symbol = ?"
+        params.append(symbol.zfill(6))
+    params.append(limit)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            f"""
+            SELECT
+                decision.session_date,
+                decision.checkpoint_time,
+                decision.symbol,
+                symbol_dim.company_name,
+                decision.horizon,
+                decision.raw_action,
+                decision.adjusted_action,
+                decision.tuned_action,
+                decision.final_action,
+                decision.panel_name,
+                decision.predicted_class,
+                decision.predicted_class_probability,
+                decision.confidence_margin,
+                decision.uncertainty_score,
+                decision.disagreement_score,
+                decision.override_applied_flag,
+                decision.override_type,
+                decision.hard_guard_block_flag,
+                decision.fallback_flag,
+                decision.fallback_reason,
+                decision.active_meta_model_id
+            FROM fact_intraday_meta_decision AS decision
+            LEFT JOIN dim_symbol AS symbol_dim
+              ON decision.symbol = symbol_dim.symbol
+            WHERE decision.session_date = ?
+              {symbol_filter}
+            ORDER BY decision.horizon, decision.symbol, decision.checkpoint_time
+            LIMIT ?
+            """,
+            params,
+        ).fetchdf()
+
+
+def latest_intraday_meta_overlay_comparison_frame(
+    settings: Settings,
+    *,
+    metric_scope: str = "overlay",
+    limit: int = 30,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        if metric_scope == "overlay":
+            return connection.execute(
+                """
+                SELECT
+                    horizon,
+                    panel_name,
+                    MAX(
+                        CASE
+                            WHEN metric_name = 'policy_only_mean_excess_return'
+                                THEN metric_value
+                        END
+                    ) AS policy_only_mean_excess_return,
+                    MAX(
+                        CASE
+                            WHEN metric_name = 'meta_overlay_mean_excess_return'
+                                THEN metric_value
+                        END
+                    ) AS meta_overlay_mean_excess_return,
+                    MAX(
+                        CASE
+                            WHEN metric_name = 'same_exit_lift_mean_excess_return'
+                                THEN metric_value
+                        END
+                    ) AS same_exit_lift_mean_excess_return,
+                    MAX(
+                        CASE
+                            WHEN metric_name = 'same_exit_lift_mean_timing_edge_bps'
+                                THEN metric_value
+                        END
+                    ) AS same_exit_lift_mean_timing_edge_bps,
+                    MAX(
+                        CASE
+                            WHEN metric_name = 'override_rate'
+                                THEN metric_value
+                        END
+                    ) AS override_rate,
+                    MAX(
+                        CASE
+                            WHEN metric_name = 'fallback_rate'
+                                THEN metric_value
+                        END
+                    ) AS fallback_rate,
+                    MAX(
+                        CASE
+                            WHEN metric_name = 'upgrade_precision'
+                                THEN metric_value
+                        END
+                    ) AS upgrade_precision,
+                    MAX(
+                        CASE
+                            WHEN metric_name = 'downgrade_precision'
+                                THEN metric_value
+                        END
+                    ) AS downgrade_precision,
+                    MAX(
+                        CASE
+                            WHEN metric_name = 'saved_loss_rate'
+                                THEN metric_value
+                        END
+                    ) AS saved_loss_rate,
+                    MAX(
+                        CASE
+                            WHEN metric_name = 'missed_winner_rate'
+                                THEN metric_value
+                        END
+                    ) AS missed_winner_rate,
+                    MAX(sample_count) AS sample_count
+                FROM vw_latest_model_metric_summary
+                WHERE model_domain = ?
+                  AND model_version = ?
+                  AND split_name = 'evaluation'
+                  AND metric_scope = 'overlay'
+                  AND comparison_key = 'overall'
+                GROUP BY horizon, panel_name
+                ORDER BY horizon, panel_name
+                LIMIT ?
+                """,
+                [INTRADAY_META_MODEL_DOMAIN, INTRADAY_META_MODEL_VERSION, limit],
+            ).fetchdf()
+        comparison_scope = "market_regime_family" if metric_scope == "regime" else "checkpoint_time"
+        return connection.execute(
+            """
+            SELECT
+                horizon,
+                panel_name,
+                comparison_key,
+                metric_value AS same_exit_lift_mean_excess_return,
+                sample_count
+            FROM vw_latest_model_metric_summary
+            WHERE model_domain = ?
+              AND model_version = ?
+              AND split_name = 'evaluation'
+              AND metric_scope = ?
+              AND metric_name = 'same_exit_lift_mean_excess_return'
+            ORDER BY horizon, panel_name, comparison_key
+            LIMIT ?
+            """,
+            [
+                INTRADAY_META_MODEL_DOMAIN,
+                INTRADAY_META_MODEL_VERSION,
+                comparison_scope,
+                limit,
+            ],
+        ).fetchdf()
+
+
+def _latest_intraday_meta_training_row(
+    settings: Settings,
+    *,
+    horizon: int,
+    panel_name: str,
+):
+    if not settings.paths.duckdb_path.exists():
+        return None
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        frame = connection.execute(
+            """
+            SELECT *
+            FROM vw_latest_model_training_run
+            WHERE model_domain = ?
+              AND model_version = ?
+              AND horizon = ?
+              AND panel_name = ?
+            ORDER BY train_end_date DESC, created_at DESC
+            LIMIT 1
+            """,
+            [INTRADAY_META_MODEL_DOMAIN, INTRADAY_META_MODEL_VERSION, horizon, panel_name],
+        ).fetchdf()
+    if frame.empty:
+        return None
+    return frame.iloc[0]
+
+
+def _intraday_meta_diagnostic_payload(
+    settings: Settings,
+    *,
+    horizon: int,
+    panel_name: str,
+) -> tuple[pd.Series | None, dict[str, object], object]:
+    training_row = _latest_intraday_meta_training_row(
+        settings,
+        horizon=horizon,
+        panel_name=panel_name,
+    )
+    if training_row is None:
+        return None, {}, None
+    diagnostics_payload: dict[str, object] = {}
+    diagnostic_uri = training_row.get("diagnostic_artifact_uri")
+    if pd.notna(diagnostic_uri) and Path(str(diagnostic_uri)).exists():
+        diagnostics_payload = json.loads(Path(str(diagnostic_uri)).read_text(encoding="utf-8"))
+    model_payload = None
+    artifact_uri = training_row.get("artifact_uri")
+    if pd.notna(artifact_uri) and Path(str(artifact_uri)).exists():
+        model_payload = load_model_artifact(Path(str(artifact_uri)))
+    return training_row, diagnostics_payload, model_payload
+
+
+def intraday_meta_feature_importance_frame(
+    settings: Settings,
+    *,
+    horizon: int,
+    panel_name: str,
+    limit: int = 20,
+) -> pd.DataFrame:
+    _, diagnostics_payload, _ = _intraday_meta_diagnostic_payload(
+        settings,
+        horizon=horizon,
+        panel_name=panel_name,
+    )
+    rows = diagnostics_payload.get("feature_importance", [])
+    if not rows:
+        return pd.DataFrame()
+    frame = pd.DataFrame(rows)
+    frame = frame.sort_values(["member_name", "importance"], ascending=[True, False]).reset_index(
+        drop=True
+    )
+    return frame.head(limit).copy()
+
+
+def intraday_meta_confusion_matrix_frame(
+    settings: Settings,
+    *,
+    horizon: int,
+    panel_name: str,
+) -> pd.DataFrame:
+    _, _, model_payload = _intraday_meta_diagnostic_payload(
+        settings,
+        horizon=horizon,
+        panel_name=panel_name,
+    )
+    if not model_payload:
+        return pd.DataFrame()
+    validation_frame = model_payload.get("validation_prediction_frame")
+    if validation_frame is None or len(validation_frame) == 0:
+        return pd.DataFrame()
+    frame = validation_frame.copy()
+    if frame.empty:
+        return pd.DataFrame()
+    output = (
+        frame.groupby(["target_class", "predicted_class"], dropna=False)
+        .size()
+        .reset_index(name="sample_count")
+    )
+    return output.sort_values(["target_class", "predicted_class"]).reset_index(drop=True)
+
+
+def intraday_meta_calibration_frame(
+    settings: Settings,
+    *,
+    horizon: int,
+    panel_name: str,
+) -> pd.DataFrame:
+    _, _, model_payload = _intraday_meta_diagnostic_payload(
+        settings,
+        horizon=horizon,
+        panel_name=panel_name,
+    )
+    if not model_payload:
+        return pd.DataFrame()
+    validation_frame = model_payload.get("validation_prediction_frame")
+    if validation_frame is None or len(validation_frame) == 0:
+        return pd.DataFrame()
+    frame = validation_frame.copy()
+    if frame.empty:
+        return pd.DataFrame()
+    frame["correct_flag"] = (
+        frame["target_class"].astype(str) == frame["predicted_class"].astype(str)
+    )
+    frame["calibration_bucket"] = pd.cut(
+        pd.to_numeric(frame["predicted_class_probability"], errors="coerce"),
+        bins=[0.0, 0.5, 0.65, 0.8, 0.9, 1.0],
+        labels=["0.00-0.50", "0.50-0.65", "0.65-0.80", "0.80-0.90", "0.90-1.00"],
+        include_lowest=True,
+    )
+    output = (
+        frame.groupby(["predicted_class", "calibration_bucket"], dropna=False)
+        .agg(
+            sample_count=("symbol", "count"),
+            avg_confidence=("predicted_class_probability", "mean"),
+            observed_accuracy=("correct_flag", "mean"),
+        )
+        .reset_index()
+    )
+    output["calibration_bucket"] = output["calibration_bucket"].astype(str)
+    return output.sort_values(["predicted_class", "calibration_bucket"]).reset_index(drop=True)

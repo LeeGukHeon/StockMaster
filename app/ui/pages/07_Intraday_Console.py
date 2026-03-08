@@ -22,6 +22,9 @@ from app.ui.helpers import (
     intraday_console_tuned_action_frame,
     latest_intraday_active_policy_frame,
     latest_intraday_checkpoint_health_frame,
+    latest_intraday_meta_active_model_frame,
+    latest_intraday_meta_decision_frame,
+    latest_intraday_meta_prediction_frame,
     latest_intraday_policy_recommendation_frame,
     latest_intraday_policy_report_preview,
     latest_intraday_postmortem_preview,
@@ -40,7 +43,10 @@ signal_frame = intraday_console_signal_frame(settings, limit=40)
 decision_frame = intraday_console_decision_frame(settings, limit=40)
 adjusted_decision_frame = intraday_console_adjusted_decision_frame(settings, limit=40)
 tuned_decision_frame = intraday_console_tuned_action_frame(settings, limit=40)
+meta_prediction_frame = latest_intraday_meta_prediction_frame(settings, limit=40)
+meta_decision_frame = latest_intraday_meta_decision_frame(settings, limit=40)
 active_policy_frame = latest_intraday_active_policy_frame(settings, limit=20)
+active_meta_model_frame = latest_intraday_meta_active_model_frame(settings, limit=20)
 recommendation_frame = latest_intraday_policy_recommendation_frame(settings, limit=20)
 strategy_trace_frame = intraday_console_strategy_trace_frame(settings, limit=50)
 timing_frame = intraday_console_timing_frame(settings, limit=30)
@@ -49,8 +55,9 @@ policy_preview = latest_intraday_policy_report_preview(settings)
 
 st.title("장중 콘솔")
 st.caption(
-    "Selection v2 후보군을 기준으로 장중 후보 세션, 체크포인트 신호, raw/adjusted/tuned "
-    "진입 판단, strategy trace를 확인하는 보조 화면입니다. 자동매매 화면이 아닙니다."
+    "Selection v2 후보군 위에서 raw -> adjusted -> tuned -> "
+    "meta overlay -> final action 흐름을 보는 화면입니다. "
+    "자동매매 화면이 아니라 candidate-only 장중 보조 콘솔입니다."
 )
 
 if status_frame.empty:
@@ -101,11 +108,25 @@ with decision_left:
     else:
         st.dataframe(localize_frame(adjusted_decision_frame), width="stretch", hide_index=True)
 with decision_right:
-    st.subheader("Tuned 진입 판단")
+    st.subheader("Tuned 정책 액션")
     if tuned_decision_frame.empty:
-        st.info("active policy 기준 tuned action이 없습니다.")
+        st.info("active policy 기반 tuned action이 없습니다.")
     else:
         st.dataframe(localize_frame(tuned_decision_frame), width="stretch", hide_index=True)
+
+meta_left, meta_right = st.columns(2)
+with meta_left:
+    st.subheader("ML 메타 예측")
+    if meta_prediction_frame.empty:
+        st.info("intraday meta prediction 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(meta_prediction_frame), width="stretch", hide_index=True)
+with meta_right:
+    st.subheader("최종 액션")
+    if meta_decision_frame.empty:
+        st.info("intraday final action 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(meta_decision_frame), width="stretch", hide_index=True)
 
 policy_left, policy_right = st.columns(2)
 with policy_left:
@@ -114,12 +135,17 @@ with policy_left:
         st.info("활성 정책 레지스트리가 없습니다.")
     else:
         st.dataframe(localize_frame(active_policy_frame), width="stretch", hide_index=True)
-with policy_right:
     st.subheader("최신 정책 추천")
     if recommendation_frame.empty:
         st.info("정책 추천 결과가 없습니다.")
     else:
         st.dataframe(localize_frame(recommendation_frame), width="stretch", hide_index=True)
+with policy_right:
+    st.subheader("현재 활성 메타모델")
+    if active_meta_model_frame.empty:
+        st.info("활성 메타모델 레지스트리가 없습니다.")
+    else:
+        st.dataframe(localize_frame(active_meta_model_frame), width="stretch", hide_index=True)
 
 trace_left, trace_right = st.columns(2)
 with trace_left:

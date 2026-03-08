@@ -2954,10 +2954,15 @@ def apply_active_intraday_policy_frame(
     horizons: list[int] | None = None,
     symbol: str | None = None,
     limit: int | None = None,
+    connection=None,
 ) -> pd.DataFrame:
     ensure_storage_layout(settings)
     effective_horizons = horizons or [1, 5]
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+    owns_connection = connection is None
+    if owns_connection:
+        connection_context = duckdb_connection(settings.paths.duckdb_path, read_only=True)
+        connection = connection_context.__enter__()
+    try:
         bootstrap_core_tables(connection)
         frame = _load_policy_base_frame(
             connection,
@@ -2967,6 +2972,9 @@ def apply_active_intraday_policy_frame(
             checkpoints=list(DEFAULT_CHECKPOINTS),
         )
         active_policies = _load_active_policy_registry(connection, as_of_date=session_date)
+    finally:
+        if owns_connection:
+            connection_context.__exit__(None, None, None)
     if frame.empty:
         return pd.DataFrame()
     frame["regime_cluster"] = frame["market_regime_family"].map(_regime_cluster)

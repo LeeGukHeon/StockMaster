@@ -2,7 +2,7 @@
 
 StockMaster is a Korea-focused personal stock research platform for post-market analysis, explanatory ranking, reporting, and retrospective evaluation.
 
-Implemented through TICKET-009:
+Implemented through TICKET-010:
 
 - foundation, settings, logging, bootstrap, and disk guard
 - provider activation for KIS, DART, and Naver News
@@ -15,6 +15,7 @@ Implemented through TICKET-009:
 - intraday candidate assist engine v1 with candidate-only 1m bars, trade summary, quote summary, and deterministic timing decisions
 - intraday postmortem, regime-aware adjusted timing, strategy comparison, and timing calibration
 - intraday policy calibration, walk-forward tuning, ablation analysis, recommendation registry, and manual active-policy freeze/rollback
+- intraday policy meta-model / ML timing classifier v1 with panel-specific training, threshold calibration, bounded overlay scoring, and manual active-meta freeze/rollback
 - Streamlit Home, Ops, Research, Leaderboard, Market Pulse, Stock Workbench, Evaluation, and Intraday Console pages
 
 Out of scope:
@@ -22,6 +23,7 @@ Out of scope:
 - auto-trading, order routing, and execution
 - full news article storage
 - online-learning / RL intraday policy
+- deep-learning / transformer / RL meta timing overlay
 - full-market raw tick or websocket archival
 
 The platform contains explanatory ranking, ML-assisted selection, and deterministic intraday timing support. It is still not an execution engine.
@@ -839,6 +841,85 @@ python scripts/publish_discord_intraday_policy_summary.py --as-of-date 2026-03-2
 python scripts/validate_intraday_policy_framework.py --as-of-date 2026-03-20 --horizons 1 5
 ```
 
+## TICKET-010 intraday policy meta-model / ML timing classifier v1
+
+TICKET-010 adds a bounded ML overlay on top of the active intraday policy. It does not replace:
+
+- selection engine v2 candidate generation
+- the active deterministic intraday policy
+- hard guards such as `AVOID_TODAY` or `DATA_INSUFFICIENT`
+
+The overlay only operates on matured intraday snapshots and only on admissible panels:
+
+- `ENTER_PANEL`
+- `WAIT_PANEL`
+
+Class system:
+
+- `ENTER_PANEL`: `KEEP_ENTER`, `DOWNGRADE_WAIT`, `DOWNGRADE_AVOID`
+- `WAIT_PANEL`: `KEEP_WAIT`, `UPGRADE_ENTER`, `DOWNGRADE_AVOID`
+
+Base model family:
+
+- `LogisticRegression`
+- `HistGradientBoostingClassifier`
+- `ExtraTreesClassifier`
+
+The ensemble is a conservative sklearn-only soft-voting stack. Probability calibration uses sigmoid-style per-class calibration. Uncertainty and disagreement are proxy measures built from confidence margin and member dispersion, not Bayesian estimates.
+
+### Matured-only tuning and as-of discipline
+
+- training and evaluation use only matured same-exit intraday outcomes
+- live scoring reads only already-materialized intraday snapshots for that checkpoint
+- the meta-model cannot create independent actions outside the tuned policy action space
+- `AVOID_TODAY` and `DATA_INSUFFICIENT` are never upward-overridden
+
+### Final action rule
+
+- adjusted `ENTER_NOW` can only become `ENTER_NOW`, `WAIT_RECHECK`, or `AVOID_TODAY`
+- adjusted `WAIT_RECHECK` can only become `WAIT_RECHECK`, `ENTER_NOW`, or `AVOID_TODAY`
+- adjusted `AVOID_TODAY` / `DATA_INSUFFICIENT` stay as-is
+- low confidence, low margin, high uncertainty, high disagreement, missing model, or missing artifact all fall back to the tuned policy action and store a fallback reason
+
+### Recommendation, freeze, and rollback
+
+- training output is stored in the generic model registry with `model_domain = intraday_meta`
+- active meta-model state is separate from training output
+- promotion is manual only
+- rollback is explicit and scope-safe
+
+### TICKET-010 commands
+
+```powershell
+python scripts/build_intraday_meta_training_dataset.py --start-session-date 2026-03-03 --end-session-date 2026-03-09 --horizons 1 5
+python scripts/validate_intraday_meta_dataset.py --start-session-date 2026-03-03 --end-session-date 2026-03-09 --horizons 1 5
+python scripts/train_intraday_meta_models.py --train-end-date 2026-03-09 --horizons 1 5 --start-session-date 2026-03-03 --validation-sessions 1
+python scripts/run_intraday_meta_walkforward.py --start-session-date 2026-03-03 --end-session-date 2026-03-09 --mode rolling --train-sessions 3 --validation-sessions 1 --test-sessions 1 --step-sessions 1 --horizons 1 5
+python scripts/calibrate_intraday_meta_thresholds.py --as-of-date 2026-03-09 --horizons 1 5
+python scripts/evaluate_intraday_meta_models.py --start-session-date 2026-03-03 --end-session-date 2026-03-09 --horizons 1 5
+python scripts/freeze_intraday_active_meta_model.py --as-of-date 2026-03-09 --source latest_training --note \"Freeze after review\" --horizons 1 5
+python scripts/materialize_intraday_meta_predictions.py --session-date 2026-03-09 --horizons 1 5
+python scripts/materialize_intraday_final_actions.py --session-date 2026-03-09 --horizons 1 5
+python scripts/render_intraday_meta_model_report.py --as-of-date 2026-03-09 --horizons 1 5 --dry-run
+python scripts/publish_discord_intraday_meta_summary.py --as-of-date 2026-03-09 --horizons 1 5 --dry-run
+python scripts/validate_intraday_meta_model_framework.py --as-of-date 2026-03-09 --horizons 1 5
+```
+
+### Stored contracts
+
+- `fact_model_training_run` extended for `model_domain = intraday_meta`
+- `fact_model_metric_summary` stores panel/class/overlay diagnostics
+- `fact_intraday_meta_prediction`
+- `fact_intraday_meta_decision`
+- `fact_intraday_active_meta_model`
+
+### Current known limitations
+
+- the overlay is still a conservative sklearn baseline, not a deep or sequential intraday model
+- probability calibration is sigmoid-style and intentionally simple
+- uncertainty/disagreement are proxy scores, not probabilistic guarantees
+- the final action layer is bounded by the active policy and hard guards by design
+
 ## Grade rules
 
 Current grade assignment:
@@ -1060,12 +1141,14 @@ After `streamlit run app/ui/Home.py`, verify:
 - Home shows reference data, research freshness, feature/ranking snapshot, and validation summary
 - Ops shows version tracking, flow/prediction coverage, model training summary, validation status, experiment runs, active-policy registry state, rollback history, and policy publish/report status
 - Research shows feature store, flow, regime, labels, selection validation, and intraday policy lab outputs
+- Research also shows intraday meta-model training rows, calibration summary, confusion matrix, feature importance, and overlay comparison
 - Leaderboard compares explanatory ranking v0, selection engine v1, and selection engine v2
 - Market Pulse shows regime + flow breadth + latest top selections
 - Stock Workbench shows one symbol across features, alpha predictions, flow history, prices, frozen outcomes, and news metadata
 - Research also acts as the policy lab and shows walk-forward evidence, ablation deltas, recommendations, and policy-report previews
-- Evaluation shows outcome cohorts, rolling summaries, calibration diagnostics, selection-engine comparison, intraday strategy comparison, and policy walk-forward/ablation evidence
-- Intraday Console shows candidate session coverage, checkpoint health, raw vs tuned actions, active policy trace, and timing outcomes
+- Evaluation shows outcome cohorts, rolling summaries, calibration diagnostics, selection-engine comparison, intraday strategy comparison, policy walk-forward/ablation evidence, and policy-only vs meta-overlay comparison
+- Intraday Console shows candidate session coverage, checkpoint health, raw vs tuned actions, active policy trace, ML class probabilities, final action, and fallback
+- Ops shows active meta-model registry, latest meta training/scoring runs, fallback traces, and rollback history
 
 ## Docker
 

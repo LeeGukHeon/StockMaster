@@ -277,8 +277,10 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     CREATE TABLE IF NOT EXISTS fact_model_training_run (
         training_run_id VARCHAR PRIMARY KEY,
         run_id VARCHAR NOT NULL,
+        model_domain VARCHAR,
         model_version VARCHAR NOT NULL,
         horizon INTEGER NOT NULL,
+        panel_name VARCHAR,
         train_end_date DATE NOT NULL,
         training_window_start DATE,
         training_window_end DATE,
@@ -286,9 +288,14 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         validation_window_end DATE,
         train_row_count BIGINT NOT NULL,
         validation_row_count BIGINT NOT NULL,
+        train_session_count BIGINT,
+        validation_session_count BIGINT,
         feature_count BIGINT NOT NULL,
         ensemble_weight_json VARCHAR,
         model_family_json VARCHAR,
+        threshold_payload_json VARCHAR,
+        diagnostic_artifact_uri VARCHAR,
+        metadata_json VARCHAR,
         fallback_flag BOOLEAN NOT NULL,
         fallback_reason VARCHAR,
         artifact_uri VARCHAR,
@@ -325,10 +332,15 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS fact_model_metric_summary (
         training_run_id VARCHAR NOT NULL,
+        model_domain VARCHAR NOT NULL DEFAULT 'default',
         model_version VARCHAR NOT NULL,
         horizon INTEGER NOT NULL,
+        panel_name VARCHAR NOT NULL DEFAULT 'all',
         member_name VARCHAR NOT NULL,
         split_name VARCHAR NOT NULL,
+        metric_scope VARCHAR NOT NULL DEFAULT 'all',
+        class_label VARCHAR NOT NULL DEFAULT 'all',
+        comparison_key VARCHAR NOT NULL DEFAULT 'all',
         metric_name VARCHAR NOT NULL,
         metric_value DOUBLE,
         sample_count BIGINT,
@@ -337,6 +349,9 @@ CORE_TABLE_DDL: tuple[str, ...] = (
             training_run_id,
             member_name,
             split_name,
+            metric_scope,
+            class_label,
+            comparison_key,
             metric_name
         )
     )
@@ -965,6 +980,86 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_intraday_meta_prediction (
+        run_id VARCHAR NOT NULL,
+        session_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        checkpoint_time VARCHAR NOT NULL,
+        ranking_version VARCHAR NOT NULL,
+        panel_name VARCHAR,
+        tuned_action VARCHAR NOT NULL,
+        active_policy_candidate_id VARCHAR,
+        active_meta_model_id VARCHAR,
+        training_run_id VARCHAR,
+        model_version VARCHAR,
+        predicted_class VARCHAR,
+        predicted_class_probability DOUBLE,
+        confidence_margin DOUBLE,
+        uncertainty_score DOUBLE,
+        disagreement_score DOUBLE,
+        class_probability_json VARCHAR,
+        fallback_flag BOOLEAN,
+        fallback_reason VARCHAR,
+        source_notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (session_date, symbol, horizon, checkpoint_time, ranking_version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_meta_decision (
+        run_id VARCHAR NOT NULL,
+        session_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        checkpoint_time VARCHAR NOT NULL,
+        ranking_version VARCHAR NOT NULL,
+        raw_action VARCHAR,
+        adjusted_action VARCHAR,
+        tuned_action VARCHAR NOT NULL,
+        final_action VARCHAR NOT NULL,
+        panel_name VARCHAR,
+        predicted_class VARCHAR,
+        predicted_class_probability DOUBLE,
+        confidence_margin DOUBLE,
+        uncertainty_score DOUBLE,
+        disagreement_score DOUBLE,
+        active_policy_candidate_id VARCHAR,
+        active_meta_model_id VARCHAR,
+        active_meta_training_run_id VARCHAR,
+        hard_guard_block_flag BOOLEAN,
+        override_applied_flag BOOLEAN,
+        override_type VARCHAR,
+        fallback_flag BOOLEAN,
+        fallback_reason VARCHAR,
+        decision_reason_codes_json VARCHAR,
+        risk_flags_json VARCHAR,
+        source_notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (session_date, symbol, horizon, checkpoint_time, ranking_version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_intraday_active_meta_model (
+        active_meta_model_id VARCHAR PRIMARY KEY,
+        horizon INTEGER NOT NULL,
+        panel_name VARCHAR NOT NULL,
+        training_run_id VARCHAR NOT NULL,
+        model_version VARCHAR NOT NULL,
+        source_type VARCHAR NOT NULL,
+        promotion_type VARCHAR NOT NULL,
+        threshold_payload_json VARCHAR,
+        calibration_summary_json VARCHAR,
+        effective_from_date DATE NOT NULL,
+        effective_to_date DATE,
+        active_flag BOOLEAN NOT NULL,
+        rollback_of_active_meta_model_id VARCHAR,
+        note VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS fact_evaluation_summary (
         summary_date DATE NOT NULL,
         window_type VARCHAR NOT NULL,
@@ -1137,6 +1232,24 @@ PREDICTION_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS ensemble_weight_json VARCHAR",
 )
 
+MODEL_TRAINING_RUN_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS model_domain VARCHAR",
+    "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS panel_name VARCHAR",
+    "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS train_session_count BIGINT",
+    "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS validation_session_count BIGINT",
+    "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS threshold_payload_json VARCHAR",
+    "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS diagnostic_artifact_uri VARCHAR",
+    "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS metadata_json VARCHAR",
+)
+
+MODEL_METRIC_SUMMARY_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE fact_model_metric_summary ADD COLUMN IF NOT EXISTS model_domain VARCHAR",
+    "ALTER TABLE fact_model_metric_summary ADD COLUMN IF NOT EXISTS panel_name VARCHAR",
+    "ALTER TABLE fact_model_metric_summary ADD COLUMN IF NOT EXISTS metric_scope VARCHAR",
+    "ALTER TABLE fact_model_metric_summary ADD COLUMN IF NOT EXISTS class_label VARCHAR",
+    "ALTER TABLE fact_model_metric_summary ADD COLUMN IF NOT EXISTS comparison_key VARCHAR",
+)
+
 SELECTION_OUTCOME_COLUMN_MIGRATIONS: tuple[str, ...] = (
     (
         "ALTER TABLE fact_selection_outcome "
@@ -1279,7 +1392,11 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     SELECT *
     FROM fact_model_training_run
     QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY horizon, model_version
+        PARTITION BY
+            horizon,
+            model_version,
+            COALESCE(model_domain, 'default'),
+            COALESCE(panel_name, 'all')
         ORDER BY train_end_date DESC, created_at DESC
     ) = 1
     """,
@@ -1297,7 +1414,17 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     SELECT *
     FROM fact_model_metric_summary
     QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY horizon, model_version, member_name, split_name, metric_name
+        PARTITION BY
+            horizon,
+            model_version,
+            COALESCE(model_domain, 'default'),
+            COALESCE(panel_name, 'all'),
+            member_name,
+            split_name,
+            COALESCE(metric_scope, 'all'),
+            COALESCE(class_label, 'all'),
+            COALESCE(comparison_key, 'all'),
+            metric_name
         ORDER BY created_at DESC
     ) = 1
     """,
@@ -1512,6 +1639,36 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     ) = 1
     """,
     """
+    CREATE OR REPLACE VIEW vw_latest_intraday_meta_prediction AS
+    SELECT *
+    FROM fact_intraday_meta_prediction
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, horizon, checkpoint_time, ranking_version
+        ORDER BY session_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_meta_decision AS
+    SELECT *
+    FROM fact_intraday_meta_decision
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, horizon, checkpoint_time, ranking_version
+        ORDER BY session_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_active_meta_model AS
+    SELECT *
+    FROM fact_intraday_active_meta_model
+    WHERE active_flag
+      AND effective_from_date <= CURRENT_DATE
+      AND (effective_to_date IS NULL OR effective_to_date >= CURRENT_DATE)
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, panel_name
+        ORDER BY effective_from_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
     CREATE OR REPLACE VIEW vw_latest_ranking_validation_summary AS
     SELECT *
     FROM ops_ranking_validation_summary
@@ -1621,6 +1778,108 @@ def _migrate_fact_ranking_table(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute("DROP TABLE fact_ranking_legacy")
 
 
+def _migrate_fact_model_metric_summary_table(connection: duckdb.DuckDBPyConnection) -> None:
+    exists = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_schema = 'main'
+          AND table_name = 'fact_model_metric_summary'
+        """
+    ).fetchone()[0]
+    if not exists:
+        return
+    info = connection.execute("PRAGMA table_info('fact_model_metric_summary')").fetchdf()
+    legacy_columns = {str(name) for name in info["name"].astype(str).tolist()}
+    pk_columns = info.loc[info["pk"].fillna(0).astype(int) > 0, "name"].astype(str).tolist()
+    expected_pk = [
+        "training_run_id",
+        "member_name",
+        "split_name",
+        "metric_scope",
+        "class_label",
+        "comparison_key",
+        "metric_name",
+    ]
+    if pk_columns == expected_pk:
+        return
+    connection.execute(
+        "ALTER TABLE fact_model_metric_summary "
+        "RENAME TO fact_model_metric_summary_legacy"
+    )
+    connection.execute(
+        """
+        CREATE TABLE fact_model_metric_summary (
+            training_run_id VARCHAR NOT NULL,
+            model_domain VARCHAR NOT NULL DEFAULT 'default',
+            model_version VARCHAR NOT NULL,
+            horizon INTEGER NOT NULL,
+            panel_name VARCHAR NOT NULL DEFAULT 'all',
+            member_name VARCHAR NOT NULL,
+            split_name VARCHAR NOT NULL,
+            metric_scope VARCHAR NOT NULL DEFAULT 'all',
+            class_label VARCHAR NOT NULL DEFAULT 'all',
+            comparison_key VARCHAR NOT NULL DEFAULT 'all',
+            metric_name VARCHAR NOT NULL,
+            metric_value DOUBLE,
+            sample_count BIGINT,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (
+                training_run_id,
+                member_name,
+                split_name,
+                metric_scope,
+                class_label,
+                comparison_key,
+                metric_name
+            )
+        )
+        """
+    )
+    def _legacy_expr(column_name: str, default_sql: str) -> str:
+        if column_name in legacy_columns:
+            return f"COALESCE({column_name}, {default_sql})"
+        return default_sql
+
+    connection.execute(
+        f"""
+        INSERT INTO fact_model_metric_summary (
+            training_run_id,
+            model_domain,
+            model_version,
+            horizon,
+            panel_name,
+            member_name,
+            split_name,
+            metric_scope,
+            class_label,
+            comparison_key,
+            metric_name,
+            metric_value,
+            sample_count,
+            created_at
+        )
+        SELECT
+            training_run_id,
+            {_legacy_expr("model_domain", "'default'")},
+            model_version,
+            horizon,
+            {_legacy_expr("panel_name", "'all'")},
+            member_name,
+            split_name,
+            {_legacy_expr("metric_scope", "'all'")},
+            {_legacy_expr("class_label", "'all'")},
+            {_legacy_expr("comparison_key", "'all'")},
+            metric_name,
+            metric_value,
+            sample_count,
+            created_at
+        FROM fact_model_metric_summary_legacy
+        """
+    )
+    connection.execute("DROP TABLE fact_model_metric_summary_legacy")
+
+
 def connect_duckdb(
     db_path: Path,
     *,
@@ -1646,6 +1905,7 @@ def duckdb_connection(
 def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
     try:
         _migrate_fact_ranking_table(connection)
+        _migrate_fact_model_metric_summary_table(connection)
 
         for ddl in CORE_TABLE_DDL:
             connection.execute(ddl)
@@ -1660,6 +1920,12 @@ def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
             connection.execute(ddl)
 
         for ddl in PREDICTION_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in MODEL_TRAINING_RUN_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in MODEL_METRIC_SUMMARY_COLUMN_MIGRATIONS:
             connection.execute(ddl)
 
         for ddl in SELECTION_OUTCOME_COLUMN_MIGRATIONS:

@@ -25,6 +25,13 @@ from app.ui.helpers import (
     latest_intraday_adjustment_summary_frame,
     latest_intraday_checkpoint_health_frame,
     latest_intraday_market_context_frame,
+    latest_intraday_meta_active_model_frame,
+    latest_intraday_meta_decision_frame,
+    latest_intraday_meta_overlay_comparison_frame,
+    latest_intraday_meta_prediction_frame,
+    latest_intraday_meta_rollback_frame,
+    latest_intraday_meta_run_status_frame,
+    latest_intraday_meta_training_frame,
     latest_intraday_policy_ablation_frame,
     latest_intraday_policy_evaluation_frame,
     latest_intraday_policy_experiment_frame,
@@ -111,6 +118,13 @@ policy_recommendation = latest_intraday_policy_recommendation_frame(settings, li
 policy_active = latest_intraday_active_policy_frame(settings, limit=20)
 policy_rollbacks = latest_intraday_policy_rollback_frame(settings, limit=20)
 policy_publish_status = latest_intraday_policy_publish_status_frame(settings, limit=12)
+meta_training = latest_intraday_meta_training_frame(settings, limit=20)
+meta_active = latest_intraday_meta_active_model_frame(settings, limit=20)
+meta_rollbacks = latest_intraday_meta_rollback_frame(settings, limit=20)
+meta_run_status = latest_intraday_meta_run_status_frame(settings, limit=12)
+meta_prediction = latest_intraday_meta_prediction_frame(settings, limit=20)
+meta_decision = latest_intraday_meta_decision_frame(settings, limit=20)
+meta_overlay = latest_intraday_meta_overlay_comparison_frame(settings, limit=20)
 discord_preview = latest_discord_preview(settings)
 postmortem_preview = latest_postmortem_preview(settings)
 intraday_postmortem_preview = latest_intraday_postmortem_preview(settings)
@@ -241,6 +255,44 @@ with policy_right:
         st.info("정책 rollback 이력이 없습니다.")
     else:
         st.dataframe(localize_frame(policy_rollbacks), width="stretch", hide_index=True)
+
+st.subheader("메타모델 운영 상태")
+meta_left, meta_right = st.columns(2)
+with meta_left:
+    st.subheader("최신 메타모델 학습")
+    if meta_training.empty:
+        st.info("메타모델 학습 이력이 없습니다.")
+    else:
+        st.dataframe(localize_frame(meta_training), width="stretch", hide_index=True)
+    st.subheader("활성 메타모델 레지스트리")
+    if meta_active.empty:
+        st.info("활성 메타모델 레지스트리가 없습니다.")
+    else:
+        st.dataframe(localize_frame(meta_active), width="stretch", hide_index=True)
+    st.subheader("메타모델 Rollback 이력")
+    if meta_rollbacks.empty:
+        st.info("메타모델 rollback 이력이 없습니다.")
+    else:
+        st.dataframe(localize_frame(meta_rollbacks), width="stretch", hide_index=True)
+with meta_right:
+    st.subheader("메타모델 실행 상태")
+    if meta_run_status.empty:
+        st.info("메타모델 run status가 없습니다.")
+    else:
+        st.dataframe(localize_frame(meta_run_status), width="stretch", hide_index=True)
+    st.subheader("최신 메타 예측")
+    if meta_prediction.empty:
+        st.info("메타 prediction 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(meta_prediction), width="stretch", hide_index=True)
+    st.subheader("최신 최종 액션 / overlay")
+    if meta_decision.empty and meta_overlay.empty:
+        st.info("메타 final action / overlay 비교 결과가 없습니다.")
+    else:
+        if not meta_decision.empty:
+            st.dataframe(localize_frame(meta_decision), width="stretch", hide_index=True)
+        if not meta_overlay.empty:
+            st.dataframe(localize_frame(meta_overlay), width="stretch", hide_index=True)
 
 publish_left, publish_right = st.columns(2)
 with publish_left:

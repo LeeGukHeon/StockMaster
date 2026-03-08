@@ -21,6 +21,7 @@ from app.ui.helpers import (
     latest_calibration_diagnostic_frame,
     latest_evaluation_comparison_frame,
     latest_evaluation_summary_frame,
+    latest_intraday_meta_overlay_comparison_frame,
     latest_intraday_policy_ablation_frame,
     latest_intraday_policy_evaluation_frame,
     latest_intraday_policy_report_preview,
@@ -49,14 +50,26 @@ intraday_regime_matrix = latest_intraday_strategy_comparison_frame(
 intraday_timing_calibration = latest_intraday_timing_calibration_frame(settings, limit=30)
 policy_walkforward = latest_intraday_policy_evaluation_frame(settings, split_name="test", limit=30)
 policy_ablation = latest_intraday_policy_ablation_frame(settings, limit=30)
+meta_overlay = latest_intraday_meta_overlay_comparison_frame(settings, limit=30)
+meta_regime_breakdown = latest_intraday_meta_overlay_comparison_frame(
+    settings,
+    metric_scope="regime",
+    limit=30,
+)
+meta_checkpoint_breakdown = latest_intraday_meta_overlay_comparison_frame(
+    settings,
+    metric_scope="checkpoint",
+    limit=30,
+)
 postmortem_preview = latest_postmortem_preview(settings)
 intraday_postmortem_preview = latest_intraday_postmortem_preview(settings)
 policy_report_preview = latest_intraday_policy_report_preview(settings)
 
 st.title("사후 평가")
 st.caption(
-    "일봉 selection outcome, calibrated prediction, 장중 timing layer, 정책 walk-forward를 "
-    "같은 화면에서 비교합니다. 모든 수치는 pre-cost 기준입니다."
+    "일봉 selection, 장중 timing, 정책 비교, "
+    "TICKET-010 메타 overlay 성능을 같은 same-exit 기준으로 확인합니다. "
+    "모든 수치는 pre-cost 기준입니다."
 )
 
 if not evaluation_dates:
@@ -87,7 +100,7 @@ else:
     with top_left:
         st.subheader("최신 평가 요약")
         st.dataframe(localize_frame(latest_summary), width="stretch", hide_index=True)
-        st.subheader("Selection vs 설명형 랭킹")
+        st.subheader("Selection vs 설명 점수")
         st.dataframe(localize_frame(latest_comparison), width="stretch", hide_index=True)
         st.subheader("Selection v2 비교")
         st.dataframe(
@@ -108,7 +121,7 @@ with intraday_left:
         st.info("장중 strategy comparison 결과가 없습니다.")
     else:
         st.dataframe(localize_frame(intraday_strategy_comparison), width="stretch", hide_index=True)
-    st.subheader("장중 레짐 매트릭스")
+    st.subheader("장중 regime matrix")
     if intraday_regime_matrix.empty:
         st.info("장중 regime matrix 결과가 없습니다.")
     else:
@@ -125,11 +138,29 @@ with intraday_right:
     else:
         st.dataframe(localize_frame(policy_walkforward), width="stretch", hide_index=True)
 
-st.subheader("정책 Ablation")
-if policy_ablation.empty:
-    st.info("정책 ablation 결과가 없습니다.")
-else:
-    st.dataframe(localize_frame(policy_ablation), width="stretch", hide_index=True)
+meta_left, meta_right = st.columns(2)
+with meta_left:
+    st.subheader("Policy-only vs Meta Overlay")
+    if meta_overlay.empty:
+        st.info("메타 overlay 비교 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(meta_overlay), width="stretch", hide_index=True)
+    st.subheader("메타 overlay regime 분해")
+    if meta_regime_breakdown.empty:
+        st.info("regime family 기준 메타 overlay 분해가 없습니다.")
+    else:
+        st.dataframe(localize_frame(meta_regime_breakdown), width="stretch", hide_index=True)
+with meta_right:
+    st.subheader("메타 overlay checkpoint 분해")
+    if meta_checkpoint_breakdown.empty:
+        st.info("checkpoint 기준 메타 overlay 분해가 없습니다.")
+    else:
+        st.dataframe(localize_frame(meta_checkpoint_breakdown), width="stretch", hide_index=True)
+    st.subheader("정책 Ablation")
+    if policy_ablation.empty:
+        st.info("정책 ablation 결과가 없습니다.")
+    else:
+        st.dataframe(localize_frame(policy_ablation), width="stretch", hide_index=True)
 
 if policy_report_preview:
     with st.expander("최신 정책 연구 리포트 미리보기", expanded=False):
