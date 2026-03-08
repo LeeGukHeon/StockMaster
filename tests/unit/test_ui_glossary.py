@@ -24,5 +24,5 @@ def test_glossary_contains_core_terms() -> None:
 def test_glossary_markdown_renders_headings() -> None:
     markdown = glossary_markdown()
     assert markdown.startswith("# 용어집")
-    assert "## Selection v2" in markdown
-    assert "## Release Candidate" in markdown
+    assert "## 선정 엔진 v2" in markdown
+    assert "## 릴리스 점검" in markdown

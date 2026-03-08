@@ -37,7 +37,7 @@ render_page_header(
     settings,
     page_name="리더보드",
     title="리더보드",
-    description="rank, grade, selection value, expected alpha, uncertainty, disagreement, implementation penalty, flow score, band, flags를 한 번에 보는 화면입니다.",
+    description="등급, 선정 점수, 예상 알파, 불확실성, 모델 불일치, 실행 패널티, 수급 점수, 밴드, 위험 신호를 한 번에 확인하는 화면입니다.",
 )
 render_glossary_hint("Selection v2")
 
@@ -65,7 +65,7 @@ else:
         format_func=format_market_label,
     )
     limit = st.slider("표시 건수", min_value=10, max_value=100, value=25, step=5)
-    show_technical = st.toggle("기술 컬럼 보기", value=True)
+    show_technical = st.toggle("기술 지표 열 보기", value=True)
 
     board = leaderboard_frame(
         settings,
@@ -89,7 +89,7 @@ else:
 
     top_left, top_right = st.columns((2, 1))
     with top_left:
-        st.subheader("순위 테이블")
+        st.subheader("순위 표")
         if board.empty:
             st.info("현재 조건에 맞는 순위 데이터가 없습니다.")
         else:
@@ -115,6 +115,7 @@ else:
             ]
             if show_technical:
                 columns.extend(technical_columns)
+
             display = board[[column for column in columns if column in board.columns]].copy()
             if "final_selection_rank_pct" in display.columns:
                 display["final_selection_rank_pct"] = (
@@ -135,7 +136,7 @@ else:
     else:
         st.dataframe(localize_frame(filtered), width="stretch", hide_index=True)
 
-    st.subheader("Selection vs Explanatory 비교")
+    st.subheader("선정 엔진과 설명형 순위 비교")
     if evaluation_comparison.empty:
         st.info("비교 평가 데이터가 없습니다.")
     else:

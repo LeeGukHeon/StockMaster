@@ -70,16 +70,16 @@ render_page_header(
     settings,
     page_name="사후 평가",
     title="사후 평가",
-    description="D+1/D+5 matured summary, calibration, miss reason, intraday/policy/meta 비교를 same-exit 기준으로 확인합니다.",
+    description="D+1/D+5 성숙 요약, 보정 상태, 놓친 이유, 장중/정책/메타 비교를 동일 종료 기준으로 확인하는 화면입니다.",
 )
 
 render_narrative_card(
-    "Evaluation Narrative",
-    "이 화면은 pre-cost 기준입니다. selection, timing, policy, meta overlay를 다시 계산하지 않고 이미 freeze된 snapshot을 기준으로 비교합니다.",
+    "사후 평가 요약",
+    "이 화면은 비용 차감 전 기준입니다. 선정, 장중 타이밍, 정책, 메타 오버레이를 다시 계산하지 않고 저장된 스냅샷 기준으로 비교합니다.",
 )
 
 if not evaluation_dates:
-    st.info("아직 selection evaluation 결과가 없습니다. 평가 스크립트를 먼저 실행하세요.")
+    st.info("아직 선정 사후 평가 결과가 없습니다. 평가 스크립트를 먼저 실행하세요.")
 else:
     selected_date = st.selectbox("평가일", options=evaluation_dates, index=0)
     horizon = st.selectbox("기간", options=[1, 5], index=1, format_func=lambda value: f"D+{value}")
@@ -106,38 +106,38 @@ else:
     with top_left:
         st.subheader("최신 평가 요약")
         st.dataframe(localize_frame(latest_summary), width="stretch", hide_index=True)
-        st.subheader("Selection vs Explanatory")
+        st.subheader("선정 엔진과 설명형 순위 비교")
         st.dataframe(localize_frame(latest_comparison), width="stretch", hide_index=True)
-        st.subheader("Selection v2 비교")
+        st.subheader("선정 엔진 v2 비교")
         st.dataframe(localize_frame(latest_selection_v2_comparison), width="stretch", hide_index=True)
     with top_right:
-        st.subheader("Band Coverage / Calibration")
+        st.subheader("예측 밴드 커버리지 / 보정")
         st.dataframe(localize_frame(latest_calibration), width="stretch", hide_index=True)
-        st.subheader("선택 결과 샘플")
+        st.subheader("선정 결과 표본")
         st.dataframe(localize_frame(outcomes), width="stretch", hide_index=True)
 
 intraday_left, intraday_right = st.columns(2)
 with intraday_left:
     st.subheader("장중 전략 비교")
     st.dataframe(localize_frame(intraday_strategy_comparison), width="stretch", hide_index=True)
-    st.subheader("장중 Regime Matrix")
+    st.subheader("장중 국면 행렬")
     st.dataframe(localize_frame(intraday_regime_matrix), width="stretch", hide_index=True)
 with intraday_right:
-    st.subheader("장중 Timing Calibration")
+    st.subheader("장중 타이밍 보정")
     st.dataframe(localize_frame(intraday_timing_calibration), width="stretch", hide_index=True)
-    st.subheader("Policy Walk-Forward")
+    st.subheader("정책 워크포워드")
     st.dataframe(localize_frame(policy_walkforward), width="stretch", hide_index=True)
 
 meta_left, meta_right = st.columns(2)
 with meta_left:
-    st.subheader("Policy-only vs Meta Overlay")
+    st.subheader("정책 단독 대비 메타 오버레이")
     st.dataframe(localize_frame(meta_overlay), width="stretch", hide_index=True)
-    st.subheader("Meta Overlay Regime Breakdown")
+    st.subheader("메타 오버레이 국면별 분해")
     st.dataframe(localize_frame(meta_regime_breakdown), width="stretch", hide_index=True)
 with meta_right:
-    st.subheader("Meta Overlay Checkpoint Breakdown")
+    st.subheader("메타 오버레이 체크포인트별 분해")
     st.dataframe(localize_frame(meta_checkpoint_breakdown), width="stretch", hide_index=True)
-    st.subheader("Policy Ablation")
+    st.subheader("정책 제거 실험")
     st.dataframe(localize_frame(policy_ablation), width="stretch", hide_index=True)
 
 if policy_report_preview:
@@ -145,11 +145,11 @@ if policy_report_preview:
         st.code(policy_report_preview)
 
 if intraday_postmortem_preview:
-    with st.expander("최신 장중 postmortem 미리보기", expanded=False):
+    with st.expander("최신 장중 사후 분석 미리보기", expanded=False):
         st.code(intraday_postmortem_preview)
 
 if postmortem_preview:
-    with st.expander("최신 selection postmortem 미리보기", expanded=False):
+    with st.expander("최신 선정 사후 분석 미리보기", expanded=False):
         st.code(postmortem_preview)
 
 render_page_footer(settings, page_name="사후 평가")

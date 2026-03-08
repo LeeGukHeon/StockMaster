@@ -1525,6 +1525,10 @@ def format_market_label(value: str) -> str:
     return str(translated)
 
 
+def format_execution_mode_label(value: str) -> str:
+    return str(_translate_scalar("execution_mode", value))
+
+
 def format_disk_status_label(value: object) -> str:
     return str(_translate_scalar("status", value))
 
@@ -4999,6 +5003,27 @@ UI_VALUE_LABELS.setdefault("comparison_key", {}).update(
         "EQUAL_WEIGHT_BASELINE": "동일가중 기준선",
     }
 )
+UI_VALUE_LABELS.setdefault("report_type", {}).update(
+    {
+        "daily_research_report": "일일 리서치 리포트",
+        "portfolio_report": "포트폴리오 리포트",
+        "evaluation_report": "사후 평가 리포트",
+        "intraday_summary_report": "장중 요약 리포트",
+        "intraday_postmortem_report": "장중 사후 분석 리포트",
+        "postmortem_report": "선정 사후 분석 리포트",
+        "intraday_policy_research_report": "장중 정책 연구 리포트",
+        "intraday_meta_model_report": "장중 메타 모델 리포트",
+        "ops_report": "운영 리포트",
+        "release_candidate_checklist": "릴리스 점검표",
+    }
+)
+UI_VALUE_LABELS.setdefault("warning_level", {}).update(
+    {
+        "OK": "정상",
+        "WARNING": "경고",
+        "CRITICAL": "치명",
+    }
+)
 UI_VALUE_LABELS.setdefault("run_type", {}).update(
     {
         "build_portfolio_candidate_book": "포트폴리오 후보군 생성",
@@ -5014,5 +5039,93 @@ UI_VALUE_LABELS.setdefault("run_type", {}).update(
         "render_portfolio_report": "포트폴리오 리포트 렌더",
         "publish_discord_portfolio_summary": "포트폴리오 디스코드 발행",
         "validate_portfolio_framework": "포트폴리오 프레임워크 검증",
+        "build_latest_app_snapshot": "현재 기준 스냅샷 생성",
+        "build_report_index": "리포트 목록 색인 생성",
+        "build_ui_freshness_snapshot": "화면 신선도 스냅샷 생성",
+        "render_daily_research_report": "일일 리서치 리포트 생성",
+        "render_evaluation_report": "사후 평가 리포트 생성",
+        "render_intraday_summary_report": "장중 요약 리포트 생성",
+        "render_release_candidate_checklist": "릴리스 점검표 생성",
+        "validate_page_contracts": "화면 계약 검증",
+        "validate_report_artifacts": "리포트 산출물 검증",
+        "validate_navigation_integrity": "화면 이동 구조 검증",
+        "validate_release_candidate": "릴리스 후보 검증",
+    }
+)
+UI_VALUE_LABELS.setdefault("run_type", {}).update(
+    {
+        "materialize_intraday_policy_candidates": "장중 정책 후보 생성",
+        "run_intraday_policy_calibration": "장중 정책 보정 실행",
+        "run_intraday_policy_walkforward": "장중 정책 워크포워드 실행",
+        "evaluate_intraday_policy_ablation": "장중 정책 제거 실험 평가",
+        "materialize_intraday_policy_recommendations": "장중 정책 추천 생성",
+        "freeze_intraday_active_policy": "장중 정책 동결",
+        "rollback_intraday_active_policy": "장중 정책 롤백",
+        "render_intraday_policy_research_report": "장중 정책 연구 리포트 생성",
+        "publish_discord_intraday_policy_summary": "장중 정책 디스코드 요약 발행",
+        "validate_intraday_policy_framework": "장중 정책 프레임워크 검증",
+        "freeze_active_portfolio_policy": "포트폴리오 정책 동결",
+        "rollback_active_portfolio_policy": "포트폴리오 정책 롤백",
+        "materialize_portfolio_nav": "포트폴리오 순자산 가치 생성",
+        "freeze_intraday_active_meta_model": "장중 메타 모형 동결",
+        "rollback_intraday_active_meta_model": "장중 메타 모형 롤백",
+        "train_alpha_model_v1": "알파 모형 학습",
+        "materialize_alpha_predictions_v1": "알파 모형 예측 생성",
+    }
+)
+UI_VALUE_LABELS.setdefault("strategy_id", {}).update(
+    {
+        "SEL_V2_OPEN_ALL": "선정 엔진 v2 시가 일괄",
+        "SEL_V2_TIMING_RAW_FIRST_ENTER": "선정 엔진 v2 원시 첫 진입",
+        "SEL_V2_TIMING_ADJ_FIRST_ENTER": "선정 엔진 v2 조정 첫 진입",
+        "SEL_V2_TIMING_ADJ_0930_ONLY": "선정 엔진 v2 조정 09:30 고정",
+        "SEL_V2_TIMING_ADJ_1000_ONLY": "선정 엔진 v2 조정 10:00 고정",
+    }
+)
+UI_VALUE_LABELS.setdefault("reason_tag", {}).update(
+    {
+        "ml_alpha_supportive": "알파 모형 지지",
+    }
+)
+UI_COLUMN_LABELS.update(
+    {
+        "latest_selection_v2_ranking_version": "최신 선정 엔진 v2 버전",
+        "latest_selection_v2_date": "최신 선정 엔진 v2 기준일",
+        "latest_selection_v2_rows": "최신 선정 엔진 v2 행 수",
+        "d1_selection_v2_value": "D+1 선정 엔진 v2 점수",
+        "d1_selection_v2_grade": "D+1 선정 엔진 v2 등급",
+        "d5_selection_v2_value": "D+5 선정 엔진 v2 점수",
+        "d5_selection_v2_grade": "D+5 선정 엔진 v2 등급",
+        "d5_selection_v2_realized_excess_return": "D+5 선정 엔진 v2 실현 초과수익률",
+        "d5_selection_v2_band_status": "D+5 선정 엔진 v2 밴드 판정",
+        "selection_v2_avg_excess": "선정 엔진 v2 평균 초과수익률",
+        "nav_value": "순자산 가치",
+        "active_meta_model_id": "활성 메타 모형 ID",
+        "rollback_of_active_meta_model_id": "롤백 대상 메타 모형 ID",
+        "active_meta_model_ids_json": "활성 메타 모형",
+        "rollback_of_active_policy_id": "롤백 대상 정책 ID",
+        "ablation_name": "제거 실험 항목",
+    }
+)
+UI_VALUE_LABELS.setdefault("prediction_version", {}).update(
+    {
+        ALPHA_PREDICTION_VERSION: "알파 모형 예측 v1",
+    }
+)
+UI_VALUE_LABELS.setdefault("metric_scope", {}).update(
+    {
+        "policy_ablation": "정책 제거 실험",
+        "overlay": "메타 보조",
+        "regime": "시장 국면",
+        "checkpoint": "체크포인트",
+    }
+)
+UI_VALUE_LABELS.setdefault("run_type", {}).update(
+    {
+        "render_discord_eod_report": "디스코드 장마감 리포트 생성",
+        "publish_discord_eod_report": "디스코드 장마감 리포트 발행",
+        "publish_discord_postmortem_report": "디스코드 사후 분석 리포트 발행",
+        "publish_discord_intraday_postmortem": "디스코드 장중 사후 분석 리포트 발행",
+        "publish_discord_portfolio_summary": "디스코드 포트폴리오 요약 발행",
     }
 )

@@ -1,23 +1,23 @@
-# Reports And Pages
+# 리포트와 화면 안내
 
-## Canonical Reports
-- `daily_research_report`
-- `portfolio_report`
-- `evaluation_report`
-- `intraday_summary_report`
-- `release_candidate_checklist`
-- Additional technical artifacts remain indexed in the report center when present.
+## 기준 리포트
+- `daily_research_report`: 일일 리서치 리포트
+- `portfolio_report`: 포트폴리오 리포트
+- `evaluation_report`: 사후 평가 리포트
+- `intraday_summary_report`: 장중 요약 리포트
+- `release_candidate_checklist`: 릴리스 점검표
+- 이외 기술 리포트도 생성되면 리포트 센터에서 함께 색인됩니다.
 
-## Page Map
-- `오늘`: current truth, active policy badges, critical alerts, latest report links
-- `시장 현황`: regime, breadth, volatility, market news, narrative summary
-- `리더보드`: ranked names, expected alpha, uncertainty, disagreement, implementation penalty, flow score, bands
-- `포트폴리오`: candidate book, target holdings, rebalance, waitlist, constraints
-- `포트폴리오 평가`: NAV, drawdown, turnover, holdings count, policy comparison
-- `장중 콘솔`: raw vs adjusted vs tuned vs meta vs final action
-- `사후 평가`: matured outcome summary, calibration, compare views
-- `종목 분석`: symbol-level why-in / why-not / reports / decisions / postmortem
-- `리서치 랩`: technical diagnostics and experiment results
-- `운영`: latest runs, failures, policies, publish status, operational trace
-- `헬스 대시보드`: health summary, dependencies, locks, recovery, alerts
-- `문서 / 도움말`: user guide, daily workflow, glossary, limitations, report center
+## 화면 구성
+- `오늘`: 현재 기준 시점, 활성 정책 배지, 중요 알림, 최신 리포트 링크
+- `시장 현황`: 시장 국면, 시장 폭, 변동성, 시장 뉴스, 서술형 요약
+- `리더보드`: 상위 종목, 예상 알파, 불확실성, 모델 불일치, 실행 패널티, 수급 점수, 밴드
+- `포트폴리오`: 후보군, 목표 편입안, 리밸런스, 대기 목록, 제약 상태
+- `포트폴리오 평가`: 순자산 가치, 낙폭, 회전율, 보유 종목 수, 정책 비교
+- `장중 콘솔`: 원시 판단, 조정 판단, 튜닝 판단, 메타 판단, 최종 판단
+- `사후 평가`: 성숙 결과 요약, 보정 상태, 비교 화면
+- `종목 분석`: 종목별 편입 사유 / 제외 사유 / 리포트 / 판단 / 사후 분석
+- `리서치 랩`: 기술 진단과 실험 결과
+- `운영`: 최신 실행, 실패 이력, 정책, 발행 상태, 운영 추적
+- `헬스 대시보드`: 상태 요약, 의존성, 잠금, 복구, 알림
+- `문서 / 도움말`: 사용자 가이드, 일일 흐름, 용어집, 한계, 리포트 센터

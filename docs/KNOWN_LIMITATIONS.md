@@ -1,9 +1,9 @@
-# Known Limitations
+# 알려진 한계
 
-- StockMaster is not an order-routing or auto-trading system.
-- DuckDB remains effectively single-writer. Heavy bundles are safer when executed sequentially.
-- Some ML and intraday overlays are conservative because historical matured samples are still shallow.
-- Probability bands and some uncertainty values are still proxy-style v1 implementations.
-- Intraday and portfolio layers are downstream proposal layers and must not be interpreted as execution systems.
-- Report center relies on artifact indexing; if report render scripts have not been run, some links will be missing by design.
-- UI pages intentionally avoid heavy recomputation and prefer materialized outputs. Missing outputs are surfaced as warnings instead of being silently recomputed.
+- StockMaster는 주문 라우팅 시스템이나 자동매매 시스템이 아닙니다.
+- DuckDB는 사실상 단일 쓰기 특성을 가지므로, 무거운 배치는 순차 실행이 안전합니다.
+- 일부 기계학습 오버레이와 장중 오버레이는 성숙 표본이 아직 얕아 보수적으로 동작합니다.
+- 확률 밴드와 일부 불확실성 값은 아직 대리 지표 기반 v1 구현입니다.
+- 장중 레이어와 포트폴리오 레이어는 모두 하위 제안 계층이며, 실행 시스템으로 해석하면 안 됩니다.
+- 리포트 센터는 산출물 색인을 기준으로 동작하므로, 리포트 생성 스크립트를 돌리지 않으면 일부 링크가 없는 것이 정상일 수 있습니다.
+- UI 화면은 무거운 재계산을 피하고 적재된 산출물을 우선 사용합니다. 산출물이 없으면 조용히 다시 계산하지 않고 경고로 드러냅니다.

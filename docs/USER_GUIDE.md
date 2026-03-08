@@ -1,28 +1,29 @@
-# StockMaster User Guide
+# StockMaster 사용자 가이드
 
-## Purpose
-StockMaster is a Korean stock research platform focused on post-close analysis, explainable ranking, intraday timing assistance, portfolio proposal, and operational monitoring.
+## 목적
+StockMaster는 국내 주식 리서치에 초점을 둔 분석 플랫폼입니다.  
+장 마감 후 분석, 설명 가능한 순위 산정, 장중 타이밍 보조, 포트폴리오 제안, 운영 상태 점검이 핵심입니다.
 
-It is not an auto-trading product.
+이 시스템은 자동매매 제품이 아닙니다.
 
-## Core Workflow
-1. Start on `오늘` to confirm current truth, active policies, freshness, and latest report links.
-2. Check `시장 현황` for regime, breadth, volatility, and narrative context.
-3. Review `리더보드` for top-ranked names and risk/uncertainty flags.
-4. Move to `포트폴리오` and `포트폴리오 평가` for target book, rebalance, holdings, NAV, and execution-mode comparison.
-5. Use `장중 콘솔` during the session to review raw action, adjusted action, meta overlay, and final action.
-6. Use `사후 평가` and `종목 분석` for matured outcomes, miss reasons, and postmortem trace.
-7. Use `리서치 랩` for model, policy, and calibration diagnostics.
-8. Use `운영` and `헬스 대시보드` to inspect failures, locks, alerts, retention, and recovery status.
-9. Use `문서 / 도움말` for glossary, workflow, latest report index, and release-candidate checks.
+## 기본 사용 흐름
+1. `오늘` 화면에서 현재 기준 시점, 활성 정책, 데이터 신선도, 최신 리포트 링크를 확인합니다.
+2. `시장 현황`에서 시장 국면, 시장 폭, 변동성, 주요 뉴스 흐름을 확인합니다.
+3. `리더보드`에서 상위 종목, 위험 신호, 불확실성, 수급 점수를 검토합니다.
+4. `포트폴리오`와 `포트폴리오 평가`에서 목표 편입안, 리밸런스 계획, 보유 현황, 순자산 가치, 실행 모드 비교를 봅니다.
+5. 장중에는 `장중 콘솔`에서 원시 판단, 조정 판단, 메타 오버레이, 최종 판단을 확인합니다.
+6. `사후 평가`와 `종목 분석`에서 성숙한 결과, 놓친 이유, 사후 분석 기록을 확인합니다.
+7. `리서치 랩`에서는 모델·정책·보정 진단 같은 기술 화면을 필요할 때만 확인합니다.
+8. `운영`과 `헬스 대시보드`에서 실패 이력, 잠금, 알림, 정리 이력, 복구 상태를 확인합니다.
+9. `문서 / 도움말`에서는 용어집, 일일 사용 흐름, 리포트 색인, 릴리스 점검 결과를 확인합니다.
 
-## What The Badges Mean
-- `성공`: latest materialized output is present and within expected freshness.
-- `저하`: output exists, but quality, completeness, or freshness needs caution.
-- `경고`: attention required, but not necessarily blocking.
-- `치명`: blocking or near-blocking operational state.
+## 배지 의미
+- `정상`: 최신 산출물이 존재하고, 기대한 신선도 범위 안에 있습니다.
+- `저하`: 산출물은 있으나 품질, 완전성, 신선도에 주의가 필요합니다.
+- `경고`: 즉시 확인이 필요하지만 반드시 차단 상태는 아닙니다.
+- `치명`: 차단 또는 차단 직전 수준의 운영 문제입니다.
 
-## Ground Rules
-- Do not treat displayed actions as execution instructions.
-- Use existing materialized outputs as the source of truth.
-- If a page shows `stale`, `degraded`, or missing artifact warnings, treat them as real system state, not cosmetic messages.
+## 사용 원칙
+- 화면에 보이는 판단을 주문 지시로 받아들이지 않습니다.
+- 이미 적재된 산출물을 기준 진실로 사용합니다.
+- 화면에 `지연`, `저하`, `산출물 없음` 경고가 보이면 실제 운영 상태로 받아들여야 합니다.

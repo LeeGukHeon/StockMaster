@@ -1,55 +1,55 @@
-# Daily Workflow
+# 일일 사용 흐름
 
-## 1. Pre-open / Morning Check
-- Open `오늘`
-- Confirm:
-  - latest daily bundle status
-  - latest evaluation availability
-  - latest intraday session status
-  - active intraday / meta / portfolio / ops policy badges
-  - critical alerts
+## 1. 장 시작 전 / 아침 점검
+- `오늘` 화면을 엽니다.
+- 아래 항목을 먼저 확인합니다.
+  - 최신 일일 배치 상태
+  - 최신 사후 평가 준비 여부
+  - 최신 장중 세션 상태
+  - 활성 장중 정책 / 메타 모델 / 포트폴리오 정책 / 운영 정책 배지
+  - 치명 알림 유무
 
-## 2. Market Context
-- Open `시장 현황`
-- Confirm regime, breadth, volatility, and recent market-wide news.
+## 2. 시장 상황 파악
+- `시장 현황` 화면을 엽니다.
+- 시장 국면, 시장 폭, 변동성, 최근 시장 전체 뉴스 흐름을 확인합니다.
 
-## 3. Candidate Review
-- Open `리더보드`
-- Filter by market, horizon, and ranking version.
-- Review:
-  - expected alpha
-  - uncertainty
-  - disagreement
-  - implementation penalty
-  - flow score
-  - bands and flags
+## 3. 후보 종목 검토
+- `리더보드` 화면을 엽니다.
+- 시장, 기간, 순위 버전을 선택합니다.
+- 아래 항목을 함께 봅니다.
+  - 예상 알파
+  - 불확실성
+  - 모델 불일치
+  - 실행 패널티
+  - 수급 점수
+  - 상단/하단 밴드와 위험 플래그
 
-## 4. Portfolio Proposal
-- Open `포트폴리오`
-- Review target holdings, waitlist, blocked names, cash, and constraints.
-- Use `포트폴리오 평가` for NAV, drawdown, turnover, and policy comparison.
+## 4. 포트폴리오 제안 검토
+- `포트폴리오` 화면을 엽니다.
+- 목표 편입 종목, 대기 종목, 차단 종목, 현금 비중, 제약 이벤트를 확인합니다.
+- `포트폴리오 평가` 화면에서는 순자산 가치, 낙폭, 회전율, 정책 비교를 확인합니다.
 
-## 5. Intraday Assist
-- Open `장중 콘솔`
-- Compare:
-  - raw action
-  - adjusted action
-  - tuned action
-  - meta prediction
-  - final action
+## 5. 장중 보조 확인
+- `장중 콘솔` 화면을 엽니다.
+- 아래 흐름을 비교합니다.
+  - 원시 판단
+  - 조정 판단
+  - 튜닝 판단
+  - 메타 모델 예측
+  - 최종 판단
 
-## 6. Post-close Review
-- Open `사후 평가`
-- Check matured D+1 / D+5 summaries, calibration, policy compare, and miss reasons.
+## 6. 장 마감 후 점검
+- `사후 평가` 화면을 엽니다.
+- D+1 / D+5 성숙 결과, 보정 상태, 정책 비교, 놓친 이유를 확인합니다.
 
-## 7. Investigation
-- Open `종목 분석`
-- Review why-in, why-not, decisions, postmortem trace, and related reports for one symbol.
+## 7. 종목별 심화 확인
+- `종목 분석` 화면을 엽니다.
+- 특정 종목의 편입 사유, 제외 사유, 판단 이력, 사후 분석, 관련 리포트를 확인합니다.
 
-## 8. Technical Review
-- Open `리서치 랩`
-- Inspect model diagnostics, policy walk-forward, ablations, and feature importance only when needed.
+## 8. 기술 진단
+- `리서치 랩` 화면을 엽니다.
+- 모델 진단, 정책 워크포워드, 제거 실험, 특성 중요도는 필요할 때만 확인합니다.
 
-## 9. Operational Review
-- Open `운영` and `헬스 대시보드`
-- Review run failures, active locks, alerts, cleanup history, and recovery queue.
+## 9. 운영 상태 점검
+- `운영`, `헬스 대시보드` 화면을 엽니다.
+- 실패 실행, 활성 잠금, 알림, 정리 이력, 복구 대기열을 확인합니다.

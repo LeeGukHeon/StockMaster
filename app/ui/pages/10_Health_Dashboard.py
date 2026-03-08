@@ -47,75 +47,74 @@ render_page_header(
     settings,
     page_name="헬스 대시보드",
     title="헬스 대시보드",
-    description="Overall health summary, recent runs, failed steps, dependency readiness, disk watermark, cleanup, lock, recovery queue를 집중해서 봅니다.",
+    description="전체 상태 요약, 최근 실행, 실패 단계, 의존성, 디스크 경보, 정리 이력, 잠금, 복구 대기열을 직접 확인하는 화면입니다.",
 )
 
 if health.empty:
     render_narrative_card(
-        "Health Narrative",
-        "아직 health snapshot이 없습니다. materialize_health_snapshots와 ops maintenance bundle을 먼저 확인하세요.",
+        "상태 요약",
+        "아직 상태 스냅샷이 없습니다. materialize_health_snapshots와 운영 유지보수 번들 상태를 먼저 확인하세요.",
     )
 else:
     latest_row = health.iloc[0]
     render_narrative_card(
-        "Health Narrative",
-        f"현재 health scope는 {latest_row.get('health_scope', '-')}, 상태는 {latest_row.get('status', '-')}, "
-        f"component는 {latest_row.get('component_name', '-')} 입니다.",
+        "상태 요약",
+        f"현재 상태 범위는 {latest_row.get('health_scope', '-')}, 상태는 {latest_row.get('status', '-')}, 구성요소는 {latest_row.get('component_name', '-')}입니다.",
     )
 
 summary_left, summary_right = st.columns(2)
 with summary_left:
-    st.subheader("Overall Health Summary")
+    st.subheader("전체 상태 요약")
     st.dataframe(localize_frame(health), width="stretch", hide_index=True)
 with summary_right:
-    st.subheader("Latest Successful Outputs")
+    st.subheader("최신 정상 산출물")
     st.dataframe(localize_frame(latest_outputs), width="stretch", hide_index=True)
 
-st.subheader("Dependency Readiness")
+st.subheader("의존성 준비 상태")
 st.dataframe(localize_frame(dependencies), width="stretch", hide_index=True)
 
 run_left, run_right = st.columns(2)
 with run_left:
-    st.subheader("Recent Runs")
+    st.subheader("최근 실행 이력")
     st.dataframe(localize_frame(runs), width="stretch", hide_index=True)
 with run_right:
-    st.subheader("Step Failure Explorer")
+    st.subheader("단계별 실패 현황")
     if step_failures.empty:
-        st.success("최근 실패 step이 없습니다.")
+        st.success("최근 실패 단계가 없습니다.")
     else:
         st.dataframe(localize_frame(step_failures), width="stretch", hide_index=True)
 
 ops_left, ops_right = st.columns(2)
 with ops_left:
-    st.subheader("Disk Usage / Watermark")
+    st.subheader("디스크 사용량 / 경보선")
     st.dataframe(localize_frame(disk_events), width="stretch", hide_index=True)
-    st.subheader("Retention & Cleanup History")
+    st.subheader("보관 정책 / 정리 이력")
     st.dataframe(localize_frame(cleanup_history), width="stretch", hide_index=True)
 with ops_right:
-    st.subheader("Active Locks")
+    st.subheader("활성 잠금")
     if locks.empty:
-        st.success("활성 lock이 없습니다.")
+        st.success("활성 잠금이 없습니다.")
     else:
         st.dataframe(localize_frame(locks), width="stretch", hide_index=True)
-    st.subheader("Recovery Queue")
+    st.subheader("복구 대기열")
     if recovery.empty:
-        st.info("현재 recovery queue는 비어 있습니다.")
+        st.info("현재 복구 대기열은 비어 있습니다.")
     else:
         st.dataframe(localize_frame(recovery), width="stretch", hide_index=True)
 
 alert_left, alert_right = st.columns(2)
 with alert_left:
-    st.subheader("Alerts")
+    st.subheader("알림")
     if alerts.empty:
-        st.success("열린 alert event가 없습니다.")
+        st.success("열린 알림 이벤트가 없습니다.")
     else:
         st.dataframe(localize_frame(alerts), width="stretch", hide_index=True)
 with alert_right:
-    st.subheader("Active Ops Policy")
+    st.subheader("활성 운영 정책")
     st.dataframe(localize_frame(active_policy), width="stretch", hide_index=True)
 
 if ops_preview:
-    with st.expander("Latest Ops Report Preview", expanded=False):
+    with st.expander("최신 운영 리포트 미리보기", expanded=False):
         st.code(ops_preview)
 
 render_page_footer(settings, page_name="헬스 대시보드")

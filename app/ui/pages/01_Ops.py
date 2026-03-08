@@ -56,82 +56,81 @@ render_page_header(
     settings,
     page_name="운영",
     title="운영",
-    description="최근 run, step failure, dependency, disk, cleanup, recovery, 알림과 최신 산출물을 한 번에 보는 운영 콘솔입니다.",
+    description="최근 실행 이력, 단계별 실패, 의존성, 디스크, 정리 이력, 복구, 알림, 최신 산출물을 한 번에 점검하는 운영 화면입니다.",
 )
 
 if snapshot.empty:
     render_narrative_card(
-        "Ops Narrative",
-        "현재 app snapshot이 아직 없어 운영 truth가 완전히 정리되지 않았습니다. snapshot, report index, freshness 빌더를 먼저 실행하세요.",
+        "운영 요약",
+        "현재 기준 스냅샷이 아직 없어 운영 기준점이 완전히 정리되지 않았습니다. 스냅샷, 리포트 목록, 신선도 빌드를 먼저 실행하세요.",
     )
 else:
     row = snapshot.iloc[0]
     render_narrative_card(
-        "Ops Narrative",
-        f"현재 기준일은 {row['as_of_date']} 이고 health 상태는 {row['health_status']} 입니다. "
-        f"치명 알림 {int(row['critical_alert_count'] or 0)}건, 경고 알림 {int(row['warning_alert_count'] or 0)}건입니다.",
+        "운영 요약",
+        f"현재 기준일은 {row['as_of_date']}이고 운영 상태는 {row['health_status']}입니다. 치명 알림 {int(row['critical_alert_count'] or 0)}건, 경고 알림 {int(row['warning_alert_count'] or 0)}건이 열려 있습니다.",
     )
 
 top_left, top_right = st.columns(2)
 with top_left:
-    st.subheader("Overall Health Summary")
+    st.subheader("전체 상태 요약")
     st.dataframe(localize_frame(health), width="stretch", hide_index=True)
 with top_right:
-    st.subheader("Latest Successful Outputs")
+    st.subheader("최신 정상 산출물")
     st.dataframe(localize_frame(latest_outputs), width="stretch", hide_index=True)
 
-st.subheader("Dependency Readiness")
+st.subheader("의존성 준비 상태")
 st.dataframe(localize_frame(dependencies), width="stretch", hide_index=True)
 
 run_left, run_right = st.columns(2)
 with run_left:
-    st.subheader("Recent Runs")
+    st.subheader("최근 실행 이력")
     st.dataframe(localize_frame(runs), width="stretch", hide_index=True)
 with run_right:
-    st.subheader("Step Failure Explorer")
+    st.subheader("단계별 실패 현황")
     if step_failures.empty:
-        st.success("최근 step failure가 없습니다.")
+        st.success("최근 단계 실패가 없습니다.")
     else:
         st.dataframe(localize_frame(step_failures), width="stretch", hide_index=True)
 
 ops_left, ops_right = st.columns(2)
 with ops_left:
-    st.subheader("Disk Usage / Watermark")
+    st.subheader("디스크 사용량 / 경보선")
     st.dataframe(localize_frame(disk_events), width="stretch", hide_index=True)
-    st.subheader("Retention & Cleanup History")
+    st.subheader("보관 정책 / 정리 이력")
     st.dataframe(localize_frame(cleanup_history), width="stretch", hide_index=True)
 with ops_right:
-    st.subheader("Recovery Queue")
+    st.subheader("복구 대기열")
     if recovery.empty:
-        st.info("현재 recovery queue는 비어 있습니다.")
+        st.info("현재 복구 대기열은 비어 있습니다.")
     else:
         st.dataframe(localize_frame(recovery), width="stretch", hide_index=True)
-    st.subheader("Active Ops Policy")
+    st.subheader("활성 운영 정책")
     st.dataframe(localize_frame(active_policy), width="stretch", hide_index=True)
 
 alert_left, alert_right = st.columns(2)
 with alert_left:
-    st.subheader("Alerts")
+    st.subheader("알림")
     if alerts.empty:
         st.success("열린 운영 알림이 없습니다.")
     else:
         st.dataframe(localize_frame(alerts), width="stretch", hide_index=True)
 with alert_right:
-    st.subheader("Release Candidate Checks")
+    st.subheader("릴리스 점검 항목")
     if release_checks.empty:
-        st.info("릴리즈 체크 결과가 없습니다.")
+        st.info("릴리스 점검 결과가 없습니다.")
     else:
         st.dataframe(localize_frame(release_checks), width="stretch", hide_index=True)
 
-st.subheader("Canonical Report Index")
+st.subheader("통합 리포트 목록")
 render_report_center(settings, limit=12)
 
 if not latest_reports.empty:
-    with st.expander("전체 리포트 인덱스", expanded=False):
+    with st.expander("전체 리포트 목록", expanded=False):
         st.dataframe(localize_frame(latest_reports), width="stretch", hide_index=True)
 
 if ops_preview:
-    with st.expander("Latest Ops Report Preview", expanded=False):
+    with st.expander("최신 운영 리포트 미리보기", expanded=False):
         st.code(ops_preview)
 
 render_page_footer(settings, page_name="운영")

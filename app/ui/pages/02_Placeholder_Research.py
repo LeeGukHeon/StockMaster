@@ -72,55 +72,55 @@ render_page_header(
     settings,
     page_name="리서치 랩",
     title="리서치 랩",
-    description="모델, 정책, calibration, walk-forward, ablation 결과를 기술적으로 비교하는 고급 화면입니다.",
+    description="모델, 정책, 보정, 워크포워드, 제거 실험 결과를 기술적으로 비교하는 고급 화면입니다.",
 )
 
-st.subheader("최신 ML 알파 학습")
+st.subheader("최신 알파 모형 학습")
 st.dataframe(localize_frame(alpha_training_summary), width="stretch", hide_index=True)
 
-st.subheader("장중 메타 모델 학습")
+st.subheader("장중 메타 모형 학습")
 st.dataframe(localize_frame(meta_training_summary), width="stretch", hide_index=True)
 
-st.subheader("Policy vs Meta Overlay")
+st.subheader("정책 대비 메타 보조")
 st.dataframe(localize_frame(meta_overlay), width="stretch", hide_index=True)
 
-st.subheader("Regime Breakdown")
+st.subheader("국면별 분해")
 st.dataframe(localize_frame(meta_regime_breakdown), width="stretch", hide_index=True)
 
 if show_technical:
     diag_left, diag_right = st.columns(2)
     with diag_left:
-        st.subheader("Calibration")
+        st.subheader("보정 상태")
         st.dataframe(localize_frame(meta_calibration), width="stretch", hide_index=True)
-        st.subheader("Confusion Matrix")
+        st.subheader("혼동 행렬")
         st.dataframe(localize_frame(meta_confusion), width="stretch", hide_index=True)
     with diag_right:
-        st.subheader("Feature Importance")
+        st.subheader("주요 특성 중요도")
         st.dataframe(localize_frame(meta_feature_importance), width="stretch", hide_index=True)
-        st.subheader("Policy Validation")
+        st.subheader("정책 검증")
         st.dataframe(localize_frame(policy_calibration), width="stretch", hide_index=True)
 
 policy_left, policy_right = st.columns(2)
 with policy_left:
     st.subheader("정책 실험")
     st.dataframe(localize_frame(policy_experiments), width="stretch", hide_index=True)
-    st.subheader("Walk-Forward")
+    st.subheader("워크포워드")
     st.dataframe(localize_frame(policy_walkforward), width="stretch", hide_index=True)
 with policy_right:
     st.subheader("정책 추천")
     st.dataframe(localize_frame(policy_recommendation), width="stretch", hide_index=True)
-    st.subheader("정책 Publish / Rollback")
+    st.subheader("정책 발행 / 롤백")
     if not policy_publish_status.empty:
         st.dataframe(localize_frame(policy_publish_status), width="stretch", hide_index=True)
     if not policy_rollbacks.empty:
         st.dataframe(localize_frame(policy_rollbacks), width="stretch", hide_index=True)
 
 if show_technical:
-    st.subheader("Policy Ablation")
+    st.subheader("정책 제거 실험")
     st.dataframe(localize_frame(policy_ablation), width="stretch", hide_index=True)
 
 if policy_report_preview:
-    with st.expander("Latest Policy Research Report Preview", expanded=False):
+    with st.expander("최신 정책 연구 리포트 미리보기", expanded=False):
         st.code(policy_report_preview)
 
 render_page_footer(settings, page_name="리서치 랩")

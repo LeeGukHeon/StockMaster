@@ -39,27 +39,27 @@ render_page_header(
     settings,
     page_name="시장 현황",
     title="시장 현황",
-    description="regime, breadth, 변동성, 수급, 뉴스 cluster, narrative summary를 한 화면에서 확인하는 페이지입니다.",
+    description="시장 국면, 상승 폭, 변동성, 수급, 시장 뉴스 묶음, 서술형 요약을 함께 보는 화면입니다.",
 )
 
 if pulse.empty and regime.empty:
     render_narrative_card(
-        "Market Narrative",
-        "현재 market pulse 스냅샷이 없습니다. regime snapshot과 daily research ingestion 상태를 먼저 확인하세요.",
+        "시장 요약",
+        "현재 시장 현황 스냅샷이 없습니다. 시장 국면 스냅샷과 일일 리서치 적재 상태를 먼저 확인하세요.",
     )
 else:
-    regime_text = regime.iloc[0]["regime_state"] if not regime.empty else "unknown"
+    regime_text = regime.iloc[0]["regime_state"] if not regime.empty else "미확인"
     render_narrative_card(
-        "Market Narrative",
-        f"현재 시장 regime은 {regime_text} 입니다. breadth, 수급, 최근 뉴스 cluster를 함께 읽고 리더보드와 포트폴리오로 drill-down 하는 것이 권장 흐름입니다.",
+        "시장 요약",
+        f"현재 시장 국면은 {regime_text}입니다. 상승 폭, 수급, 최신 뉴스 묶음을 함께 보고 리더보드와 포트폴리오 화면으로 이어서 확인하는 흐름을 권장합니다.",
     )
 
 top_left, top_right = st.columns(2)
 with top_left:
-    st.subheader("Market Pulse Snapshot")
+    st.subheader("시장 현황 스냅샷")
     st.dataframe(localize_frame(pulse), width="stretch", hide_index=True)
 with top_right:
-    st.subheader("Regime / Flow")
+    st.subheader("시장 국면 / 수급")
     if not regime.empty:
         st.dataframe(localize_frame(regime), width="stretch", hide_index=True)
     if not flow.empty:
@@ -67,12 +67,24 @@ with top_right:
 
 news_left, news_right = st.columns(2)
 with news_left:
-    st.subheader("News Clusters")
+    st.subheader("뉴스 묶음")
     st.dataframe(localize_frame(news), width="stretch", hide_index=True)
 with news_right:
-    st.subheader("Top Actionable Preview")
+    st.subheader("주목 종목 미리보기")
     display = leaders[
-        [column for column in ["symbol", "company_name", "grade", "final_selection_value", "expected_excess_return", "flow_score", "risks"] if column in leaders.columns]
+        [
+            column
+            for column in [
+                "symbol",
+                "company_name",
+                "grade",
+                "final_selection_value",
+                "expected_excess_return",
+                "flow_score",
+                "risks",
+            ]
+            if column in leaders.columns
+        ]
     ].copy()
     st.dataframe(localize_frame(display), width="stretch", hide_index=True)
 

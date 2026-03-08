@@ -22,14 +22,14 @@ from app.ui.helpers import (
 STATUS_BADGE_META: dict[str, tuple[str, str]] = {
     "SUCCESS": ("정상", "#0f766e"),
     "PARTIAL_SUCCESS": ("부분 성공", "#0f766e"),
-    "DEGRADED_SUCCESS": ("성능 저하", "#b45309"),
+    "DEGRADED_SUCCESS": ("저하", "#b45309"),
     "SKIPPED": ("건너뜀", "#475569"),
     "BLOCKED": ("차단", "#b91c1c"),
     "FAILED": ("실패", "#b91c1c"),
     "WARNING": ("경고", "#b45309"),
     "CRITICAL": ("치명", "#b91c1c"),
     "OK": ("정상", "#0f766e"),
-    "INFO": ("참고", "#1d4ed8"),
+    "INFO": ("안내", "#1d4ed8"),
 }
 
 
@@ -79,9 +79,9 @@ def render_status_badges(items: Iterable[tuple[str, str]]) -> None:
 
 def render_warning_banner(level: str, message: str) -> None:
     normalized = str(level).upper()
-    _, color = STATUS_BADGE_META.get(normalized, ("", "#475569"))
+    display_label, color = STATUS_BADGE_META.get(normalized, (normalized, "#475569"))
     st.markdown(
-        f'<div class="sm-banner" style="border-left-color:{color};"><strong>{normalized}</strong><br>{message}</div>',
+        f'<div class="sm-banner" style="border-left-color:{color};"><strong>{display_label}</strong><br>{message}</div>',
         unsafe_allow_html=True,
     )
 
@@ -103,17 +103,19 @@ def _latest_snapshot_row(settings: Settings) -> dict[str, object] | None:
 def _policy_badges(snapshot: dict[str, object] | None) -> list[tuple[str, str]]:
     if snapshot is None:
         return []
-    badges: list[tuple[str, str]] = [("Selection v2", "INFO")]
+
+    badges: list[tuple[str, str]] = [("선정 엔진 v2", "INFO")]
     if snapshot.get("latest_daily_bundle_status"):
-        badges.append((f"데일리 번들 {snapshot['latest_daily_bundle_status']}", str(snapshot["latest_daily_bundle_status"])))
+        badges.append((f"일일 배치 {snapshot['latest_daily_bundle_status']}", str(snapshot["latest_daily_bundle_status"])))
     if snapshot.get("health_status"):
-        badges.append((f"헬스 {snapshot['health_status']}", str(snapshot["health_status"])))
+        badges.append((f"운영 상태 {snapshot['health_status']}", str(snapshot["health_status"])))
     if snapshot.get("active_intraday_policy_id"):
-        badges.append((f"타이밍 정책 {snapshot['active_intraday_policy_id']}", "INFO"))
+        badges.append((f"장중 정책 {snapshot['active_intraday_policy_id']}", "INFO"))
     if snapshot.get("active_portfolio_policy_id"):
         badges.append((f"포트폴리오 정책 {snapshot['active_portfolio_policy_id']}", "INFO"))
     if snapshot.get("active_ops_policy_id"):
         badges.append((f"운영 정책 {snapshot['active_ops_policy_id']}", "INFO"))
+
     raw_meta = snapshot.get("active_meta_model_ids_json")
     if raw_meta:
         try:
@@ -135,15 +137,23 @@ def render_page_header(
     inject_app_styles()
     st.title(title)
     st.caption(description)
+
     snapshot = _latest_snapshot_row(settings)
     render_status_badges(_policy_badges(snapshot))
+
     freshness = latest_ui_freshness_frame(settings, page_name=page_name, limit=20)
     critical = freshness[freshness["warning_level"].astype(str).str.upper() == "CRITICAL"]
     warning = freshness[freshness["warning_level"].astype(str).str.upper() == "WARNING"]
     if not critical.empty:
-        render_warning_banner("CRITICAL", f"{page_name} 화면에 치명적인 stale 데이터가 있습니다. 숫자와 리포트 링크를 보수적으로 해석해야 합니다.")
+        render_warning_banner(
+            "CRITICAL",
+            f"{page_name} 화면에 치명적인 지연 데이터가 있습니다. 숫자와 리포트 링크를 보수적으로 해석해야 합니다.",
+        )
     elif not warning.empty:
-        render_warning_banner("WARNING", f"{page_name} 화면 일부 데이터가 경고 임계치를 넘었습니다. 최신 run과 freshness 상태를 함께 확인하세요.")
+        render_warning_banner(
+            "WARNING",
+            f"{page_name} 화면 일부 데이터가 경고 임계치를 넘었습니다. 최신 실행 이력과 신선도 상태를 함께 확인하세요.",
+        )
 
 
 def render_provenance_footer(
@@ -155,15 +165,15 @@ def render_provenance_footer(
     snapshot = _latest_snapshot_row(settings)
     pieces = [f"환경: {settings.app.env.upper()}", f"페이지: {page_name}"]
     if snapshot:
-        pieces.append(f"snapshot: {snapshot.get('snapshot_ts')}")
+        pieces.append(f"스냅샷: {snapshot.get('snapshot_ts')}")
         if snapshot.get("latest_daily_bundle_run_id"):
-            pieces.append(f"daily_run: {snapshot['latest_daily_bundle_run_id']}")
+            pieces.append(f"일일 배치: {snapshot['latest_daily_bundle_run_id']}")
         if snapshot.get("active_ops_policy_id"):
-            pieces.append(f"ops_policy: {snapshot['active_ops_policy_id']}")
+            pieces.append(f"운영 정책: {snapshot['active_ops_policy_id']}")
         if snapshot.get("active_portfolio_policy_id"):
-            pieces.append(f"portfolio_policy: {snapshot['active_portfolio_policy_id']}")
+            pieces.append(f"포트폴리오 정책: {snapshot['active_portfolio_policy_id']}")
         if snapshot.get("active_intraday_policy_id"):
-            pieces.append(f"intraday_policy: {snapshot['active_intraday_policy_id']}")
+            pieces.append(f"장중 정책: {snapshot['active_intraday_policy_id']}")
     if extra_items:
         pieces.extend(extra_items)
     st.markdown(
@@ -184,8 +194,9 @@ def render_page_footer(
 def render_report_center(settings: Settings, *, limit: int = 12) -> None:
     reports = latest_report_index_frame(settings, limit=limit)
     if reports.empty:
-        st.info("리포트 인덱스가 없습니다. `build_report_index.py`를 먼저 실행하세요.")
+        st.info("리포트 목록이 없습니다. `build_report_index.py`를 먼저 실행하세요.")
         return
+
     display = reports[
         [
             "report_type",
@@ -203,8 +214,9 @@ def render_report_center(settings: Settings, *, limit: int = 12) -> None:
 def render_release_candidate_summary(settings: Settings, *, limit: int = 12) -> None:
     checks = latest_release_candidate_check_frame(settings, limit=limit)
     if checks.empty:
-        st.info("릴리즈 체크 결과가 없습니다. `validate_release_candidate.py`를 실행하세요.")
+        st.info("릴리스 점검 결과가 없습니다. `validate_release_candidate.py`를 실행하세요.")
         return
+
     display = checks[
         ["check_ts", "check_name", "status", "severity", "recommended_action"]
     ].copy()
@@ -222,13 +234,16 @@ def render_top_actionable_badges(settings: Settings) -> None:
     snapshot = _latest_snapshot_row(settings)
     if not snapshot:
         return
+
     raw_value = snapshot.get("top_actionable_symbol_list_json")
     if not raw_value:
         return
+
     try:
         records = json.loads(str(raw_value))
     except json.JSONDecodeError:
         return
+
     badges = []
     for record in records[:5]:
         symbol = record.get("symbol", "N/A")

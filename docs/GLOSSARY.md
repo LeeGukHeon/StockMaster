@@ -1,31 +1,31 @@
-# Glossary
+# 용어집
 
-## Selection v2
-Daily selection engine combining alpha, flow, regime fit, uncertainty, disagreement, and implementation-aware penalties.
+## 선정 엔진 v2
+알파, 수급, 시장 국면 적합성, 불확실성, 모델 불일치, 실행 패널티를 함께 반영하는 일일 종목 선별 엔진입니다.
 
-## Expected Alpha
-Expected excess return versus the same-market equal-weight baseline.
+## 예상 알파
+동일 시장 동일가중 기준선 대비 기대 초과수익입니다.
 
-## Flow Score
-Investor flow summary score based on foreign, institution, and individual flow behavior.
+## 수급 점수
+외국인, 기관, 개인 수급 흐름을 요약해 점수화한 값입니다.
 
-## Uncertainty
-Proxy for prediction confidence. Higher means less confidence.
+## 불확실성
+예측 신뢰도의 대리 지표입니다. 값이 높을수록 신뢰도가 낮다고 해석합니다.
 
-## Disagreement
-Proxy for ensemble member dispersion. Higher means model members disagree more.
+## 모델 불일치
+앙상블 구성 모형들 사이의 예측 차이를 요약한 대리 지표입니다. 값이 높을수록 모형 간 의견 차이가 큽니다.
 
-## Implementation Penalty
-Penalty applied for liquidity, execution friction, and other practical constraints.
+## 실행 패널티
+유동성, 체결 마찰, 기타 실무 제약을 반영해 차감하는 값입니다.
 
-## Timing Assisted
-Portfolio execution mode that uses intraday final actions only as a gate for new entries and adds.
+## 장중 타이밍 보조
+포트폴리오 실행 모드 중 하나로, 신규 진입과 추가 매수에서만 장중 최종 판단을 진입 게이트로 활용합니다.
 
-## Stale
-Latest materialized dataset is older than the page threshold.
+## 지연 상태
+화면 기준 신선도 임계값보다 최신 적재 시점이 오래된 상태입니다.
 
-## Degraded
-Output exists but quality, completeness, or freshness is below the preferred level.
+## 저하 상태
+산출물은 존재하지만 품질, 완전성, 신선도가 권장 수준보다 떨어진 상태입니다.
 
-## Release Candidate
-User-facing state where page contracts, reports, freshness, links, and help/docs are checked before deployment work.
+## 릴리스 점검
+배포 직전 단계에서 화면 계약, 리포트, 신선도, 링크, 도움말 문서를 함께 확인하는 사용자 점검 상태입니다.
