@@ -40,11 +40,23 @@ def _safe_relative(path: Path, root: Path) -> str:
 
 
 def _cleanup_targets(settings: Settings) -> list[tuple[str, Path, int]]:
+    intraday_dir = settings.paths.curated_dir / "intraday"
     return [
         ("raw_api", settings.paths.raw_dir, settings.retention.raw_api_days),
         ("cache", settings.paths.cache_dir, settings.retention.report_cache_days),
         ("logs", settings.paths.logs_dir, settings.retention.log_days),
         ("artifacts", settings.paths.artifacts_dir, settings.retention.report_cache_days),
+        ("intraday_bar_1m", intraday_dir / "bar_1m", settings.retention.intraday_1m_days),
+        (
+            "intraday_trade_summary",
+            intraday_dir / "trade_summary",
+            settings.retention.intraday_5m_days,
+        ),
+        (
+            "intraday_quote_summary",
+            intraday_dir / "quote_summary",
+            settings.retention.orderbook_summary_days,
+        ),
     ]
 
 
@@ -141,6 +153,8 @@ def enforce_retention_policies(
     stats = _CleanupStats()
     touched_paths: list[str] = []
     for _scope_name, base_path, max_age_days in _cleanup_targets(settings):
+        if not base_path.exists():
+            continue
         relative_base = _safe_relative(base_path, settings.paths.project_root)
         if allowlist and relative_base not in allowlist:
             continue
@@ -148,7 +162,11 @@ def enforce_retention_policies(
             if not candidate.is_file():
                 continue
             relative_candidate = _safe_relative(candidate, settings.paths.project_root)
-            if any(relative_candidate.startswith(prefix) for prefix in protected):
+            if any(
+                relative_candidate.startswith(prefix)
+                and not relative_candidate.startswith(relative_base)
+                for prefix in protected
+            ):
                 continue
             modified_at = datetime.fromtimestamp(candidate.stat().st_mtime, tz=timezone.utc)
             if modified_at >= now - timedelta(days=max_age_days):

@@ -1131,6 +1131,13 @@ Disk watermark and retention policy:
 - cleanup watermark: `80%`
 - emergency watermark: `90%`
 - cleanup is allowlist-driven and protected-prefix aware
+- sufficient-mode default retention keeps only re-creatable high-volume support data on a rolling window:
+  - raw API payload/cache: `14d`
+  - intraday `bar_1m`: `30d`
+  - intraday `trade_summary`: `45d`
+  - intraday `quote_summary`: `21d`
+  - report cache/artifacts: `21d`
+  - logs: `30d`
 - curated core data, predictions, evaluations, and portfolio snapshots are not auto-deleted
 - retention supports both dry-run and actual-run tracking through `fact_retention_cleanup_run`
 - disk events are written to `fact_disk_watermark_event`

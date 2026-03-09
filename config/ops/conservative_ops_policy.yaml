@@ -15,6 +15,9 @@ cleanup_allowlist:
   - data/cache
   - data/logs
   - data/artifacts
+  - data/curated/intraday/bar_1m
+  - data/curated/intraday/trade_summary
+  - data/curated/intraday/quote_summary
 protected_prefixes:
   - data/curated
   - data/marts
