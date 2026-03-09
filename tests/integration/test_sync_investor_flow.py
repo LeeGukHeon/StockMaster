@@ -13,7 +13,7 @@ class _FakeKisProvider:
     def __init__(self) -> None:
         self.closed = False
 
-    def fetch_investor_flow(self, *, symbol: str, trading_date):
+    def fetch_investor_flow(self, *, symbol: str, trading_date, persist_probe_artifacts=False):
         frame = pd.DataFrame(
             [
                 {
@@ -67,4 +67,22 @@ def test_sync_investor_flow_writes_curated_rows(tmp_path):
         assert row_count == 2
 
     assert provider.closed is False
+    assert any(path.endswith("investor_flow.parquet") for path in result.artifact_paths)
+
+
+def test_sync_investor_flow_can_persist_raw_artifacts(tmp_path):
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    provider = _FakeKisProvider()
+
+    result = sync_investor_flow(
+        settings,
+        trading_date=date(2026, 3, 6),
+        limit_symbols=1,
+        kis_provider=provider,
+        persist_raw_artifacts=True,
+    )
+
+    assert result.row_count == 1
+    assert any(path.endswith(".json") for path in result.artifact_paths)
     assert any(path.endswith(".parquet") for path in result.artifact_paths)

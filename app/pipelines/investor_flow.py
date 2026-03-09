@@ -225,6 +225,8 @@ def sync_investor_flow(
     market: str = "ALL",
     force: bool = False,
     dry_run: bool = False,
+    persist_raw_artifacts: bool = False,
+    persist_probe_artifacts: bool = False,
     kis_provider: KISProvider | None = None,
 ) -> InvestorFlowSyncResult:
     ensure_storage_layout(settings)
@@ -344,19 +346,23 @@ def sync_investor_flow(
                         probe = provider.fetch_investor_flow(
                             symbol=symbol,
                             trading_date=trading_date,
+                            persist_probe_artifacts=persist_probe_artifacts,
                         )
-                        raw_json_path = (
-                            settings.paths.raw_dir
-                            / "kis"
-                            / "investor_flow"
-                            / f"trading_date={trading_date.isoformat()}"
-                            / f"symbol={symbol}"
-                            / f"{run_context.run_id}.json"
-                        )
-                        raw_parquet_path = raw_json_path.with_suffix(".parquet")
-                        artifact_paths.append(str(write_json_payload(raw_json_path, probe.payload)))
-                        probe.frame.to_parquet(raw_parquet_path, index=False)
-                        artifact_paths.append(str(raw_parquet_path))
+                        if persist_raw_artifacts:
+                            raw_json_path = (
+                                settings.paths.raw_dir
+                                / "kis"
+                                / "investor_flow"
+                                / f"trading_date={trading_date.isoformat()}"
+                                / f"symbol={symbol}"
+                                / f"{run_context.run_id}.json"
+                            )
+                            raw_parquet_path = raw_json_path.with_suffix(".parquet")
+                            artifact_paths.append(
+                                str(write_json_payload(raw_json_path, probe.payload))
+                            )
+                            probe.frame.to_parquet(raw_parquet_path, index=False)
+                            artifact_paths.append(str(raw_parquet_path))
 
                         normalized = _normalize_investor_flow(
                             symbol=symbol,

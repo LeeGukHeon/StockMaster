@@ -21,8 +21,8 @@ INVESTOR_FLOW_ENDPOINT = "/uapi/domestic-stock/v1/quotations/investor-trade-by-s
 class InvestorFlowProbe:
     frame: pd.DataFrame
     payload: dict[str, Any]
-    raw_json_path: str
-    raw_parquet_path: str
+    raw_json_path: str | None
+    raw_parquet_path: str | None
 
 
 class KisInvestorFlowClient:
@@ -67,6 +67,7 @@ class KisInvestorFlowClient:
         market_code: str = "J",
         adjusted_price_flag: str = "",
         extra_class_code: str = "",
+        persist_probe_artifacts: bool = False,
     ) -> InvestorFlowProbe:
         requested_date = trading_date or today_local(self.settings.app.timezone)
         response = request_with_retries(
@@ -102,26 +103,29 @@ class KisInvestorFlowClient:
         else:
             frame = pd.DataFrame()
 
-        raw_dir = (
-            self.settings.paths.raw_dir
-            / "kis"
-            / "investor_flow_probe"
-            / f"trading_date={requested_date.isoformat()}"
-            / f"symbol={symbol}"
-        )
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        raw_json_path = raw_dir / "payload.json"
-        raw_json_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        raw_json_path = None
+        raw_parquet_path = None
+        if persist_probe_artifacts:
+            raw_dir = (
+                self.settings.paths.raw_dir
+                / "kis"
+                / "investor_flow_probe"
+                / f"trading_date={requested_date.isoformat()}"
+                / f"symbol={symbol}"
+            )
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            raw_json_path = raw_dir / "payload.json"
+            raw_json_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
-        raw_parquet_path = raw_dir / "payload.parquet"
-        frame.to_parquet(raw_parquet_path, index=False)
+            raw_parquet_path = raw_dir / "payload.parquet"
+            frame.to_parquet(raw_parquet_path, index=False)
 
         return InvestorFlowProbe(
             frame=frame,
             payload=payload,
-            raw_json_path=str(raw_json_path),
-            raw_parquet_path=str(raw_parquet_path),
+            raw_json_path=str(raw_json_path) if raw_json_path is not None else None,
+            raw_parquet_path=str(raw_parquet_path) if raw_parquet_path is not None else None,
         )

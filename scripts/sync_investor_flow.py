@@ -34,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--market", default="ALL", choices=["ALL", "KOSPI", "KOSDAQ"])
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--persist-raw",
+        action="store_true",
+        help="Persist per-symbol raw investor flow payloads for debugging.",
+    )
     return parser
 
 
@@ -51,6 +56,7 @@ def main() -> int:
         market=args.market,
         force=args.force,
         dry_run=args.dry_run,
+        persist_raw_artifacts=args.persist_raw,
     )
     logger.info(
         "Investor flow sync completed.",
