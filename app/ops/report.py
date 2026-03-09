@@ -5,8 +5,8 @@ from datetime import date
 from pathlib import Path
 
 import duckdb
-import httpx
 
+from app.common.discord import publish_discord_messages
 from app.ops.common import JobStatus, OpsJobResult
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables
@@ -206,9 +206,11 @@ def publish_discord_ops_alerts(
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     published = False
     if not dry_run and settings.discord.webhook_url:
-        with httpx.Client(timeout=15.0) as client:
-            for message in payload.get("messages", []):
-                client.post(settings.discord.webhook_url, json=message).raise_for_status()
+        publish_discord_messages(
+            settings.discord.webhook_url,
+            list(payload.get("messages", [])),
+            timeout=15.0,
+        )
         published = True
     notes = f"Ops alerts {'published' if published else 'prepared'}."
     return OpsJobResult(

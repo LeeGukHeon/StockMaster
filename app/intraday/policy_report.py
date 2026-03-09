@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-import httpx
 import pandas as pd
 
+from app.common.discord import publish_discord_messages
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
@@ -286,9 +286,11 @@ def publish_discord_intraday_policy_summary(
         published = False
         notes = "Dry run only."
         if not dry_run and webhook_url:
-            with httpx.Client(timeout=15.0) as client:
-                for message in payload.get("messages", []):
-                    client.post(webhook_url, json=message).raise_for_status()
+            publish_discord_messages(
+                webhook_url,
+                list(payload.get("messages", [])),
+                timeout=15.0,
+            )
             published = True
             notes = "Intraday policy summary published."
         with duckdb_connection(settings.paths.duckdb_path) as connection:

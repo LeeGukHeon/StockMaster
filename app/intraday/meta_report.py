@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-import httpx
 import pandas as pd
 
+from app.common.discord import publish_discord_messages
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
@@ -241,10 +241,11 @@ def publish_discord_intraday_meta_summary(
     payload = json.loads(payload_path.read_text(encoding="utf-8")) if payload_path else {"messages": []}
     published = False
     if not dry_run and settings.discord.enabled and settings.discord.webhook_url:
-        with httpx.Client(timeout=15.0) as client:
-            for message in payload["messages"]:
-                response = client.post(settings.discord.webhook_url, json=message)
-                response.raise_for_status()
+        publish_discord_messages(
+            settings.discord.webhook_url,
+            list(payload["messages"]),
+            timeout=15.0,
+        )
         published = True
     return IntradayMetaSummaryPublishResult(
         run_id=render_result.run_id,

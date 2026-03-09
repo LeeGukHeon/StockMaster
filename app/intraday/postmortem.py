@@ -4,9 +4,9 @@ import json
 from dataclasses import dataclass
 from datetime import date
 
-import httpx
 import pandas as pd
 
+from app.common.discord import publish_discord_messages
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
@@ -444,13 +444,11 @@ def publish_discord_intraday_postmortem(
                         "Webhook URL is not configured."
                     )
             else:
-                response_payloads: list[dict[str, object]] = []
-                for index, message in enumerate(messages, start=1):
-                    response = httpx.post(webhook_url, json=message, timeout=10.0)
-                    response.raise_for_status()
-                    response_payloads.append(
-                        {"message_index": index, "status_code": response.status_code}
-                    )
+                response_payloads = publish_discord_messages(
+                    webhook_url,
+                    list(messages),
+                    timeout=10.0,
+                )
                 publish_path = (
                     settings.paths.artifacts_dir
                     / "intraday_postmortem"
