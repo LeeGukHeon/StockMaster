@@ -100,5 +100,21 @@ class KISProvider(BaseProvider):
             session_date=session_date,
         )
 
-    def fetch_investor_flow(self, *, symbol: str, trading_date=None):
-        return self.investor_flow.fetch_investor_flow(symbol=symbol, trading_date=trading_date)
+    def fetch_investor_flow(
+        self,
+        *,
+        symbol: str,
+        trading_date=None,
+        market_code: str = "J",
+        adjusted_price_flag: str = "",
+        extra_class_code: str = "",
+        persist_probe_artifacts: bool = False,
+    ):
+        return self.investor_flow.fetch_investor_flow(
+            symbol=symbol,
+            trading_date=trading_date,
+            market_code=market_code,
+            adjusted_price_flag=adjusted_price_flag,
+            extra_class_code=extra_class_code,
+            persist_probe_artifacts=persist_probe_artifacts,
+        )
