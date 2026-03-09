@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import date
 
+from app.ops.bundles import run_daily_close_bundle, run_news_sync_bundle
 from app.ops.common import JobStatus
 from app.ops.scheduler import get_scheduled_job, read_scheduler_state
 from app.ops.serial import acquire_serial_lock, release_serial_lock
+from app.storage.duckdb import duckdb_connection
 from scripts import _scheduler_cli
 from tests._ticket003_support import build_test_settings, seed_ticket003_data
 
@@ -84,3 +86,45 @@ def test_run_scheduled_bundle_skips_when_serial_lock_is_occupied(tmp_path, monke
     assert exit_code == 0
     assert not calls
     assert state["status"] == JobStatus.SKIPPED_LOCKED
+
+
+def test_news_sync_bundle_uses_calendar_day_identity_on_weekend(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+
+    result = run_news_sync_bundle(
+        settings,
+        as_of_date=date(2026, 3, 7),
+        profile="after_close",
+        dry_run=True,
+    )
+
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        as_of_date = connection.execute(
+            """
+            SELECT as_of_date
+            FROM fact_job_run
+            WHERE job_name = 'run_news_sync_bundle'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()[0]
+
+    assert result.status == JobStatus.SKIPPED
+    assert result.as_of_date == date(2026, 3, 7)
+    assert as_of_date == date(2026, 3, 7)
+
+
+def test_daily_close_bundle_self_skips_on_non_trading_day(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+
+    result = run_daily_close_bundle(
+        settings,
+        as_of_date=date(2026, 3, 7),
+        dry_run=True,
+        force=True,
+        publish_discord=False,
+    )
+
+    assert result.status == JobStatus.SKIPPED_NON_TRADING_DAY

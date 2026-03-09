@@ -16,6 +16,9 @@ from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 
 DEFAULT_INTRADAY_CHECKPOINTS: tuple[str, ...] = ("09:05", "09:15", "09:30", "10:00", "11:00")
+DATE_SEMANTICS_CALENDAR = "calendar_day"
+DATE_SEMANTICS_TRADING = "trading_day"
+DATE_SEMANTICS_HYBRID = "hybrid"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +36,7 @@ class ScheduledJobDefinition:
     intraday_window_start: str | None = None
     intraday_window_end: str | None = None
     intraday_interval_minutes: int | None = None
+    date_semantics: str = DATE_SEMANTICS_CALENDAR
     trading_day_required: bool = False
     serial_scope: str = "global_write"
     heavy_job: bool = False
@@ -58,6 +62,7 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         on_calendar=("*-*-* 02:30:00",),
         weekdays=(0, 1, 2, 3, 4, 5, 6),
         run_times=("02:30",),
+        date_semantics=DATE_SEMANTICS_CALENDAR,
     ),
     ScheduledJobDefinition(
         job_key="news_morning",
@@ -70,7 +75,7 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         on_calendar=("Mon..Fri *-*-* 08:30:00",),
         weekdays=(0, 1, 2, 3, 4),
         run_times=("08:30",),
-        trading_day_required=True,
+        date_semantics=DATE_SEMANTICS_CALENDAR,
     ),
     ScheduledJobDefinition(
         job_key="intraday_assist",
@@ -94,6 +99,7 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         intraday_window_start="08:55",
         intraday_window_end="15:15",
         intraday_interval_minutes=5,
+        date_semantics=DATE_SEMANTICS_TRADING,
         trading_day_required=True,
     ),
     ScheduledJobDefinition(
@@ -107,7 +113,7 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         on_calendar=("Mon..Fri *-*-* 16:10:00",),
         weekdays=(0, 1, 2, 3, 4),
         run_times=("16:10",),
-        trading_day_required=True,
+        date_semantics=DATE_SEMANTICS_CALENDAR,
     ),
     ScheduledJobDefinition(
         job_key="evaluation",
@@ -120,6 +126,7 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         on_calendar=("Mon..Fri *-*-* 16:20:00",),
         weekdays=(0, 1, 2, 3, 4),
         run_times=("16:20",),
+        date_semantics=DATE_SEMANTICS_TRADING,
         trading_day_required=True,
     ),
     ScheduledJobDefinition(
@@ -133,6 +140,7 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         on_calendar=("Mon..Fri *-*-* 18:40:00",),
         weekdays=(0, 1, 2, 3, 4),
         run_times=("18:40",),
+        date_semantics=DATE_SEMANTICS_TRADING,
         trading_day_required=True,
         heavy_job=True,
     ),
@@ -147,7 +155,7 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         on_calendar=("Mon..Fri *-*-* 19:05:00",),
         weekdays=(0, 1, 2, 3, 4),
         run_times=("19:05",),
-        trading_day_required=True,
+        date_semantics=DATE_SEMANTICS_CALENDAR,
     ),
     ScheduledJobDefinition(
         job_key="weekly_training_candidate",
@@ -160,6 +168,7 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         on_calendar=("Sat *-*-* 03:30:00",),
         weekdays=(5,),
         run_times=("03:30",),
+        date_semantics=DATE_SEMANTICS_HYBRID,
         heavy_job=True,
     ),
     ScheduledJobDefinition(
@@ -176,6 +185,7 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         on_calendar=("Sat *-*-* 06:30:00",),
         weekdays=(5,),
         run_times=("06:30",),
+        date_semantics=DATE_SEMANTICS_HYBRID,
         heavy_job=True,
     ),
 )
@@ -255,6 +265,7 @@ def schedule_job_catalog_frame(
                 "last_finished_at": state.get("finished_at"),
                 "last_notes": state.get("notes"),
                 "last_run_id": state.get("run_id"),
+                "date_semantics": item.date_semantics,
                 "trading_day_required": item.trading_day_required,
                 "heavy_job": item.heavy_job,
                 "manual_local_command": local_manual_command(item),

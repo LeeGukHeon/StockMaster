@@ -586,6 +586,14 @@ def _scheduler_target_date(
     return resolve_reference_trading_date(settings, target_date=target, connection=connection)
 
 
+def _scheduler_calendar_date(
+    settings: Settings,
+    *,
+    requested_date: date | None,
+) -> date:
+    return requested_date or today_local(settings.app.timezone)
+
+
 def _mark_audit_suite(
     job: JobRunContext,
     *,
@@ -612,10 +620,10 @@ def run_news_sync_bundle(
     policy_config_path: str | None = None,
 ) -> OpsJobResult:
     ensure_storage_layout(settings)
-    requested_date = as_of_date or today_local(settings.app.timezone)
+    requested_date = _scheduler_calendar_date(settings, requested_date=as_of_date)
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
-        target_date = _scheduler_target_date(
+        reference_trading_date = _scheduler_target_date(
             settings,
             requested_date=requested_date,
             connection=connection,
@@ -624,7 +632,7 @@ def run_news_sync_bundle(
             settings,
             connection,
             job_name="run_news_sync_bundle",
-            as_of_date=target_date,
+            as_of_date=requested_date,
             trigger_type=trigger_type,
             dry_run=dry_run,
             parent_run_id=parent_run_id,
@@ -633,15 +641,13 @@ def run_news_sync_bundle(
             policy_config_path=policy_config_path,
             lock_name=SCHEDULER_GLOBAL_LOCK,
             notes=f"Scheduler news sync bundle profile={profile} for {requested_date.isoformat()}",
-            details={"bundle_phase": "news_sync", "profile": profile},
+            details={
+                "bundle_phase": "news_sync",
+                "profile": profile,
+                "date_semantics": "calendar_day",
+                "reference_trading_date": reference_trading_date.isoformat(),
+            },
         ) as job:
-            skipped = _skip_if_non_trading_day(
-                job,
-                target_date=requested_date,
-                label=f"run_news_sync_bundle[{profile}]",
-            )
-            if skipped is not None:
-                return skipped
             completed = _skip_if_already_completed(
                 job,
                 bundle_phase="news_sync",
@@ -674,14 +680,14 @@ def run_news_sync_bundle(
                     job,
                     settings=settings,
                     connection=connection,
-                    as_of_date=target_date,
+                    as_of_date=requested_date,
                 )
                 job.run_step(
                     "materialize_health_snapshots",
                     materialize_health_snapshots,
                     settings,
                     connection=connection,
-                    as_of_date=target_date,
+                    as_of_date=requested_date,
                     job_run_id=job.run_id,
                     policy_config_path=policy_config_path,
                     critical=False,
@@ -728,7 +734,11 @@ def run_daily_close_bundle(
             policy_config_path=policy_config_path,
             lock_name=SCHEDULER_GLOBAL_LOCK,
             notes=f"Scheduler daily close bundle for {target_date.isoformat()}",
-            details={"bundle_phase": "daily_close", "profile": "final_news_and_report"},
+            details={
+                "bundle_phase": "daily_close",
+                "profile": "final_news_and_report",
+                "date_semantics": "trading_day",
+            },
         ) as job:
             skipped = _skip_if_non_trading_day(
                 job,
@@ -885,7 +895,7 @@ def run_evaluation_bundle(
             policy_config_path=policy_config_path,
             lock_name=SCHEDULER_GLOBAL_LOCK,
             notes=f"Scheduler evaluation bundle through {target_date.isoformat()}",
-            details={"bundle_phase": "evaluation"},
+            details={"bundle_phase": "evaluation", "date_semantics": "trading_day"},
         ) as job:
             skipped = _skip_if_non_trading_day(
                 job,
@@ -974,7 +984,11 @@ def run_intraday_assist_bundle(
             policy_config_path=policy_config_path,
             lock_name=SCHEDULER_GLOBAL_LOCK,
             notes=f"Scheduler intraday assist bundle for {requested_date.isoformat()}",
-            details={"bundle_phase": "intraday_assist", "checkpoint_time": checkpoint_key},
+            details={
+                "bundle_phase": "intraday_assist",
+                "checkpoint_time": checkpoint_key,
+                "date_semantics": "trading_day",
+            },
         ) as job:
             skipped = _skip_if_non_trading_day(
                 job,
@@ -1177,7 +1191,12 @@ def run_weekly_training_bundle(
             policy_config_path=policy_config_path,
             lock_name=SCHEDULER_GLOBAL_LOCK,
             notes=f"Scheduler weekly training candidate bundle through {target_date.isoformat()}",
-            details={"bundle_phase": "weekly_training_candidate"},
+            details={
+                "bundle_phase": "weekly_training_candidate",
+                "date_semantics": "hybrid",
+                "scheduled_calendar_date": requested_date.isoformat(),
+                "reference_trading_date": target_date.isoformat(),
+            },
         ) as job:
             completed = _skip_if_already_completed(job, bundle_phase="weekly_training_candidate")
             if completed is not None and not force:
@@ -1283,7 +1302,12 @@ def run_weekly_calibration_bundle(
             policy_config_path=policy_config_path,
             lock_name=SCHEDULER_GLOBAL_LOCK,
             notes=f"Scheduler weekly calibration bundle through {target_date.isoformat()}",
-            details={"bundle_phase": "weekly_calibration"},
+            details={
+                "bundle_phase": "weekly_calibration",
+                "date_semantics": "hybrid",
+                "scheduled_calendar_date": requested_date.isoformat(),
+                "reference_trading_date": target_date.isoformat(),
+            },
         ) as job:
             completed = _skip_if_already_completed(job, bundle_phase="weekly_calibration")
             if completed is not None and not force:
@@ -1399,19 +1423,14 @@ def run_daily_audit_lite_bundle(
     policy_config_path: str | None = None,
 ) -> OpsJobResult:
     ensure_storage_layout(settings)
-    requested_date = as_of_date or today_local(settings.app.timezone)
+    requested_date = _scheduler_calendar_date(settings, requested_date=as_of_date)
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
-        target_date = _scheduler_target_date(
-            settings,
-            requested_date=requested_date,
-            connection=connection,
-        )
         with JobRunContext(
             settings,
             connection,
             job_name="run_daily_audit_lite_bundle",
-            as_of_date=target_date,
+            as_of_date=requested_date,
             trigger_type=trigger_type,
             dry_run=dry_run,
             parent_run_id=parent_run_id,
@@ -1419,8 +1438,11 @@ def run_daily_audit_lite_bundle(
             recovery_of_run_id=recovery_of_run_id,
             policy_config_path=policy_config_path,
             lock_name=SCHEDULER_GLOBAL_LOCK,
-            notes=f"Scheduler daily audit-lite bundle for {target_date.isoformat()}",
-            details={"bundle_phase": "daily_audit_lite"},
+            notes=f"Scheduler daily audit-lite bundle for {requested_date.isoformat()}",
+            details={
+                "bundle_phase": "daily_audit_lite",
+                "date_semantics": "calendar_day",
+            },
         ) as job:
             completed = _skip_if_already_completed(job, bundle_phase="daily_audit_lite")
             if completed is not None and not force:
@@ -1447,7 +1469,7 @@ def run_daily_audit_lite_bundle(
                     validate_release_candidate,
                     settings,
                     connection=connection,
-                    as_of_date=target_date,
+                    as_of_date=requested_date,
                     critical=False,
                 )
                 if latest_suite is not None:
@@ -1463,7 +1485,7 @@ def run_daily_audit_lite_bundle(
                     render_release_candidate_checklist,
                     settings,
                     connection=connection,
-                    as_of_date=target_date,
+                    as_of_date=requested_date,
                     job_run_id=job.run_id,
                     dry_run=dry_run,
                     critical=False,
@@ -1472,19 +1494,19 @@ def run_daily_audit_lite_bundle(
                     job,
                     settings=settings,
                     connection=connection,
-                    as_of_date=target_date,
+                    as_of_date=requested_date,
                 )
                 job.run_step(
                     "materialize_health_snapshots",
                     materialize_health_snapshots,
                     settings,
                     connection=connection,
-                    as_of_date=target_date,
+                    as_of_date=requested_date,
                     job_run_id=job.run_id,
                     policy_config_path=policy_config_path,
                     critical=False,
                 )
             return job_result_from_context(
                 job,
-                notes=f"Daily audit-lite bundle completed for {target_date.isoformat()}.",
+                notes=f"Daily audit-lite bundle completed for {requested_date.isoformat()}.",
             )

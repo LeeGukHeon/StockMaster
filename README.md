@@ -175,6 +175,10 @@ Automation rules:
 - already completed identity => idempotent skip
 - lock occupied => skip/defer
 - missing upstream readiness => blocked/degraded
+- date semantics are split explicitly:
+  - `calendar_day`: morning news sync, after-close news sync, daily audit lite, ops maintenance
+  - `trading_day`: intraday assist, evaluation bundle, daily close bundle
+  - `hybrid`: weekly training candidate and weekly calibration run on calendar schedule but resolve the latest trading-day inputs internally
 - weekly retrain/calibration results are generated automatically but never auto-applied
 - active model/policy changes remain manual via UI compare-and-confirm or explicit freeze scripts
 

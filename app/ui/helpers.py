@@ -979,6 +979,14 @@ UI_VALUE_LABELS.setdefault("job_name", {}).update(
         "run_daily_audit_lite_bundle": "일일 경량 감사 번들",
     }
 )
+UI_VALUE_LABELS.setdefault("date_semantics", {}).update(
+    {
+        "calendar_day": "달력일 기준",
+        "trading_day": "거래일 기준",
+        "hybrid": "혼합 기준",
+    }
+)
+
 UI_COLUMN_LABELS.update(
     {
         "schedule_label": "실행 주기",
@@ -987,6 +995,7 @@ UI_COLUMN_LABELS.update(
         "last_finished_at": "최근 종료 시각",
         "last_notes": "최근 메모",
         "last_run_id": "최근 실행 ID",
+        "date_semantics": "날짜 기준",
         "trading_day_required": "거래일 전용",
         "heavy_job": "무거운 작업",
         "manual_local_command": "로컬 수동 실행",
