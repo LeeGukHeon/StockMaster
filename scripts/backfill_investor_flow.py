@@ -51,18 +51,33 @@ def main() -> int:
 
     total_rows = 0
     total_failures = 0
+    skipped_dates: list[str] = []
     for trading_date in iter_dates(args.start, args.end):
-        result = sync_investor_flow(
-            settings,
-            trading_date=trading_date,
-            symbols=_parse_symbols(args.symbols),
-            limit_symbols=args.limit_symbols,
-            market=args.market,
-            force=args.force,
-            persist_raw_artifacts=args.persist_raw,
-        )
-        total_rows += result.row_count
-        total_failures += result.failed_symbol_count
+        try:
+            result = sync_investor_flow(
+                settings,
+                trading_date=trading_date,
+                symbols=_parse_symbols(args.symbols),
+                limit_symbols=args.limit_symbols,
+                market=args.market,
+                force=args.force,
+                persist_raw_artifacts=args.persist_raw,
+            )
+            total_rows += result.row_count
+            total_failures += result.failed_symbol_count
+        except RuntimeError as exc:
+            # Some historical dates return HTTP 200 but no usable rows for any symbol.
+            # Treat those dates as backfill skips instead of aborting the full range.
+            if "No investor flow rows were loaded" not in str(exc):
+                raise
+            skipped_dates.append(trading_date.isoformat())
+            logger.warning(
+                "Investor flow backfill skipped empty date.",
+                extra={
+                    "trading_date": trading_date.isoformat(),
+                    "reason": str(exc),
+                },
+            )
 
     logger.info(
         "Investor flow backfill completed.",
@@ -71,11 +86,12 @@ def main() -> int:
             "end_date": args.end.isoformat(),
             "row_count": total_rows,
             "failed_symbol_count": total_failures,
+            "skipped_dates": skipped_dates,
         },
     )
     print(
         f"Investor flow backfill completed. range={args.start.isoformat()}..{args.end.isoformat()} "
-        f"rows={total_rows} failed={total_failures}"
+        f"rows={total_rows} failed={total_failures} skipped_dates={len(skipped_dates)}"
     )
     return 0
 
