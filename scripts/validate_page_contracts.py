@@ -6,6 +6,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import duckdb
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -28,17 +30,30 @@ def main() -> int:
             critical=False,
         )
 
-    result = run_standalone_job(
-        settings,
-        job_name="validate_page_contracts",
-        as_of_date=None,
-        dry_run=False,
-        policy_config_path=None,
-        runner=_runner,
-    )
-    log_and_print(
-        f"Page contracts validated. run_id={result.run_id} checks={result.check_count} warnings={result.warning_count}"
-    )
+    try:
+        result = run_standalone_job(
+            settings,
+            job_name="validate_page_contracts",
+            as_of_date=None,
+            dry_run=False,
+            policy_config_path=None,
+            runner=_runner,
+        )
+        log_and_print(
+            f"Page contracts validated. run_id={result.run_id} checks={result.check_count} warnings={result.warning_count}"
+        )
+    except duckdb.ConnectionException as exc:
+        if "conflicting lock" not in str(exc).lower():
+            raise
+        result = validate_page_contracts(
+            settings,
+            connection=None,
+            persist_results=False,
+        )
+        log_and_print(
+            "Page contracts validated in read-only fallback mode due to an active DuckDB writer lock. "
+            f"checks={result.check_count} warnings={result.warning_count}"
+        )
     return 0
 
 

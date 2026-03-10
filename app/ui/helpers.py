@@ -558,6 +558,42 @@ def latest_ui_freshness_frame(
         ).fetchdf()
 
 
+HOME_OPERATIONAL_CRITICAL_FRESHNESS_KEYS: tuple[tuple[str, str], ...] = (
+    ("오늘", "selection_v2"),
+    ("오늘", "report_index"),
+    ("시장 현황", "market_regime"),
+    ("시장 현황", "market_news"),
+    ("리더보드", "selection_v2"),
+    ("포트폴리오", "target_book"),
+    ("포트폴리오", "nav_snapshot"),
+    ("장중 콘솔", "intraday_final_action"),
+    ("운영", "health_snapshot"),
+    ("운영", "job_run"),
+    ("헬스 대시보드", "health_snapshot"),
+)
+
+
+def home_banner_freshness_levels(freshness: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if freshness.empty:
+        return freshness, freshness
+
+    normalized = freshness.copy()
+    normalized["warning_level"] = normalized["warning_level"].astype(str).str.upper()
+    operational_mask = normalized.apply(
+        lambda row: (str(row.get("page_name")), str(row.get("dataset_name")))
+        in HOME_OPERATIONAL_CRITICAL_FRESHNESS_KEYS,
+        axis=1,
+    )
+    critical = normalized[
+        (normalized["warning_level"] == "CRITICAL") & operational_mask
+    ].copy()
+    warning = normalized[
+        (normalized["warning_level"] == "WARNING")
+        | ((normalized["warning_level"] == "CRITICAL") & ~operational_mask)
+    ].copy()
+    return critical, warning
+
+
 def latest_ops_report_preview(settings: Settings) -> str | None:
     report_root = settings.paths.artifacts_dir / "ops" / "report"
     if not report_root.exists():

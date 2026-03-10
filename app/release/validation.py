@@ -75,12 +75,7 @@ def _view_count(connection: duckdb.DuckDBPyConnection, table_name: str) -> int:
     return int(row[0]) if row else 0
 
 
-def validate_page_contracts(
-    settings: Settings,
-    *,
-    connection: duckdb.DuckDBPyConnection,
-) -> OpsValidationResult:
-    bootstrap_core_tables(connection)
+def _page_contract_checks() -> list[ValidationCheck]:
     checks: list[ValidationCheck] = []
     for spec in PAGE_SPECS:
         if spec.callable_name is not None:
@@ -100,7 +95,21 @@ def validate_page_contracts(
                 ),
             )
         )
-    _insert_checks(connection, settings, checks)
+    return checks
+
+
+def validate_page_contracts(
+    settings: Settings,
+    *,
+    connection: duckdb.DuckDBPyConnection | None,
+    persist_results: bool = True,
+) -> OpsValidationResult:
+    checks = _page_contract_checks()
+    if persist_results:
+        if connection is None:
+            raise ValueError("connection is required when persist_results=True")
+        bootstrap_core_tables(connection)
+        _insert_checks(connection, settings, checks)
     warning_count = sum(1 for check in checks if check.severity != "INFO")
     return OpsValidationResult(
         run_id="embedded",
@@ -110,15 +119,10 @@ def validate_page_contracts(
     )
 
 
-def validate_navigation_integrity(
-    settings: Settings,
-    *,
-    connection: duckdb.DuckDBPyConnection,
-) -> OpsValidationResult:
-    bootstrap_core_tables(connection)
+def _navigation_integrity_checks() -> list[ValidationCheck]:
     url_paths = [spec.url_path for spec in PAGE_SPECS]
     titles = [spec.title for spec in PAGE_SPECS]
-    checks = [
+    return [
         ValidationCheck(
             name="navigation:url_path_unique",
             status=JobStatus.SUCCESS if len(url_paths) == len(set(url_paths)) else JobStatus.FAILED,
@@ -141,7 +145,20 @@ def validate_navigation_integrity(
             recommended_action="Docs/Help 페이지를 navigation에 포함하세요.",
         ),
     ]
-    _insert_checks(connection, settings, checks)
+
+
+def validate_navigation_integrity(
+    settings: Settings,
+    *,
+    connection: duckdb.DuckDBPyConnection | None,
+    persist_results: bool = True,
+) -> OpsValidationResult:
+    checks = _navigation_integrity_checks()
+    if persist_results:
+        if connection is None:
+            raise ValueError("connection is required when persist_results=True")
+        bootstrap_core_tables(connection)
+        _insert_checks(connection, settings, checks)
     warning_count = sum(1 for check in checks if check.severity != "INFO")
     return OpsValidationResult(
         run_id="embedded",

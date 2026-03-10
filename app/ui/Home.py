@@ -25,6 +25,7 @@ from app.ui.components import (
     render_warning_banner,
 )
 from app.ui.helpers import (
+    home_banner_freshness_levels,
     latest_alert_event_frame,
     latest_app_snapshot_frame,
     latest_market_news_frame,
@@ -124,8 +125,7 @@ def render_today_page() -> None:
     snapshot_row = _snapshot_row(settings)
     alerts = latest_alert_event_frame(settings, limit=10)
     freshness = latest_ui_freshness_frame(settings, limit=30)
-    critical_freshness = freshness[freshness["warning_level"].astype(str).str.upper() == "CRITICAL"]
-    warning_freshness = freshness[freshness["warning_level"].astype(str).str.upper() == "WARNING"]
+    critical_freshness, warning_freshness = home_banner_freshness_levels(freshness)
     selection_preview = leaderboard_frame(
         settings,
         horizon=5,

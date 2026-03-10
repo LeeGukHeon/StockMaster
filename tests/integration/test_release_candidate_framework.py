@@ -156,3 +156,13 @@ def test_release_candidate_snapshot_and_report_index_flow(tmp_path) -> None:
     assert int(report_index_count) > 0
     assert int(freshness_count) > 0
     assert int(check_count) > 0
+
+
+def test_validate_page_contracts_without_db_persistence(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    result = validate_page_contracts(
+        settings,
+        connection=None,
+        persist_results=False,
+    )
+    assert result.check_count > 0
