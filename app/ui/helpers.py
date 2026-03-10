@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import numbers
 from dataclasses import asdict
 from pathlib import Path
 
@@ -1874,6 +1875,45 @@ def _translate_json_list(value: object, mapping: dict[str, str]) -> object:
     return ", ".join(translated) if translated else "-"
 
 
+PERCENT_COLUMN_TOKENS: tuple[str, ...] = (
+    "_return",
+    "_band",
+    "_weight",
+    "_ratio",
+    "_rate",
+    "_pct",
+    "_probability",
+    "_margin",
+)
+PERCENT_COLUMN_EXACT: set[str] = {
+    "drawdown",
+}
+
+
+def _is_percent_display_column(column: str) -> bool:
+    return column in PERCENT_COLUMN_EXACT or any(
+        token in column for token in PERCENT_COLUMN_TOKENS
+    )
+
+
+def _format_percent_value(value: object) -> object:
+    if pd.isna(value) or isinstance(value, bool):
+        return value
+    if not isinstance(value, numbers.Real):
+        return value
+    scaled = float(value) * 100.0
+    if abs(scaled) < 0.005:
+        scaled = 0.0
+    return f"{scaled:.2f}%"
+
+
+def _format_scalar_for_display(column: str, value: object) -> object:
+    translated = _translate_scalar(column, value)
+    if _is_percent_display_column(column):
+        return _format_percent_value(translated)
+    return translated
+
+
 def localize_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame
@@ -1901,7 +1941,10 @@ def localize_frame(frame: pd.DataFrame) -> pd.DataFrame:
             )
             continue
         localized[column] = localized[column].map(
-            lambda value, current_column=column: _translate_scalar(current_column, value)
+            lambda value, current_column=column: _format_scalar_for_display(
+                current_column,
+                value,
+            )
         )
     return localized.rename(columns=UI_COLUMN_LABELS)
 

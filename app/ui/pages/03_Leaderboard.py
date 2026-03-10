@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -93,12 +92,6 @@ else:
         if selected_version == SELECTION_ENGINE_VERSION
         else latest_validation_summary_frame(settings, limit=50)
     )
-
-    if not board.empty and "final_selection_rank_pct" in board.columns:
-        board = board.copy()
-        board["final_selection_rank_pct"] = (
-            pd.to_numeric(board["final_selection_rank_pct"], errors="coerce") * 100.0
-        ).round(1)
 
     render_record_cards(
         board,
