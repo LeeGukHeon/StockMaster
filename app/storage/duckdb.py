@@ -2876,7 +2876,16 @@ def connect_duckdb(
     read_only: bool = False,
 ) -> duckdb.DuckDBPyConnection:
     ensure_directory(db_path.parent)
-    return duckdb.connect(str(db_path), read_only=read_only)
+    try:
+        return duckdb.connect(str(db_path), read_only=read_only)
+    except duckdb.ConnectionException as exc:
+        # Within a single process, bundle runners can hold an existing read/write
+        # connection and then call helper paths that attempt a read-only attach.
+        # DuckDB rejects mixing configs for the same database file, so fall back
+        # to a regular connection for that nested case only.
+        if read_only and "different configuration" in str(exc).lower():
+            return duckdb.connect(str(db_path), read_only=False)
+        raise
 
 
 @contextmanager

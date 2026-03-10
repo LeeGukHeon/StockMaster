@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import duckdb
+
+from app.intraday import research_mode as research_mode_module
 from app.intraday.meta_dataset import build_intraday_meta_training_dataset
 from app.intraday.meta_inference import (
     materialize_intraday_final_actions,
@@ -127,3 +130,27 @@ def test_intraday_research_mode_end_to_end(tmp_path):
     assert int(capability_count) == len(CAPABILITY_SPECS)
     assert int(lineage_count) > 0
     assert int(report_count) >= 2
+
+
+def test_intraday_research_mode_validation_falls_back_to_read_only(monkeypatch, tmp_path):
+    settings, session_dates = _prepare_ticket010_data(tmp_path)
+    settings.app.env = "server"
+    settings.intraday_research.enabled = True
+    materialize_intraday_research_capability(settings, as_of_date=max(session_dates))
+
+    real_duckdb_connection = research_mode_module.duckdb_connection
+    state = {"raised": False}
+
+    def flaky_duckdb_connection(db_path, read_only: bool = False):
+        if not read_only and not state["raised"]:
+            state["raised"] = True
+            raise duckdb.IOException("IO Error: Could not set lock on file test.duckdb")
+        return real_duckdb_connection(db_path, read_only=read_only)
+
+    monkeypatch.setattr(research_mode_module, "duckdb_connection", flaky_duckdb_connection)
+
+    result = validate_intraday_research_mode(settings, as_of_date=max(session_dates))
+
+    assert state["raised"] is True
+    assert result.check_count == 7
+    assert "read-only fallback" in result.notes

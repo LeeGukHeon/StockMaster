@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Iterable
 
+import duckdb
+
 from app.common.run_context import activate_run_context
 from app.common.time import now_local, today_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
@@ -369,109 +371,129 @@ def validate_intraday_research_mode(
     as_of_date: date,
 ) -> IntradayResearchModeValidationResult:
     ensure_storage_layout(settings)
+
+    def _collect_counts(connection: duckdb.DuckDBPyConnection) -> tuple:
+        return connection.execute(
+            """
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM fact_intraday_research_capability
+                    WHERE as_of_date = ?
+                ) AS capability_count,
+                (
+                    SELECT COUNT(*)
+                    FROM fact_intraday_research_capability
+                    WHERE as_of_date = ?
+                      AND enabled_flag
+                ) AS enabled_count,
+                (
+                    SELECT COUNT(*)
+                    FROM fact_intraday_entry_decision
+                    WHERE session_date <= ?
+                ) AS raw_count,
+                (
+                    SELECT COUNT(*)
+                    FROM fact_intraday_adjusted_entry_decision
+                    WHERE session_date <= ?
+                ) AS adjusted_count,
+                (
+                    SELECT COUNT(*)
+                    FROM fact_intraday_meta_decision
+                    WHERE session_date <= ?
+                ) AS meta_count,
+                (
+                    SELECT COUNT(*)
+                    FROM vw_intraday_decision_lineage
+                    WHERE session_date <= ?
+                ) AS lineage_count,
+                (
+                    SELECT COUNT(*)
+                    FROM fact_latest_report_index
+                    WHERE report_type IN (
+                        'intraday_summary_report',
+                        'intraday_postmortem_report',
+                        'intraday_policy_research_report',
+                        'intraday_meta_model_report'
+                    )
+                ) AS report_count
+            """,
+            [as_of_date, as_of_date, as_of_date, as_of_date, as_of_date, as_of_date],
+        ).fetchone()
+
+    def _result_from_counts(run_id: str, counts: tuple, *, suffix: str = "") -> IntradayResearchModeValidationResult:
+        warnings = sum(int(value or 0) == 0 for value in counts)
+        notes = (
+            "Intraday research mode validated. "
+            f"capabilities={int(counts[0] or 0)} enabled={int(counts[1] or 0)} "
+            f"raw={int(counts[2] or 0)} adjusted={int(counts[3] or 0)} "
+            f"meta={int(counts[4] or 0)} lineage={int(counts[5] or 0)} "
+            f"reports={int(counts[6] or 0)} warnings={warnings}"
+        )
+        if suffix:
+            notes = f"{notes} {suffix}"
+        return IntradayResearchModeValidationResult(
+            run_id=run_id,
+            as_of_date=as_of_date,
+            check_count=7,
+            warning_count=warnings,
+            notes=notes,
+        )
+
     with activate_run_context(
         "validate_intraday_research_mode",
         as_of_date=as_of_date,
     ) as run_context:
-        with duckdb_connection(settings.paths.duckdb_path) as connection:
-            bootstrap_core_tables(connection)
-            record_run_start(
-                connection,
-                run_id=run_context.run_id,
-                run_type=run_context.run_type,
-                started_at=run_context.started_at,
-                as_of_date=as_of_date,
-                input_sources=[
-                    "fact_intraday_research_capability",
-                    "fact_intraday_entry_decision",
-                    "fact_intraday_adjusted_entry_decision",
-                    "fact_intraday_meta_decision",
-                    "fact_latest_report_index",
-                ],
-                notes=f"Validate intraday research mode for {as_of_date.isoformat()}",
-                ranking_version=SELECTION_ENGINE_VERSION,
-            )
-            try:
-                counts = connection.execute(
-                    """
-                    SELECT
-                        (
-                            SELECT COUNT(*)
-                            FROM fact_intraday_research_capability
-                            WHERE as_of_date = ?
-                        ) AS capability_count,
-                        (
-                            SELECT COUNT(*)
-                            FROM fact_intraday_research_capability
-                            WHERE as_of_date = ?
-                              AND enabled_flag
-                        ) AS enabled_count,
-                        (
-                            SELECT COUNT(*)
-                            FROM fact_intraday_entry_decision
-                            WHERE session_date <= ?
-                        ) AS raw_count,
-                        (
-                            SELECT COUNT(*)
-                            FROM fact_intraday_adjusted_entry_decision
-                            WHERE session_date <= ?
-                        ) AS adjusted_count,
-                        (
-                            SELECT COUNT(*)
-                            FROM fact_intraday_meta_decision
-                            WHERE session_date <= ?
-                        ) AS meta_count,
-                        (
-                            SELECT COUNT(*)
-                            FROM vw_intraday_decision_lineage
-                            WHERE session_date <= ?
-                        ) AS lineage_count,
-                        (
-                            SELECT COUNT(*)
-                            FROM fact_latest_report_index
-                            WHERE report_type IN (
-                                'intraday_summary_report',
-                                'intraday_postmortem_report',
-                                'intraday_policy_research_report',
-                                'intraday_meta_model_report'
-                            )
-                        ) AS report_count
-                    """,
-                    [as_of_date, as_of_date, as_of_date, as_of_date, as_of_date, as_of_date],
-                ).fetchone()
-                warnings = sum(int(value or 0) == 0 for value in counts)
-                notes = (
-                    "Intraday research mode validated. "
-                    f"capabilities={int(counts[0] or 0)} enabled={int(counts[1] or 0)} "
-                    f"raw={int(counts[2] or 0)} adjusted={int(counts[3] or 0)} "
-                    f"meta={int(counts[4] or 0)} lineage={int(counts[5] or 0)} "
-                    f"reports={int(counts[6] or 0)} warnings={warnings}"
-                )
-                record_run_finish(
+        try:
+            with duckdb_connection(settings.paths.duckdb_path) as connection:
+                bootstrap_core_tables(connection)
+                record_run_start(
                     connection,
                     run_id=run_context.run_id,
-                    finished_at=now_local(settings.app.timezone),
-                    status="success",
-                    output_artifacts=[],
-                    notes=notes,
-                    ranking_version=SELECTION_ENGINE_VERSION,
-                )
-                return IntradayResearchModeValidationResult(
-                    run_id=run_context.run_id,
+                    run_type=run_context.run_type,
+                    started_at=run_context.started_at,
                     as_of_date=as_of_date,
-                    check_count=7,
-                    warning_count=warnings,
-                    notes=notes,
-                )
-            except Exception as exc:
-                record_run_finish(
-                    connection,
-                    run_id=run_context.run_id,
-                    finished_at=now_local(settings.app.timezone),
-                    status="failed",
-                    output_artifacts=[],
-                    notes=f"Intraday research mode validation failed for {as_of_date.isoformat()}",
-                    error_message=str(exc),
+                    input_sources=[
+                        "fact_intraday_research_capability",
+                        "fact_intraday_entry_decision",
+                        "fact_intraday_adjusted_entry_decision",
+                        "fact_intraday_meta_decision",
+                        "fact_latest_report_index",
+                    ],
+                    notes=f"Validate intraday research mode for {as_of_date.isoformat()}",
                     ranking_version=SELECTION_ENGINE_VERSION,
                 )
+                try:
+                    result = _result_from_counts(run_context.run_id, _collect_counts(connection))
+                    record_run_finish(
+                        connection,
+                        run_id=run_context.run_id,
+                        finished_at=now_local(settings.app.timezone),
+                        status="success",
+                        output_artifacts=[],
+                        notes=result.notes,
+                        ranking_version=SELECTION_ENGINE_VERSION,
+                    )
+                    return result
+                except Exception as exc:
+                    record_run_finish(
+                        connection,
+                        run_id=run_context.run_id,
+                        finished_at=now_local(settings.app.timezone),
+                        status="failed",
+                        output_artifacts=[],
+                        notes=f"Intraday research mode validation failed for {as_of_date.isoformat()}",
+                        error_message=str(exc),
+                        ranking_version=SELECTION_ENGINE_VERSION,
+                    )
+                    raise
+        except duckdb.IOException as exc:
+            if "Could not set lock on file" not in str(exc):
                 raise
+            with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+                result = _result_from_counts(
+                    run_context.run_id,
+                    _collect_counts(connection),
+                    suffix="(read-only fallback due active writer lock)",
+                )
+            return result
