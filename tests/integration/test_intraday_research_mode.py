@@ -126,10 +126,29 @@ def test_intraday_research_mode_end_to_end(tmp_path):
             WHERE report_type IN ('intraday_summary_report', 'intraday_meta_model_report')
             """
         ).fetchone()[0]
+        lineage_projection = connection.execute(
+            """
+            SELECT
+                company_name,
+                market,
+                raw_action,
+                predicted_class_probability,
+                confidence_margin,
+                uncertainty_score,
+                disagreement_score,
+                market_regime_state,
+                final_selection_value
+            FROM vw_intraday_decision_lineage
+            WHERE session_date = ?
+            LIMIT 1
+            """,
+            [max(session_dates)],
+        ).fetchone()
 
     assert int(capability_count) == len(CAPABILITY_SPECS)
     assert int(lineage_count) > 0
     assert int(report_count) >= 2
+    assert lineage_projection is not None
 
 
 def test_intraday_research_mode_validation_falls_back_to_read_only(monkeypatch, tmp_path):

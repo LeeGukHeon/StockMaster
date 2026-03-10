@@ -2286,8 +2286,11 @@ CORE_VIEW_DDL: tuple[str, ...] = (
         decision.checkpoint_time,
         decision.ranking_version,
         candidate.selection_date,
+        candidate.company_name,
+        candidate.market,
         candidate.run_id AS candidate_session_run_id,
         candidate.candidate_rank,
+        candidate.final_selection_value,
         candidate.final_selection_value AS candidate_selection_value,
         candidate.grade AS candidate_grade,
         ranking.run_id AS ranking_run_id,
@@ -2302,7 +2305,12 @@ CORE_VIEW_DDL: tuple[str, ...] = (
         decision.run_id AS meta_decision_run_id,
         decision.panel_name,
         decision.predicted_class,
+        decision.predicted_class_probability,
+        decision.confidence_margin,
+        decision.uncertainty_score,
+        decision.disagreement_score,
         decision.final_action,
+        decision.raw_action,
         decision.active_policy_candidate_id,
         decision.active_meta_model_id,
         prediction.run_id AS prediction_run_id,
@@ -2325,7 +2333,7 @@ CORE_VIEW_DDL: tuple[str, ...] = (
         portfolio.blocked_flag,
         portfolio.waitlist_flag,
         regime.run_id AS market_regime_run_id,
-        regime.regime_state,
+        regime.regime_state AS market_regime_state,
         regime.regime_score
     FROM fact_intraday_meta_decision AS decision
     LEFT JOIN fact_intraday_candidate_session AS candidate
