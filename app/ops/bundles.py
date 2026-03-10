@@ -789,7 +789,7 @@ def run_daily_close_bundle(
                     "daily_pipeline",
                     run_daily_pipeline_job,
                     settings,
-                    run_training=False,
+                    run_training=True,
                     publish_discord=publish_discord,
                 )
                 job.run_step(

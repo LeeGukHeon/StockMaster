@@ -19,10 +19,17 @@ from sklearn.preprocessing import StandardScaler
 
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
+from app.features.constants import FEATURE_VERSION
+from app.labels.forward_returns import LABEL_VERSION
 from app.ml.constants import (
+    ALPHA_CANDIDATE_MODEL_SPECS,
     CALIBRATION_BIN_COUNT,
+    CHALLENGER_ALPHA_MODEL_SPECS,
+    MODEL_DOMAIN,
     MODEL_MEMBER_NAMES,
     MODEL_VERSION,
+    SELECTION_ENGINE_VERSION,
+    AlphaModelSpec,
 )
 from app.ml.dataset import (
     TRAINING_FEATURE_COLUMNS,
@@ -30,6 +37,7 @@ from app.ml.dataset import (
     load_training_dataset,
 )
 from app.ml.registry import (
+    upsert_alpha_model_specs,
     upsert_model_member_predictions,
     upsert_model_metric_summary,
     upsert_model_training_runs,
@@ -291,6 +299,45 @@ def _prepare_feature_frame(dataset: pd.DataFrame, *, horizon: int) -> pd.DataFra
     return working.sort_values(["as_of_date", "symbol"]).reset_index(drop=True)
 
 
+def _filter_training_frame_for_spec(
+    frame: pd.DataFrame,
+    *,
+    model_spec: AlphaModelSpec,
+    validation_days: int,
+) -> pd.DataFrame:
+    if model_spec.rolling_window_days is None:
+        return frame
+    if frame.empty:
+        return frame
+    unique_dates = sorted(dict.fromkeys(frame["as_of_date"].tolist()))
+    if not unique_dates:
+        return frame
+    total_window_days = int(model_spec.rolling_window_days) + max(1, int(validation_days))
+    retained_dates = set(unique_dates[-total_window_days:])
+    return frame.loc[frame["as_of_date"].isin(retained_dates)].copy()
+
+
+def _model_spec_registry_row(model_spec: AlphaModelSpec) -> dict[str, object]:
+    return {
+        "model_spec_id": model_spec.model_spec_id,
+        "model_domain": MODEL_DOMAIN,
+        "model_version": MODEL_VERSION,
+        "estimation_scheme": model_spec.estimation_scheme,
+        "rolling_window_days": model_spec.rolling_window_days,
+        "feature_version": FEATURE_VERSION,
+        "label_version": LABEL_VERSION,
+        "selection_engine_version": SELECTION_ENGINE_VERSION,
+        "spec_payload_json": json.dumps(
+            {"member_names": list(MODEL_MEMBER_NAMES)},
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        "active_candidate_flag": bool(model_spec.active_candidate_flag),
+        "created_at": pd.Timestamp.utcnow(),
+        "updated_at": pd.Timestamp.utcnow(),
+    }
+
+
 def _train_single_horizon(
     dataset: pd.DataFrame,
     *,
@@ -300,14 +347,24 @@ def _train_single_horizon(
     min_train_days: int,
     validation_days: int,
     artifact_root: Path,
+    model_spec: AlphaModelSpec,
 ) -> tuple[dict[str, object], pd.DataFrame, pd.DataFrame, Path | None]:
     training_frame = _prepare_feature_frame(dataset, horizon=horizon)
-    training_run_id = f"{run_id}-h{int(horizon)}"
+    training_frame = _filter_training_frame_for_spec(
+        training_frame,
+        model_spec=model_spec,
+        validation_days=validation_days,
+    )
+    training_run_id = f"{run_id}-{model_spec.model_spec_id}-h{int(horizon)}"
     if training_frame.empty:
         row = {
             "training_run_id": training_run_id,
             "run_id": run_id,
+            "model_domain": MODEL_DOMAIN,
             "model_version": MODEL_VERSION,
+            "model_spec_id": model_spec.model_spec_id,
+            "estimation_scheme": model_spec.estimation_scheme,
+            "rolling_window_days": model_spec.rolling_window_days,
             "horizon": int(horizon),
             "train_end_date": train_end_date,
             "training_window_start": None,
@@ -485,13 +542,26 @@ def _train_single_horizon(
             }
         )
     )
+    artifact_payload["model_domain"] = MODEL_DOMAIN
+    artifact_payload["model_spec_id"] = model_spec.model_spec_id
+    artifact_payload["estimation_scheme"] = model_spec.estimation_scheme
+    artifact_payload["rolling_window_days"] = model_spec.rolling_window_days
 
-    artifact_path = artifact_root / f"horizon={int(horizon)}" / "alpha_model_v1.pkl"
+    artifact_path = (
+        artifact_root
+        / f"model_spec_id={model_spec.model_spec_id}"
+        / f"horizon={int(horizon)}"
+        / "alpha_model_v1.pkl"
+    )
     write_model_artifact(artifact_path, artifact_payload)
     training_run_row = {
         "training_run_id": training_run_id,
         "run_id": run_id,
+        "model_domain": MODEL_DOMAIN,
         "model_version": MODEL_VERSION,
+        "model_spec_id": model_spec.model_spec_id,
+        "estimation_scheme": model_spec.estimation_scheme,
+        "rolling_window_days": model_spec.rolling_window_days,
         "horizon": int(horizon),
         "train_end_date": train_end_date,
         "training_window_start": min(train_dates) if train_dates else None,
@@ -511,6 +581,7 @@ def _train_single_horizon(
         "fallback_reason": fallback_reason,
         "artifact_uri": str(artifact_path),
         "notes": (
+            f"model_spec_id={model_spec.model_spec_id} "
             f"train_rows={len(train_frame)} validation_rows={len(validation_frame)} "
             f"fallback={bool(fallback_flag)}"
         ),
@@ -536,6 +607,62 @@ def train_alpha_model_v1(
     limit_symbols: int | None = None,
     market: str = "ALL",
 ) -> AlphaTrainingResult:
+    return _train_alpha_specs(
+        settings,
+        train_end_date=train_end_date,
+        horizons=horizons,
+        min_train_days=min_train_days,
+        validation_days=validation_days,
+        symbols=symbols,
+        limit_symbols=limit_symbols,
+        market=market,
+        model_specs=(ALPHA_CANDIDATE_MODEL_SPECS[0],),
+        run_type="train_alpha_model_v1",
+        note_prefix="Train sklearn alpha model v1.",
+    )
+
+
+def train_alpha_candidate_models(
+    settings: Settings,
+    *,
+    train_end_date: date,
+    horizons: list[int],
+    min_train_days: int,
+    validation_days: int,
+    symbols: list[str] | None = None,
+    limit_symbols: int | None = None,
+    market: str = "ALL",
+    model_specs: tuple[AlphaModelSpec, ...] = CHALLENGER_ALPHA_MODEL_SPECS,
+) -> AlphaTrainingResult:
+    return _train_alpha_specs(
+        settings,
+        train_end_date=train_end_date,
+        horizons=horizons,
+        min_train_days=min_train_days,
+        validation_days=validation_days,
+        symbols=symbols,
+        limit_symbols=limit_symbols,
+        market=market,
+        model_specs=model_specs,
+        run_type="train_alpha_candidate_models",
+        note_prefix="Train alpha challenger candidate models.",
+    )
+
+
+def _train_alpha_specs(
+    settings: Settings,
+    *,
+    train_end_date: date,
+    horizons: list[int],
+    min_train_days: int,
+    validation_days: int,
+    symbols: list[str] | None,
+    limit_symbols: int | None,
+    market: str,
+    model_specs: tuple[AlphaModelSpec, ...],
+    run_type: str,
+    note_prefix: str,
+) -> AlphaTrainingResult:
     ensure_storage_layout(settings)
     build_model_training_dataset(
         settings,
@@ -547,7 +674,7 @@ def train_alpha_model_v1(
         market=market,
     )
 
-    with activate_run_context("train_alpha_model_v1", as_of_date=train_end_date) as run_context:
+    with activate_run_context(run_type, as_of_date=train_end_date) as run_context:
         with duckdb_connection(settings.paths.duckdb_path) as connection:
             bootstrap_core_tables(connection)
             record_run_start(
@@ -560,10 +687,12 @@ def train_alpha_model_v1(
                     "fact_feature_snapshot",
                     "fact_forward_return_label",
                     "fact_model_training_run",
+                    "dim_alpha_model_spec",
                 ],
                 notes=(
-                    "Train sklearn alpha model v1. "
-                    f"train_end_date={train_end_date.isoformat()} horizons={horizons}"
+                    f"{note_prefix} "
+                    f"train_end_date={train_end_date.isoformat()} horizons={horizons} "
+                    f"model_specs={[spec.model_spec_id for spec in model_specs]}"
                 ),
             )
             try:
@@ -610,28 +739,34 @@ def train_alpha_model_v1(
                 member_prediction_frames: list[pd.DataFrame] = []
                 metric_frames: list[pd.DataFrame] = []
                 artifact_paths: list[str] = []
-                for horizon in horizons:
-                    (
-                        training_run_row,
-                        member_predictions,
-                        metric_summary,
-                        artifact_path,
-                    ) = _train_single_horizon(
-                        dataset,
-                        run_id=run_context.run_id,
-                        train_end_date=train_end_date,
-                        horizon=int(horizon),
-                        min_train_days=min_train_days,
-                        validation_days=validation_days,
-                        artifact_root=artifact_root,
-                    )
-                    training_run_rows.append(training_run_row)
-                    if not member_predictions.empty:
-                        member_prediction_frames.append(member_predictions)
-                    if not metric_summary.empty:
-                        metric_frames.append(metric_summary)
-                    if artifact_path is not None:
-                        artifact_paths.append(str(artifact_path))
+                upsert_alpha_model_specs(
+                    connection,
+                    pd.DataFrame([_model_spec_registry_row(spec) for spec in model_specs]),
+                )
+                for model_spec in model_specs:
+                    for horizon in horizons:
+                        (
+                            training_run_row,
+                            member_predictions,
+                            metric_summary,
+                            artifact_path,
+                        ) = _train_single_horizon(
+                            dataset,
+                            run_id=run_context.run_id,
+                            train_end_date=train_end_date,
+                            horizon=int(horizon),
+                            min_train_days=min_train_days,
+                            validation_days=validation_days,
+                            artifact_root=artifact_root,
+                            model_spec=model_spec,
+                        )
+                        training_run_rows.append(training_run_row)
+                        if not member_predictions.empty:
+                            member_prediction_frames.append(member_predictions)
+                        if not metric_summary.empty:
+                            metric_frames.append(metric_summary)
+                        if artifact_path is not None:
+                            artifact_paths.append(str(artifact_path))
 
                 upsert_model_training_runs(connection, pd.DataFrame(training_run_rows))
                 if member_prediction_frames:
@@ -655,8 +790,10 @@ def train_alpha_model_v1(
                 )
                 artifact_paths.append(str(summary_artifact))
                 notes = (
-                    "Alpha model v1 training completed. "
-                    f"dataset_rows={len(dataset)} horizon_runs={len(training_run_rows)}"
+                    f"{note_prefix} completed. "
+                    f"dataset_rows={len(dataset)} "
+                    f"training_runs={len(training_run_rows)} "
+                    f"model_specs={len(model_specs)}"
                 )
                 record_run_finish(
                     connection,

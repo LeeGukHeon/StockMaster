@@ -45,7 +45,11 @@ def _bucketize(rank_pct: pd.Series) -> pd.Series:
 def upsert_predictions(connection, frame: pd.DataFrame) -> None:
     if frame.empty:
         return
-    connection.register("prediction_stage", frame)
+    stage = frame.copy()
+    for column in ("training_run_id", "model_spec_id", "active_alpha_model_id"):
+        if column not in stage.columns:
+            stage[column] = None
+    connection.register("prediction_stage", stage)
     connection.execute(
         """
         DELETE FROM fact_prediction
@@ -74,6 +78,9 @@ def upsert_predictions(connection, frame: pd.DataFrame) -> None:
             calibration_bucket,
             calibration_sample_size,
             model_version,
+            training_run_id,
+            model_spec_id,
+            active_alpha_model_id,
             uncertainty_score,
             disagreement_score,
             fallback_flag,
@@ -100,6 +107,9 @@ def upsert_predictions(connection, frame: pd.DataFrame) -> None:
             calibration_bucket,
             calibration_sample_size,
             model_version,
+            training_run_id,
+            model_spec_id,
+            active_alpha_model_id,
             uncertainty_score,
             disagreement_score,
             fallback_flag,

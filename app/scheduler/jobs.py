@@ -9,6 +9,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from app.common.disk import measure_disk_usage
 from app.common.run_context import activate_run_context
 from app.common.time import get_timezone, now_local, today_local
+from app.evaluation.alpha_shadow import (
+    materialize_alpha_shadow_evaluation_summary,
+    materialize_alpha_shadow_selection_outcomes,
+)
 from app.evaluation.calibration_diagnostics import materialize_calibration_diagnostics
 from app.evaluation.outcomes import materialize_selection_outcomes
 from app.evaluation.summary import materialize_prediction_evaluation
@@ -16,7 +20,8 @@ from app.evaluation.validation import validate_evaluation_pipeline
 from app.features.feature_store import build_feature_store
 from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
 from app.ml.inference import materialize_alpha_predictions_v1
-from app.ml.training import train_alpha_model_v1
+from app.ml.shadow import materialize_alpha_shadow_candidates
+from app.ml.training import train_alpha_candidate_models, train_alpha_model_v1
 from app.pipelines.daily_ohlcv import sync_daily_ohlcv
 from app.pipelines.fundamentals_snapshot import sync_fundamentals_snapshot
 from app.pipelines.investor_flow import sync_investor_flow
@@ -231,11 +236,13 @@ def run_daily_pipeline_job(
                 "materialize_explanatory_ranking",
                 "materialize_selection_engine_v1",
                 "materialize_alpha_predictions_v1",
+                "materialize_alpha_shadow_candidates",
                 "materialize_selection_engine_v2",
                 "calibrate_proxy_prediction_bands",
             ]
             if run_training:
                 input_sources.insert(8, "train_alpha_model_v1")
+                input_sources.insert(9, "train_alpha_candidate_models")
             if publish_discord:
                 input_sources.append("publish_discord_eod_report")
             record_run_start(
@@ -293,7 +300,23 @@ def run_daily_pipeline_job(
                 if run_training
                 else None
             )
+            alpha_candidate_training_result = (
+                train_alpha_candidate_models(
+                    settings,
+                    train_end_date=pipeline_date,
+                    horizons=[1, 5],
+                    min_train_days=120,
+                    validation_days=20,
+                )
+                if run_training
+                else None
+            )
             alpha_prediction_result = materialize_alpha_predictions_v1(
+                settings,
+                as_of_date=pipeline_date,
+                horizons=[1, 5],
+            )
+            alpha_shadow_result = materialize_alpha_shadow_candidates(
                 settings,
                 as_of_date=pipeline_date,
                 horizons=[1, 5],
@@ -334,7 +357,10 @@ def run_daily_pipeline_job(
             artifact_paths.extend(selection_result.artifact_paths)
             if alpha_training_result is not None:
                 artifact_paths.extend(alpha_training_result.artifact_paths)
+            if alpha_candidate_training_result is not None:
+                artifact_paths.extend(alpha_candidate_training_result.artifact_paths)
             artifact_paths.extend(alpha_prediction_result.artifact_paths)
+            artifact_paths.extend(alpha_shadow_result.artifact_paths)
             artifact_paths.extend(selection_v2_result.artifact_paths)
             if calibration_result is not None:
                 artifact_paths.extend(calibration_result.artifact_paths)
@@ -351,8 +377,17 @@ def run_daily_pipeline_job(
                 f"regime_rows={regime_result.row_count}, "
                 f"ranking_rows={ranking_result.row_count}, "
                 f"selection_rows={selection_result.row_count}, "
-                f"alpha_training_runs={alpha_training_result.training_run_count if alpha_training_result else 0}, "
+                "alpha_training_runs="
+                f"{alpha_training_result.training_run_count if alpha_training_result else 0}, "
+                "alpha_candidate_training_runs="
+                f"{(
+                    alpha_candidate_training_result.training_run_count
+                    if alpha_candidate_training_result
+                    else 0
+                )}, "
                 f"alpha_prediction_rows={alpha_prediction_result.row_count}, "
+                f"alpha_shadow_prediction_rows={alpha_shadow_result.prediction_row_count}, "
+                f"alpha_shadow_ranking_rows={alpha_shadow_result.ranking_row_count}, "
                 f"selection_v2_rows={selection_v2_result.row_count}, "
                 f"prediction_rows={calibration_result.row_count if calibration_result else 0}, "
                 f"discord_published={discord_result.published if discord_result else False}"
@@ -426,7 +461,9 @@ def run_evaluation_job(settings: Settings) -> JobExecutionResult:
                 as_of_date=run_context.as_of_date,
                 input_sources=[
                     "materialize_selection_outcomes",
+                    "materialize_alpha_shadow_selection_outcomes",
                     "materialize_prediction_evaluation",
+                    "materialize_alpha_shadow_evaluation_summary",
                     "materialize_calibration_diagnostics",
                     "publish_discord_postmortem_report",
                     "validate_evaluation_pipeline",
@@ -444,7 +481,20 @@ def run_evaluation_job(settings: Settings) -> JobExecutionResult:
                 end_selection_date=selection_end_date,
                 horizons=[1, 5],
             )
+            shadow_outcome_result = materialize_alpha_shadow_selection_outcomes(
+                settings,
+                start_selection_date=selection_start_date,
+                end_selection_date=selection_end_date,
+                horizons=[1, 5],
+            )
             summary_result = materialize_prediction_evaluation(
+                settings,
+                start_selection_date=selection_start_date,
+                end_selection_date=selection_end_date,
+                horizons=[1, 5],
+                rolling_windows=[20, 60],
+            )
+            shadow_summary_result = materialize_alpha_shadow_evaluation_summary(
                 settings,
                 start_selection_date=selection_start_date,
                 end_selection_date=selection_end_date,
@@ -480,7 +530,9 @@ def run_evaluation_job(settings: Settings) -> JobExecutionResult:
             )
 
             artifact_paths.extend(outcome_result.artifact_paths)
+            artifact_paths.extend(shadow_outcome_result.artifact_paths)
             artifact_paths.extend(summary_result.artifact_paths)
+            artifact_paths.extend(shadow_summary_result.artifact_paths)
             artifact_paths.extend(diagnostic_result.artifact_paths)
             artifact_paths.extend(postmortem_result.artifact_paths)
             artifact_paths.extend(validation_result.artifact_paths)
@@ -489,7 +541,9 @@ def run_evaluation_job(settings: Settings) -> JobExecutionResult:
                 "Evaluation pipeline completed. selection_range="
                 f"{selection_start_date.isoformat()}.."
                 f"{selection_end_date.isoformat()}, outcome_rows={outcome_result.row_count}, "
+                f"shadow_outcome_rows={shadow_outcome_result.row_count}, "
                 f"evaluation_rows={summary_result.row_count}, "
+                f"shadow_summary_rows={shadow_summary_result.row_count}, "
                 f"diagnostic_rows={diagnostic_result.row_count}, "
                 f"postmortem_published={postmortem_result.published}, "
                 f"validation_checks={validation_result.row_count}"

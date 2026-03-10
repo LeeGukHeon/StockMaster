@@ -5,6 +5,7 @@ from datetime import date
 from app.common.paths import project_root
 from app.features.feature_store import FeatureStoreBuildResult
 from app.ml.inference import AlphaPredictionMaterializationResult
+from app.ml.shadow import AlphaShadowMaterializationResult
 from app.ml.training import AlphaTrainingResult
 from app.pipelines.daily_ohlcv import DailyOhlcvSyncResult
 from app.pipelines.fundamentals_snapshot import FundamentalsSnapshotSyncResult
@@ -197,6 +198,47 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
             prediction_version="alpha_prediction_v1",
         )
 
+    def fake_train_alpha_candidate_models(
+        settings_arg,
+        *,
+        train_end_date,
+        horizons,
+        min_train_days,
+        validation_days,
+        **kwargs,
+    ):
+        observed_dates.append(train_end_date)
+        assert horizons == [1, 5]
+        assert min_train_days == 120
+        assert validation_days == 20
+        return AlphaTrainingResult(
+            run_id="alpha-candidate-train-run",
+            train_end_date=train_end_date,
+            row_count=200,
+            training_run_count=4,
+            artifact_paths=["artifacts/alpha_candidate_training.parquet"],
+            notes="ok",
+            model_version="alpha_model_v1",
+        )
+
+    def fake_materialize_alpha_shadow_candidates(
+        settings_arg,
+        *,
+        as_of_date,
+        horizons,
+        **kwargs,
+    ):
+        observed_dates.append(as_of_date)
+        assert horizons == [1, 5]
+        return AlphaShadowMaterializationResult(
+            run_id="alpha-shadow-run",
+            as_of_date=as_of_date,
+            prediction_row_count=60,
+            ranking_row_count=60,
+            artifact_paths=["curated/alpha_shadow.parquet"],
+            notes="ok",
+        )
+
     def fake_materialize_selection_engine_v2(settings_arg, *, as_of_date, horizons, **kwargs):
         observed_dates.append(as_of_date)
         assert horizons == [1, 5]
@@ -257,8 +299,16 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("app.scheduler.jobs.train_alpha_model_v1", fake_train_alpha_model_v1)
     monkeypatch.setattr(
+        "app.scheduler.jobs.train_alpha_candidate_models",
+        fake_train_alpha_candidate_models,
+    )
+    monkeypatch.setattr(
         "app.scheduler.jobs.materialize_alpha_predictions_v1",
         fake_materialize_alpha_predictions_v1,
+    )
+    monkeypatch.setattr(
+        "app.scheduler.jobs.materialize_alpha_shadow_candidates",
+        fake_materialize_alpha_shadow_candidates,
     )
     monkeypatch.setattr(
         "app.scheduler.jobs.materialize_selection_engine_v2",
@@ -276,7 +326,7 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
     result = run_daily_pipeline_job(settings)
 
     assert result.status == "success"
-    assert observed_dates == [date(2026, 3, 6)] * 13
+    assert observed_dates == [date(2026, 3, 6)] * 15
     assert "ohlcv_rows=8" in result.notes
     assert "fundamentals_rows=6" in result.notes
     assert "news_rows=7" in result.notes
@@ -286,7 +336,10 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
     assert "ranking_rows=20" in result.notes
     assert "selection_rows=20" in result.notes
     assert "alpha_training_runs=2" in result.notes
+    assert "alpha_candidate_training_runs=4" in result.notes
     assert "alpha_prediction_rows=20" in result.notes
+    assert "alpha_shadow_prediction_rows=60" in result.notes
+    assert "alpha_shadow_ranking_rows=60" in result.notes
     assert "selection_v2_rows=20" in result.notes
     assert "prediction_rows=20" in result.notes
     assert "discord_published=False" in result.notes
@@ -471,6 +524,45 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
             prediction_version="alpha_prediction_v1",
         )
 
+    def fake_train_alpha_candidate_models(
+        settings_arg,
+        *,
+        train_end_date,
+        horizons,
+        min_train_days,
+        validation_days,
+        **kwargs,
+    ):
+        assert horizons == [1, 5]
+        assert min_train_days == 120
+        assert validation_days == 20
+        return AlphaTrainingResult(
+            run_id="alpha-candidate-train-run",
+            train_end_date=train_end_date,
+            row_count=200,
+            training_run_count=4,
+            artifact_paths=["artifacts/alpha_candidate_training.parquet"],
+            notes="ok",
+            model_version="alpha_model_v1",
+        )
+
+    def fake_materialize_alpha_shadow_candidates(
+        settings_arg,
+        *,
+        as_of_date,
+        horizons,
+        **kwargs,
+    ):
+        assert horizons == [1, 5]
+        return AlphaShadowMaterializationResult(
+            run_id="alpha-shadow-run",
+            as_of_date=as_of_date,
+            prediction_row_count=60,
+            ranking_row_count=60,
+            artifact_paths=["curated/alpha_shadow.parquet"],
+            notes="ok",
+        )
+
     def fake_materialize_selection_engine_v2(settings_arg, *, as_of_date, horizons, **kwargs):
         assert horizons == [1, 5]
         return SelectionEngineV2Result(
@@ -520,8 +612,16 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
     )
     monkeypatch.setattr("app.scheduler.jobs.train_alpha_model_v1", fake_train_alpha_model_v1)
     monkeypatch.setattr(
+        "app.scheduler.jobs.train_alpha_candidate_models",
+        fake_train_alpha_candidate_models,
+    )
+    monkeypatch.setattr(
         "app.scheduler.jobs.materialize_alpha_predictions_v1",
         fake_materialize_alpha_predictions_v1,
+    )
+    monkeypatch.setattr(
+        "app.scheduler.jobs.materialize_alpha_shadow_candidates",
+        fake_materialize_alpha_shadow_candidates,
     )
     monkeypatch.setattr(
         "app.scheduler.jobs.materialize_selection_engine_v2",
@@ -540,7 +640,10 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
 
     assert result.status == "success"
     assert "alpha_training_runs=2" in result.notes
+    assert "alpha_candidate_training_runs=4" in result.notes
     assert "alpha_prediction_rows=20" in result.notes
+    assert "alpha_shadow_prediction_rows=60" in result.notes
+    assert "alpha_shadow_ranking_rows=60" in result.notes
     assert "selection_v2_rows=20" in result.notes
     assert "prediction_rows=0" in result.notes
     assert "calibration_skipped=" in result.notes

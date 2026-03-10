@@ -264,6 +264,9 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         calibration_bucket VARCHAR,
         calibration_sample_size BIGINT,
         model_version VARCHAR,
+        training_run_id VARCHAR,
+        model_spec_id VARCHAR,
+        active_alpha_model_id VARCHAR,
         uncertainty_score DOUBLE,
         disagreement_score DOUBLE,
         fallback_flag BOOLEAN,
@@ -276,11 +279,30 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS dim_alpha_model_spec (
+        model_spec_id VARCHAR PRIMARY KEY,
+        model_domain VARCHAR NOT NULL,
+        model_version VARCHAR NOT NULL,
+        estimation_scheme VARCHAR NOT NULL,
+        rolling_window_days INTEGER,
+        feature_version VARCHAR,
+        label_version VARCHAR,
+        selection_engine_version VARCHAR,
+        spec_payload_json VARCHAR,
+        active_candidate_flag BOOLEAN NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS fact_model_training_run (
         training_run_id VARCHAR PRIMARY KEY,
         run_id VARCHAR NOT NULL,
         model_domain VARCHAR,
         model_version VARCHAR NOT NULL,
+        model_spec_id VARCHAR,
+        estimation_scheme VARCHAR,
+        rolling_window_days INTEGER,
         horizon INTEGER NOT NULL,
         panel_name VARCHAR,
         train_end_date DATE NOT NULL,
@@ -304,6 +326,110 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         notes VARCHAR,
         status VARCHAR NOT NULL,
         created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_alpha_active_model (
+        active_alpha_model_id VARCHAR PRIMARY KEY,
+        horizon INTEGER NOT NULL,
+        model_spec_id VARCHAR NOT NULL,
+        training_run_id VARCHAR NOT NULL,
+        model_version VARCHAR NOT NULL,
+        source_type VARCHAR NOT NULL,
+        promotion_type VARCHAR NOT NULL,
+        promotion_report_json VARCHAR,
+        effective_from_date DATE NOT NULL,
+        effective_to_date DATE,
+        active_flag BOOLEAN NOT NULL,
+        rollback_of_active_alpha_model_id VARCHAR,
+        note VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_alpha_shadow_prediction (
+        run_id VARCHAR NOT NULL,
+        selection_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        model_spec_id VARCHAR NOT NULL,
+        training_run_id VARCHAR NOT NULL,
+        expected_excess_return DOUBLE,
+        lower_band DOUBLE,
+        median_band DOUBLE,
+        upper_band DOUBLE,
+        uncertainty_score DOUBLE,
+        disagreement_score DOUBLE,
+        fallback_flag BOOLEAN,
+        fallback_reason VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (selection_date, symbol, horizon, model_spec_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_alpha_shadow_ranking (
+        run_id VARCHAR NOT NULL,
+        selection_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        model_spec_id VARCHAR NOT NULL,
+        training_run_id VARCHAR NOT NULL,
+        final_selection_value DOUBLE,
+        selection_percentile DOUBLE,
+        grade VARCHAR,
+        report_candidate_flag BOOLEAN,
+        eligible_flag BOOLEAN,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (selection_date, symbol, horizon, model_spec_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_alpha_shadow_selection_outcome (
+        selection_date DATE NOT NULL,
+        evaluation_date DATE,
+        symbol VARCHAR NOT NULL,
+        market VARCHAR,
+        horizon INTEGER NOT NULL,
+        model_spec_id VARCHAR NOT NULL,
+        training_run_id VARCHAR NOT NULL,
+        selection_percentile DOUBLE,
+        report_candidate_flag BOOLEAN,
+        grade VARCHAR,
+        eligible_flag BOOLEAN,
+        final_selection_value DOUBLE,
+        expected_excess_return_at_selection DOUBLE,
+        lower_band_at_selection DOUBLE,
+        median_band_at_selection DOUBLE,
+        upper_band_at_selection DOUBLE,
+        uncertainty_score_at_selection DOUBLE,
+        disagreement_score_at_selection DOUBLE,
+        realized_excess_return DOUBLE,
+        prediction_error DOUBLE,
+        outcome_status VARCHAR,
+        source_label_version VARCHAR,
+        evaluation_run_id VARCHAR NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (selection_date, symbol, horizon, model_spec_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_alpha_shadow_evaluation_summary (
+        summary_date DATE NOT NULL,
+        window_type VARCHAR NOT NULL,
+        window_start DATE NOT NULL,
+        window_end DATE NOT NULL,
+        horizon INTEGER NOT NULL,
+        model_spec_id VARCHAR NOT NULL,
+        segment_value VARCHAR NOT NULL,
+        count_evaluated BIGINT NOT NULL,
+        mean_realized_excess_return DOUBLE,
+        mean_point_loss DOUBLE,
+        rank_ic DOUBLE,
+        evaluation_run_id VARCHAR NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (summary_date, window_type, horizon, model_spec_id, segment_value)
     )
     """,
     """
@@ -383,6 +509,9 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         fallback_flag_at_selection BOOLEAN,
         fallback_reason_at_selection VARCHAR,
         prediction_version_at_selection VARCHAR,
+        training_run_id_at_selection VARCHAR,
+        model_spec_id_at_selection VARCHAR,
+        active_alpha_model_id_at_selection VARCHAR,
         regime_label_at_selection VARCHAR,
         top_reason_tags_json VARCHAR,
         risk_flags_json VARCHAR,
@@ -1803,6 +1932,9 @@ MANIFEST_COLUMN_MIGRATIONS: tuple[str, ...] = (
 
 PREDICTION_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS model_version VARCHAR",
+    "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS training_run_id VARCHAR",
+    "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS model_spec_id VARCHAR",
+    "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS active_alpha_model_id VARCHAR",
     "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS uncertainty_score DOUBLE",
     "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS fallback_flag BOOLEAN",
     "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS fallback_reason VARCHAR",
@@ -1812,6 +1944,9 @@ PREDICTION_COLUMN_MIGRATIONS: tuple[str, ...] = (
 
 MODEL_TRAINING_RUN_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS model_domain VARCHAR",
+    "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS model_spec_id VARCHAR",
+    "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS estimation_scheme VARCHAR",
+    "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS rolling_window_days INTEGER",
     "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS panel_name VARCHAR",
     "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS train_session_count BIGINT",
     "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS validation_session_count BIGINT",
@@ -1844,6 +1979,18 @@ SELECTION_OUTCOME_COLUMN_MIGRATIONS: tuple[str, ...] = (
     (
         "ALTER TABLE fact_selection_outcome "
         "ADD COLUMN IF NOT EXISTS prediction_version_at_selection VARCHAR"
+    ),
+    (
+        "ALTER TABLE fact_selection_outcome "
+        "ADD COLUMN IF NOT EXISTS training_run_id_at_selection VARCHAR"
+    ),
+    (
+        "ALTER TABLE fact_selection_outcome "
+        "ADD COLUMN IF NOT EXISTS model_spec_id_at_selection VARCHAR"
+    ),
+    (
+        "ALTER TABLE fact_selection_outcome "
+        "ADD COLUMN IF NOT EXISTS active_alpha_model_id_at_selection VARCHAR"
     ),
 )
 
@@ -1974,8 +2121,30 @@ CORE_VIEW_DDL: tuple[str, ...] = (
             horizon,
             model_version,
             COALESCE(model_domain, 'default'),
+            COALESCE(model_spec_id, 'default'),
             COALESCE(panel_name, 'all')
         ORDER BY train_end_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_alpha_active_model AS
+    SELECT *
+    FROM fact_alpha_active_model
+    WHERE active_flag
+      AND effective_from_date <= CURRENT_DATE
+      AND (effective_to_date IS NULL OR effective_to_date >= CURRENT_DATE)
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon
+        ORDER BY effective_from_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_alpha_shadow_evaluation_summary AS
+    SELECT *
+    FROM fact_alpha_shadow_evaluation_summary
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, model_spec_id, segment_value, window_type
+        ORDER BY summary_date DESC, created_at DESC
     ) = 1
     """,
     """

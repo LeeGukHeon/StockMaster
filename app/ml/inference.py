@@ -11,11 +11,19 @@ import pandas as pd
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.features.feature_store import build_feature_store, load_feature_matrix
-from app.ml.constants import MODEL_VERSION, PREDICTION_VERSION, SELECTION_ENGINE_VERSION
+from app.ml.constants import (
+    MODEL_DOMAIN,
+    MODEL_SPEC_ID,
+    MODEL_VERSION,
+    PREDICTION_VERSION,
+    SELECTION_ENGINE_VERSION,
+)
 from app.ml.dataset import TRAINING_FEATURE_COLUMNS
 from app.ml.registry import (
+    load_active_alpha_model,
     load_latest_training_run,
     load_model_artifact,
+    load_training_run_by_id,
     upsert_model_member_predictions,
 )
 from app.selection.calibration import PREDICTION_VERSION as PROXY_PREDICTION_VERSION
@@ -53,6 +61,9 @@ PREDICTION_OUTPUT_COLUMNS: tuple[str, ...] = (
     "calibration_bucket",
     "calibration_sample_size",
     "model_version",
+    "training_run_id",
+    "model_spec_id",
+    "active_alpha_model_id",
     "uncertainty_score",
     "disagreement_score",
     "fallback_flag",
@@ -83,6 +94,9 @@ def _normalise_prediction_frame(frame: pd.DataFrame) -> pd.DataFrame:
         "prediction_version",
         "calibration_bucket",
         "model_version",
+        "training_run_id",
+        "model_spec_id",
+        "active_alpha_model_id",
         "fallback_reason",
         "ensemble_weight_json",
         "source_notes_json",
@@ -100,7 +114,11 @@ def _normalise_prediction_frame(frame: pd.DataFrame) -> pd.DataFrame:
 def upsert_predictions(connection, frame: pd.DataFrame) -> None:
     if frame.empty:
         return
-    connection.register("alpha_prediction_stage", frame)
+    stage = frame.copy()
+    for column in ("training_run_id", "model_spec_id", "active_alpha_model_id"):
+        if column not in stage.columns:
+            stage[column] = None
+    connection.register("alpha_prediction_stage", stage)
     connection.execute(
         """
         DELETE FROM fact_prediction
@@ -129,6 +147,9 @@ def upsert_predictions(connection, frame: pd.DataFrame) -> None:
             calibration_bucket,
             calibration_sample_size,
             model_version,
+            training_run_id,
+            model_spec_id,
+            active_alpha_model_id,
             uncertainty_score,
             disagreement_score,
             fallback_flag,
@@ -155,6 +176,9 @@ def upsert_predictions(connection, frame: pd.DataFrame) -> None:
             calibration_bucket,
             calibration_sample_size,
             model_version,
+            training_run_id,
+            model_spec_id,
+            active_alpha_model_id,
             uncertainty_score,
             disagreement_score,
             fallback_flag,
@@ -240,6 +264,9 @@ def _prediction_from_proxy(
             proxy.calibration_bucket,
             proxy.calibration_sample_size,
             ? AS model_version,
+            NULL::VARCHAR AS training_run_id,
+            NULL::VARCHAR AS model_spec_id,
+            NULL::VARCHAR AS active_alpha_model_id,
             NULL::DOUBLE AS uncertainty_score,
             NULL::DOUBLE AS disagreement_score,
             TRUE AS fallback_flag,
@@ -267,6 +294,209 @@ def _prediction_from_proxy(
     return frame
 
 
+def _resolve_training_run_for_inference(
+    connection,
+    *,
+    as_of_date: date,
+    horizon: int,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str]:
+    active_model = load_active_alpha_model(
+        connection,
+        as_of_date=as_of_date,
+        horizon=horizon,
+    )
+    if active_model is not None:
+        training_run = load_training_run_by_id(
+            connection,
+            training_run_id=str(active_model["training_run_id"]),
+        )
+        if training_run is not None:
+            return training_run, active_model, "active_registry"
+        active_model = None
+    training_run = load_latest_training_run(
+        connection,
+        horizon=horizon,
+        model_version=MODEL_VERSION,
+        train_end_date=as_of_date,
+        model_domain=MODEL_DOMAIN,
+        model_spec_id=MODEL_SPEC_ID,
+    )
+    if training_run is not None:
+        return training_run, active_model, "legacy_latest_successful"
+    return None, active_model, "missing"
+
+
+def build_prediction_frame_from_training_run(
+    *,
+    run_id: str,
+    as_of_date: date,
+    horizon: int,
+    feature_frame: pd.DataFrame,
+    training_run: dict[str, Any],
+    training_run_source: str,
+    ranking_version: str = SELECTION_ENGINE_VERSION,
+    prediction_version: str = PREDICTION_VERSION,
+    active_alpha_model_id: str | None = None,
+    persist_member_predictions: bool = True,
+) -> tuple[pd.DataFrame, list[pd.DataFrame]]:
+    if not training_run.get("artifact_uri"):
+        return pd.DataFrame(columns=PREDICTION_OUTPUT_COLUMNS), []
+
+    artifact_payload = load_model_artifact(Path(str(training_run["artifact_uri"])))
+    working = feature_frame.copy()
+    feature_columns = list(artifact_payload.get("feature_columns", list(TRAINING_FEATURE_COLUMNS)))
+    for column in feature_columns:
+        if column not in working.columns:
+            working[column] = pd.NA
+    X_inference = working[feature_columns].apply(
+        pd.to_numeric,
+        errors="coerce",
+    )
+    member_predictions: dict[str, pd.Series] = {}
+    for member_name in artifact_payload.get("member_order", []):
+        model = artifact_payload["members"].get(member_name)
+        if model is None:
+            continue
+        member_predictions[member_name] = pd.Series(
+            model.predict(X_inference),
+            index=working.index,
+            dtype="float64",
+        )
+
+    if not member_predictions:
+        return pd.DataFrame(columns=PREDICTION_OUTPUT_COLUMNS), []
+
+    ensemble_weights = {
+        str(key): float(value)
+        for key, value in artifact_payload.get("ensemble_weights", {}).items()
+        if key in member_predictions
+    }
+    if not ensemble_weights:
+        equal_weight = 1.0 / len(member_predictions)
+        ensemble_weights = {member_name: equal_weight for member_name in member_predictions}
+    ensemble_prediction = sum(
+        member_predictions[member_name] * weight
+        for member_name, weight in ensemble_weights.items()
+    )
+    disagreement_raw = pd.concat(member_predictions.values(), axis=1).std(axis=1, ddof=0)
+    disagreement_score = disagreement_raw.rank(pct=True).mul(100.0)
+    calibration_rows = artifact_payload.get("calibration", [])
+    bucket_records = [
+        _bucket_from_calibration(calibration_rows, float(value)) for value in ensemble_prediction
+    ]
+    band_frame = pd.DataFrame(bucket_records)
+    result_frame = pd.DataFrame(
+        {
+            "run_id": run_id,
+            "as_of_date": as_of_date,
+            "symbol": working["symbol"],
+            "horizon": int(horizon),
+            "market": working["market"],
+            "ranking_version": ranking_version,
+            "prediction_version": prediction_version,
+            "expected_excess_return": ensemble_prediction,
+            "lower_band": ensemble_prediction
+            + pd.to_numeric(band_frame["residual_q25"], errors="coerce").fillna(0.0),
+            "median_band": ensemble_prediction
+            + pd.to_numeric(band_frame["residual_median"], errors="coerce").fillna(0.0),
+            "upper_band": ensemble_prediction
+            + pd.to_numeric(band_frame["residual_q75"], errors="coerce").fillna(0.0),
+            "calibration_start_date": training_run.get("validation_window_start"),
+            "calibration_end_date": training_run.get("validation_window_end"),
+            "calibration_bucket": band_frame["bucket"],
+            "calibration_sample_size": band_frame["sample_count"],
+            "model_version": MODEL_VERSION,
+            "training_run_id": training_run["training_run_id"],
+            "model_spec_id": training_run.get("model_spec_id")
+            or artifact_payload.get("model_spec_id")
+            or MODEL_SPEC_ID,
+            "active_alpha_model_id": active_alpha_model_id,
+            "uncertainty_score": pd.to_numeric(
+                band_frame["expected_abs_error"],
+                errors="coerce",
+            ),
+            "disagreement_score": disagreement_score,
+            "fallback_flag": bool(artifact_payload.get("fallback_flag", False)),
+            "fallback_reason": artifact_payload.get("fallback_reason"),
+            "member_count": len(member_predictions),
+            "ensemble_weight_json": json.dumps(
+                ensemble_weights,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "source_notes_json": [
+                json.dumps(
+                    {
+                        "training_run_id": training_run["training_run_id"],
+                        "artifact_uri": training_run["artifact_uri"],
+                        "model_spec_id": (
+                            training_run.get("model_spec_id")
+                            or artifact_payload.get("model_spec_id")
+                            or MODEL_SPEC_ID
+                        ),
+                        "active_alpha_model_id": active_alpha_model_id,
+                        "training_run_source": training_run_source,
+                        "fallback_flag": bool(artifact_payload.get("fallback_flag", False)),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            ]
+            * len(working),
+            "created_at": pd.Timestamp.utcnow(),
+        }
+    )
+    if result_frame["uncertainty_score"].notna().any():
+        result_frame["uncertainty_score"] = (
+            result_frame["uncertainty_score"].rank(pct=True).mul(100.0)
+        )
+
+    member_prediction_frames: list[pd.DataFrame] = []
+    if persist_member_predictions:
+        prediction_created_at = pd.Timestamp.utcnow()
+        for member_name, values in member_predictions.items():
+            member_prediction_frames.append(
+                pd.DataFrame(
+                    {
+                        "training_run_id": training_run["training_run_id"],
+                        "as_of_date": as_of_date,
+                        "symbol": working["symbol"],
+                        "horizon": int(horizon),
+                        "model_version": MODEL_VERSION,
+                        "prediction_role": "inference",
+                        "member_name": member_name,
+                        "predicted_excess_return": values,
+                        "actual_excess_return": pd.NA,
+                        "residual": pd.NA,
+                        "fallback_flag": bool(artifact_payload.get("fallback_flag", False)),
+                        "fallback_reason": artifact_payload.get("fallback_reason"),
+                        "created_at": prediction_created_at,
+                    }
+                )
+            )
+        member_prediction_frames.append(
+            pd.DataFrame(
+                {
+                    "training_run_id": training_run["training_run_id"],
+                    "as_of_date": as_of_date,
+                    "symbol": working["symbol"],
+                    "horizon": int(horizon),
+                    "model_version": MODEL_VERSION,
+                    "prediction_role": "inference",
+                    "member_name": "ensemble",
+                    "predicted_excess_return": ensemble_prediction,
+                    "actual_excess_return": pd.NA,
+                    "residual": pd.NA,
+                    "fallback_flag": bool(artifact_payload.get("fallback_flag", False)),
+                    "fallback_reason": artifact_payload.get("fallback_reason"),
+                    "created_at": prediction_created_at,
+                }
+            )
+        )
+
+    return _normalise_prediction_frame(result_frame), member_prediction_frames
+
+
 def materialize_alpha_predictions_v1(
     settings: Settings,
     *,
@@ -290,7 +520,11 @@ def materialize_alpha_predictions_v1(
                 run_type=run_context.run_type,
                 started_at=run_context.started_at,
                 as_of_date=run_context.as_of_date,
-                input_sources=["fact_feature_snapshot", "fact_model_training_run"],
+                input_sources=[
+                    "fact_feature_snapshot",
+                    "fact_model_training_run",
+                    "fact_alpha_active_model",
+                ],
                 notes=(
                     "Materialize alpha model v1 predictions. "
                     f"as_of_date={as_of_date.isoformat()} horizons={horizons}"
@@ -314,13 +548,16 @@ def materialize_alpha_predictions_v1(
                 member_prediction_frames: list[pd.DataFrame] = []
                 artifact_paths: list[str] = []
                 for horizon in horizons:
-                    latest_training_run = load_latest_training_run(
+                    (
+                        selected_training_run,
+                        active_alpha_model,
+                        training_run_source,
+                    ) = _resolve_training_run_for_inference(
                         connection,
+                        as_of_date=as_of_date,
                         horizon=int(horizon),
-                        model_version=MODEL_VERSION,
-                        train_end_date=as_of_date,
                     )
-                    if latest_training_run is None:
+                    if selected_training_run is None:
                         proxy_frame = _prediction_from_proxy(
                             connection,
                             run_id=run_context.run_id,
@@ -331,7 +568,9 @@ def materialize_alpha_predictions_v1(
                             prediction_frames.append(_normalise_prediction_frame(proxy_frame))
                             continue
 
-                    if latest_training_run is None or not latest_training_run.get("artifact_uri"):
+                    if selected_training_run is None or not selected_training_run.get(
+                        "artifact_uri"
+                    ):
                         fallback_frame = feature_frame[["as_of_date", "symbol", "market"]].copy()
                         fallback_frame["run_id"] = run_context.run_id
                         fallback_frame["horizon"] = int(horizon)
@@ -346,6 +585,9 @@ def materialize_alpha_predictions_v1(
                         fallback_frame["calibration_bucket"] = pd.NA
                         fallback_frame["calibration_sample_size"] = pd.NA
                         fallback_frame["model_version"] = MODEL_VERSION
+                        fallback_frame["training_run_id"] = pd.NA
+                        fallback_frame["model_spec_id"] = pd.NA
+                        fallback_frame["active_alpha_model_id"] = pd.NA
                         fallback_frame["uncertainty_score"] = pd.NA
                         fallback_frame["disagreement_score"] = pd.NA
                         fallback_frame["fallback_flag"] = True
@@ -381,6 +623,9 @@ def materialize_alpha_predictions_v1(
                                         "calibration_bucket",
                                         "calibration_sample_size",
                                         "model_version",
+                                        "training_run_id",
+                                        "model_spec_id",
+                                        "active_alpha_model_id",
                                         "uncertainty_score",
                                         "disagreement_score",
                                         "fallback_flag",
@@ -395,32 +640,20 @@ def materialize_alpha_predictions_v1(
                         )
                         continue
 
-                    artifact_payload = load_model_artifact(
-                        Path(str(latest_training_run["artifact_uri"]))
+                    result_frame, member_frames = build_prediction_frame_from_training_run(
+                        run_id=run_context.run_id,
+                        as_of_date=as_of_date,
+                        horizon=int(horizon),
+                        feature_frame=feature_frame,
+                        training_run=selected_training_run,
+                        training_run_source=training_run_source,
+                        active_alpha_model_id=(
+                            active_alpha_model.get("active_alpha_model_id")
+                            if active_alpha_model is not None
+                            else None
+                        ),
                     )
-                    working = feature_frame.copy()
-                    feature_columns = list(
-                        artifact_payload.get("feature_columns", list(TRAINING_FEATURE_COLUMNS))
-                    )
-                    for column in feature_columns:
-                        if column not in working.columns:
-                            working[column] = pd.NA
-                    X_inference = working[feature_columns].apply(
-                        pd.to_numeric,
-                        errors="coerce",
-                    )
-                    member_predictions: dict[str, pd.Series] = {}
-                    for member_name in artifact_payload.get("member_order", []):
-                        model = artifact_payload["members"].get(member_name)
-                        if model is None:
-                            continue
-                        member_predictions[member_name] = pd.Series(
-                            model.predict(X_inference),
-                            index=working.index,
-                            dtype="float64",
-                        )
-
-                    if not member_predictions:
+                    if result_frame.empty:
                         proxy_frame = _prediction_from_proxy(
                             connection,
                             run_id=run_context.run_id,
@@ -430,142 +663,8 @@ def materialize_alpha_predictions_v1(
                         if not proxy_frame.empty:
                             prediction_frames.append(_normalise_prediction_frame(proxy_frame))
                         continue
-
-                    ensemble_weights = {
-                        str(key): float(value)
-                        for key, value in artifact_payload.get("ensemble_weights", {}).items()
-                        if key in member_predictions
-                    }
-                    if not ensemble_weights:
-                        equal_weight = 1.0 / len(member_predictions)
-                        ensemble_weights = {
-                            member_name: equal_weight for member_name in member_predictions
-                        }
-                    ensemble_prediction = sum(
-                        member_predictions[member_name] * weight
-                        for member_name, weight in ensemble_weights.items()
-                    )
-                    disagreement_raw = pd.concat(member_predictions.values(), axis=1).std(
-                        axis=1,
-                        ddof=0,
-                    )
-                    disagreement_score = disagreement_raw.rank(pct=True).mul(100.0)
-                    calibration_rows = artifact_payload.get("calibration", [])
-                    bucket_records = [
-                        _bucket_from_calibration(calibration_rows, float(value))
-                        for value in ensemble_prediction
-                    ]
-                    band_frame = pd.DataFrame(bucket_records)
-                    result_frame = pd.DataFrame(
-                        {
-                            "run_id": run_context.run_id,
-                            "as_of_date": as_of_date,
-                            "symbol": working["symbol"],
-                            "horizon": int(horizon),
-                            "market": working["market"],
-                            "ranking_version": SELECTION_ENGINE_VERSION,
-                            "prediction_version": PREDICTION_VERSION,
-                            "expected_excess_return": ensemble_prediction,
-                            "lower_band": ensemble_prediction
-                            + pd.to_numeric(band_frame["residual_q25"], errors="coerce").fillna(
-                                0.0
-                            ),
-                            "median_band": ensemble_prediction
-                            + pd.to_numeric(band_frame["residual_median"], errors="coerce").fillna(
-                                0.0
-                            ),
-                            "upper_band": ensemble_prediction
-                            + pd.to_numeric(band_frame["residual_q75"], errors="coerce").fillna(
-                                0.0
-                            ),
-                            "calibration_start_date": latest_training_run.get(
-                                "validation_window_start"
-                            ),
-                            "calibration_end_date": latest_training_run.get(
-                                "validation_window_end"
-                            ),
-                            "calibration_bucket": band_frame["bucket"],
-                            "calibration_sample_size": band_frame["sample_count"],
-                            "model_version": MODEL_VERSION,
-                            "uncertainty_score": pd.to_numeric(
-                                band_frame["expected_abs_error"],
-                                errors="coerce",
-                            ),
-                            "disagreement_score": disagreement_score,
-                            "fallback_flag": bool(artifact_payload.get("fallback_flag", False)),
-                            "fallback_reason": artifact_payload.get("fallback_reason"),
-                            "member_count": len(member_predictions),
-                            "ensemble_weight_json": json.dumps(
-                                ensemble_weights,
-                                ensure_ascii=False,
-                                sort_keys=True,
-                            ),
-                            "source_notes_json": [
-                                json.dumps(
-                                    {
-                                        "training_run_id": latest_training_run["training_run_id"],
-                                        "artifact_uri": latest_training_run["artifact_uri"],
-                                        "fallback_flag": bool(
-                                            artifact_payload.get("fallback_flag", False)
-                                        ),
-                                    },
-                                    ensure_ascii=False,
-                                    sort_keys=True,
-                                )
-                            ]
-                            * len(working),
-                            "created_at": pd.Timestamp.utcnow(),
-                        }
-                    )
-                    if result_frame["uncertainty_score"].notna().any():
-                        uncertainty_score = (
-                            result_frame["uncertainty_score"].rank(pct=True).mul(100.0)
-                        )
-                        result_frame["uncertainty_score"] = uncertainty_score
-                    prediction_frames.append(_normalise_prediction_frame(result_frame))
-
-                    prediction_created_at = pd.Timestamp.utcnow()
-                    for member_name, values in member_predictions.items():
-                        member_prediction_frames.append(
-                            pd.DataFrame(
-                                {
-                                    "training_run_id": latest_training_run["training_run_id"],
-                                    "as_of_date": as_of_date,
-                                    "symbol": working["symbol"],
-                                    "horizon": int(horizon),
-                                    "model_version": MODEL_VERSION,
-                                    "prediction_role": "inference",
-                                    "member_name": member_name,
-                                    "predicted_excess_return": values,
-                                    "actual_excess_return": pd.NA,
-                                    "residual": pd.NA,
-                                    "fallback_flag": bool(
-                                        artifact_payload.get("fallback_flag", False)
-                                    ),
-                                    "fallback_reason": artifact_payload.get("fallback_reason"),
-                                    "created_at": prediction_created_at,
-                                }
-                            )
-                        )
-                    member_prediction_frames.append(
-                        pd.DataFrame(
-                            {
-                                "training_run_id": latest_training_run["training_run_id"],
-                                "as_of_date": as_of_date,
-                                "symbol": working["symbol"],
-                                "horizon": int(horizon),
-                                "model_version": MODEL_VERSION,
-                                "prediction_role": "inference",
-                                "member_name": "ensemble",
-                                "predicted_excess_return": ensemble_prediction,
-                                "actual_excess_return": pd.NA,
-                                "residual": pd.NA,
-                                "fallback_flag": bool(artifact_payload.get("fallback_flag", False)),
-                                "fallback_reason": artifact_payload.get("fallback_reason"),
-                                "created_at": prediction_created_at,
-                            }
-                        )
-                    )
+                    prediction_frames.append(result_frame)
+                    member_prediction_frames.extend(member_frames)
 
                 non_empty_prediction_frames = [
                     frame for frame in prediction_frames if not frame.empty

@@ -343,6 +343,9 @@ def upsert_selection_outcomes(connection, frame: pd.DataFrame) -> None:
             fallback_flag_at_selection,
             fallback_reason_at_selection,
             prediction_version_at_selection,
+            training_run_id_at_selection,
+            model_spec_id_at_selection,
+            active_alpha_model_id_at_selection,
             regime_label_at_selection,
             top_reason_tags_json,
             risk_flags_json,
@@ -388,6 +391,9 @@ def upsert_selection_outcomes(connection, frame: pd.DataFrame) -> None:
             fallback_flag_at_selection,
             fallback_reason_at_selection,
             prediction_version_at_selection,
+            training_run_id_at_selection,
+            model_spec_id_at_selection,
+            active_alpha_model_id_at_selection,
             regime_label_at_selection,
             top_reason_tags_json,
             risk_flags_json,
@@ -600,6 +606,9 @@ def materialize_selection_outcomes(
                         prediction.disagreement_score AS disagreement_score_at_selection,
                         prediction.fallback_flag AS fallback_flag_at_selection,
                         prediction.fallback_reason AS fallback_reason_at_selection,
+                        prediction.training_run_id AS training_run_id_at_selection,
+                        prediction.model_spec_id AS model_spec_id_at_selection,
+                        prediction.active_alpha_model_id AS active_alpha_model_id_at_selection,
                         label.entry_date AS entry_trade_date,
                         label.exit_date AS exit_trade_date,
                         label.gross_forward_return AS realized_return,
@@ -669,8 +678,11 @@ def materialize_selection_outcomes(
                 ) & joined["selection_percentile"].fillna(0.0).ge(0.85)
                 missing_uncertainty = joined["uncertainty_score_at_selection"].isna()
                 joined.loc[missing_uncertainty, "uncertainty_score_at_selection"] = (
-                    score_payloads.loc[missing_uncertainty].map(
-                        lambda payload: payload.get("uncertainty_proxy_score")
+                    pd.to_numeric(
+                        score_payloads.loc[missing_uncertainty].map(
+                            lambda payload: payload.get("uncertainty_proxy_score")
+                        ),
+                        errors="coerce",
                     )
                 )
                 joined["implementation_penalty_at_selection"] = score_payloads.map(
@@ -762,6 +774,9 @@ def materialize_selection_outcomes(
                         "fallback_flag_at_selection",
                         "fallback_reason_at_selection",
                         "prediction_version_at_selection",
+                        "training_run_id_at_selection",
+                        "model_spec_id_at_selection",
+                        "active_alpha_model_id_at_selection",
                         "regime_label_at_selection",
                         "top_reason_tags_json",
                         "risk_flags_json",

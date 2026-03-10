@@ -3,8 +3,15 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+from app.evaluation.outcomes import materialize_selection_outcomes
+from app.ml.active import freeze_alpha_active_model
 from app.ml.comparison import compare_selection_engines
-from app.ml.constants import MODEL_VERSION, PREDICTION_VERSION, SELECTION_ENGINE_VERSION
+from app.ml.constants import (
+    MODEL_SPEC_ID,
+    MODEL_VERSION,
+    PREDICTION_VERSION,
+    SELECTION_ENGINE_VERSION,
+)
 from app.ml.diagnostics import render_model_diagnostic_report
 from app.ml.inference import materialize_alpha_predictions_v1
 from app.ml.training import (
@@ -86,6 +93,108 @@ def test_train_alpha_model_v1_persists_registry_and_metrics(tmp_path):
     assert registry_count == 2
     assert metric_count >= 8
     assert validation_prediction_count > 0
+
+
+def test_freeze_active_alpha_model_controls_inference_and_outcome_lineage(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+    train_alpha_model_v1(
+        settings,
+        train_end_date=date(2026, 3, 5),
+        horizons=[1, 5],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+    )
+    train_alpha_model_v1(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+    )
+    freeze_result = freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        source="test_suite",
+        note="freeze prior run",
+        horizons=[1, 5],
+        train_end_date=date(2026, 3, 5),
+    )
+    prediction_result = materialize_alpha_predictions_v1(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        limit_symbols=4,
+    )
+    materialize_selection_engine_v2(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        limit_symbols=4,
+    )
+    materialize_selection_outcomes(
+        settings,
+        selection_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        limit_symbols=4,
+        ranking_versions=[SELECTION_ENGINE_VERSION],
+    )
+
+    assert freeze_result.row_count == 2
+    assert prediction_result.row_count == 8
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        expected_runs = dict(
+            connection.execute(
+                """
+                SELECT horizon, training_run_id
+                FROM fact_model_training_run
+                WHERE train_end_date = ?
+                  AND model_version = ?
+                ORDER BY horizon
+                """,
+                [date(2026, 3, 5), MODEL_VERSION],
+            ).fetchall()
+        )
+        prediction_lineage = connection.execute(
+            """
+            SELECT
+                horizon,
+                COUNT(DISTINCT training_run_id) AS training_run_count,
+                MIN(training_run_id) AS training_run_id,
+                COUNT(DISTINCT active_alpha_model_id) AS active_model_count,
+                MIN(model_spec_id) AS model_spec_id
+            FROM fact_prediction
+            WHERE as_of_date = ?
+              AND prediction_version = ?
+            GROUP BY horizon
+            ORDER BY horizon
+            """,
+            [date(2026, 3, 6), PREDICTION_VERSION],
+        ).fetchall()
+        outcome_lineage_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_selection_outcome
+            WHERE selection_date = ?
+              AND ranking_version = ?
+              AND training_run_id_at_selection IS NOT NULL
+              AND model_spec_id_at_selection IS NOT NULL
+              AND active_alpha_model_id_at_selection IS NOT NULL
+            """,
+            [date(2026, 3, 6), SELECTION_ENGINE_VERSION],
+        ).fetchone()[0]
+
+    assert len(expected_runs) == 2
+    for horizon, training_run_count, training_run_id, active_model_count, model_spec_id in (
+        prediction_lineage
+    ):
+        assert int(training_run_count) == 1
+        assert training_run_id == expected_runs[int(horizon)]
+        assert int(active_model_count) == 1
+        assert model_spec_id == MODEL_SPEC_ID
+    assert int(outcome_lineage_count or 0) > 0
 
 
 def test_materialize_alpha_predictions_and_selection_engine_v2(tmp_path):
