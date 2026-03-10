@@ -18,12 +18,17 @@ from app.ui.components import (
     render_report_center,
 )
 from app.ui.helpers import (
+    krx_service_registry_frame,
     latest_active_ops_policy_frame,
     latest_alert_event_frame,
     latest_app_snapshot_frame,
     latest_disk_watermark_event_frame,
     latest_health_snapshot_frame,
     latest_job_runs_frame,
+    latest_krx_budget_snapshot_frame,
+    latest_krx_request_log_frame,
+    latest_krx_service_status_frame,
+    latest_krx_source_attribution_frame,
     latest_ops_report_preview,
     latest_pipeline_dependency_frame,
     latest_recovery_queue_frame,
@@ -57,6 +62,11 @@ ops_preview = latest_ops_report_preview(settings)
 scheduler_catalog = scheduler_job_catalog_frame(settings)
 scheduler_state = latest_scheduler_state_frame(settings, limit=30)
 scheduler_runs = latest_scheduler_bundle_result_frame(settings, limit=30)
+krx_budget = latest_krx_budget_snapshot_frame(settings, limit=10)
+krx_status = latest_krx_service_status_frame(settings, limit=20)
+krx_logs = latest_krx_request_log_frame(settings, limit=20)
+krx_attribution = latest_krx_source_attribution_frame(settings, limit=20)
+krx_registry = krx_service_registry_frame()
 
 render_page_header(
     settings,
@@ -103,6 +113,30 @@ with st.expander("최근 자동 번들 실행 결과와 수동 실행 명령", e
         st.info("최근 자동 번들 실행 결과가 없습니다.")
     else:
         st.dataframe(localize_frame(scheduler_runs), width="stretch", hide_index=True)
+
+st.subheader("KRX 라이브 상태")
+krx_left, krx_right = st.columns(2)
+with krx_left:
+    if krx_status.empty:
+        st.info("아직 KRX 서비스 상태 이력이 없습니다. smoke test를 먼저 실행하세요.")
+    else:
+        st.dataframe(localize_frame(krx_status), width="stretch", hide_index=True)
+with krx_right:
+    if krx_budget.empty:
+        st.info("아직 KRX 요청 예산 스냅샷이 없습니다.")
+    else:
+        st.dataframe(localize_frame(krx_budget), width="stretch", hide_index=True)
+
+with st.expander("KRX 요청 로그 / 출처 표기 / 승인 서비스", expanded=False):
+    if krx_logs.empty:
+        st.info("아직 KRX 요청 로그가 없습니다.")
+    else:
+        st.dataframe(localize_frame(krx_logs), width="stretch", hide_index=True)
+    if krx_attribution.empty:
+        st.info("아직 KRX 출처 표기 스냅샷이 없습니다.")
+    else:
+        st.dataframe(localize_frame(krx_attribution), width="stretch", hide_index=True)
+    st.dataframe(localize_frame(krx_registry), width="stretch", hide_index=True)
 
 run_left, run_right = st.columns(2)
 with run_left:

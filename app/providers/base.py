@@ -119,7 +119,55 @@ _PROVIDER_REQUEST_POLICIES: dict[str, dict[str, ProviderRequestPolicy]] = {
             retries=4,
             retry_delay_seconds=1.0,
             transport_retry_delay_seconds=1.25,
-        )
+        ),
+        "stock_kospi_daily_trade": ProviderRequestPolicy(
+            min_interval_seconds=0.6,
+            retries=4,
+            retry_delay_seconds=1.0,
+            transport_retry_delay_seconds=1.25,
+        ),
+        "stock_kosdaq_daily_trade": ProviderRequestPolicy(
+            min_interval_seconds=0.6,
+            retries=4,
+            retry_delay_seconds=1.0,
+            transport_retry_delay_seconds=1.25,
+        ),
+        "stock_kospi_symbol_master": ProviderRequestPolicy(
+            min_interval_seconds=0.75,
+            retries=4,
+            retry_delay_seconds=1.25,
+            transport_retry_delay_seconds=1.5,
+        ),
+        "stock_kosdaq_symbol_master": ProviderRequestPolicy(
+            min_interval_seconds=0.75,
+            retries=4,
+            retry_delay_seconds=1.25,
+            transport_retry_delay_seconds=1.5,
+        ),
+        "index_krx_daily": ProviderRequestPolicy(
+            min_interval_seconds=0.6,
+            retries=4,
+            retry_delay_seconds=1.0,
+            transport_retry_delay_seconds=1.25,
+        ),
+        "index_kospi_daily": ProviderRequestPolicy(
+            min_interval_seconds=0.6,
+            retries=4,
+            retry_delay_seconds=1.0,
+            transport_retry_delay_seconds=1.25,
+        ),
+        "index_kosdaq_daily": ProviderRequestPolicy(
+            min_interval_seconds=0.6,
+            retries=4,
+            retry_delay_seconds=1.0,
+            transport_retry_delay_seconds=1.25,
+        ),
+        "etf_daily_trade": ProviderRequestPolicy(
+            min_interval_seconds=0.6,
+            retries=4,
+            retry_delay_seconds=1.0,
+            transport_retry_delay_seconds=1.25,
+        ),
     },
 }
 

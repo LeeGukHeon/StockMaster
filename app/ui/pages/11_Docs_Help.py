@@ -40,6 +40,8 @@ tabs = st.tabs(
         "한계와 주의",
         "리포트 / 화면 안내",
         "장중 리서치 모드",
+        "KRX Live",
+        "KRX 서비스",
         "서버 배포",
         "자동 스케줄러",
         "감사 / DB 문서",
@@ -67,6 +69,12 @@ with tabs[5]:
     st.markdown(read_markdown(PROJECT_ROOT / "docs/INTRADAY_RESEARCH_MODE.md"))
 
 with tabs[6]:
+    st.markdown(read_markdown(PROJECT_ROOT / "docs/KRX_LIVE_INTEGRATION.md"))
+
+with tabs[7]:
+    st.markdown(read_markdown(PROJECT_ROOT / "docs/KRX_SERVICE_REGISTRY.md"))
+
+with tabs[8]:
     st.markdown(read_markdown(PROJECT_ROOT / "docs/DEPLOY_OCI.md"))
     st.markdown("---")
     st.markdown(read_markdown(PROJECT_ROOT / "docs/RUNBOOK_SERVER_OPERATIONS.md"))
@@ -75,12 +83,12 @@ with tabs[6]:
     with st.expander("외부 접속 체크리스트", expanded=False):
         st.markdown(read_markdown(PROJECT_ROOT / "docs/EXTERNAL_ACCESS_CHECKLIST.md"))
 
-with tabs[7]:
+with tabs[9]:
     st.markdown(read_markdown(PROJECT_ROOT / "docs/SCHEDULER_AUTOMATION.md"))
     st.markdown("---")
     st.markdown(read_markdown(PROJECT_ROOT / "docs/SCHEDULER_SERVER_RUNBOOK.md"))
 
-with tabs[8]:
+with tabs[10]:
     st.markdown(read_markdown(PROJECT_ROOT / "docs/AUDIT_T000_T013_STATUS.md"))
     st.markdown("---")
     st.markdown(read_markdown(PROJECT_ROOT / "docs/DB_CONTRACT_MATRIX.md"))
@@ -89,11 +97,11 @@ with tabs[8]:
     with st.expander("케이스 runbook", expanded=False):
         st.markdown(read_markdown(PROJECT_ROOT / "docs/CASE_RUNBOOK_T000_T013.md"))
 
-with tabs[9]:
+with tabs[11]:
     st.subheader("최신 리포트 목록")
     render_report_center(settings, limit=20)
 
-with tabs[10]:
+with tabs[12]:
     st.subheader("릴리스 체크 항목")
     render_release_candidate_summary(settings, limit=20)
     preview = latest_release_candidate_preview(settings)

@@ -36,7 +36,15 @@ providers:
     daily_request_budget: 1000
     request_timeout_seconds: 20.0
     source_attribution_label: 한국거래소 통계정보
-    service_urls: {}
+    service_urls:
+      stock_kospi_daily_trade: https://data-dbg.krx.co.kr/svc/apis/sto/stk_bydd_trd
+      stock_kosdaq_daily_trade: https://data-dbg.krx.co.kr/svc/apis/sto/ksq_bydd_trd
+      stock_kospi_symbol_master: https://data-dbg.krx.co.kr/svc/apis/sto/stk_isu_base_info
+      stock_kosdaq_symbol_master: https://data-dbg.krx.co.kr/svc/apis/sto/ksq_isu_base_info
+      index_krx_daily: https://data-dbg.krx.co.kr/svc/apis/idx/krx_dd_trd
+      index_kospi_daily: https://data-dbg.krx.co.kr/svc/apis/idx/kospi_dd_trd
+      index_kosdaq_daily: https://data-dbg.krx.co.kr/svc/apis/idx/kosdaq_dd_trd
+      etf_daily_trade: https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd
   naver_news:
     base_url: https://openapi.naver.com
 

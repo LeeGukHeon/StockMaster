@@ -1634,6 +1634,70 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_external_api_request_log (
+        request_id VARCHAR PRIMARY KEY,
+        provider_name VARCHAR NOT NULL,
+        service_slug VARCHAR NOT NULL,
+        run_id VARCHAR,
+        as_of_date DATE,
+        request_ts TIMESTAMPTZ NOT NULL,
+        http_status INTEGER,
+        status VARCHAR NOT NULL,
+        latency_ms INTEGER,
+        rows_received BIGINT NOT NULL DEFAULT 0,
+        used_fallback BOOLEAN NOT NULL DEFAULT FALSE,
+        error_code VARCHAR,
+        error_message VARCHAR,
+        endpoint_url VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_external_api_budget_snapshot (
+        budget_snapshot_id VARCHAR PRIMARY KEY,
+        provider_name VARCHAR NOT NULL,
+        snapshot_ts TIMESTAMPTZ NOT NULL,
+        date_kst DATE NOT NULL,
+        request_budget BIGINT NOT NULL,
+        requests_used BIGINT NOT NULL,
+        usage_ratio DOUBLE NOT NULL,
+        throttle_state VARCHAR NOT NULL,
+        details_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_krx_service_status (
+        service_status_id VARCHAR PRIMARY KEY,
+        service_slug VARCHAR NOT NULL,
+        display_name_ko VARCHAR NOT NULL,
+        approval_expected BOOLEAN NOT NULL,
+        enabled_by_env BOOLEAN NOT NULL,
+        last_smoke_status VARCHAR NOT NULL,
+        last_smoke_ts TIMESTAMPTZ NOT NULL,
+        last_success_ts TIMESTAMPTZ,
+        last_http_status INTEGER,
+        last_error_class VARCHAR,
+        fallback_mode VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_source_attribution_snapshot (
+        attribution_snapshot_id VARCHAR PRIMARY KEY,
+        snapshot_ts TIMESTAMPTZ NOT NULL,
+        as_of_date DATE,
+        page_slug VARCHAR NOT NULL,
+        component_slug VARCHAR NOT NULL,
+        source_label VARCHAR NOT NULL,
+        provider_name VARCHAR NOT NULL,
+        active_flag BOOLEAN NOT NULL,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS fact_latest_app_snapshot (
         snapshot_id VARCHAR PRIMARY KEY,
         snapshot_ts TIMESTAMPTZ NOT NULL,
@@ -2539,6 +2603,42 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY lock_name
         ORDER BY acquired_at DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_external_api_request_log AS
+    SELECT *
+    FROM fact_external_api_request_log
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY provider_name, service_slug, COALESCE(as_of_date, DATE '1970-01-01')
+        ORDER BY request_ts DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_external_api_budget_snapshot AS
+    SELECT *
+    FROM fact_external_api_budget_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY provider_name, date_kst
+        ORDER BY snapshot_ts DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_krx_service_status AS
+    SELECT *
+    FROM fact_krx_service_status
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY service_slug
+        ORDER BY last_smoke_ts DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_source_attribution_snapshot AS
+    SELECT *
+    FROM fact_source_attribution_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY page_slug, component_slug
+        ORDER BY snapshot_ts DESC, created_at DESC
     ) = 1
     """,
     """

@@ -18,6 +18,7 @@ from app.ui.components import (
     render_warning_banner,
 )
 from app.ui.helpers import (
+    krx_service_registry_frame,
     latest_active_lock_frame,
     latest_alert_event_frame,
     latest_disk_watermark_event_frame,
@@ -26,6 +27,10 @@ from app.ui.helpers import (
     latest_intraday_strategy_comparison_frame,
     latest_intraday_timing_calibration_frame,
     latest_job_runs_frame,
+    latest_krx_budget_snapshot_frame,
+    latest_krx_request_log_frame,
+    latest_krx_service_status_frame,
+    latest_krx_source_attribution_frame,
     latest_pipeline_dependency_frame,
     latest_recovery_queue_frame,
     latest_retention_cleanup_frame,
@@ -55,6 +60,11 @@ scheduler_runs = latest_scheduler_bundle_result_frame(settings, limit=30)
 intraday_capability = latest_intraday_research_capability_frame(settings, limit=20)
 intraday_strategy = latest_intraday_strategy_comparison_frame(settings, limit=20)
 intraday_calibration = latest_intraday_timing_calibration_frame(settings, limit=20)
+krx_budget = latest_krx_budget_snapshot_frame(settings, limit=10)
+krx_status = latest_krx_service_status_frame(settings, limit=20)
+krx_logs = latest_krx_request_log_frame(settings, limit=20)
+krx_attribution = latest_krx_source_attribution_frame(settings, limit=20)
+krx_registry = krx_service_registry_frame()
 
 render_page_header(
     settings,
@@ -119,6 +129,31 @@ with intraday_left:
 with intraday_right:
     st.subheader("장중 타이밍 보정")
     st.dataframe(localize_frame(intraday_calibration), width="stretch", hide_index=True)
+
+krx_left, krx_right = st.columns(2)
+with krx_left:
+    st.subheader("KRX Live 서비스 상태")
+    if krx_status.empty:
+        st.info("아직 KRX live 상태 스냅샷이 없습니다.")
+    else:
+        st.dataframe(localize_frame(krx_status), width="stretch", hide_index=True)
+    st.subheader("KRX 요청 예산")
+    if krx_budget.empty:
+        st.info("아직 KRX 요청 예산 스냅샷이 없습니다.")
+    else:
+        st.dataframe(localize_frame(krx_budget), width="stretch", hide_index=True)
+with krx_right:
+    st.subheader("KRX 서비스 레지스트리")
+    st.dataframe(localize_frame(krx_registry), width="stretch", hide_index=True)
+    with st.expander("KRX 요청 로그 / 출처 표기", expanded=False):
+        if krx_logs.empty:
+            st.info("아직 KRX 요청 로그가 없습니다.")
+        else:
+            st.dataframe(localize_frame(krx_logs), width="stretch", hide_index=True)
+        if krx_attribution.empty:
+            st.info("아직 KRX 출처 표기 스냅샷이 없습니다.")
+        else:
+            st.dataframe(localize_frame(krx_attribution), width="stretch", hide_index=True)
 
 run_left, run_right = st.columns(2)
 with run_left:

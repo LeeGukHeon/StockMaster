@@ -77,10 +77,10 @@ class KrxReferenceAdapter:
         for service_slug in live_services:
             result = self.provider.fetch_service_rows(
                 service_slug=service_slug,
-                params={"as_of_date": as_of_date.isoformat()},
                 as_of_date=as_of_date,
                 run_id=run_id,
                 connection=connection,
+                record_attribution=connection is not None,
             )
             if result.frame.empty:
                 fallback_reason = result.fallback_reason or "empty_live_response"
@@ -155,10 +155,10 @@ class KrxReferenceAdapter:
         for service_slug in service_slugs:
             result = self.provider.fetch_service_rows(
                 service_slug=service_slug,
-                params={"as_of_date": as_of_date.isoformat()},
                 as_of_date=as_of_date,
                 run_id=run_id,
                 connection=connection,
+                record_attribution=connection is not None,
             )
             if result.frame.empty:
                 fallback_reason = result.fallback_reason or "empty_live_response"
@@ -200,10 +200,10 @@ class KrxReferenceAdapter:
             )
         result = self.provider.fetch_service_rows(
             service_slug=service_slug,
-            params={"as_of_date": as_of_date.isoformat()},
             as_of_date=as_of_date,
             run_id=run_id,
             connection=connection,
+            record_attribution=connection is not None,
         )
         return KrxReferenceResult(
             frame=result.frame,

@@ -31,6 +31,7 @@ from app.providers.base import ProviderHealth
 from app.providers.dart.client import DartProvider
 from app.providers.kis.client import KISProvider
 from app.providers.krx.client import KrxProvider
+from app.providers.krx.registry import KRX_SERVICE_REGISTRY
 from app.providers.naver_news.client import NaverNewsProvider
 from app.ranking.explanatory_score import RANKING_VERSION as EXPLANATORY_RANKING_VERSION
 from app.selection.calibration import PREDICTION_VERSION
@@ -1853,6 +1854,121 @@ def provider_health_frame(settings: Settings) -> pd.DataFrame:
         for provider in providers:
             provider.close()
     return pd.DataFrame([asdict(row) for row in rows])
+
+
+def krx_service_registry_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "service_slug": service.service_slug,
+                "display_name_ko": service.display_name_ko,
+                "category": service.category,
+                "endpoint_url": service.endpoint_url,
+                "request_date_field": service.request_date_field,
+                "approval_required": service.approval_required,
+                "expected_usage": service.expected_usage,
+                "request_cost_weight": service.request_cost_weight,
+            }
+            for service in KRX_SERVICE_REGISTRY
+        ]
+    )
+
+
+def latest_krx_service_status_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                service_slug,
+                display_name_ko,
+                approval_expected,
+                enabled_by_env,
+                last_smoke_status,
+                last_smoke_ts,
+                last_success_ts,
+                last_http_status,
+                last_error_class,
+                fallback_mode
+            FROM vw_latest_krx_service_status
+            ORDER BY display_name_ko
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_krx_budget_snapshot_frame(settings: Settings, limit: int = 10) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                provider_name,
+                date_kst,
+                request_budget,
+                requests_used,
+                usage_ratio,
+                throttle_state,
+                snapshot_ts
+            FROM vw_latest_external_api_budget_snapshot
+            WHERE provider_name = 'krx'
+            ORDER BY date_kst DESC, snapshot_ts DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_krx_request_log_frame(settings: Settings, limit: int = 30) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                request_ts,
+                provider_name,
+                service_slug,
+                as_of_date,
+                http_status,
+                status,
+                latency_ms,
+                rows_received,
+                used_fallback,
+                error_code
+            FROM fact_external_api_request_log
+            WHERE provider_name = 'krx'
+            ORDER BY request_ts DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_krx_source_attribution_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                snapshot_ts,
+                as_of_date,
+                page_slug,
+                component_slug,
+                source_label,
+                provider_name,
+                active_flag
+            FROM vw_latest_source_attribution_snapshot
+            WHERE provider_name = 'krx'
+            ORDER BY snapshot_ts DESC, page_slug, component_slug
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
 
 
 def watermark_frame(settings: Settings) -> pd.DataFrame:
@@ -5593,5 +5709,80 @@ UI_VALUE_LABELS.setdefault("run_type", {}).update(
         "publish_discord_postmortem_report": "디스코드 사후 분석 리포트 발행",
         "publish_discord_intraday_postmortem": "디스코드 장중 사후 분석 리포트 발행",
         "publish_discord_portfolio_summary": "디스코드 포트폴리오 요약 발행",
+    }
+)
+UI_COLUMN_LABELS.update(
+    {
+        "provider_name": "제공처",
+        "service_slug": "서비스 슬러그",
+        "display_name_ko": "서비스명",
+        "endpoint_url": "엔드포인트 URL",
+        "request_date_field": "요청 일자 필드",
+        "approval_required": "승인 필요",
+        "expected_usage": "예상 용도",
+        "request_cost_weight": "요청 가중치",
+        "enabled_by_env": "환경 활성화",
+        "last_smoke_status": "최근 스모크 상태",
+        "last_smoke_ts": "최근 스모크 시각",
+        "last_success_ts": "최근 성공 시각",
+        "last_http_status": "최근 HTTP 상태",
+        "last_error_class": "최근 오류 분류",
+        "fallback_mode": "폴백 모드",
+        "request_budget": "일 요청 예산",
+        "requests_used": "사용 요청 수",
+        "usage_ratio": "사용 비율",
+        "throttle_state": "예산 상태",
+        "request_ts": "요청 시각",
+        "rows_received": "수신 행 수",
+        "used_fallback": "폴백 사용",
+        "error_code": "오류 코드",
+        "source_label": "출처 표기",
+        "page_slug": "페이지",
+        "component_slug": "컴포넌트",
+        "active_flag": "활성 여부",
+    }
+)
+UI_VALUE_LABELS.setdefault("provider_name", {}).update(
+    {
+        "krx": "한국거래소",
+        "kis": "한국투자증권",
+        "dart": "OpenDART",
+        "naver_news": "네이버 뉴스",
+    }
+)
+UI_VALUE_LABELS.setdefault("service_slug", {}).update(
+    {
+        "stock_kospi_daily_trade": "유가증권 일별매매정보",
+        "stock_kosdaq_daily_trade": "코스닥 일별매매정보",
+        "stock_kospi_symbol_master": "유가증권 종목기본정보",
+        "stock_kosdaq_symbol_master": "코스닥 종목기본정보",
+        "index_krx_daily": "KRX 시리즈 일별시세정보",
+        "index_kospi_daily": "KOSPI 시리즈 일별시세정보",
+        "index_kosdaq_daily": "KOSDAQ 시리즈 일별시세정보",
+        "etf_daily_trade": "ETF 일별매매정보",
+    }
+)
+UI_VALUE_LABELS.setdefault("expected_usage", {}).update(
+    {
+        "reference": "참조 데이터",
+        "market_statistics": "시장 통계",
+        "index_statistics": "지수 통계",
+        "etf_statistics": "ETF 통계",
+        "reference_or_statistics": "참조/통계",
+    }
+)
+UI_VALUE_LABELS.setdefault("throttle_state", {}).update(
+    {
+        "OK": "정상",
+        "WARNING": "경고",
+        "FALLBACK_ONLY": "폴백 전용",
+        "BLOCKED": "차단",
+        "NO_SNAPSHOT": "스냅샷 없음",
+    }
+)
+UI_VALUE_LABELS.setdefault("fallback_mode", {}).update(
+    {
+        "primary_live": "라이브 우선",
+        "fallback_only": "폴백 전용",
     }
 )

@@ -19,6 +19,7 @@ from app.providers.base import (
 )
 from app.providers.krx.registry import (
     KRX_SERVICE_BY_SLUG,
+    build_krx_request_params,
     canonicalize_krx_service_slugs,
     krx_service_definition,
 )
@@ -161,7 +162,10 @@ class KrxProvider(BaseProvider):
 
     def service_url(self, service_slug: str) -> str | None:
         normalized = service_slug.strip().lower()
-        return self.settings.providers.krx.service_urls.get(normalized)
+        return (
+            self.settings.providers.krx.service_urls.get(normalized)
+            or krx_service_definition(normalized).endpoint_url
+        )
 
     def source_attribution_label(self) -> str:
         return self.settings.providers.krx.source_attribution_label
@@ -412,34 +416,50 @@ class KrxProvider(BaseProvider):
 
     def _normalize_frame(self, service_slug: str, frame: pd.DataFrame) -> pd.DataFrame:
         output = frame.copy()
-        rename_map = {
-            "isu_cd": "symbol",
-            "isu_srt_cd": "symbol",
-            "ISU_CD": "symbol",
-            "ISU_SRT_CD": "symbol",
-            "short_code": "symbol",
-            "stock_code": "symbol",
-            "symbol_code": "symbol",
-            "isu_nm": "company_name",
-            "ISU_NM": "company_name",
-            "kor_sec_nm": "company_name",
-            "company": "company_name",
-            "company_nm": "company_name",
-            "market": "market_segment",
-            "mkt_nm": "market_segment",
-            "MKT_NM": "market_segment",
-            "mrkt_ctg": "market_segment",
-            "sector": "sector",
-            "sector_nm": "sector",
-            "induty_nm": "industry",
-            "industry_nm": "industry",
-            "lstg_dt": "listing_date",
-            "listing_date": "listing_date",
+        coalesce_map = {
+            "symbol": [
+                "symbol",
+                "ISU_SRT_CD",
+                "isu_srt_cd",
+                "ISU_CD",
+                "isu_cd",
+                "short_code",
+                "stock_code",
+                "symbol_code",
+            ],
+            "company_name": [
+                "company_name",
+                "isu_nm",
+                "ISU_NM",
+                "kor_sec_nm",
+                "company",
+                "company_nm",
+            ],
+            "market_segment": [
+                "market_segment",
+                "market",
+                "mkt_nm",
+                "MKT_NM",
+                "mrkt_ctg",
+            ],
+            "sector": ["sector", "sector_nm"],
+            "industry": ["industry", "induty_nm", "industry_nm"],
+            "listing_date": ["listing_date", "lstg_dt"],
         }
-        for column_name in list(output.columns):
-            normalized = column_name.strip()
-            if normalized in rename_map:
-                output = output.rename(columns={column_name: rename_map[normalized]})
+
+        for target, candidates in coalesce_map.items():
+            merged = None
+            for candidate in candidates:
+                if candidate not in output.columns:
+                    continue
+                candidate_value = output[candidate]
+                if isinstance(candidate_value, pd.DataFrame):
+                    for _, series in candidate_value.items():
+                        merged = series if merged is None else merged.fillna(series)
+                else:
+                    merged = candidate_value if merged is None else merged.fillna(candidate_value)
+            if merged is not None:
+                output[target] = merged
         if "symbol" in output.columns:
             output["symbol"] = output["symbol"].astype(str).str[-6:].str.zfill(6)
         if "listing_date" in output.columns:
@@ -465,6 +485,11 @@ class KrxProvider(BaseProvider):
         normalized_slug = service_slug.strip().lower()
         request_ts = now_local(self.settings.app.timezone)
         endpoint_url = self.service_url(normalized_slug)
+        request_params = build_krx_request_params(
+            normalized_slug,
+            as_of_date=as_of_date,
+            extra_params=params,
+        )
         if normalized_slug not in KRX_SERVICE_BY_SLUG:
             raise ValueError(f"Unknown KRX service slug: {service_slug}")
         if not self.enabled_live:
@@ -553,7 +578,7 @@ class KrxProvider(BaseProvider):
                 method="GET",
                 url=endpoint_url,
                 endpoint_label=normalized_slug,
-                params=params or {},
+                params=request_params,
                 headers=headers,
             )
             latency_ms = int((datetime.now() - started).total_seconds() * 1000)

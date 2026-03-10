@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 
 from app.common.paths import project_root as detect_project_root
 from app.common.paths import resolve_path
-from app.providers.krx.registry import canonicalize_krx_service_slugs
+from app.providers.krx.registry import canonicalize_krx_service_slugs, krx_default_service_urls
 
 
 class AppConfig(BaseModel):
@@ -122,7 +122,7 @@ class KrxProviderConfig(BaseModel):
     daily_request_budget: int = 1000
     request_timeout_seconds: float = 20.0
     source_attribution_label: str = "한국거래소 통계정보"
-    service_urls: dict[str, str] = Field(default_factory=dict)
+    service_urls: dict[str, str] = Field(default_factory=krx_default_service_urls)
 
     @field_validator("allowed_services", mode="before")
     @classmethod
@@ -342,7 +342,7 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
         "KRX_SOURCE_ATTRIBUTION_LABEL",
         krx.get("source_attribution_label", "한국거래소 통계정보"),
     )
-    configured_service_urls = dict(krx.get("service_urls", {}))
+    configured_service_urls = dict(krx.get("service_urls", krx_default_service_urls()))
     for env_key, env_value in env_values.items():
         if not env_key.startswith("KRX_SERVICE_URL_") or not env_value:
             continue

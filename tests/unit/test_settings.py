@@ -91,3 +91,26 @@ def test_load_settings_keeps_intraday_research_disabled_in_local_profile(tmp_pat
     assert settings.intraday_research.enabled is False
     assert settings.intraday_research.assist_enabled is False
     assert settings.intraday_research.meta_model_enabled is False
+
+
+def test_load_settings_enables_krx_live_with_allowlist(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "ENABLE_KRX_LIVE=true",
+                "KRX_API_KEY=test-key",
+                "KRX_ALLOWED_SERVICES=etf_daily_trade,index_kospi_daily",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(project_root=project_root(), env_file=env_file)
+
+    assert settings.providers.krx.enabled_live is True
+    assert settings.providers.krx.api_key == "test-key"
+    assert settings.providers.krx.allowed_services == ["etf_daily_trade", "index_kospi_daily"]
+    assert settings.providers.krx.service_urls["etf_daily_trade"].endswith(
+        "/svc/apis/etp/etf_bydd_trd"
+    )

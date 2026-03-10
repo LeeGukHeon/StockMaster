@@ -84,7 +84,9 @@ Used only when the related capability is enabled:
 Notes:
 
 - `KIS_USE_MOCK=false` uses the production KIS host.
-- `KRX_API_KEY` is still optional because KRX is not yet a live ingestion dependency.
+- `KRX_API_KEY` is required only when `ENABLE_KRX_LIVE=true`.
+- `ENABLE_KRX_LIVE=true` activates approved KRX OPEN API services only.
+- `KRX_ALLOWED_SERVICES` must contain only the approved canonical service slugs.
 - `DISCORD_REPORT_ENABLED=false` keeps Discord in render-only mode. Live publish requires both `DISCORD_REPORT_ENABLED=true` and `DISCORD_WEBHOOK_URL`.
 - `DISCORD_WEBHOOK_URL` is optional for preview and dry-run workflows.
 
@@ -207,6 +209,40 @@ Useful commands:
 ```powershell
 python scripts/validate_intraday_research_mode.py --as-of-date 2026-03-09
 python scripts/smoke_intraday_research_mode.py
+```
+
+## KRX live integration
+
+TICKET-019 / TICKET-020 activate KRX OPEN API as a live-first, fallback-second source for
+exchange reference and market statistics.
+
+Current approved canonical services:
+
+- `stock_kospi_daily_trade`
+- `stock_kosdaq_daily_trade`
+- `stock_kospi_symbol_master`
+- `stock_kosdaq_symbol_master`
+- `index_krx_daily`
+- `index_kospi_daily`
+- `index_kosdaq_daily`
+- `etf_daily_trade`
+
+Rules:
+
+- `ENABLE_KRX_LIVE=false` keeps KRX fully disabled
+- `ENABLE_KRX_LIVE=true` requires `KRX_API_KEY`
+- only services listed in `KRX_ALLOWED_SERVICES` are callable
+- live failure never makes the whole platform fatal; it falls back to seed/existing paths where available
+- KIS remains the operational intraday source
+- KRX-driven statistics carry the source attribution label `한국거래소 통계정보`
+
+Useful commands:
+
+```powershell
+python scripts/validate_krx_live_configuration.py
+python scripts/krx_smoke_test.py --service-slug etf_daily_trade --as-of-date 2026-03-06
+python scripts/krx_smoke_test_all_allowed.py --as-of-date 2026-03-06
+python scripts/render_krx_service_status_report.py --as-of-date 2026-03-06 --dry-run
 ```
 
 ## Initial bootstrap and reference data
