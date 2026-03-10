@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 
 import streamlit as st
@@ -11,6 +12,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.common.time import today_local
+from app.ml.active import freeze_alpha_active_model, rollback_alpha_active_model
+from app.ml.constants import ALPHA_CANDIDATE_MODEL_SPECS, MODEL_SPEC_ID
+from app.ml.promotion import format_alpha_model_spec_id
 from app.ui.components import (
     render_narrative_card,
     render_page_footer,
@@ -22,7 +27,11 @@ from app.ui.helpers import (
     krx_service_registry_frame,
     latest_active_ops_policy_frame,
     latest_alert_event_frame,
+    latest_alpha_active_model_frame,
+    latest_alpha_model_spec_frame,
     latest_alpha_promotion_summary_frame,
+    latest_alpha_rollback_frame,
+    latest_alpha_training_candidate_frame,
     latest_app_snapshot_frame,
     latest_disk_watermark_event_frame,
     latest_health_snapshot_frame,
@@ -58,6 +67,10 @@ recovery = latest_recovery_queue_frame(settings, limit=20)
 alerts = latest_alert_event_frame(settings, limit=20)
 active_policy = latest_active_ops_policy_frame(settings, limit=10)
 alpha_promotion = latest_alpha_promotion_summary_frame(settings, limit=10)
+alpha_active_models = latest_alpha_active_model_frame(settings, limit=10)
+alpha_candidate_training = latest_alpha_training_candidate_frame(settings, limit=10)
+alpha_model_specs = latest_alpha_model_spec_frame(settings, limit=10)
+alpha_rollbacks = latest_alpha_rollback_frame(settings, limit=10)
 latest_outputs = latest_successful_pipeline_output_frame(settings, limit=20)
 release_checks = latest_release_candidate_check_frame(settings, limit=20)
 latest_reports = latest_report_index_frame(settings, limit=20)
@@ -109,6 +122,162 @@ render_record_cards(
     empty_message="No alpha promotion audit is available yet.",
     table_expander_label="Alpha promotion details",
 )
+
+alpha_notice = st.session_state.pop("alpha_ops_notice", None)
+if isinstance(alpha_notice, dict):
+    notice_level = str(alpha_notice.get("level") or "info")
+    notice_message = str(alpha_notice.get("message") or "").strip()
+    if notice_message:
+        getattr(st, notice_level, st.info)(notice_message)
+
+alpha_default_date = today_local(settings.app.timezone)
+alpha_default_train_end_date = alpha_default_date
+if not alpha_candidate_training.empty and "train_end_date" in alpha_candidate_training.columns:
+    train_end_dates = alpha_candidate_training["train_end_date"].dropna().tolist()
+    if train_end_dates:
+        alpha_default_train_end_date = max(
+            date.fromisoformat(str(value)) if isinstance(value, str) else value
+            for value in train_end_dates
+        )
+alpha_spec_options = (
+    alpha_model_specs["model_spec_id"].astype(str).tolist()
+    if not alpha_model_specs.empty and "model_spec_id" in alpha_model_specs.columns
+    else [spec.model_spec_id for spec in ALPHA_CANDIDATE_MODEL_SPECS]
+)
+alpha_default_spec_id = MODEL_SPEC_ID if MODEL_SPEC_ID in alpha_spec_options else alpha_spec_options[0]
+alpha_default_spec_index = alpha_spec_options.index(alpha_default_spec_id)
+
+st.subheader("Alpha active controls")
+st.caption(
+    "Use manual freeze to pin a specific alpha candidate. "
+    "Use rollback only when the previous active registry row should be restored."
+)
+
+alpha_control_left, alpha_control_right = st.columns(2)
+with alpha_control_left:
+    st.caption("Current active alpha registry")
+    if alpha_active_models.empty:
+        st.info("No active alpha registry rows are available yet.")
+    else:
+        st.dataframe(localize_frame(alpha_active_models), width="stretch", hide_index=True)
+    with st.expander("Latest alpha candidate training runs", expanded=False):
+        if alpha_candidate_training.empty:
+            st.info("No alpha candidate training runs are available yet.")
+        else:
+            st.dataframe(
+                localize_frame(alpha_candidate_training),
+                width="stretch",
+                hide_index=True,
+            )
+    with st.form("freeze_alpha_active_model_form", clear_on_submit=False):
+        freeze_effective_date = st.date_input(
+            "Freeze effective date",
+            value=alpha_default_date,
+        )
+        freeze_train_end_date = st.date_input(
+            "Reference train end date",
+            value=alpha_default_train_end_date,
+        )
+        freeze_spec_id = st.selectbox(
+            "Model spec",
+            options=alpha_spec_options,
+            index=alpha_default_spec_index,
+            format_func=format_alpha_model_spec_id,
+        )
+        freeze_horizons = st.multiselect(
+            "Horizons",
+            options=[1, 5],
+            default=[1, 5],
+        )
+        freeze_note = st.text_input(
+            "Freeze note",
+            value="Ops UI manual alpha freeze",
+        )
+        freeze_confirm = st.checkbox(
+            "I checked the candidate training table and want to replace the active alpha model."
+        )
+        freeze_submit = st.form_submit_button("Freeze alpha active model")
+        if freeze_submit:
+            if not freeze_confirm:
+                st.warning("Confirm the manual freeze before running it.")
+            elif not freeze_horizons:
+                st.warning("Select at least one horizon to freeze.")
+            else:
+                try:
+                    with st.spinner("Freezing alpha active model..."):
+                        freeze_result = freeze_alpha_active_model(
+                            settings,
+                            as_of_date=freeze_effective_date,
+                            source="ops_manual_freeze_ui",
+                            note=freeze_note,
+                            horizons=[int(value) for value in freeze_horizons],
+                            model_spec_id=str(freeze_spec_id),
+                            train_end_date=freeze_train_end_date,
+                        )
+                    st.session_state["alpha_ops_notice"] = {
+                        "level": "success" if freeze_result.row_count > 0 else "warning",
+                        "message": (
+                            f"Alpha active freeze completed. run_id={freeze_result.run_id} "
+                            f"rows={freeze_result.row_count}"
+                        ),
+                    }
+                    st.rerun()
+                except Exception as exc:  # pragma: no cover - UI feedback path
+                    st.error(f"Alpha active freeze failed: {exc}")
+
+with alpha_control_right:
+    st.caption("Alpha rollback history")
+    if alpha_rollbacks.empty:
+        st.info("No alpha rollback rows are available yet.")
+    else:
+        st.dataframe(localize_frame(alpha_rollbacks), width="stretch", hide_index=True)
+    with st.expander("Alpha model spec catalog", expanded=False):
+        if alpha_model_specs.empty:
+            st.info("No alpha model spec rows are available yet.")
+        else:
+            st.dataframe(localize_frame(alpha_model_specs), width="stretch", hide_index=True)
+    with st.form("rollback_alpha_active_model_form", clear_on_submit=False):
+        rollback_effective_date = st.date_input(
+            "Rollback effective date",
+            value=alpha_default_date,
+        )
+        rollback_horizons = st.multiselect(
+            "Rollback horizons",
+            options=[1, 5],
+            default=[1, 5],
+        )
+        rollback_note = st.text_input(
+            "Rollback note",
+            value="Ops UI alpha rollback",
+        )
+        rollback_confirm = st.checkbox(
+            "I checked the current active registry and want to restore the previous alpha model."
+        )
+        rollback_submit = st.form_submit_button("Rollback alpha active model")
+        if rollback_submit:
+            if not rollback_confirm:
+                st.warning("Confirm the rollback before running it.")
+            elif not rollback_horizons:
+                st.warning("Select at least one horizon to roll back.")
+            else:
+                try:
+                    with st.spinner("Rolling back alpha active model..."):
+                        rollback_result = rollback_alpha_active_model(
+                            settings,
+                            as_of_date=rollback_effective_date,
+                            horizons=[int(value) for value in rollback_horizons],
+                            note=rollback_note,
+                        )
+                    st.session_state["alpha_ops_notice"] = {
+                        "level": "success" if rollback_result.row_count > 0 else "warning",
+                        "message": (
+                            f"Alpha active rollback completed. "
+                            f"run_id={rollback_result.run_id} rows={rollback_result.row_count}"
+                        ),
+                    }
+                    st.rerun()
+                except Exception as exc:  # pragma: no cover - UI feedback path
+                    st.error(f"Alpha active rollback failed: {exc}")
 
 top_left, top_right = st.columns(2)
 with top_left:

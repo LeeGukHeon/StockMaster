@@ -15,6 +15,7 @@ from app.intraday.meta_common import (
     WAIT_PANEL,
 )
 from app.intraday.policy import apply_active_intraday_policy_frame
+from app.ml.constants import MODEL_DOMAIN as ALPHA_MODEL_DOMAIN
 from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
@@ -3140,11 +3141,208 @@ def latest_alpha_promotion_summary_frame(settings: Settings, *, limit: int = 10)
     return frame.head(limit).copy()
 
 
+def latest_alpha_active_model_frame(
+    settings: Settings,
+    *,
+    as_of_date=None,
+    limit: int = 20,
+    active_only: bool = True,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        target_date = as_of_date
+        if target_date is None:
+            row = connection.execute(
+                "SELECT MAX(effective_from_date) FROM fact_alpha_active_model"
+            ).fetchone()
+            target_date = None if row is None or row[0] is None else pd.Timestamp(row[0]).date()
+        if target_date is None:
+            return pd.DataFrame()
+        if active_only:
+            return connection.execute(
+                """
+                SELECT
+                    active.horizon,
+                    active.model_spec_id,
+                    active.training_run_id,
+                    train.train_end_date,
+                    active.model_version,
+                    active.source_type,
+                    active.promotion_type,
+                    active.effective_from_date,
+                    active.effective_to_date,
+                    active.note
+                FROM fact_alpha_active_model AS active
+                LEFT JOIN fact_model_training_run AS train
+                  ON active.training_run_id = train.training_run_id
+                WHERE active.effective_from_date <= ?
+                  AND (active.effective_to_date IS NULL OR active.effective_to_date >= ?)
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY active.horizon
+                    ORDER BY active.effective_from_date DESC, active.created_at DESC
+                ) = 1
+                ORDER BY active.horizon
+                LIMIT ?
+                """,
+                [target_date, target_date, limit],
+            ).fetchdf()
+        return connection.execute(
+            """
+            SELECT
+                horizon,
+                model_spec_id,
+                training_run_id,
+                model_version,
+                source_type,
+                promotion_type,
+                effective_from_date,
+                effective_to_date,
+                active_flag,
+                rollback_of_active_alpha_model_id,
+                note,
+                updated_at
+            FROM fact_alpha_active_model
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
+def latest_alpha_training_candidate_frame(
+    settings: Settings,
+    *,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            WITH latest AS (
+                SELECT
+                    model_spec_id,
+                    horizon,
+                    estimation_scheme,
+                    rolling_window_days,
+                    train_end_date,
+                    training_run_id,
+                    model_version,
+                    fallback_flag,
+                    fallback_reason,
+                    created_at
+                FROM fact_model_training_run
+                WHERE model_domain = ?
+                  AND status = 'success'
+                  AND artifact_uri IS NOT NULL
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY model_spec_id, horizon
+                    ORDER BY train_end_date DESC, created_at DESC
+                ) = 1
+            )
+            SELECT
+                model_spec_id,
+                horizon,
+                estimation_scheme,
+                rolling_window_days,
+                train_end_date,
+                training_run_id,
+                model_version,
+                fallback_flag,
+                fallback_reason
+            FROM latest
+            ORDER BY model_spec_id, horizon
+            LIMIT ?
+            """,
+            [ALPHA_MODEL_DOMAIN, limit],
+        ).fetchdf()
+
+
+def latest_alpha_model_spec_frame(
+    settings: Settings,
+    *,
+    limit: int = 20,
+    active_only: bool = True,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    query = """
+        SELECT
+            model_spec_id,
+            model_domain,
+            model_version,
+            estimation_scheme,
+            rolling_window_days,
+            feature_version,
+            label_version,
+            selection_engine_version,
+            active_candidate_flag,
+            updated_at
+        FROM dim_alpha_model_spec
+    """
+    parameters: list[object] = []
+    if active_only:
+        query += " WHERE active_candidate_flag = TRUE"
+    query += " ORDER BY model_spec_id LIMIT ?"
+    parameters.append(limit)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(query, parameters).fetchdf()
+
+
+def latest_alpha_rollback_frame(
+    settings: Settings,
+    *,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                horizon,
+                model_spec_id,
+                training_run_id,
+                promotion_type,
+                rollback_of_active_alpha_model_id,
+                effective_from_date,
+                note,
+                updated_at
+            FROM fact_alpha_active_model
+            WHERE promotion_type = 'ROLLBACK'
+               OR rollback_of_active_alpha_model_id IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchdf()
+
+
 UI_VALUE_LABELS.setdefault("run_type", {}).update(
     {
         "freeze_alpha_active_model": "Alpha active freeze",
         "rollback_alpha_active_model": "Alpha active rollback",
         "run_alpha_auto_promotion": "Alpha auto-promotion",
+    }
+)
+UI_VALUE_LABELS.setdefault("model_spec_id", {}).update(
+    {
+        "alpha_recursive_expanding_v1": "recursive",
+        "alpha_rolling_120_v1": "rolling 120d",
+        "alpha_rolling_250_v1": "rolling 250d",
+        "alpha_recursive_rolling_combo": "recursive+rolling combo",
+    }
+)
+UI_VALUE_LABELS.setdefault("estimation_scheme", {}).update(
+    {
+        "recursive": "Recursive",
+        "rolling": "Rolling",
+    }
+)
+UI_VALUE_LABELS.setdefault("promotion_type", {}).update(
+    {
+        "MANUAL_FREEZE": "Manual freeze",
     }
 )
 UI_VALUE_LABELS.setdefault("promotion_type", {}).update(
@@ -3172,6 +3370,10 @@ UI_COLUMN_LABELS.update(
         "active_effective_from_date": "Active Effective From",
         "active_source_type": "Active Source",
         "active_promotion_type": "Active Promotion Type",
+        "active_candidate_flag": "Candidate Enabled",
+        "rolling_window_days": "Rolling Window Days",
+        "rollback_of_active_alpha_model_id": "Rollback Of Active Alpha Model ID",
+        "train_end_date": "Train End Date",
     }
 )
 

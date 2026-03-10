@@ -14,6 +14,12 @@ from app.ml.registry import (
     upsert_model_training_runs,
 )
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
+from app.ui.helpers import (
+    latest_alpha_active_model_frame,
+    latest_alpha_model_spec_frame,
+    latest_alpha_rollback_frame,
+    latest_alpha_training_candidate_frame,
+)
 from tests._ticket003_support import build_test_settings
 
 SELECTION_DATES = [
@@ -273,3 +279,57 @@ def test_rollback_alpha_active_model_is_noop_without_previous_and_restores_previ
     assert active_h1_restored["source_type"] == "rollback_restore"
     assert active_h1_restored["promotion_type"] == "ROLLBACK"
     assert active_h1_restored["rollback_of_active_alpha_model_id"] is not None
+
+
+def test_alpha_ops_helper_frames_surface_registry_and_candidates(tmp_path):
+    settings = _build_promotion_settings(tmp_path)
+    freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        source="test_seed",
+        note="seed incumbent",
+        horizons=[1, 5],
+        model_spec_id=MODEL_SPEC_ID,
+        train_end_date=date(2026, 3, 6),
+    )
+    freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 10),
+        source="test_seed",
+        note="seed challenger",
+        horizons=[1, 5],
+        model_spec_id="alpha_rolling_120_v1",
+        train_end_date=date(2026, 3, 6),
+    )
+    rollback_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 11),
+        horizons=[1, 5],
+        note="restore incumbent",
+    )
+
+    active_frame = latest_alpha_active_model_frame(
+        settings,
+        as_of_date=date(2026, 3, 11),
+        limit=10,
+    )
+    candidate_frame = latest_alpha_training_candidate_frame(settings, limit=10)
+    spec_frame = latest_alpha_model_spec_frame(settings, limit=10)
+    rollback_frame = latest_alpha_rollback_frame(settings, limit=10)
+
+    assert not active_frame.empty
+    assert not candidate_frame.empty
+    assert not spec_frame.empty
+    assert not rollback_frame.empty
+    assert set(active_frame["model_spec_id"]) == {MODEL_SPEC_ID}
+    assert set(candidate_frame["model_spec_id"]) >= {
+        MODEL_SPEC_ID,
+        "alpha_rolling_120_v1",
+        "alpha_rolling_250_v1",
+    }
+    assert set(spec_frame["model_spec_id"]) >= {
+        MODEL_SPEC_ID,
+        "alpha_rolling_120_v1",
+        "alpha_rolling_250_v1",
+    }
+    assert set(rollback_frame["promotion_type"]) == {"ROLLBACK"}
