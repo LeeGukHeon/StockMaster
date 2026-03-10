@@ -33,6 +33,10 @@ def _parse_symbols(value: str | None) -> list[str] | None:
     return [token.strip().zfill(6) for token in value.split(",") if token.strip()]
 
 
+def _is_empty_news_backfill_error(exc: Exception) -> bool:
+    return "No news metadata rows were materialized for the requested signal date." in str(exc)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Backfill OHLCV, fundamentals, and news metadata.")
     parser.add_argument("--start", type=_parse_date, required=True)
@@ -80,6 +84,7 @@ def main() -> int:
                 ),
             )
             artifact_paths: list[str] = []
+            skipped_empty_news_dates: list[str] = []
             try:
                 for current_date in dates:
                     ohlcv_result = sync_daily_ohlcv(
@@ -99,24 +104,36 @@ def main() -> int:
                         force=args.force,
                         dry_run=args.dry_run,
                     )
-                    news_result = sync_news_metadata(
-                        settings,
-                        signal_date=current_date,
-                        mode=args.mode,
-                        symbols=symbols,
-                        limit_symbols=args.limit_symbols,
-                        force=args.force,
-                        dry_run=args.dry_run,
-                        query_pack=args.query_pack,
-                        max_items_per_query=args.max_items_per_query,
-                    )
+                    try:
+                        news_result = sync_news_metadata(
+                            settings,
+                            signal_date=current_date,
+                            mode=args.mode,
+                            symbols=symbols,
+                            limit_symbols=args.limit_symbols,
+                            force=args.force,
+                            dry_run=args.dry_run,
+                            query_pack=args.query_pack,
+                            max_items_per_query=args.max_items_per_query,
+                        )
+                    except RuntimeError as exc:
+                        if not _is_empty_news_backfill_error(exc):
+                            raise
+                        skipped_empty_news_dates.append(current_date.isoformat())
+                        logger.warning(
+                            "Backfill skipped empty historical news date.",
+                            extra={"signal_date": current_date.isoformat()},
+                        )
+                        news_result = None
                     artifact_paths.extend(ohlcv_result.artifact_paths)
                     artifact_paths.extend(fundamentals_result.artifact_paths)
-                    artifact_paths.extend(news_result.artifact_paths)
+                    if news_result is not None:
+                        artifact_paths.extend(news_result.artifact_paths)
 
                 notes = (
                     f"Backfill completed for {len(dates)} dates. "
-                    f"range={args.start.isoformat()}..{args.end.isoformat()}"
+                    f"range={args.start.isoformat()}..{args.end.isoformat()}, "
+                    f"skipped_empty_news_dates={len(skipped_empty_news_dates)}"
                 )
                 record_run_finish(
                     connection,

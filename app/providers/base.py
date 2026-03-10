@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass
 from datetime import date
@@ -32,12 +33,151 @@ class ProviderRequestError(RuntimeError):
         self.detail = detail
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderRequestPolicy:
+    min_interval_seconds: float = 0.0
+    retries: int = 3
+    retry_delay_seconds: float = 0.5
+    transport_retry_delay_seconds: float | None = None
+    retryable_status_codes: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+    @property
+    def transport_delay_seconds(self) -> float:
+        return self.transport_retry_delay_seconds or self.retry_delay_seconds
+
+
+_PROVIDER_REQUEST_POLICIES: dict[str, dict[str, ProviderRequestPolicy]] = {
+    "kis": {
+        "__default__": ProviderRequestPolicy(
+            min_interval_seconds=0.15,
+            retries=4,
+            retry_delay_seconds=0.75,
+            transport_retry_delay_seconds=1.0,
+        ),
+        "/oauth2/tokenP": ProviderRequestPolicy(
+            min_interval_seconds=1.0,
+            retries=3,
+            retry_delay_seconds=1.0,
+            transport_retry_delay_seconds=1.5,
+        ),
+        "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily": ProviderRequestPolicy(
+            min_interval_seconds=0.25,
+            retries=4,
+            retry_delay_seconds=1.0,
+            transport_retry_delay_seconds=1.25,
+        ),
+    },
+    "dart": {
+        "__default__": ProviderRequestPolicy(
+            min_interval_seconds=0.5,
+            retries=5,
+            retry_delay_seconds=1.0,
+            transport_retry_delay_seconds=1.5,
+        ),
+        "/api/corpCode.xml": ProviderRequestPolicy(
+            min_interval_seconds=1.0,
+            retries=4,
+            retry_delay_seconds=1.25,
+            transport_retry_delay_seconds=1.5,
+        ),
+        "/api/company.json": ProviderRequestPolicy(
+            min_interval_seconds=0.75,
+            retries=5,
+            retry_delay_seconds=1.25,
+            transport_retry_delay_seconds=1.75,
+        ),
+        "/api/list.json": ProviderRequestPolicy(
+            min_interval_seconds=0.9,
+            retries=5,
+            retry_delay_seconds=1.5,
+            transport_retry_delay_seconds=2.0,
+        ),
+        "/api/fnlttSinglAcntAll.json": ProviderRequestPolicy(
+            min_interval_seconds=0.9,
+            retries=5,
+            retry_delay_seconds=1.5,
+            transport_retry_delay_seconds=2.0,
+        ),
+    },
+    "naver_news": {
+        "__default__": ProviderRequestPolicy(
+            min_interval_seconds=0.25,
+            retries=4,
+            retry_delay_seconds=0.75,
+            transport_retry_delay_seconds=1.0,
+        ),
+        "/v1/search/news.json": ProviderRequestPolicy(
+            min_interval_seconds=0.35,
+            retries=4,
+            retry_delay_seconds=1.0,
+            transport_retry_delay_seconds=1.25,
+        ),
+    },
+    "krx": {
+        "__default__": ProviderRequestPolicy(
+            min_interval_seconds=0.5,
+            retries=4,
+            retry_delay_seconds=1.0,
+            transport_retry_delay_seconds=1.25,
+        )
+    },
+}
+
+_REQUEST_POLICY_LOCK = threading.Lock()
+_LAST_REQUEST_TS: dict[tuple[str, str], float] = {}
+
+
 def _response_detail(response: httpx.Response) -> str:
     try:
         detail = response.text
     except Exception:
         detail = "<response body unavailable>"
     return detail[:500]
+
+
+def resolve_provider_request_policy(
+    provider_name: str,
+    endpoint_label: str,
+    *,
+    retries: int | None = None,
+    retry_delay_seconds: float | None = None,
+    retryable_status_codes: set[int] | None = None,
+) -> ProviderRequestPolicy:
+    provider_policies = _PROVIDER_REQUEST_POLICIES.get(provider_name, {})
+    base_policy = provider_policies.get("__default__", ProviderRequestPolicy())
+    resolved = provider_policies.get(endpoint_label, base_policy)
+    return ProviderRequestPolicy(
+        min_interval_seconds=resolved.min_interval_seconds,
+        retries=retries if retries is not None else resolved.retries,
+        retry_delay_seconds=(
+            retry_delay_seconds if retry_delay_seconds is not None else resolved.retry_delay_seconds
+        ),
+        transport_retry_delay_seconds=resolved.transport_retry_delay_seconds,
+        retryable_status_codes=frozenset(
+            retryable_status_codes
+            if retryable_status_codes is not None
+            else resolved.retryable_status_codes
+        ),
+    )
+
+
+def _wait_for_request_slot(
+    provider_name: str,
+    endpoint_label: str,
+    policy: ProviderRequestPolicy,
+) -> None:
+    if policy.min_interval_seconds <= 0:
+        return
+    request_key = (provider_name, endpoint_label)
+    with _REQUEST_POLICY_LOCK:
+        now = time.monotonic()
+        last_ts = _LAST_REQUEST_TS.get(request_key)
+        if last_ts is not None:
+            wait_seconds = (last_ts + policy.min_interval_seconds) - now
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+                now = time.monotonic()
+        _LAST_REQUEST_TS[request_key] = now
 
 
 def request_with_retries(
@@ -53,13 +193,21 @@ def request_with_retries(
     retryable_status_codes: set[int] | None = None,
     **request_kwargs: Any,
 ) -> httpx.Response:
-    retryable = retryable_status_codes or {429, 500, 502, 503, 504}
+    request_policy = resolve_provider_request_policy(
+        provider_name,
+        endpoint_label,
+        retries=retries,
+        retry_delay_seconds=retry_delay_seconds,
+        retryable_status_codes=retryable_status_codes,
+    )
+    retryable = set(request_policy.retryable_status_codes)
     last_detail = "Request did not complete."
 
-    for attempt in range(1, retries + 1):
+    for attempt in range(1, request_policy.retries + 1):
         try:
+            _wait_for_request_slot(provider_name, endpoint_label, request_policy)
             response = client.request(method, url, **request_kwargs)
-            if response.status_code in retryable and attempt < retries:
+            if response.status_code in retryable and attempt < request_policy.retries:
                 last_detail = _response_detail(response)
                 logger.warning(
                     "Retrying provider request after retryable status.",
@@ -70,7 +218,7 @@ def request_with_retries(
                         "status_code": response.status_code,
                     },
                 )
-                time.sleep(retry_delay_seconds * attempt)
+                time.sleep(request_policy.retry_delay_seconds * attempt)
                 continue
             response.raise_for_status()
             return response
@@ -81,7 +229,7 @@ def request_with_retries(
             httpx.RemoteProtocolError,
         ) as exc:
             last_detail = str(exc)
-            if attempt < retries:
+            if attempt < request_policy.retries:
                 logger.warning(
                     "Retrying provider request after transport error.",
                     extra={
@@ -91,7 +239,7 @@ def request_with_retries(
                         "error": str(exc),
                     },
                 )
-                time.sleep(retry_delay_seconds * attempt)
+                time.sleep(request_policy.transport_delay_seconds * attempt)
                 continue
             raise ProviderRequestError(provider_name, endpoint_label, str(exc)) from exc
         except httpx.HTTPStatusError as exc:
