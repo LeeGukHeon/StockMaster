@@ -9,6 +9,7 @@ import pandas as pd
 from app.common.discord import publish_discord_messages
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
+from app.ml.promotion import load_alpha_promotion_summary
 from app.selection.calibration import PREDICTION_VERSION
 from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.settings import Settings
@@ -148,10 +149,34 @@ def _format_pick_line(row: pd.Series) -> str:
     )
 
 
+def _format_alpha_promotion_line(row: pd.Series) -> str:
+    p_value = ""
+    if pd.notna(row.get("p_value")):
+        p_value = f" | p={float(row['p_value']):.3f}"
+    active_top10 = ""
+    if pd.notna(row.get("active_top10_mean_excess_return")):
+        active_top10 = f"{float(row['active_top10_mean_excess_return']):+.2%}"
+    compare_top10 = ""
+    if pd.notna(row.get("comparison_top10_mean_excess_return")):
+        compare_top10 = f"{float(row['comparison_top10_mean_excess_return']):+.2%}"
+    compare_text = str(row.get("comparison_model_label") or "-")
+    if compare_top10:
+        compare_text = f"{compare_text} {compare_top10}"
+    active_text = str(row.get("active_model_label") or "-")
+    if active_top10:
+        active_text = f"{active_text} {active_top10}"
+    return (
+        f"- H{int(row['horizon'])} {row['decision_label']} | active={active_text} "
+        f"| compare={compare_text} | samples={int(row['sample_count'])}{p_value} "
+        f"| reason={row['decision_reason_label']}"
+    )
+
+
 def _build_payload_content(
     *,
     as_of_date: date,
     market_pulse: dict[str, object],
+    alpha_promotion: pd.DataFrame,
     d1_board: pd.DataFrame,
     d5_board: pd.DataFrame,
     market_news: pd.DataFrame,
@@ -168,8 +193,18 @@ def _build_payload_content(
         "Selection engine v1 uses explanatory + flow + proxy penalties. "
         "Prediction bands below are calibrated historical proxies, not ML forecasts.",
         "",
-        "**Top D+1 candidates**",
+        "**Alpha promotion**",
     ]
+    if alpha_promotion.empty:
+        lines.append("- no alpha promotion audit is available yet")
+    else:
+        lines.extend(_format_alpha_promotion_line(row) for _, row in alpha_promotion.iterrows())
+    lines.extend(
+        [
+            "",
+        "**Top D+1 candidates**",
+        ]
+    )
     if d1_board.empty:
         lines.append("- no D+1 selection rows")
     else:
@@ -282,12 +317,18 @@ def render_discord_eod_report(
                     "fact_prediction",
                     "fact_market_regime_snapshot",
                     "fact_news_item",
+                    "fact_alpha_promotion_test",
+                    "fact_alpha_active_model",
                 ],
                 notes=f"Render Discord EOD report for {as_of_date.isoformat()}",
                 ranking_version=SELECTION_ENGINE_VERSION,
             )
             try:
                 market_pulse = _load_market_pulse(connection, as_of_date=as_of_date)
+                alpha_promotion = load_alpha_promotion_summary(
+                    connection,
+                    as_of_date=as_of_date,
+                )
                 d1_board = _load_top_selection_rows(
                     connection,
                     as_of_date=as_of_date,
@@ -304,6 +345,7 @@ def render_discord_eod_report(
                 content = _build_payload_content(
                     as_of_date=as_of_date,
                     market_pulse=market_pulse,
+                    alpha_promotion=alpha_promotion,
                     d1_board=d1_board,
                     d5_board=d5_board,
                     market_news=market_news,

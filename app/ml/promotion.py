@@ -32,6 +32,25 @@ from app.storage.manifests import record_run_finish, record_run_start
 PRIMARY_LOSS_NAME = "loss_top10"
 AUDIT_LOSS_NAMES: tuple[str, ...] = ("loss_top20", "loss_point", "loss_rank")
 ALL_LOSS_NAMES: tuple[str, ...] = (PRIMARY_LOSS_NAME, *AUDIT_LOSS_NAMES)
+MODEL_SPEC_LABELS: dict[str, str] = {
+    MODEL_SPEC_ID: "recursive",
+    "alpha_rolling_120_v1": "rolling 120d",
+    "alpha_rolling_250_v1": "rolling 250d",
+    "alpha_recursive_rolling_combo": "recursive+rolling combo",
+}
+DECISION_LABELS: dict[str, str] = {
+    "KEEP_ACTIVE": "Active kept",
+    "PROMOTE_CHALLENGER": "Challenger promoted",
+    "NO_AUTO_PROMOTION": "No auto-promotion",
+}
+DECISION_REASON_LABELS: dict[str, str] = {
+    "incumbent_in_superior_set": "incumbent remained in the superior set",
+    "single_challenger_survived": "one challenger survived the superior set",
+    "combo_survived_in_superior_set": "combo candidate survived the superior set",
+    "ambiguous_superior_set": "multiple challengers survived without a clear winner",
+    "no_matured_shadow_history": "matured shadow self-backtest history is not available",
+    "no_complete_loss_matrix": "shadow self-backtest matrix is incomplete",
+}
 
 
 @dataclass(slots=True)
@@ -42,6 +61,317 @@ class AlphaPromotionResult:
     promoted_horizon_count: int
     artifact_paths: list[str]
     notes: str
+
+
+def format_alpha_model_spec_id(model_spec_id: str | None) -> str:
+    if model_spec_id is None:
+        return "-"
+    return MODEL_SPEC_LABELS.get(str(model_spec_id), str(model_spec_id))
+
+
+def format_alpha_promotion_decision(decision: str | None) -> str:
+    if decision is None:
+        return "-"
+    return DECISION_LABELS.get(str(decision), str(decision))
+
+
+def format_alpha_promotion_reason(reason: str | None) -> str:
+    if reason is None:
+        return "-"
+    return DECISION_REASON_LABELS.get(str(reason), str(reason))
+
+
+def _safe_json_load(value: object) -> dict[str, object]:
+    if value in (None, "", "{}"):
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _float_or_none(value: object) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
+
+
+def _loss_to_return(loss_value: object) -> float | None:
+    value = _float_or_none(loss_value)
+    if value is None:
+        return None
+    return -value
+
+
+def _loss_to_rank_ic(loss_value: object) -> float | None:
+    value = _float_or_none(loss_value)
+    if value is None:
+        return None
+    return -value
+
+
+def _load_latest_promotion_rows(
+    connection,
+    *,
+    as_of_date: date | None = None,
+) -> pd.DataFrame:
+    where_clause = "WHERE loss_name = ?"
+    params: list[object] = [PRIMARY_LOSS_NAME]
+    if as_of_date is not None:
+        where_clause += " AND promotion_date <= ?"
+        params.append(as_of_date)
+    return connection.execute(
+        f"""
+        WITH latest AS (
+            SELECT *
+            FROM fact_alpha_promotion_test
+            {where_clause}
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY horizon, incumbent_model_spec_id, challenger_model_spec_id, loss_name
+                ORDER BY promotion_date DESC, created_at DESC
+            ) = 1
+        )
+        SELECT *
+        FROM latest
+        ORDER BY promotion_date DESC, horizon, challenger_model_spec_id
+        """,
+        params,
+    ).fetchdf()
+
+
+def _load_active_alpha_registry_frame(
+    connection,
+    *,
+    as_of_date: date | None = None,
+) -> pd.DataFrame:
+    if as_of_date is None:
+        return connection.execute(
+            """
+            SELECT
+                horizon,
+                model_spec_id AS active_model_spec_id,
+                effective_from_date AS active_effective_from_date,
+                source_type AS active_source_type,
+                promotion_type AS active_promotion_type
+            FROM fact_alpha_active_model
+            WHERE active_flag = TRUE
+              AND effective_from_date <= CURRENT_DATE
+              AND (effective_to_date IS NULL OR effective_to_date >= CURRENT_DATE)
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY horizon
+                ORDER BY effective_from_date DESC, created_at DESC
+            ) = 1
+            """
+        ).fetchdf()
+    return connection.execute(
+        """
+        SELECT
+            horizon,
+            model_spec_id AS active_model_spec_id,
+            effective_from_date AS active_effective_from_date,
+            source_type AS active_source_type,
+            promotion_type AS active_promotion_type
+        FROM fact_alpha_active_model
+        WHERE active_flag = TRUE
+          AND effective_from_date <= ?
+          AND (effective_to_date IS NULL OR effective_to_date >= ?)
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY horizon
+            ORDER BY effective_from_date DESC, created_at DESC
+        ) = 1
+        """,
+        [as_of_date, as_of_date],
+    ).fetchdf()
+
+
+def _best_comparison_spec_id(
+    *,
+    incumbent_model_spec_id: str,
+    active_model_spec_id: str,
+    chosen_model_spec_id: str | None,
+    mean_losses: dict[str, object],
+) -> str | None:
+    if (
+        chosen_model_spec_id is not None
+        and active_model_spec_id == chosen_model_spec_id
+        and active_model_spec_id != incumbent_model_spec_id
+    ):
+        return incumbent_model_spec_id
+    if chosen_model_spec_id is not None and chosen_model_spec_id != active_model_spec_id:
+        return chosen_model_spec_id
+
+    candidates: list[tuple[float, str]] = []
+    for model_spec_id, loss_payload in mean_losses.items():
+        if str(model_spec_id) == active_model_spec_id or not isinstance(loss_payload, dict):
+            continue
+        loss_value = _float_or_none(loss_payload.get(PRIMARY_LOSS_NAME))
+        if loss_value is None:
+            continue
+        candidates.append((loss_value, str(model_spec_id)))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[0][1]
+
+
+def load_alpha_promotion_summary(
+    connection,
+    *,
+    as_of_date: date | None = None,
+) -> pd.DataFrame:
+    promotion_rows = _load_latest_promotion_rows(connection, as_of_date=as_of_date)
+    if promotion_rows.empty:
+        return pd.DataFrame()
+    active_rows = _load_active_alpha_registry_frame(connection, as_of_date=as_of_date)
+    active_lookup = {
+        int(row.horizon): row._asdict()
+        for row in active_rows.itertuples(index=False)
+    }
+
+    summary_rows: list[dict[str, object]] = []
+    for horizon, group in promotion_rows.groupby("horizon", sort=True):
+        latest_promotion_date = pd.Timestamp(group["promotion_date"].max()).date()
+        horizon_group = group.loc[
+            pd.to_datetime(group["promotion_date"]).dt.date == latest_promotion_date
+        ].copy()
+        if horizon_group.empty:
+            continue
+
+        parsed_rows: list[dict[str, object]] = []
+        for row in horizon_group.itertuples(index=False):
+            detail_payload = _safe_json_load(row.detail_json)
+            parsed_rows.append(
+                {
+                    "row": row,
+                    "detail_payload": detail_payload,
+                    "mean_losses": detail_payload.get("mean_losses", {}),
+                    "chosen_model_spec_id": detail_payload.get("chosen_model_spec_id"),
+                    "decision_reason": detail_payload.get("decision_reason"),
+                    "superior_set": detail_payload.get("superior_set", []),
+                }
+            )
+
+        first = parsed_rows[0]
+        incumbent_model_spec_id = str(first["row"].incumbent_model_spec_id)
+        decision = str(first["row"].decision)
+        chosen_model_spec_id = (
+            str(first["chosen_model_spec_id"])
+            if first["chosen_model_spec_id"] not in (None, "")
+            else None
+        )
+        active_row = active_lookup.get(int(horizon), {})
+        active_model_spec_id = str(
+            active_row.get("active_model_spec_id") or incumbent_model_spec_id
+        )
+        mean_losses = (
+            first["mean_losses"] if isinstance(first["mean_losses"], dict) else {}
+        )
+        comparison_model_spec_id = _best_comparison_spec_id(
+            incumbent_model_spec_id=incumbent_model_spec_id,
+            active_model_spec_id=active_model_spec_id,
+            chosen_model_spec_id=chosen_model_spec_id,
+            mean_losses=mean_losses,
+        )
+        representative = next(
+            (
+                item
+                for item in parsed_rows
+                if str(item["row"].challenger_model_spec_id)
+                == str(comparison_model_spec_id or chosen_model_spec_id or incumbent_model_spec_id)
+            ),
+            first,
+        )
+        active_losses = mean_losses.get(active_model_spec_id, {})
+        comparison_losses = mean_losses.get(comparison_model_spec_id, {})
+        if (
+            comparison_model_spec_id == incumbent_model_spec_id
+            and active_model_spec_id != incumbent_model_spec_id
+        ):
+            comparison_role_label = "prior incumbent"
+        elif comparison_model_spec_id is None:
+            comparison_role_label = "-"
+        else:
+            comparison_role_label = "best challenger"
+
+        superior_set = [
+            format_alpha_model_spec_id(str(model_spec_id))
+            for model_spec_id in first["superior_set"]
+        ]
+        active_top10 = _loss_to_return(
+            active_losses.get(PRIMARY_LOSS_NAME) if isinstance(active_losses, dict) else None
+        )
+        comparison_top10 = _loss_to_return(
+            comparison_losses.get(PRIMARY_LOSS_NAME)
+            if isinstance(comparison_losses, dict)
+            else None
+        )
+        summary_rows.append(
+            {
+                "promotion_date": latest_promotion_date,
+                "horizon": int(horizon),
+                "summary_title": f"H{int(horizon)} {format_alpha_promotion_decision(decision)}",
+                "decision": decision,
+                "decision_label": format_alpha_promotion_decision(decision),
+                "decision_reason": first["decision_reason"],
+                "decision_reason_label": format_alpha_promotion_reason(first["decision_reason"]),
+                "active_model_spec_id": active_model_spec_id,
+                "active_model_label": format_alpha_model_spec_id(active_model_spec_id),
+                "comparison_model_spec_id": comparison_model_spec_id,
+                "comparison_model_label": format_alpha_model_spec_id(comparison_model_spec_id),
+                "comparison_role_label": comparison_role_label,
+                "incumbent_model_spec_id": incumbent_model_spec_id,
+                "incumbent_model_label": format_alpha_model_spec_id(incumbent_model_spec_id),
+                "chosen_model_spec_id": chosen_model_spec_id,
+                "chosen_model_label": format_alpha_model_spec_id(chosen_model_spec_id),
+                "window_start": representative["row"].window_start,
+                "window_end": representative["row"].window_end,
+                "sample_count": int(representative["row"].sample_count or 0),
+                "p_value": _float_or_none(representative["row"].p_value),
+                "superior_set_label": ", ".join(superior_set) if superior_set else "-",
+                "active_top10_mean_excess_return": active_top10,
+                "comparison_top10_mean_excess_return": comparison_top10,
+                "promotion_gap": (
+                    None
+                    if active_top10 is None or comparison_top10 is None
+                    else comparison_top10 - active_top10
+                ),
+                "active_top20_mean_excess_return": _loss_to_return(
+                    active_losses.get("loss_top20") if isinstance(active_losses, dict) else None
+                ),
+                "comparison_top20_mean_excess_return": _loss_to_return(
+                    comparison_losses.get("loss_top20")
+                    if isinstance(comparison_losses, dict)
+                    else None
+                ),
+                "active_point_loss": _float_or_none(
+                    active_losses.get("loss_point") if isinstance(active_losses, dict) else None
+                ),
+                "comparison_point_loss": _float_or_none(
+                    comparison_losses.get("loss_point")
+                    if isinstance(comparison_losses, dict)
+                    else None
+                ),
+                "active_rank_ic": _loss_to_rank_ic(
+                    active_losses.get("loss_rank") if isinstance(active_losses, dict) else None
+                ),
+                "comparison_rank_ic": _loss_to_rank_ic(
+                    comparison_losses.get("loss_rank")
+                    if isinstance(comparison_losses, dict)
+                    else None
+                ),
+                "active_effective_from_date": active_row.get("active_effective_from_date"),
+                "active_source_type": active_row.get("active_source_type"),
+                "active_promotion_type": active_row.get("active_promotion_type"),
+            }
+        )
+
+    if not summary_rows:
+        return pd.DataFrame()
+    return pd.DataFrame(summary_rows).sort_values(
+        ["promotion_date", "horizon"],
+        ascending=[False, True],
+    )
 
 
 def upsert_alpha_promotion_tests(connection, frame: pd.DataFrame) -> None:

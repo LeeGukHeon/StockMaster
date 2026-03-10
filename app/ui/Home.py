@@ -28,6 +28,7 @@ from app.ui.components import (
 from app.ui.helpers import (
     home_banner_freshness_levels,
     latest_alert_event_frame,
+    latest_alpha_promotion_summary_frame,
     latest_app_snapshot_frame,
     latest_market_news_frame,
     latest_recommendation_timeline_text,
@@ -135,6 +136,7 @@ def render_today_page() -> None:
     )
     latest_reports = latest_report_index_frame(settings, limit=12, latest_only=True)
     latest_news = latest_market_news_frame(settings, limit=6)
+    alpha_promotion = latest_alpha_promotion_summary_frame(settings, limit=6)
     release_preview = latest_release_candidate_preview(settings)
 
     st.title("오늘")
@@ -180,6 +182,24 @@ def render_today_page() -> None:
 
     render_narrative_card("현재 기준 요약", _today_narrative(snapshot_row, alerts, freshness))
     render_narrative_card("오늘 추천 해석", latest_recommendation_timeline_text(settings))
+
+    render_record_cards(
+        alpha_promotion,
+        title="Alpha active vs challenger",
+        primary_column="summary_title",
+        secondary_columns=["active_model_label", "comparison_model_label"],
+        detail_columns=[
+            "decision_label",
+            "active_top10_mean_excess_return",
+            "comparison_top10_mean_excess_return",
+            "promotion_gap",
+            "sample_count",
+            "window_end",
+        ],
+        limit=2,
+        empty_message="No alpha promotion audit is available yet.",
+        table_expander_label="Alpha promotion details",
+    )
 
     link_left, link_mid, link_right = st.columns(3)
     with link_left:

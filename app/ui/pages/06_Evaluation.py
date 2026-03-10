@@ -25,6 +25,7 @@ from app.ui.helpers import (
     available_evaluation_dates,
     evaluation_outcomes_frame,
     format_ranking_version_label,
+    latest_alpha_promotion_summary_frame,
     latest_calibration_diagnostic_frame,
     latest_evaluation_comparison_frame,
     latest_evaluation_summary_frame,
@@ -46,6 +47,7 @@ evaluation_dates = available_evaluation_dates(settings)
 latest_summary = latest_evaluation_summary_frame(settings, limit=30)
 latest_comparison = latest_evaluation_comparison_frame(settings)
 latest_selection_v2_comparison = latest_selection_engine_comparison_frame(settings)
+latest_alpha_promotion = latest_alpha_promotion_summary_frame(settings, limit=10)
 latest_calibration = latest_calibration_diagnostic_frame(settings, limit=30)
 intraday_capability = latest_intraday_research_capability_frame(settings, limit=20)
 intraday_strategy_comparison = latest_intraday_strategy_comparison_frame(settings, limit=30)
@@ -139,6 +141,25 @@ else:
         limit=8,
         empty_message="선정 엔진 비교 데이터가 없습니다.",
         table_expander_label="선정 엔진 비교 원본 표 보기",
+    )
+    render_record_cards(
+        latest_alpha_promotion,
+        title="Alpha active vs challenger",
+        primary_column="summary_title",
+        secondary_columns=["active_model_label", "comparison_model_label"],
+        detail_columns=[
+            "decision_label",
+            "decision_reason_label",
+            "active_top10_mean_excess_return",
+            "comparison_top10_mean_excess_return",
+            "promotion_gap",
+            "sample_count",
+            "window_end",
+            "p_value",
+        ],
+        limit=4,
+        empty_message="No alpha promotion audit is available yet.",
+        table_expander_label="Alpha promotion details",
     )
     render_record_cards(
         latest_calibration,

@@ -15,12 +15,14 @@ from app.ui.components import (
     render_narrative_card,
     render_page_footer,
     render_page_header,
+    render_record_cards,
     render_report_center,
 )
 from app.ui.helpers import (
     krx_service_registry_frame,
     latest_active_ops_policy_frame,
     latest_alert_event_frame,
+    latest_alpha_promotion_summary_frame,
     latest_app_snapshot_frame,
     latest_disk_watermark_event_frame,
     latest_health_snapshot_frame,
@@ -55,6 +57,7 @@ cleanup_history = latest_retention_cleanup_frame(settings, limit=20)
 recovery = latest_recovery_queue_frame(settings, limit=20)
 alerts = latest_alert_event_frame(settings, limit=20)
 active_policy = latest_active_ops_policy_frame(settings, limit=10)
+alpha_promotion = latest_alpha_promotion_summary_frame(settings, limit=10)
 latest_outputs = latest_successful_pipeline_output_frame(settings, limit=20)
 release_checks = latest_release_candidate_check_frame(settings, limit=20)
 latest_reports = latest_report_index_frame(settings, limit=20)
@@ -86,6 +89,26 @@ else:
         "운영 요약",
         f"현재 기준일은 {row['as_of_date']}이고 운영 상태는 {row['health_status']}입니다. 치명 알림 {int(row['critical_alert_count'] or 0)}건, 경고 알림 {int(row['warning_alert_count'] or 0)}건이 열려 있습니다.",
     )
+
+render_record_cards(
+    alpha_promotion,
+    title="Alpha active vs challenger",
+    primary_column="summary_title",
+    secondary_columns=["active_model_label", "comparison_model_label"],
+    detail_columns=[
+        "decision_label",
+        "decision_reason_label",
+        "active_top10_mean_excess_return",
+        "comparison_top10_mean_excess_return",
+        "promotion_gap",
+        "sample_count",
+        "window_end",
+        "active_promotion_type",
+    ],
+    limit=4,
+    empty_message="No alpha promotion audit is available yet.",
+    table_expander_label="Alpha promotion details",
+)
 
 top_left, top_right = st.columns(2)
 with top_left:

@@ -18,6 +18,7 @@ from app.intraday.policy import apply_active_intraday_policy_frame
 from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
+from app.ml.promotion import load_alpha_promotion_summary
 from app.ml.registry import load_model_artifact
 from app.ops.scheduler import (
     bundle_last_result_frame as scheduler_bundle_last_result_frame,
@@ -3127,6 +3128,52 @@ def latest_evaluation_comparison_frame(settings: Settings) -> pd.DataFrame:
             """,
             [SELECTION_ENGINE_VERSION, EXPLANATORY_RANKING_VERSION],
         ).fetchdf()
+
+
+def latest_alpha_promotion_summary_frame(settings: Settings, *, limit: int = 10) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        frame = load_alpha_promotion_summary(connection)
+    if frame.empty:
+        return frame
+    return frame.head(limit).copy()
+
+
+UI_VALUE_LABELS.setdefault("run_type", {}).update(
+    {
+        "freeze_alpha_active_model": "Alpha active freeze",
+        "rollback_alpha_active_model": "Alpha active rollback",
+        "run_alpha_auto_promotion": "Alpha auto-promotion",
+    }
+)
+UI_VALUE_LABELS.setdefault("promotion_type", {}).update(
+    {
+        "AUTO_PROMOTION": "Auto-promotion",
+        "ROLLBACK": "Rollback restore",
+    }
+)
+UI_COLUMN_LABELS.update(
+    {
+        "summary_title": "Summary",
+        "decision_label": "Decision",
+        "decision_reason_label": "Reason",
+        "active_model_label": "Active Model",
+        "comparison_model_label": "Comparison Model",
+        "comparison_role_label": "Comparison Role",
+        "active_top10_mean_excess_return": "Active Top10 Mean Excess Return",
+        "comparison_top10_mean_excess_return": "Comparison Top10 Mean Excess Return",
+        "promotion_gap": "Return Gap",
+        "active_point_loss": "Active Point Loss",
+        "comparison_point_loss": "Comparison Point Loss",
+        "active_rank_ic": "Active Rank IC",
+        "comparison_rank_ic": "Comparison Rank IC",
+        "superior_set_label": "Superior Set",
+        "active_effective_from_date": "Active Effective From",
+        "active_source_type": "Active Source",
+        "active_promotion_type": "Active Promotion Type",
+    }
+)
 
 
 def latest_calibration_diagnostic_frame(settings: Settings, *, limit: int = 20) -> pd.DataFrame:
