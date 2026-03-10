@@ -43,6 +43,37 @@ class _PortfolioContext:
     regime_cash_target: float
 
 
+def _coalesce_variant_columns(
+    frame: pd.DataFrame,
+    mapping: dict[str, tuple[str, ...]],
+) -> pd.DataFrame:
+    for canonical, variants in mapping.items():
+        if canonical in frame.columns:
+            continue
+        series = None
+        for variant in variants:
+            if variant not in frame.columns:
+                continue
+            series = frame[variant] if series is None else series.combine_first(frame[variant])
+        if series is not None:
+            frame[canonical] = series
+    return frame
+
+
+def _empty_timing_actions_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "symbol",
+            "timing_action",
+            "timing_confidence_margin",
+            "timing_uncertainty_score",
+            "timing_disagreement_score",
+            "timing_fallback_flag",
+            "timing_fallback_reason",
+        ]
+    )
+
+
 def upsert_portfolio_candidate(connection, frame: pd.DataFrame) -> None:
     if frame.empty:
         return
@@ -273,6 +304,12 @@ def _load_ranking_prediction_frame(
         .merge(primary_prediction, on="symbol", how="left")
         .merge(tactical_prediction, on="symbol", how="left")
     )
+    frame = _coalesce_variant_columns(frame, {
+        "uncertainty_score": ("uncertainty_score_y", "uncertainty_score_x"),
+        "disagreement_score": ("disagreement_score_y", "disagreement_score_x"),
+        "fallback_flag": ("fallback_flag_y", "fallback_flag_x"),
+        "fallback_reason": ("fallback_reason_y", "fallback_reason_x"),
+    })
     frame["company_name"] = frame["company_name_dim"].combine_first(frame["company_name"])
     frame["market"] = frame["market_dim"].combine_first(frame["market"])
     payloads = frame["explanatory_score_json"].map(
@@ -480,17 +517,7 @@ def build_portfolio_candidate_book(
                     horizon=policy.primary_horizon,
                 )
                 if timing_actions.empty:
-                    timing_actions = pd.DataFrame(
-                        columns=[
-                            "symbol",
-                            "timing_action",
-                            "confidence_margin",
-                            "uncertainty_score",
-                            "disagreement_score",
-                            "fallback_flag",
-                            "fallback_reason",
-                        ]
-                    )
+                    timing_actions = _empty_timing_actions_frame()
                 else:
                     timing_actions = timing_actions.rename(
                         columns={

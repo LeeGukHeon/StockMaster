@@ -1067,6 +1067,83 @@ def _latest_portfolio_as_of_date(settings: Settings):
     return None if not row or row[0] is None else pd.Timestamp(row[0]).date()
 
 
+def _latest_portfolio_session_date(settings: Settings, *, as_of_date=None):
+    target_date = as_of_date or _latest_portfolio_as_of_date(settings)
+    if target_date is None or not settings.paths.duckdb_path.exists():
+        return None
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT MAX(session_date)
+            FROM fact_portfolio_target_book
+            WHERE as_of_date = ?
+            """,
+            [target_date],
+        ).fetchone()
+    return None if not row or row[0] is None else pd.Timestamp(row[0]).date()
+
+
+def latest_recommendation_timeline(settings: Settings) -> dict[str, object]:
+    if not settings.paths.duckdb_path.exists():
+        return {}
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        selection_row = connection.execute(
+            """
+            SELECT MAX(as_of_date)
+            FROM fact_ranking
+            WHERE ranking_version = 'selection_engine_v2'
+            """
+        ).fetchone()
+        selection_as_of_date = (
+            None
+            if selection_row is None or selection_row[0] is None
+            else pd.Timestamp(selection_row[0]).date()
+        )
+        portfolio_as_of_date = _latest_portfolio_as_of_date(settings)
+        portfolio_session_date = _latest_portfolio_session_date(
+            settings,
+            as_of_date=portfolio_as_of_date,
+        )
+        intraday_row = connection.execute(
+            "SELECT MAX(session_date) FROM fact_intraday_meta_decision"
+        ).fetchone()
+        intraday_session_date = (
+            None
+            if intraday_row is None or intraday_row[0] is None
+            else pd.Timestamp(intraday_row[0]).date()
+        )
+    return {
+        "selection_as_of_date": selection_as_of_date,
+        "portfolio_as_of_date": portfolio_as_of_date,
+        "portfolio_session_date": portfolio_session_date,
+        "intraday_session_date": intraday_session_date,
+    }
+
+
+def latest_recommendation_timeline_text(settings: Settings) -> str:
+    timeline = latest_recommendation_timeline(settings)
+    selection_as_of_date = timeline.get("selection_as_of_date")
+    portfolio_session_date = timeline.get("portfolio_session_date")
+    intraday_session_date = timeline.get("intraday_session_date")
+    if selection_as_of_date is None:
+        return "추천 기준일 데이터가 아직 없습니다."
+    if portfolio_session_date is None:
+        return (
+            f"현재 추천은 {selection_as_of_date} 장마감 후 산출한 결과입니다. "
+            "다음 거래일 진입용 포트폴리오 목표북은 아직 생성되지 않았습니다."
+        )
+    if intraday_session_date is not None:
+        return (
+            f"현재 추천은 {selection_as_of_date} 장마감 후 산출한 결과이며, "
+            f"실제 신규 진입 검토 기준일은 {portfolio_session_date}입니다. "
+            f"장중 연구 세션은 {intraday_session_date} 기준으로 이어집니다."
+        )
+    return (
+        f"현재 추천은 {selection_as_of_date} 장마감 후 산출한 결과이며, "
+        f"실제 신규 진입 검토 기준일은 {portfolio_session_date}입니다."
+    )
+
+
 def _latest_portfolio_snapshot_date(settings: Settings):
     if not settings.paths.duckdb_path.exists():
         return None

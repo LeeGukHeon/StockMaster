@@ -11,7 +11,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.ui.components import render_narrative_card, render_page_footer, render_page_header
+from app.ui.components import (
+    render_narrative_card,
+    render_page_footer,
+    render_page_header,
+)
 from app.ui.helpers import (
     format_execution_mode_label,
     latest_portfolio_candidate_frame,
@@ -22,6 +26,7 @@ from app.ui.helpers import (
     latest_portfolio_report_preview,
     latest_portfolio_target_book_frame,
     latest_portfolio_waitlist_frame,
+    latest_recommendation_timeline_text,
     load_ui_settings,
     localize_frame,
 )
@@ -62,6 +67,8 @@ else:
         "포트폴리오 요약",
         f"현재 활성 정책은 {row.get('active_portfolio_policy_id', '-')}, 실행 모드는 {format_execution_mode_label(execution_mode)}입니다. 신규 진입과 추가 매수는 장중 판단 결과를 선택적으로 반영합니다.",
     )
+
+st.caption(latest_recommendation_timeline_text(settings))
 
 top_left, top_right = st.columns(2)
 with top_left:

@@ -28,6 +28,7 @@ from app.ui.helpers import (
     latest_alert_event_frame,
     latest_app_snapshot_frame,
     latest_market_news_frame,
+    latest_recommendation_timeline_text,
     latest_release_candidate_preview,
     latest_report_index_frame,
     latest_ui_freshness_frame,
@@ -192,6 +193,7 @@ def render_today_page() -> None:
     actionable_left, actionable_right = st.columns((2, 1))
     with actionable_left:
         st.subheader("오늘의 주목 종목")
+        st.caption(latest_recommendation_timeline_text(settings))
         render_top_actionable_badges(settings)
         if selection_preview.empty:
             st.info("선정 엔진 v2 미리보기가 없습니다.")

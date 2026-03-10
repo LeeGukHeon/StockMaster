@@ -14,13 +14,19 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
-from app.ui.components import render_glossary_hint, render_page_footer, render_page_header
+from app.ui.components import (
+    render_glossary_hint,
+    render_narrative_card,
+    render_page_footer,
+    render_page_header,
+)
 from app.ui.helpers import (
     available_ranking_dates,
     available_ranking_versions,
     format_market_label,
     format_ranking_version_label,
     latest_evaluation_comparison_frame,
+    latest_recommendation_timeline_text,
     latest_selection_validation_summary_frame,
     latest_validation_summary_frame,
     leaderboard_frame,
@@ -40,6 +46,7 @@ render_page_header(
     description="등급, 선정 점수, 예상 알파, 불확실성, 모델 불일치, 실행 패널티, 수급 점수, 밴드, 위험 신호를 한 번에 확인하는 화면입니다.",
 )
 render_glossary_hint("Selection v2")
+render_narrative_card("추천 기준일", latest_recommendation_timeline_text(settings))
 
 if not ranking_versions:
     st.info("리더보드 데이터가 아직 없습니다.")
