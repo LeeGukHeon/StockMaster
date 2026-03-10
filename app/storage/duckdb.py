@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -2907,6 +2909,28 @@ def duckdb_connection(
         yield connection
     finally:
         connection.close()
+
+
+@contextmanager
+def duckdb_snapshot_connection(db_path: Path) -> Iterator[duckdb.DuckDBPyConnection]:
+    ensure_directory(db_path.parent)
+    fd, snapshot_path_raw = tempfile.mkstemp(prefix="stockmaster-duckdb-", suffix=".duckdb")
+    snapshot_path = Path(snapshot_path_raw)
+    import os
+
+    os.close(fd)
+    try:
+        shutil.copy2(db_path, snapshot_path)
+        connection = duckdb.connect(str(snapshot_path), read_only=True)
+        try:
+            yield connection
+        finally:
+            connection.close()
+    finally:
+        try:
+            Path(snapshot_path).unlink(missing_ok=True)
+        except PermissionError:
+            pass
 
 
 def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:

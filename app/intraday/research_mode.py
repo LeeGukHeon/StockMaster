@@ -14,7 +14,7 @@ from app.common.time import now_local, today_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
-from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
+from app.storage.duckdb import bootstrap_core_tables, duckdb_connection, duckdb_snapshot_connection
 from app.storage.manifests import record_run_finish, record_run_start
 
 INTRADAY_RESEARCH_ROLLOUT = "RESEARCH_NON_TRADING"
@@ -488,12 +488,17 @@ def validate_intraday_research_mode(
                     )
                     raise
         except duckdb.IOException as exc:
-            if "Could not set lock on file" not in str(exc):
+            message = str(exc).lower()
+            if (
+                "could not set lock on file" not in message
+                and "cannot open file" not in message
+                and "다른 프로세스" not in message
+            ):
                 raise
-            with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+            with duckdb_snapshot_connection(settings.paths.duckdb_path) as connection:
                 result = _result_from_counts(
                     run_context.run_id,
                     _collect_counts(connection),
-                    suffix="(read-only fallback due active writer lock)",
+                    suffix="(snapshot read-only fallback due active writer lock)",
                 )
             return result

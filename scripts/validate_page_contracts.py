@@ -42,8 +42,13 @@ def main() -> int:
         log_and_print(
             f"Page contracts validated. run_id={result.run_id} checks={result.check_count} warnings={result.warning_count}"
         )
-    except duckdb.ConnectionException as exc:
-        if "conflicting lock" not in str(exc).lower():
+    except (duckdb.ConnectionException, duckdb.IOException) as exc:
+        message = str(exc).lower()
+        if (
+            "conflicting lock" not in message
+            and "file is being used by another process" not in message
+            and "다른 프로세스" not in message
+        ):
             raise
         result = validate_page_contracts(
             settings,

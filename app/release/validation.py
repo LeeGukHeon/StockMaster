@@ -231,13 +231,18 @@ def validate_report_artifacts(
 def validate_release_candidate(
     settings: Settings,
     *,
-    connection: duckdb.DuckDBPyConnection,
+    connection: duckdb.DuckDBPyConnection | None = None,
     as_of_date: date | None = None,
+    persist_results: bool = True,
 ) -> OpsValidationResult:
+    if persist_results and connection is None:
+        raise ValueError("connection is required when persist_results=True")
+    if connection is None:
+        raise ValueError("connection is required when persist_results=False is not using a caller-provided snapshot")
     bootstrap_core_tables(connection)
     subresults = [
-        validate_page_contracts(settings, connection=connection),
-        validate_navigation_integrity(settings, connection=connection),
+        validate_page_contracts(settings, connection=connection, persist_results=persist_results),
+        validate_navigation_integrity(settings, connection=connection, persist_results=persist_results),
         validate_report_artifacts(settings, connection=connection),
     ]
     freshness_rows = connection.execute(
@@ -278,7 +283,8 @@ def validate_release_candidate(
             recommended_action="stale dataset을 재생성하거나 배너를 확인하세요.",
         ),
     ]
-    _insert_checks(connection, settings, checks)
+    if persist_results:
+        _insert_checks(connection, settings, checks)
     total_checks = sum(result.check_count for result in subresults) + len(checks)
     total_warnings = sum(result.warning_count for result in subresults) + sum(
         1 for check in checks if check.severity != "INFO"
