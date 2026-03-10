@@ -167,7 +167,7 @@ def _load_latest_timing_action(
             NULL AS uncertainty_score,
             NULL AS disagreement_score,
             fallback_flag,
-            fallback_reason
+            NULL AS fallback_reason
         FROM fact_intraday_adjusted_entry_decision
         WHERE session_date = ?
           AND horizon = ?
