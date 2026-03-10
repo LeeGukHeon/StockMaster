@@ -19,6 +19,7 @@ from app.ui.components import (
     render_narrative_card,
     render_page_footer,
     render_page_header,
+    render_record_cards,
 )
 from app.ui.helpers import (
     available_ranking_dates,
@@ -32,7 +33,6 @@ from app.ui.helpers import (
     leaderboard_frame,
     leaderboard_grade_count_frame,
     load_ui_settings,
-    localize_frame,
 )
 
 settings = load_ui_settings(PROJECT_ROOT)
@@ -43,10 +43,10 @@ render_page_header(
     settings,
     page_name="리더보드",
     title="리더보드",
-    description="등급, 선정 점수, 예상 알파, 불확실성, 모델 불일치, 실행 패널티, 수급 점수, 밴드, 위험 신호를 한 번에 확인하는 화면입니다.",
+    description="오늘 바로 볼 추천 종목과 기대 알파, 위험 신호, 불확실성 정보를 빠르게 확인합니다.",
 )
 render_glossary_hint("Selection v2")
-render_narrative_card("추천 기준일", latest_recommendation_timeline_text(settings))
+render_narrative_card("추천 기준 안내", latest_recommendation_timeline_text(settings))
 
 if not ranking_versions:
     st.info("리더보드 데이터가 아직 없습니다.")
@@ -71,8 +71,8 @@ else:
         index=0,
         format_func=format_market_label,
     )
-    limit = st.slider("표시 건수", min_value=10, max_value=100, value=25, step=5)
-    show_technical = st.toggle("기술 지표 열 보기", value=True)
+    limit = st.slider("표시 개수", min_value=10, max_value=100, value=25, step=5)
+    show_technical = st.toggle("세부 기술 지표 함께 보기", value=False)
 
     board = leaderboard_frame(
         settings,
@@ -94,59 +94,64 @@ else:
         else latest_validation_summary_frame(settings, limit=50)
     )
 
-    top_left, top_right = st.columns((2, 1))
-    with top_left:
-        st.subheader("순위 표")
-        if board.empty:
-            st.info("현재 조건에 맞는 순위 데이터가 없습니다.")
-        else:
-            columns = [
-                "symbol",
-                "company_name",
-                "market",
-                "grade",
-                "final_selection_value",
-                "final_selection_rank_pct",
-                "expected_excess_return",
-                "lower_band",
-                "upper_band",
-                "reasons",
-                "risks",
-            ]
-            technical_columns = [
-                "uncertainty_score",
-                "disagreement_score",
-                "implementation_penalty_score",
-                "flow_score",
-                "fallback_flag",
-            ]
-            if show_technical:
-                columns.extend(technical_columns)
+    if not board.empty and "final_selection_rank_pct" in board.columns:
+        board = board.copy()
+        board["final_selection_rank_pct"] = (
+            pd.to_numeric(board["final_selection_rank_pct"], errors="coerce") * 100.0
+        ).round(1)
 
-            display = board[[column for column in columns if column in board.columns]].copy()
-            if "final_selection_rank_pct" in display.columns:
-                display["final_selection_rank_pct"] = (
-                    pd.to_numeric(display["final_selection_rank_pct"], errors="coerce") * 100.0
-                ).round(1)
-            st.dataframe(localize_frame(display), width="stretch", hide_index=True)
-    with top_right:
-        st.subheader("등급 분포")
-        if grade_counts.empty:
-            st.info("등급 분포가 없습니다.")
-        else:
-            st.dataframe(localize_frame(grade_counts), width="stretch", hide_index=True)
+    render_record_cards(
+        board,
+        title="오늘 추천 상위 종목",
+        primary_column="symbol",
+        secondary_columns=["company_name", "grade"],
+        detail_columns=[
+            "final_selection_value",
+            "expected_excess_return",
+            "final_selection_rank_pct",
+            "lower_band",
+            "upper_band",
+            *(["uncertainty_score", "disagreement_score", "flow_score"] if show_technical else []),
+        ],
+        limit=min(limit, 8),
+        empty_message="현재 조건에 맞는 순위 데이터가 없습니다.",
+        table_expander_label="리더보드 원본 표 보기",
+    )
 
-    st.subheader("최신 검증 요약")
+    render_record_cards(
+        grade_counts,
+        title="등급 분포",
+        primary_column="grade",
+        detail_columns=["symbol_count"],
+        limit=10,
+        empty_message="등급 분포가 없습니다.",
+        table_expander_label="등급 분포 원본 표 보기",
+    )
+
     filtered = validation.loc[validation["horizon"] == horizon].copy() if not validation.empty else validation
-    if filtered.empty:
-        st.info("선택한 버전에 대한 검증 데이터가 없습니다.")
-    else:
-        st.dataframe(localize_frame(filtered), width="stretch", hide_index=True)
+    render_record_cards(
+        filtered,
+        title="최신 검증 요약",
+        primary_column="summary_name",
+        secondary_columns=["window_type"],
+        detail_columns=["summary_value", "horizon"],
+        limit=8,
+        empty_message="선택한 버전에 대한 검증 데이터가 없습니다.",
+        table_expander_label="검증 요약 원본 표 보기",
+    )
 
-    st.subheader("선정 엔진과 설명형 순위 비교")
-    if evaluation_comparison.empty:
-        st.info("비교 평가 데이터가 없습니다.")
-    else:
-        st.dataframe(localize_frame(evaluation_comparison), width="stretch", hide_index=True)
+    render_record_cards(
+        evaluation_comparison,
+        title="선정 엔진과 설명형 비교",
+        primary_column="metric_name",
+        secondary_columns=["horizon"],
+        detail_columns=[
+            "selection_v2_avg_excess",
+            "explanatory_avg_excess",
+        ],
+        limit=8,
+        empty_message="비교 평가 데이터가 없습니다.",
+        table_expander_label="비교 평가 원본 표 보기",
+    )
 
 render_page_footer(settings, page_name="리더보드")

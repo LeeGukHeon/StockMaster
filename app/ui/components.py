@@ -93,6 +93,69 @@ def render_narrative_card(title: str, body: str) -> None:
     )
 
 
+def _display_value(value: object) -> str:
+    if value is None:
+        return "-"
+    text = str(value).strip()
+    return text if text else "-"
+
+
+def render_record_cards(
+    frame,
+    *,
+    title: str,
+    primary_column: str,
+    secondary_columns: list[str] | None = None,
+    detail_columns: list[str] | None = None,
+    limit: int = 5,
+    empty_message: str = "표시할 데이터가 없습니다.",
+    show_table_expander: bool = True,
+    table_expander_label: str = "원본 표 보기",
+) -> None:
+    st.subheader(title)
+    if frame.empty:
+        st.info(empty_message)
+        return
+
+    secondary_columns = secondary_columns or []
+    detail_columns = detail_columns or []
+    selected_columns = [
+        column
+        for column in [primary_column, *secondary_columns, *detail_columns]
+        if column in frame.columns
+    ]
+    display = frame[selected_columns].copy()
+    localized = localize_frame(display)
+    localized_columns = list(localized.columns)
+    label_map = dict(zip(selected_columns, localized_columns, strict=False))
+
+    if primary_column not in label_map:
+        st.dataframe(localized, width="stretch", hide_index=True)
+        return
+
+    rows = localized.head(limit).to_dict(orient="records")
+    for row in rows:
+        primary_value = _display_value(row.get(label_map[primary_column]))
+        secondary_text = " · ".join(
+            _display_value(row.get(label_map[column]))
+            for column in secondary_columns
+            if column in label_map
+        )
+        with st.container(border=True):
+            st.markdown(f"**{primary_value}**")
+            if secondary_text:
+                st.caption(secondary_text)
+            for column in detail_columns:
+                if column not in label_map:
+                    continue
+                label = label_map[column]
+                st.write(f"{label}: {_display_value(row.get(label))}")
+
+    if show_table_expander:
+        with st.expander(table_expander_label, expanded=False):
+            st.dataframe(localized, width="stretch", hide_index=True)
+
+
 def _latest_snapshot_row(settings: Settings) -> dict[str, object] | None:
     frame = latest_app_snapshot_frame(settings)
     if frame.empty:

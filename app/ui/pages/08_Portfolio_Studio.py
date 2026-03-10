@@ -15,6 +15,7 @@ from app.ui.components import (
     render_narrative_card,
     render_page_footer,
     render_page_header,
+    render_record_cards,
 )
 from app.ui.helpers import (
     format_execution_mode_label,
@@ -28,7 +29,6 @@ from app.ui.helpers import (
     latest_portfolio_waitlist_frame,
     latest_recommendation_timeline_text,
     load_ui_settings,
-    localize_frame,
 )
 
 settings = load_ui_settings(PROJECT_ROOT)
@@ -53,58 +53,115 @@ render_page_header(
     settings,
     page_name="포트폴리오",
     title="포트폴리오",
-    description="선정 엔진과 장중 타이밍 보조 결과를 바탕으로 매수 후보, 목표 비중, 리밸런스 계획을 제안하는 화면입니다.",
+    description="오늘 추천을 실제 보유안으로 어떻게 옮길지, 목표 비중과 리밸런스 계획 중심으로 확인합니다.",
 )
 
 if active_policy.empty:
     render_narrative_card(
         "포트폴리오 요약",
-        "활성 포트폴리오 정책이 아직 동결되지 않았습니다. 그래도 시험 실행 기준으로 후보 목록, 목표 편입안, 리밸런스 계획은 확인할 수 있습니다.",
+        "활성 포트폴리오 정책은 없지만, 현재 실행 기준으로 후보와 목표 보유안을 미리 볼 수 있습니다.",
     )
 else:
     row = active_policy.iloc[0]
     render_narrative_card(
         "포트폴리오 요약",
-        f"현재 활성 정책은 {row.get('active_portfolio_policy_id', '-')}, 실행 모드는 {format_execution_mode_label(execution_mode)}입니다. 신규 진입과 추가 매수는 장중 판단 결과를 선택적으로 반영합니다.",
+        (
+            f"현재 활성 정책은 {row.get('active_portfolio_policy_id', '-')}이고, "
+            f"실행 모드는 {format_execution_mode_label(execution_mode)}입니다. "
+            "타이밍 보조는 신규 진입과 추가 매수에만 선택적으로 반영합니다."
+        ),
     )
 
-st.caption(latest_recommendation_timeline_text(settings))
+render_narrative_card("추천 기준 안내", latest_recommendation_timeline_text(settings))
 
-top_left, top_right = st.columns(2)
-with top_left:
-    st.subheader("활성 포트폴리오 정책")
-    st.dataframe(localize_frame(active_policy), width="stretch", hide_index=True)
-with top_right:
-    st.subheader("후보 종목 목록")
-    st.dataframe(localize_frame(candidate_book), width="stretch", hide_index=True)
+render_record_cards(
+    active_policy,
+    title="활성 포트폴리오 정책",
+    primary_column="active_portfolio_policy_id",
+    secondary_columns=["display_name"],
+    detail_columns=["promotion_type", "effective_from_date", "note"],
+    limit=3,
+    empty_message="활성 포트폴리오 정책이 아직 없습니다.",
+    table_expander_label="포트폴리오 정책 원본 표 보기",
+)
 
-body_left, body_right = st.columns(2)
-with body_left:
-    st.subheader("목표 편입안")
-    st.dataframe(localize_frame(target_book), width="stretch", hide_index=True)
-with body_right:
-    st.subheader("리밸런스 점검")
-    st.dataframe(localize_frame(rebalance), width="stretch", hide_index=True)
+render_record_cards(
+    target_book,
+    title="목표 보유안",
+    primary_column="symbol",
+    secondary_columns=["company_name", "candidate_state"],
+    detail_columns=[
+        "target_rank",
+        "target_weight",
+        "target_notional",
+        "target_shares",
+        "gate_status",
+    ],
+    limit=8,
+    empty_message="목표 보유안 데이터가 없습니다.",
+    table_expander_label="목표 보유안 원본 표 보기",
+)
 
-lower_left, lower_right = st.columns(2)
-with lower_left:
-    st.subheader("대기 / 차단 종목")
-    if waitlist.empty:
-        st.info("현재 대기 또는 차단 종목이 없습니다.")
-    else:
-        st.dataframe(localize_frame(waitlist), width="stretch", hide_index=True)
+render_record_cards(
+    rebalance,
+    title="리밸런스 계획",
+    primary_column="symbol",
+    secondary_columns=["rebalance_action", "gate_status"],
+    detail_columns=["delta_shares", "cash_delta", "blocked_reason"],
+    limit=8,
+    empty_message="리밸런스 계획이 없습니다.",
+    table_expander_label="리밸런스 원본 표 보기",
+)
 
-    st.subheader("제약 요약")
-    if constraints.empty:
-        st.info("기록된 제약 이벤트가 없습니다.")
-    else:
-        st.dataframe(localize_frame(constraints), width="stretch", hide_index=True)
-with lower_right:
-    st.subheader("최근 순자산 가치 / 익스포저")
-    if nav_frame.empty:
-        st.info("순자산 가치 스냅샷이 없습니다.")
-    else:
-        st.dataframe(localize_frame(nav_frame), width="stretch", hide_index=True)
+render_record_cards(
+    candidate_book,
+    title="후보 종목",
+    primary_column="symbol",
+    secondary_columns=["company_name", "candidate_state"],
+    detail_columns=[
+        "candidate_rank",
+        "effective_alpha_long",
+        "risk_scaled_conviction",
+        "timing_action",
+        "timing_gate_status",
+    ],
+    limit=8,
+    empty_message="후보 종목 데이터가 없습니다.",
+    table_expander_label="후보 종목 원본 표 보기",
+)
+
+render_record_cards(
+    waitlist,
+    title="대기 / 차단 종목",
+    primary_column="symbol",
+    secondary_columns=["company_name", "gate_status"],
+    detail_columns=["waitlist_rank", "blocked_flag", "blocked_reason"],
+    limit=8,
+    empty_message="대기 또는 차단 종목이 없습니다.",
+    table_expander_label="대기 / 차단 원본 표 보기",
+)
+
+render_record_cards(
+    constraints,
+    title="제약 이벤트",
+    primary_column="constraint_type",
+    secondary_columns=["severity"],
+    detail_columns=["affected_symbol_count", "message"],
+    limit=8,
+    empty_message="기록된 제약 이벤트가 없습니다.",
+    table_expander_label="제약 이벤트 원본 표 보기",
+)
+
+render_record_cards(
+    nav_frame,
+    title="최근 순자산가치 요약",
+    primary_column="snapshot_date",
+    secondary_columns=["execution_mode"],
+    detail_columns=["nav", "cash_weight", "holding_count", "turnover"],
+    limit=6,
+    empty_message="순자산가치 스냅샷이 없습니다.",
+    table_expander_label="NAV 원본 표 보기",
+)
 
 if report_preview:
     with st.expander("최신 포트폴리오 리포트 미리보기", expanded=False):

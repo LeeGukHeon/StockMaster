@@ -18,6 +18,7 @@ from app.ui.components import (
     render_narrative_card,
     render_page_footer,
     render_page_header,
+    render_record_cards,
     render_warning_banner,
 )
 from app.ui.helpers import (
@@ -37,7 +38,6 @@ from app.ui.helpers import (
     latest_postmortem_preview,
     latest_selection_engine_comparison_frame,
     load_ui_settings,
-    localize_frame,
 )
 
 settings = load_ui_settings(PROJECT_ROOT)
@@ -75,20 +75,19 @@ render_page_header(
     settings,
     page_name="사후 평가",
     title="사후 평가",
-    description="D+1 / D+5 성과, 밴드 커버리지, 모델 비교, 장중 동일 종료 비교를 함께 확인합니다.",
+    description="D+1 / D+5 결과와 보정 상태, 장중 비교 결과를 한눈에 확인합니다.",
 )
 render_warning_banner(
     "INFO",
-    "장중 비교와 메타 오버레이는 리서치 전용 / 비매매 평가입니다. 자동 주문이나 자동 승격은 수행하지 않습니다.",
+    "장중 비교와 메타 오버레이는 연구용 비매매 평가입니다. 자동 주문이나 자동 승격은 없습니다.",
 )
-
 render_narrative_card(
     "사후 평가 요약",
-    "이 화면은 고정된 예측 스냅샷 기준입니다. 장후 선정, 장중 조정, 메타 오버레이를 다시 계산하지 않고 같은 종료 기준으로 비교합니다.",
+    "이 화면은 고정된 예측 스냅샷 기준입니다. 사후 값을 다시 계산해서 덮어쓰지 않고 같은 종료 기준으로 비교합니다.",
 )
 
 if not evaluation_dates:
-    st.info("아직 평가 결과가 없습니다. 평가 스크립트를 먼저 실행하세요.")
+    st.info("아직 평가 결과가 없습니다. 평가 스크립트를 먼저 실행해 주세요.")
 else:
     selected_date = st.selectbox("평가일", options=evaluation_dates, index=0)
     horizon = st.selectbox("기간", options=[1, 5], index=1, format_func=lambda value: f"D+{value}")
@@ -102,7 +101,7 @@ else:
         index=0,
         format_func=format_ranking_version_label,
     )
-    limit = st.slider("표시 건수", min_value=10, max_value=100, value=25, step=5)
+    limit = st.slider("표시 개수", min_value=10, max_value=100, value=25, step=5)
     outcomes = evaluation_outcomes_frame(
         settings,
         evaluation_date=selected_date,
@@ -111,53 +110,155 @@ else:
         limit=limit,
     )
 
-    top_left, top_right = st.columns(2)
-    with top_left:
-        st.subheader("최신 평가 요약")
-        st.dataframe(localize_frame(latest_summary), width="stretch", hide_index=True)
-        st.subheader("설명형 대비 선정 비교")
-        st.dataframe(localize_frame(latest_comparison), width="stretch", hide_index=True)
-        st.subheader("선정 v2 비교")
-        st.dataframe(localize_frame(latest_selection_v2_comparison), width="stretch", hide_index=True)
-    with top_right:
-        st.subheader("밴드 커버리지 / 보정")
-        st.dataframe(localize_frame(latest_calibration), width="stretch", hide_index=True)
-        st.subheader("평가 결과 샘플")
-        st.dataframe(localize_frame(outcomes), width="stretch", hide_index=True)
+    render_record_cards(
+        latest_summary,
+        title="최신 평가 요약",
+        primary_column="summary_name",
+        secondary_columns=["window_type"],
+        detail_columns=["summary_value", "horizon"],
+        limit=8,
+        empty_message="최신 평가 요약이 없습니다.",
+        table_expander_label="평가 요약 원본 표 보기",
+    )
+    render_record_cards(
+        latest_comparison,
+        title="설명형 대비 선정 비교",
+        primary_column="metric_name",
+        secondary_columns=["horizon"],
+        detail_columns=["selection_v2_avg_excess", "explanatory_avg_excess"],
+        limit=8,
+        empty_message="비교 평가 데이터가 없습니다.",
+        table_expander_label="비교 평가 원본 표 보기",
+    )
+    render_record_cards(
+        latest_selection_v2_comparison,
+        title="선정 엔진 비교",
+        primary_column="metric_name",
+        secondary_columns=["window_type"],
+        detail_columns=["current_value", "prior_value"],
+        limit=8,
+        empty_message="선정 엔진 비교 데이터가 없습니다.",
+        table_expander_label="선정 엔진 비교 원본 표 보기",
+    )
+    render_record_cards(
+        latest_calibration,
+        title="밴드 보정 / 커버리지",
+        primary_column="diagnostic_name",
+        secondary_columns=["horizon"],
+        detail_columns=["diagnostic_value", "window_end_date"],
+        limit=8,
+        empty_message="보정 데이터가 없습니다.",
+        table_expander_label="보정 원본 표 보기",
+    )
+    render_record_cards(
+        outcomes,
+        title="평가 결과 샘플",
+        primary_column="symbol",
+        secondary_columns=["company_name", "outcome_status"],
+        detail_columns=["selection_date", "horizon", "realized_excess_return", "band_status"],
+        limit=8,
+        empty_message="평가 결과 샘플이 없습니다.",
+        table_expander_label="평가 결과 원본 표 보기",
+    )
 
-st.subheader("장중 리서치 기능 상태")
-st.dataframe(localize_frame(intraday_capability), width="stretch", hide_index=True)
+render_record_cards(
+    intraday_capability,
+    title="장중 연구 기능 상태",
+    primary_column="feature_slug",
+    secondary_columns=["rollout_mode"],
+    detail_columns=["dependency_ready_flag", "report_available_flag", "last_skip_reason"],
+    limit=8,
+    empty_message="장중 연구 기능 상태가 없습니다.",
+    table_expander_label="장중 기능 상태 원본 표 보기",
+)
 
-intraday_left, intraday_right = st.columns(2)
-with intraday_left:
-    st.subheader("장중 동일 종료 비교")
-    st.dataframe(localize_frame(intraday_strategy_comparison), width="stretch", hide_index=True)
-    st.subheader("장중 국면 매트릭스")
-    st.dataframe(localize_frame(intraday_regime_matrix), width="stretch", hide_index=True)
-with intraday_right:
-    st.subheader("장중 타이밍 보정")
-    st.dataframe(localize_frame(intraday_timing_calibration), width="stretch", hide_index=True)
-    st.subheader("정책 워크포워드")
-    st.dataframe(localize_frame(policy_walkforward), width="stretch", hide_index=True)
-
-meta_left, meta_right = st.columns(2)
-with meta_left:
-    st.subheader("정책 대비 메타 오버레이")
-    st.dataframe(localize_frame(meta_overlay), width="stretch", hide_index=True)
-    st.subheader("메타 오버레이 국면별 분해")
-    st.dataframe(localize_frame(meta_regime_breakdown), width="stretch", hide_index=True)
-with meta_right:
-    st.subheader("메타 오버레이 체크포인트 분해")
-    st.dataframe(localize_frame(meta_checkpoint_breakdown), width="stretch", hide_index=True)
-    st.subheader("정책 제거 실험")
-    st.dataframe(localize_frame(policy_ablation), width="stretch", hide_index=True)
+render_record_cards(
+    intraday_strategy_comparison,
+    title="장중 동일 종료 비교",
+    primary_column="strategy_id",
+    secondary_columns=["horizon"],
+    detail_columns=["executed_count", "execution_rate", "mean_realized_excess_return"],
+    limit=8,
+    empty_message="장중 전략 비교 데이터가 없습니다.",
+    table_expander_label="장중 전략 비교 원본 표 보기",
+)
+render_record_cards(
+    intraday_regime_matrix,
+    title="장중 구간별 비교",
+    primary_column="comparison_value",
+    secondary_columns=["strategy_id"],
+    detail_columns=["horizon", "mean_realized_excess_return", "positive_timing_edge_rate"],
+    limit=8,
+    empty_message="구간별 장중 비교 데이터가 없습니다.",
+    table_expander_label="구간별 장중 비교 원본 표 보기",
+)
+render_record_cards(
+    intraday_timing_calibration,
+    title="장중 타이밍 보정",
+    primary_column="calibration_name",
+    secondary_columns=["horizon"],
+    detail_columns=["calibration_value", "window_end_date"],
+    limit=8,
+    empty_message="장중 타이밍 보정 데이터가 없습니다.",
+    table_expander_label="장중 타이밍 보정 원본 표 보기",
+)
+render_record_cards(
+    policy_walkforward,
+    title="정책 워크포워드",
+    primary_column="policy_template",
+    secondary_columns=["scope_type", "horizon"],
+    detail_columns=["objective_score", "test_session_count", "manual_review_required_flag"],
+    limit=8,
+    empty_message="정책 워크포워드 데이터가 없습니다.",
+    table_expander_label="정책 워크포워드 원본 표 보기",
+)
+render_record_cards(
+    meta_overlay,
+    title="정책 대비 메타 오버레이",
+    primary_column="metric_name",
+    secondary_columns=["horizon"],
+    detail_columns=["policy_only_value", "meta_overlay_value"],
+    limit=8,
+    empty_message="메타 오버레이 비교 데이터가 없습니다.",
+    table_expander_label="메타 오버레이 원본 표 보기",
+)
+render_record_cards(
+    meta_regime_breakdown,
+    title="메타 오버레이 구간별 결과",
+    primary_column="metric_name",
+    secondary_columns=["comparison_value"],
+    detail_columns=["policy_only_value", "meta_overlay_value"],
+    limit=8,
+    empty_message="구간별 메타 비교 데이터가 없습니다.",
+    table_expander_label="구간별 메타 비교 원본 표 보기",
+)
+render_record_cards(
+    meta_checkpoint_breakdown,
+    title="메타 오버레이 체크포인트별 결과",
+    primary_column="metric_name",
+    secondary_columns=["comparison_value"],
+    detail_columns=["policy_only_value", "meta_overlay_value"],
+    limit=8,
+    empty_message="체크포인트별 메타 비교 데이터가 없습니다.",
+    table_expander_label="체크포인트별 메타 비교 원본 표 보기",
+)
+render_record_cards(
+    policy_ablation,
+    title="정책 제거 실험",
+    primary_column="ablation_name",
+    secondary_columns=["horizon"],
+    detail_columns=["objective_score_delta", "manual_review_required_flag"],
+    limit=8,
+    empty_message="정책 제거 실험 데이터가 없습니다.",
+    table_expander_label="정책 제거 실험 원본 표 보기",
+)
 
 if intraday_postmortem_preview:
     with st.expander("최신 장중 사후 분석 미리보기", expanded=False):
         st.code(intraday_postmortem_preview)
 
 if postmortem_preview:
-    with st.expander("최신 장후 사후 분석 미리보기", expanded=False):
+    with st.expander("최신 일반 사후 분석 미리보기", expanded=False):
         st.code(postmortem_preview)
 
 render_page_footer(settings, page_name="사후 평가")

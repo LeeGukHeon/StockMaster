@@ -18,6 +18,7 @@ from app.ui.components import (
     inject_app_styles,
     render_narrative_card,
     render_page_footer,
+    render_record_cards,
     render_release_candidate_summary,
     render_report_center,
     render_status_badges,
@@ -178,6 +179,7 @@ def render_today_page() -> None:
         bottom_right.metric("최신 리포트 묶음", "-")
 
     render_narrative_card("현재 기준 요약", _today_narrative(snapshot_row, alerts, freshness))
+    render_narrative_card("오늘 추천 해석", latest_recommendation_timeline_text(settings))
 
     link_left, link_mid, link_right = st.columns(3)
     with link_left:
@@ -193,64 +195,67 @@ def render_today_page() -> None:
     actionable_left, actionable_right = st.columns((2, 1))
     with actionable_left:
         st.subheader("오늘의 주목 종목")
-        st.caption(latest_recommendation_timeline_text(settings))
         render_top_actionable_badges(settings)
         if selection_preview.empty:
             st.info("선정 엔진 v2 미리보기가 없습니다.")
         else:
-            columns = [
-                "symbol",
-                "company_name",
-                "grade",
-                "final_selection_value",
-                "expected_excess_return",
-                "uncertainty_score",
-                "disagreement_score",
-                "implementation_penalty_score",
-                "flow_score",
-                "lower_band",
-                "upper_band",
-                "risks",
-            ]
-            display = selection_preview[[column for column in columns if column in selection_preview.columns]].copy()
-            st.dataframe(localize_frame(display), width="stretch", hide_index=True)
+            render_record_cards(
+                selection_preview,
+                title="오늘 바로 볼 추천 종목",
+                primary_column="symbol",
+                secondary_columns=["company_name", "grade"],
+                detail_columns=[
+                    "final_selection_value",
+                    "expected_excess_return",
+                    "lower_band",
+                    "upper_band",
+                    "flow_score",
+                    "risks",
+                ],
+                limit=6,
+                empty_message="선정 엔진 v2 미리보기가 없습니다.",
+                table_expander_label="추천 종목 원본 표 보기",
+            )
     with actionable_right:
-        st.subheader("중요 알림")
-        if alerts.empty:
-            st.success("열린 알림이 없습니다.")
-        else:
-            display = alerts[
-                ["created_at", "alert_type", "severity", "component_name", "message", "status"]
-            ].copy()
-            st.dataframe(localize_frame(display), width="stretch", hide_index=True)
+        render_record_cards(
+            alerts,
+            title="중요 알림",
+            primary_column="message",
+            secondary_columns=["severity", "component_name"],
+            detail_columns=["created_at", "alert_type", "status"],
+            limit=5,
+            empty_message="열린 알림이 없습니다.",
+            table_expander_label="알림 원본 표 보기",
+        )
 
     report_left, report_right = st.columns((2, 1))
     with report_left:
         st.subheader("통합 리포트 센터")
         render_report_center(settings, limit=12)
     with report_right:
-        st.subheader("신선도 점검")
-        if freshness.empty:
-            st.info("화면 신선도 스냅샷이 없습니다.")
-        else:
-            display = freshness[
-                [
-                    "page_name",
-                    "dataset_name",
-                    "warning_level",
-                    "stale_flag",
-                    "latest_available_ts",
-                ]
-            ].copy()
-            st.dataframe(localize_frame(display), width="stretch", hide_index=True)
+        render_record_cards(
+            freshness,
+            title="신선도 점검",
+            primary_column="dataset_name",
+            secondary_columns=["warning_level", "page_name"],
+            detail_columns=["latest_available_ts", "stale_flag"],
+            limit=6,
+            empty_message="화면 신선도 스냅샷이 없습니다.",
+            table_expander_label="신선도 원본 표 보기",
+        )
 
     summary_left, summary_right = st.columns(2)
     with summary_left:
-        st.subheader("시장 요약")
-        if latest_news.empty:
-            st.info("시장 뉴스 메타데이터가 없습니다.")
-        else:
-            st.dataframe(localize_frame(latest_news), width="stretch", hide_index=True)
+        render_record_cards(
+            latest_news,
+            title="시장 요약",
+            primary_column="title",
+            secondary_columns=["provider", "published_at"],
+            detail_columns=["linked_symbols", "news_category"],
+            limit=5,
+            empty_message="시장 뉴스 메타데이터가 없습니다.",
+            table_expander_label="시장 뉴스 원본 표 보기",
+        )
     with summary_right:
         st.subheader("릴리스 점검 상태")
         render_release_candidate_summary(settings, limit=8)
