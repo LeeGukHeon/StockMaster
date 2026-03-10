@@ -182,6 +182,33 @@ Automation rules:
 - weekly retrain/calibration results are generated automatically but never auto-applied
 - active model/policy changes remain manual via UI compare-and-confirm or explicit freeze scripts
 
+## Intraday research mode
+
+TICKET-018 turns the existing intraday stack into a default-on research layer for
+`server` / research-like environments.
+
+Behavior:
+
+- intraday assist, regime-adjusted policy, and meta-model overlay stay candidate-only
+- raw action, adjusted action, and meta-model output are all persisted
+- same-exit comparison and intraday lineage are queryable from the UI and DuckDB views
+- intraday summary / postmortem / policy / meta-model reports are generated as research artifacts
+- all intraday outputs remain explicitly non-trading and non-ordering
+
+Safety boundaries that remain in force:
+
+- no broker integration
+- no automatic order execution
+- no automatic policy promotion
+- no automatic meta-model promotion
+
+Useful commands:
+
+```powershell
+python scripts/validate_intraday_research_mode.py --as-of-date 2026-03-09
+python scripts/smoke_intraday_research_mode.py
+```
+
 ## Initial bootstrap and reference data
 
 Run these first on a new machine:

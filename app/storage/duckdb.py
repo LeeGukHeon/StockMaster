@@ -1040,6 +1040,29 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_intraday_research_capability (
+        run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        feature_slug VARCHAR NOT NULL,
+        enabled_flag BOOLEAN NOT NULL,
+        rollout_mode VARCHAR NOT NULL,
+        blocking_dependency VARCHAR,
+        dependency_ready_flag BOOLEAN NOT NULL,
+        active_policy_ids_json VARCHAR,
+        active_meta_model_ids_json VARCHAR,
+        report_available_flag BOOLEAN NOT NULL,
+        latest_report_type VARCHAR,
+        last_successful_run_id VARCHAR,
+        last_successful_run_at TIMESTAMPTZ,
+        last_degraded_run_id VARCHAR,
+        last_degraded_run_at TIMESTAMPTZ,
+        last_skip_reason VARCHAR,
+        notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, feature_slug)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS fact_intraday_active_meta_model (
         active_meta_model_id VARCHAR PRIMARY KEY,
         horizon INTEGER NOT NULL,
@@ -2143,6 +2166,143 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY symbol, horizon, checkpoint_time, ranking_version
         ORDER BY session_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_research_capability AS
+    SELECT *
+    FROM fact_intraday_research_capability
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY feature_slug
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_intraday_decision_lineage AS
+    WITH prediction_pref AS (
+        SELECT *
+        FROM fact_prediction
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY as_of_date, symbol, horizon
+            ORDER BY
+                CASE prediction_version
+                    WHEN 'alpha_prediction_v1' THEN 0
+                    ELSE 1
+                END,
+                created_at DESC
+        ) = 1
+    ),
+    portfolio_pref AS (
+        SELECT *
+        FROM fact_portfolio_target_book
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY as_of_date, symbol
+            ORDER BY
+                CASE execution_mode
+                    WHEN 'TIMING_ASSISTED' THEN 0
+                    WHEN 'OPEN_ALL' THEN 1
+                    ELSE 2
+                END,
+                created_at DESC
+        ) = 1
+    ),
+    regime_pref AS (
+        SELECT *
+        FROM fact_market_regime_snapshot
+        WHERE market_scope = 'KR_EQUITY'
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY as_of_date
+            ORDER BY created_at DESC
+        ) = 1
+    )
+    SELECT
+        decision.session_date,
+        decision.symbol,
+        decision.horizon,
+        decision.checkpoint_time,
+        decision.ranking_version,
+        candidate.selection_date,
+        candidate.run_id AS candidate_session_run_id,
+        candidate.candidate_rank,
+        candidate.final_selection_value AS candidate_selection_value,
+        candidate.grade AS candidate_grade,
+        ranking.run_id AS ranking_run_id,
+        ranking.final_selection_value AS ranking_selection_value,
+        ranking.grade AS ranking_grade,
+        raw.run_id AS raw_decision_run_id,
+        raw.action AS raw_policy_action,
+        adjusted.run_id AS adjusted_decision_run_id,
+        adjusted.adjusted_action,
+        adjusted.market_regime_family,
+        adjusted.adjustment_profile,
+        decision.run_id AS meta_decision_run_id,
+        decision.panel_name,
+        decision.predicted_class,
+        decision.final_action,
+        decision.active_policy_candidate_id,
+        decision.active_meta_model_id,
+        prediction.run_id AS prediction_run_id,
+        prediction.prediction_version,
+        prediction.expected_excess_return,
+        prediction.lower_band,
+        prediction.upper_band,
+        prediction.uncertainty_score AS prediction_uncertainty_score,
+        prediction.disagreement_score AS prediction_disagreement_score,
+        portfolio.run_id AS portfolio_target_run_id,
+        portfolio.execution_mode AS portfolio_execution_mode,
+        portfolio.portfolio_policy_id,
+        portfolio.portfolio_policy_version,
+        portfolio.active_portfolio_policy_id,
+        portfolio.target_weight,
+        portfolio.target_notional,
+        portfolio.target_shares,
+        portfolio.gate_status,
+        portfolio.included_flag,
+        portfolio.blocked_flag,
+        portfolio.waitlist_flag,
+        regime.run_id AS market_regime_run_id,
+        regime.regime_state,
+        regime.regime_score
+    FROM fact_intraday_meta_decision AS decision
+    LEFT JOIN fact_intraday_candidate_session AS candidate
+      ON decision.session_date = candidate.session_date
+     AND decision.symbol = candidate.symbol
+     AND decision.horizon = candidate.horizon
+     AND decision.ranking_version = candidate.ranking_version
+    LEFT JOIN fact_intraday_entry_decision AS raw
+      ON decision.session_date = raw.session_date
+     AND decision.symbol = raw.symbol
+     AND decision.horizon = raw.horizon
+     AND decision.checkpoint_time = raw.checkpoint_time
+     AND decision.ranking_version = raw.ranking_version
+    LEFT JOIN fact_intraday_adjusted_entry_decision AS adjusted
+      ON decision.session_date = adjusted.session_date
+     AND decision.symbol = adjusted.symbol
+     AND decision.horizon = adjusted.horizon
+     AND decision.checkpoint_time = adjusted.checkpoint_time
+     AND decision.ranking_version = adjusted.ranking_version
+    LEFT JOIN fact_ranking AS ranking
+      ON candidate.selection_date = ranking.as_of_date
+     AND decision.symbol = ranking.symbol
+     AND decision.horizon = ranking.horizon
+     AND decision.ranking_version = ranking.ranking_version
+    LEFT JOIN prediction_pref AS prediction
+      ON candidate.selection_date = prediction.as_of_date
+     AND decision.symbol = prediction.symbol
+     AND decision.horizon = prediction.horizon
+    LEFT JOIN portfolio_pref AS portfolio
+      ON candidate.selection_date = portfolio.as_of_date
+     AND decision.symbol = portfolio.symbol
+    LEFT JOIN regime_pref AS regime
+      ON candidate.selection_date = regime.as_of_date
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_intraday_decision_lineage AS
+    SELECT *
+    FROM vw_intraday_decision_lineage
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, horizon, checkpoint_time, ranking_version
+        ORDER BY session_date DESC
     ) = 1
     """,
     """

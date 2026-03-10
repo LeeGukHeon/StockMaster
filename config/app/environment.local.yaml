@@ -7,3 +7,13 @@ logging:
 discord:
   enabled: false
 
+intraday_research:
+  enabled: false
+  assist_enabled: false
+  postmortem_enabled: false
+  policy_adjustment_enabled: false
+  meta_model_enabled: false
+  research_reports_enabled: false
+  discord_summary_enabled: false
+  writeback_enabled: false
+  rollout_mode: RESEARCH_NON_TRADING

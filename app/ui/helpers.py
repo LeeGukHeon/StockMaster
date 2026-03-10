@@ -3338,8 +3338,11 @@ def latest_intraday_status_frame(settings: Settings) -> pd.DataFrame:
                 COUNT(DISTINCT trade.symbol) AS trade_symbols,
                 COUNT(DISTINCT quote.symbol) AS quote_symbols,
                 COUNT(DISTINCT signal.symbol) AS signal_symbols,
-                COUNT(DISTINCT decision.symbol) AS decision_symbols,
+                COUNT(DISTINCT decision.symbol) AS raw_decision_symbols,
                 COUNT(DISTINCT adjusted.symbol) AS adjusted_symbols,
+                COUNT(DISTINCT meta_prediction.symbol) AS meta_prediction_symbols,
+                COUNT(DISTINCT meta_decision.symbol) AS meta_decision_symbols,
+                COUNT(DISTINCT final_action.symbol) AS final_action_symbols,
                 AVG(bar.fetch_latency_ms) AS avg_bar_latency_ms,
                 AVG(quote.fetch_latency_ms) AS avg_quote_latency_ms
             FROM fact_intraday_candidate_session AS candidate
@@ -3361,11 +3364,196 @@ def latest_intraday_status_frame(settings: Settings) -> pd.DataFrame:
             LEFT JOIN fact_intraday_adjusted_entry_decision AS adjusted
               ON candidate.session_date = adjusted.session_date
              AND candidate.symbol = adjusted.symbol
+            LEFT JOIN fact_intraday_meta_prediction AS meta_prediction
+              ON candidate.session_date = meta_prediction.session_date
+             AND candidate.symbol = meta_prediction.symbol
+            LEFT JOIN fact_intraday_meta_decision AS meta_decision
+              ON candidate.session_date = meta_decision.session_date
+             AND candidate.symbol = meta_decision.symbol
+            LEFT JOIN fact_intraday_final_action AS final_action
+              ON candidate.session_date = final_action.session_date
+             AND candidate.symbol = final_action.symbol
             WHERE candidate.session_date = ?
             GROUP BY candidate.session_date
             """,
             [session_date],
         ).fetchdf()
+
+
+def latest_intraday_research_capability_frame(
+    settings: Settings,
+    *,
+    as_of_date=None,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        if as_of_date is None:
+            return connection.execute(
+                """
+                SELECT
+                    as_of_date,
+                    feature_slug,
+                    enabled_flag,
+                    rollout_mode,
+                    dependency_ready_flag,
+                    blocking_dependency,
+                    report_available_flag,
+                    latest_report_type,
+                    last_successful_run_id,
+                    last_degraded_run_id,
+                    last_skip_reason
+                FROM vw_latest_intraday_research_capability
+                ORDER BY feature_slug
+                LIMIT ?
+                """,
+                [limit],
+            ).fetchdf()
+        return connection.execute(
+            """
+            SELECT
+                as_of_date,
+                feature_slug,
+                enabled_flag,
+                rollout_mode,
+                dependency_ready_flag,
+                blocking_dependency,
+                report_available_flag,
+                latest_report_type,
+                last_successful_run_id,
+                last_degraded_run_id,
+                last_skip_reason
+            FROM fact_intraday_research_capability
+            WHERE as_of_date = ?
+            ORDER BY feature_slug
+            LIMIT ?
+            """,
+            [as_of_date, limit],
+        ).fetchdf()
+
+
+def latest_intraday_decision_lineage_frame(
+    settings: Settings,
+    *,
+    session_date=None,
+    symbol: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    target_date = (
+        session_date
+        or _latest_intraday_meta_session_date(settings)
+        or _latest_intraday_session_date(settings)
+    )
+    if target_date is None:
+        return pd.DataFrame()
+    clauses = ["session_date = ?"]
+    params: list[object] = [target_date]
+    if symbol:
+        clauses.append("symbol = ?")
+        params.append(symbol.zfill(6))
+    params.append(limit)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            f"""
+            SELECT
+                session_date,
+                selection_date,
+                checkpoint_time,
+                symbol,
+                company_name,
+                horizon,
+                market,
+                ranking_version,
+                raw_action,
+                adjusted_action,
+                final_action,
+                predicted_class,
+                predicted_class_probability,
+                confidence_margin,
+                uncertainty_score,
+                disagreement_score,
+                candidate_session_run_id,
+                ranking_run_id,
+                raw_decision_run_id,
+                adjusted_decision_run_id,
+                meta_decision_run_id,
+                prediction_run_id,
+                portfolio_target_run_id,
+                portfolio_execution_mode,
+                gate_status,
+                target_weight,
+                target_notional,
+                target_shares,
+                market_regime_state,
+                final_selection_value,
+                expected_excess_return
+            FROM vw_intraday_decision_lineage
+            WHERE {" AND ".join(clauses)}
+            ORDER BY horizon, symbol, checkpoint_time
+            LIMIT ?
+            """,
+            params,
+        ).fetchdf()
+
+
+UI_COLUMN_LABELS.update(
+    {
+        "feature_slug": "장중 리서치 기능",
+        "rollout_mode": "운영 모드",
+        "blocking_dependency": "차단 의존성",
+        "dependency_ready_flag": "의존성 준비",
+        "report_available_flag": "보고서 존재",
+        "latest_report_type": "최신 보고서 종류",
+        "last_successful_run_id": "최근 성공 실행 ID",
+        "last_degraded_run_id": "최근 경고 실행 ID",
+        "last_skip_reason": "최근 건너뛴 사유",
+        "candidate_session_run_id": "후보군 실행 ID",
+        "ranking_run_id": "리더보드 실행 ID",
+        "raw_decision_run_id": "원정책 실행 ID",
+        "adjusted_decision_run_id": "조정정책 실행 ID",
+        "meta_decision_run_id": "메타 실행 ID",
+        "prediction_run_id": "예측 실행 ID",
+        "portfolio_target_run_id": "포트폴리오 실행 ID",
+        "portfolio_execution_mode": "포트폴리오 실행 모드",
+        "gate_status": "타이밍 게이트",
+        "target_weight": "목표 비중",
+        "target_notional": "목표 금액",
+        "target_shares": "목표 수량",
+        "selection_date": "선정 기준일",
+        "market_regime_state": "시장 국면",
+        "raw_decision_symbols": "원정책 종목 수",
+        "meta_prediction_symbols": "메타 예측 종목 수",
+        "meta_decision_symbols": "메타 판단 종목 수",
+        "final_action_symbols": "최종 행동 종목 수",
+    }
+)
+UI_VALUE_LABELS.setdefault("feature_slug", {}).update(
+    {
+        "intraday_assist": "장중 후보군 보조",
+        "intraday_policy_adjustment": "장중 정책 조정",
+        "intraday_meta_model": "장중 메타 모델",
+        "intraday_postmortem": "장중 사후 분석",
+        "intraday_research_reports": "장중 연구 리포트",
+        "intraday_discord_summary": "장중 디스코드 요약",
+        "intraday_writeback": "장중 판단 저장",
+    }
+)
+UI_VALUE_LABELS.setdefault("rollout_mode", {}).update(
+    {
+        "RESEARCH_NON_TRADING": "리서치 전용 / 비매매",
+    }
+)
+UI_VALUE_LABELS.setdefault("latest_report_type", {}).update(
+    {
+        "intraday_summary_report": "장중 요약 리포트",
+        "intraday_postmortem_report": "장중 사후 분석 리포트",
+        "intraday_policy_research_report": "장중 정책 연구 리포트",
+        "intraday_meta_model_report": "장중 메타 모델 리포트",
+    }
+)
 
 
 def latest_intraday_checkpoint_health_frame(settings: Settings) -> pd.DataFrame:

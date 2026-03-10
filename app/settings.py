@@ -152,6 +152,18 @@ class ModelConfig(BaseModel):
         return list(value)
 
 
+class IntradayResearchConfig(BaseModel):
+    enabled: bool = False
+    assist_enabled: bool = False
+    postmortem_enabled: bool = False
+    policy_adjustment_enabled: bool = False
+    meta_model_enabled: bool = False
+    research_reports_enabled: bool = False
+    discord_summary_enabled: bool = False
+    writeback_enabled: bool = False
+    rollout_mode: str = "RESEARCH_NON_TRADING"
+
+
 class Settings(BaseModel):
     app: AppConfig
     paths: PathConfig
@@ -161,6 +173,7 @@ class Settings(BaseModel):
     providers: ProviderConfig
     discord: DiscordConfig
     model: ModelConfig
+    intraday_research: IntradayResearchConfig
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -214,9 +227,12 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
     discord = config.setdefault("discord", {})
     model = config.setdefault("model", {})
     retention = config.setdefault("retention", {})
+    intraday_research = config.setdefault("intraday_research", {})
 
     app["env"] = env_values.get("APP_ENV", app.get("env"))
     app["timezone"] = env_values.get("APP_TIMEZONE", app.get("timezone"))
+    env_name = str(app.get("env") or "local")
+    research_default = env_name in {"server", "prod_like"}
 
     logging_cfg["level"] = env_values.get("APP_LOG_LEVEL", logging_cfg.get("level"))
 
@@ -291,6 +307,44 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
         env_values.get("MODEL_IMPLEMENTATION_KAPPA", model.get("implementation_kappa"))
     )
     model["regime_rho"] = float(env_values.get("MODEL_REGIME_RHO", model.get("regime_rho")))
+
+    intraday_research["enabled"] = _parse_bool(
+        env_values.get("ENABLE_INTRADAY_RESEARCH"),
+        intraday_research.get("enabled", research_default),
+    )
+    intraday_default = bool(intraday_research["enabled"])
+    intraday_research["assist_enabled"] = _parse_bool(
+        env_values.get("ENABLE_INTRADAY_ASSIST"),
+        intraday_research.get("assist_enabled", intraday_default),
+    )
+    intraday_research["postmortem_enabled"] = _parse_bool(
+        env_values.get("ENABLE_INTRADAY_POSTMORTEM"),
+        intraday_research.get("postmortem_enabled", intraday_default),
+    )
+    intraday_research["policy_adjustment_enabled"] = _parse_bool(
+        env_values.get("ENABLE_INTRADAY_POLICY_ADJUSTMENT"),
+        intraday_research.get("policy_adjustment_enabled", intraday_default),
+    )
+    intraday_research["meta_model_enabled"] = _parse_bool(
+        env_values.get("ENABLE_INTRADAY_META_MODEL"),
+        intraday_research.get("meta_model_enabled", intraday_default),
+    )
+    intraday_research["research_reports_enabled"] = _parse_bool(
+        env_values.get("ENABLE_INTRADAY_RESEARCH_REPORTS"),
+        intraday_research.get("research_reports_enabled", intraday_default),
+    )
+    intraday_research["discord_summary_enabled"] = _parse_bool(
+        env_values.get("ENABLE_INTRADAY_DISCORD_SUMMARY"),
+        intraday_research.get("discord_summary_enabled", False),
+    )
+    intraday_research["writeback_enabled"] = _parse_bool(
+        env_values.get("ENABLE_INTRADAY_WRITEBACK"),
+        intraday_research.get("writeback_enabled", intraday_default),
+    )
+    intraday_research["rollout_mode"] = env_values.get(
+        "INTRADAY_RESEARCH_ROLLOUT_MODE",
+        intraday_research.get("rollout_mode", "RESEARCH_NON_TRADING"),
+    )
 
     return config
 

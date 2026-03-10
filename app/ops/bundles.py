@@ -16,6 +16,10 @@ from app.intraday.meta_inference import (
     materialize_intraday_final_actions,
     materialize_intraday_meta_predictions,
 )
+from app.intraday.meta_report import (
+    publish_discord_intraday_meta_summary,
+    render_intraday_meta_model_report,
+)
 from app.intraday.meta_training import (
     calibrate_intraday_meta_thresholds,
     run_intraday_meta_walkforward,
@@ -27,6 +31,18 @@ from app.intraday.policy import (
     materialize_intraday_policy_recommendations,
     run_intraday_policy_calibration,
     run_intraday_policy_walkforward,
+)
+from app.intraday.policy_report import (
+    publish_discord_intraday_policy_summary,
+    render_intraday_policy_research_report,
+)
+from app.intraday.postmortem import (
+    publish_discord_intraday_postmortem,
+    render_intraday_postmortem_report,
+)
+from app.intraday.research_mode import (
+    intraday_research_feature_flags,
+    materialize_intraday_research_capability,
 )
 from app.intraday.session import materialize_intraday_candidate_session
 from app.intraday.signals import materialize_intraday_signal_snapshots
@@ -209,6 +225,22 @@ def _skip_if_already_completed(
         job.skip(note, status="SKIPPED_ALREADY_DONE")
         return job_result_from_context(job, notes=note, row_count=0)
     return None
+
+
+def _skip_if_intraday_feature_disabled(
+    job: JobRunContext,
+    *,
+    feature_slug: str,
+) -> OpsJobResult | None:
+    flags = intraday_research_feature_flags(job.settings)
+    if flags.get(feature_slug, False):
+        return None
+    note = (
+        f"{job.job_name}: intraday research feature '{feature_slug}' is disabled for "
+        f"env={job.settings.app.env}."
+    )
+    job.skip(note, status="SKIPPED")
+    return job_result_from_context(job, notes=note, row_count=0)
 
 
 def _refresh_release_views(
@@ -930,6 +962,38 @@ def run_evaluation_bundle(
                     dry_run=dry_run,
                     critical=False,
                 )
+                if settings.intraday_research.postmortem_enabled:
+                    job.run_step(
+                        "render_intraday_postmortem_report",
+                        render_intraday_postmortem_report,
+                        settings,
+                        session_date=target_date,
+                        horizons=list(DEFAULT_HORIZONS),
+                        dry_run=dry_run,
+                        critical=False,
+                    )
+                    if (
+                        settings.intraday_research.discord_summary_enabled
+                        and settings.discord.enabled
+                    ):
+                        job.run_step(
+                            "publish_discord_intraday_postmortem",
+                            publish_discord_intraday_postmortem,
+                            settings,
+                            session_date=target_date,
+                            horizons=list(DEFAULT_HORIZONS),
+                            dry_run=dry_run,
+                            critical=False,
+                        )
+                job.run_step(
+                    "materialize_intraday_research_capability",
+                    materialize_intraday_research_capability,
+                    settings,
+                    as_of_date=target_date,
+                    run_id=job.run_id,
+                    connection=connection,
+                    critical=False,
+                )
                 _refresh_release_views(
                     job,
                     settings=settings,
@@ -990,6 +1054,12 @@ def run_intraday_assist_bundle(
                 "date_semantics": "trading_day",
             },
         ) as job:
+            capability_skip = _skip_if_intraday_feature_disabled(
+                job,
+                feature_slug="intraday_assist",
+            )
+            if capability_skip is not None:
+                return capability_skip
             skipped = _skip_if_non_trading_day(
                 job,
                 target_date=requested_date,
@@ -1126,6 +1196,15 @@ def run_intraday_assist_bundle(
                         dry_run=dry_run,
                         critical=False,
                     )
+                job.run_step(
+                    "materialize_intraday_research_capability",
+                    materialize_intraday_research_capability,
+                    settings,
+                    as_of_date=requested_date,
+                    run_id=job.run_id,
+                    connection=connection,
+                    critical=False,
+                )
                 _refresh_release_views(
                     job,
                     settings=settings,
@@ -1198,6 +1277,12 @@ def run_weekly_training_bundle(
                 "reference_trading_date": target_date.isoformat(),
             },
         ) as job:
+            capability_skip = _skip_if_intraday_feature_disabled(
+                job,
+                feature_slug="intraday_meta_model",
+            )
+            if capability_skip is not None:
+                return capability_skip
             completed = _skip_if_already_completed(job, bundle_phase="weekly_training_candidate")
             if completed is not None and not force:
                 return completed
@@ -1237,9 +1322,41 @@ def run_weekly_training_bundle(
                     horizons=list(DEFAULT_HORIZONS),
                     critical=False,
                 )
+                if settings.intraday_research.research_reports_enabled:
+                    job.run_step(
+                        "render_intraday_meta_model_report",
+                        render_intraday_meta_model_report,
+                        settings,
+                        as_of_date=target_date,
+                        horizons=list(DEFAULT_HORIZONS),
+                        dry_run=dry_run,
+                        critical=False,
+                    )
+                    if (
+                        settings.intraday_research.discord_summary_enabled
+                        and settings.discord.enabled
+                    ):
+                        job.run_step(
+                            "publish_discord_intraday_meta_summary",
+                            publish_discord_intraday_meta_summary,
+                            settings,
+                            as_of_date=target_date,
+                            horizons=list(DEFAULT_HORIZONS),
+                            dry_run=dry_run,
+                            critical=False,
+                        )
                 job.mark_degraded(
                     "Automatic weekly training only creates retrain candidates. "
                     "Active meta-model is never auto-promoted."
+                )
+                job.run_step(
+                    "materialize_intraday_research_capability",
+                    materialize_intraday_research_capability,
+                    settings,
+                    as_of_date=target_date,
+                    run_id=job.run_id,
+                    connection=connection,
+                    critical=False,
                 )
                 job.run_step(
                     "materialize_health_snapshots",
@@ -1309,6 +1426,12 @@ def run_weekly_calibration_bundle(
                 "reference_trading_date": target_date.isoformat(),
             },
         ) as job:
+            capability_skip = _skip_if_intraday_feature_disabled(
+                job,
+                feature_slug="intraday_policy_adjustment",
+            )
+            if capability_skip is not None:
+                return capability_skip
             completed = _skip_if_already_completed(job, bundle_phase="weekly_calibration")
             if completed is not None and not force:
                 return completed
@@ -1387,9 +1510,41 @@ def run_weekly_calibration_bundle(
                     horizons=list(DEFAULT_HORIZONS),
                     critical=False,
                 )
+                if settings.intraday_research.research_reports_enabled:
+                    job.run_step(
+                        "render_intraday_policy_research_report",
+                        render_intraday_policy_research_report,
+                        settings,
+                        as_of_date=target_date,
+                        horizons=list(DEFAULT_HORIZONS),
+                        dry_run=dry_run,
+                        critical=False,
+                    )
+                    if (
+                        settings.intraday_research.discord_summary_enabled
+                        and settings.discord.enabled
+                    ):
+                        job.run_step(
+                            "publish_discord_intraday_policy_summary",
+                            publish_discord_intraday_policy_summary,
+                            settings,
+                            as_of_date=target_date,
+                            horizons=list(DEFAULT_HORIZONS),
+                            dry_run=dry_run,
+                            critical=False,
+                        )
                 job.mark_degraded(
                     "Automatic weekly calibration updates recommendations and thresholds only. "
                     "Active policy and active meta-model are never auto-activated."
+                )
+                job.run_step(
+                    "materialize_intraday_research_capability",
+                    materialize_intraday_research_capability,
+                    settings,
+                    as_of_date=target_date,
+                    run_id=job.run_id,
+                    connection=connection,
+                    critical=False,
                 )
                 job.run_step(
                     "materialize_health_snapshots",
@@ -1488,6 +1643,15 @@ def run_daily_audit_lite_bundle(
                     as_of_date=requested_date,
                     job_run_id=job.run_id,
                     dry_run=dry_run,
+                    critical=False,
+                )
+                job.run_step(
+                    "materialize_intraday_research_capability",
+                    materialize_intraday_research_capability,
+                    settings,
+                    as_of_date=requested_date,
+                    run_id=job.run_id,
+                    connection=connection,
                     critical=False,
                 )
                 _refresh_release_views(

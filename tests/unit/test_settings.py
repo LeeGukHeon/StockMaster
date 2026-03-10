@@ -63,3 +63,31 @@ def test_load_settings_accepts_server_environment_profile(tmp_path):
         settings.paths.duckdb_path
         == (project_root() / "server-data" / "marts" / "server.duckdb").resolve()
     )
+    assert settings.intraday_research.enabled is True
+    assert settings.intraday_research.assist_enabled is True
+    assert settings.intraday_research.postmortem_enabled is True
+    assert settings.intraday_research.policy_adjustment_enabled is True
+    assert settings.intraday_research.meta_model_enabled is True
+    assert settings.intraday_research.research_reports_enabled is True
+    assert settings.intraday_research.rollout_mode == "RESEARCH_NON_TRADING"
+
+
+def test_load_settings_keeps_intraday_research_disabled_in_local_profile(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "APP_ENV=local",
+                "APP_DATA_DIR=./local-data",
+                "APP_DUCKDB_PATH=./local-data/marts/local.duckdb",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(project_root=project_root(), env_file=env_file)
+
+    assert settings.app.env == "local"
+    assert settings.intraday_research.enabled is False
+    assert settings.intraday_research.assist_enabled is False
+    assert settings.intraday_research.meta_model_enabled is False
