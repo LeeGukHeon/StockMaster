@@ -433,6 +433,31 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_alpha_promotion_test (
+        promotion_date DATE NOT NULL,
+        horizon INTEGER NOT NULL,
+        incumbent_model_spec_id VARCHAR NOT NULL,
+        challenger_model_spec_id VARCHAR NOT NULL,
+        loss_name VARCHAR NOT NULL,
+        window_start DATE,
+        window_end DATE,
+        sample_count BIGINT NOT NULL,
+        mcs_member_flag BOOLEAN NOT NULL,
+        incumbent_mcs_member_flag BOOLEAN NOT NULL,
+        p_value DOUBLE,
+        decision VARCHAR NOT NULL,
+        detail_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (
+            promotion_date,
+            horizon,
+            incumbent_model_spec_id,
+            challenger_model_spec_id,
+            loss_name
+        )
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS fact_model_member_prediction (
         training_run_id VARCHAR NOT NULL,
         as_of_date DATE NOT NULL,
@@ -2145,6 +2170,15 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY horizon, model_spec_id, segment_value, window_type
         ORDER BY summary_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_alpha_promotion_test AS
+    SELECT *
+    FROM fact_alpha_promotion_test
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY horizon, incumbent_model_spec_id, challenger_model_spec_id, loss_name
+        ORDER BY promotion_date DESC, created_at DESC
     ) = 1
     """,
     """

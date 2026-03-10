@@ -1,0 +1,275 @@
+from __future__ import annotations
+
+from datetime import date, timedelta
+
+import pandas as pd
+
+from app.evaluation.alpha_shadow import upsert_alpha_shadow_selection_outcomes
+from app.ml.active import freeze_alpha_active_model, rollback_alpha_active_model
+from app.ml.constants import ALPHA_CANDIDATE_MODEL_SPECS, MODEL_DOMAIN, MODEL_SPEC_ID, MODEL_VERSION
+from app.ml.promotion import run_alpha_auto_promotion
+from app.ml.registry import (
+    load_active_alpha_model,
+    upsert_alpha_model_specs,
+    upsert_model_training_runs,
+)
+from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
+from tests._ticket003_support import build_test_settings
+
+SELECTION_DATES = [
+    date(2026, 2, 26),
+    date(2026, 2, 27),
+    date(2026, 3, 2),
+    date(2026, 3, 3),
+    date(2026, 3, 4),
+    date(2026, 3, 5),
+    date(2026, 3, 6),
+]
+SYMBOLS = ["005930", "000660", "123456", "123457"]
+SPEC_BASE_RETURNS = {
+    MODEL_SPEC_ID: [0.005, -0.002, 0.003, 0.000, -0.004, 0.001, -0.003],
+    "alpha_rolling_120_v1": [0.030, 0.024, 0.028, 0.021, 0.026, 0.019, 0.023],
+    "alpha_rolling_250_v1": [-0.012, -0.018, -0.010, -0.022, -0.016, -0.020, -0.014],
+}
+SPEC_BASE_ERRORS = {
+    MODEL_SPEC_ID: [0.018, 0.015, 0.017, 0.014, 0.016, 0.015, 0.017],
+    "alpha_rolling_120_v1": [0.004, 0.005, 0.003, 0.004, 0.005, 0.004, 0.003],
+    "alpha_rolling_250_v1": [0.026, 0.024, 0.028, 0.025, 0.027, 0.026, 0.029],
+}
+SYMBOL_RETURN_ADJUSTMENTS = [0.006, 0.002, -0.002, -0.006]
+SYMBOL_ERROR_ADJUSTMENTS = [0.0015, -0.0010, 0.0005, -0.0005]
+
+
+def _seed_alpha_model_registry(settings) -> None:
+    created_at = pd.Timestamp("2026-03-06T09:00:00Z")
+    spec_rows = [
+        {
+            "model_spec_id": spec.model_spec_id,
+            "model_domain": MODEL_DOMAIN,
+            "model_version": MODEL_VERSION,
+            "estimation_scheme": spec.estimation_scheme,
+            "rolling_window_days": spec.rolling_window_days,
+            "feature_version": "feature_store_v1",
+            "label_version": "forward_return_v1",
+            "selection_engine_version": "selection_engine_v2",
+            "spec_payload_json": "{}",
+            "active_candidate_flag": True,
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+        for spec in ALPHA_CANDIDATE_MODEL_SPECS
+    ]
+    training_rows: list[dict[str, object]] = []
+    for spec in ALPHA_CANDIDATE_MODEL_SPECS:
+        for horizon in (1, 5):
+            training_rows.append(
+                {
+                    "training_run_id": f"seed-{spec.model_spec_id}-h{int(horizon)}",
+                    "run_id": "seed-training",
+                    "model_domain": MODEL_DOMAIN,
+                    "model_version": MODEL_VERSION,
+                    "model_spec_id": spec.model_spec_id,
+                    "estimation_scheme": spec.estimation_scheme,
+                    "rolling_window_days": spec.rolling_window_days,
+                    "horizon": int(horizon),
+                    "panel_name": "all",
+                    "train_end_date": date(2026, 3, 6),
+                    "training_window_start": date(2026, 2, 26),
+                    "training_window_end": date(2026, 3, 5),
+                    "validation_window_start": date(2026, 3, 6),
+                    "validation_window_end": date(2026, 3, 6),
+                    "train_row_count": 128,
+                    "validation_row_count": 32,
+                    "feature_count": 10,
+                    "ensemble_weight_json": "{}",
+                    "model_family_json": '{"members":["elasticnet","hist_gbm","extra_trees"]}',
+                    "threshold_payload_json": None,
+                    "diagnostic_artifact_uri": None,
+                    "metadata_json": None,
+                    "fallback_flag": False,
+                    "fallback_reason": None,
+                    "artifact_uri": f"artifacts/{spec.model_spec_id}/horizon={int(horizon)}.pkl",
+                    "notes": "seed training run",
+                    "status": "success",
+                    "created_at": created_at,
+                }
+            )
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        upsert_alpha_model_specs(connection, pd.DataFrame(spec_rows))
+        upsert_model_training_runs(connection, pd.DataFrame(training_rows))
+
+
+def _seed_shadow_outcomes(settings) -> None:
+    created_at = pd.Timestamp("2026-03-10T00:00:00Z")
+    rows: list[dict[str, object]] = []
+    for horizon in (1, 5):
+        for spec in ALPHA_CANDIDATE_MODEL_SPECS:
+            spec_id = spec.model_spec_id
+            for date_index, selection_date in enumerate(SELECTION_DATES):
+                for symbol_index, symbol in enumerate(SYMBOLS):
+                    realized = (
+                        SPEC_BASE_RETURNS[spec_id][date_index]
+                        + SYMBOL_RETURN_ADJUSTMENTS[symbol_index]
+                    )
+                    error = (
+                        SPEC_BASE_ERRORS[spec_id][date_index]
+                        + SYMBOL_ERROR_ADJUSTMENTS[symbol_index]
+                    )
+                    expected = realized - error
+                    rows.append(
+                        {
+                            "selection_date": selection_date,
+                            "evaluation_date": selection_date + timedelta(days=1),
+                            "symbol": symbol,
+                            "market": "KOSPI" if symbol in {"005930", "000660"} else "KOSDAQ",
+                            "horizon": int(horizon),
+                            "model_spec_id": spec_id,
+                            "training_run_id": f"seed-{spec_id}-h{int(horizon)}",
+                            "selection_percentile": 1.0 - (0.25 * symbol_index),
+                            "report_candidate_flag": symbol_index < 2,
+                            "grade": ["A", "A", "B", "C"][symbol_index],
+                            "eligible_flag": True,
+                            "final_selection_value": float(100 - symbol_index),
+                            "expected_excess_return_at_selection": float(expected),
+                            "lower_band_at_selection": float(expected - 0.02),
+                            "median_band_at_selection": float(expected),
+                            "upper_band_at_selection": float(expected + 0.02),
+                            "uncertainty_score_at_selection": 0.15 + (0.01 * symbol_index),
+                            "disagreement_score_at_selection": 0.10 + (0.01 * symbol_index),
+                            "realized_excess_return": float(realized),
+                            "prediction_error": float(error),
+                            "outcome_status": "matured",
+                            "source_label_version": "test_label_v1",
+                            "evaluation_run_id": "seed-evaluation",
+                            "created_at": created_at,
+                            "updated_at": created_at,
+                        }
+                    )
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        upsert_alpha_shadow_selection_outcomes(connection, pd.DataFrame(rows))
+
+
+def _build_promotion_settings(tmp_path):
+    settings = build_test_settings(tmp_path)
+    _seed_alpha_model_registry(settings)
+    _seed_shadow_outcomes(settings)
+    return settings
+
+
+def test_run_alpha_auto_promotion_promotes_superior_challenger(tmp_path):
+    settings = _build_promotion_settings(tmp_path)
+    freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        source="test_seed",
+        note="seed incumbent",
+        horizons=[1, 5],
+        model_spec_id=MODEL_SPEC_ID,
+        train_end_date=date(2026, 3, 6),
+    )
+
+    result = run_alpha_auto_promotion(
+        settings,
+        as_of_date=date(2026, 3, 10),
+        horizons=[1, 5],
+        lookback_selection_dates=len(SELECTION_DATES),
+        bootstrap_reps=200,
+        block_length=1,
+    )
+
+    assert result.row_count == 24
+    assert result.promoted_horizon_count == 2
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        active_h1 = load_active_alpha_model(connection, as_of_date=date(2026, 3, 10), horizon=1)
+        active_h5 = load_active_alpha_model(connection, as_of_date=date(2026, 3, 10), horizon=5)
+        promotion_rows = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_alpha_promotion_test
+            WHERE promotion_date = ?
+            """,
+            [date(2026, 3, 10)],
+        ).fetchone()[0]
+        decision_row = connection.execute(
+            """
+            SELECT decision, mcs_member_flag, incumbent_mcs_member_flag, sample_count
+            FROM fact_alpha_promotion_test
+            WHERE promotion_date = ?
+              AND horizon = 1
+              AND challenger_model_spec_id = 'alpha_rolling_120_v1'
+              AND loss_name = 'loss_top10'
+            """,
+            [date(2026, 3, 10)],
+        ).fetchone()
+
+    assert active_h1 is not None
+    assert active_h5 is not None
+    assert active_h1["model_spec_id"] == "alpha_rolling_120_v1"
+    assert active_h5["model_spec_id"] == "alpha_rolling_120_v1"
+    assert active_h1["promotion_type"] == "AUTO_PROMOTION"
+    assert active_h1["source_type"] == "alpha_auto_promotion"
+    assert "alpha_rolling_120_v1" in active_h1["promotion_report_json"]["superior_set"]
+    assert promotion_rows == 24
+    assert decision_row == ("PROMOTE_CHALLENGER", True, False, len(SELECTION_DATES))
+
+
+def test_rollback_alpha_active_model_is_noop_without_previous_and_restores_previous(tmp_path):
+    settings = _build_promotion_settings(tmp_path)
+    freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        source="test_seed",
+        note="seed incumbent",
+        horizons=[1, 5],
+        model_spec_id=MODEL_SPEC_ID,
+        train_end_date=date(2026, 3, 6),
+    )
+
+    no_op = rollback_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 9),
+        horizons=[1, 5],
+        note="no prior registry row",
+    )
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        active_h1_noop = load_active_alpha_model(connection, as_of_date=date(2026, 3, 9), horizon=1)
+
+    freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 10),
+        source="test_seed",
+        note="seed challenger",
+        horizons=[1, 5],
+        model_spec_id="alpha_rolling_120_v1",
+        train_end_date=date(2026, 3, 6),
+    )
+    rollback = rollback_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 11),
+        horizons=[1, 5],
+        note="restore incumbent",
+    )
+
+    assert no_op.row_count == 0
+    assert rollback.row_count == 2
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        active_h1_restored = load_active_alpha_model(
+            connection,
+            as_of_date=date(2026, 3, 11),
+            horizon=1,
+        )
+
+    assert active_h1_noop is not None
+    assert active_h1_noop["model_spec_id"] == MODEL_SPEC_ID
+    assert active_h1_restored is not None
+    assert active_h1_restored["model_spec_id"] == MODEL_SPEC_ID
+    assert active_h1_restored["source_type"] == "rollback_restore"
+    assert active_h1_restored["promotion_type"] == "ROLLBACK"
+    assert active_h1_restored["rollback_of_active_alpha_model_id"] is not None

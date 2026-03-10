@@ -20,6 +20,7 @@ from app.evaluation.validation import validate_evaluation_pipeline
 from app.features.feature_store import build_feature_store
 from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
 from app.ml.inference import materialize_alpha_predictions_v1
+from app.ml.promotion import run_alpha_auto_promotion
 from app.ml.shadow import materialize_alpha_shadow_candidates
 from app.ml.training import train_alpha_candidate_models, train_alpha_model_v1
 from app.pipelines.daily_ohlcv import sync_daily_ohlcv
@@ -235,8 +236,9 @@ def run_daily_pipeline_job(
                 "build_market_regime_snapshot",
                 "materialize_explanatory_ranking",
                 "materialize_selection_engine_v1",
-                "materialize_alpha_predictions_v1",
                 "materialize_alpha_shadow_candidates",
+                "run_alpha_auto_promotion",
+                "materialize_alpha_predictions_v1",
                 "materialize_selection_engine_v2",
                 "calibrate_proxy_prediction_bands",
             ]
@@ -311,12 +313,17 @@ def run_daily_pipeline_job(
                 if run_training
                 else None
             )
-            alpha_prediction_result = materialize_alpha_predictions_v1(
+            alpha_shadow_result = materialize_alpha_shadow_candidates(
                 settings,
                 as_of_date=pipeline_date,
                 horizons=[1, 5],
             )
-            alpha_shadow_result = materialize_alpha_shadow_candidates(
+            alpha_promotion_result = run_alpha_auto_promotion(
+                settings,
+                as_of_date=pipeline_date,
+                horizons=[1, 5],
+            )
+            alpha_prediction_result = materialize_alpha_predictions_v1(
                 settings,
                 as_of_date=pipeline_date,
                 horizons=[1, 5],
@@ -359,8 +366,9 @@ def run_daily_pipeline_job(
                 artifact_paths.extend(alpha_training_result.artifact_paths)
             if alpha_candidate_training_result is not None:
                 artifact_paths.extend(alpha_candidate_training_result.artifact_paths)
-            artifact_paths.extend(alpha_prediction_result.artifact_paths)
             artifact_paths.extend(alpha_shadow_result.artifact_paths)
+            artifact_paths.extend(alpha_promotion_result.artifact_paths)
+            artifact_paths.extend(alpha_prediction_result.artifact_paths)
             artifact_paths.extend(selection_v2_result.artifact_paths)
             if calibration_result is not None:
                 artifact_paths.extend(calibration_result.artifact_paths)
@@ -385,6 +393,9 @@ def run_daily_pipeline_job(
                     if alpha_candidate_training_result
                     else 0
                 )}, "
+                f"alpha_promotion_rows={alpha_promotion_result.row_count}, "
+                "alpha_auto_promoted_horizons="
+                f"{alpha_promotion_result.promoted_horizon_count}, "
                 f"alpha_prediction_rows={alpha_prediction_result.row_count}, "
                 f"alpha_shadow_prediction_rows={alpha_shadow_result.prediction_row_count}, "
                 f"alpha_shadow_ranking_rows={alpha_shadow_result.ranking_row_count}, "

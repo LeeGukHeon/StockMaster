@@ -5,6 +5,7 @@ from datetime import date
 from app.common.paths import project_root
 from app.features.feature_store import FeatureStoreBuildResult
 from app.ml.inference import AlphaPredictionMaterializationResult
+from app.ml.promotion import AlphaPromotionResult
 from app.ml.shadow import AlphaShadowMaterializationResult
 from app.ml.training import AlphaTrainingResult
 from app.pipelines.daily_ohlcv import DailyOhlcvSyncResult
@@ -239,6 +240,18 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
             notes="ok",
         )
 
+    def fake_run_alpha_auto_promotion(settings_arg, *, as_of_date, horizons, **kwargs):
+        observed_dates.append(as_of_date)
+        assert horizons == [1, 5]
+        return AlphaPromotionResult(
+            run_id="alpha-promotion-run",
+            as_of_date=as_of_date,
+            row_count=24,
+            promoted_horizon_count=1,
+            artifact_paths=[],
+            notes="ok",
+        )
+
     def fake_materialize_selection_engine_v2(settings_arg, *, as_of_date, horizons, **kwargs):
         observed_dates.append(as_of_date)
         assert horizons == [1, 5]
@@ -311,6 +324,10 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
         fake_materialize_alpha_shadow_candidates,
     )
     monkeypatch.setattr(
+        "app.scheduler.jobs.run_alpha_auto_promotion",
+        fake_run_alpha_auto_promotion,
+    )
+    monkeypatch.setattr(
         "app.scheduler.jobs.materialize_selection_engine_v2",
         fake_materialize_selection_engine_v2,
     )
@@ -326,7 +343,7 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
     result = run_daily_pipeline_job(settings)
 
     assert result.status == "success"
-    assert observed_dates == [date(2026, 3, 6)] * 15
+    assert observed_dates == [date(2026, 3, 6)] * 16
     assert "ohlcv_rows=8" in result.notes
     assert "fundamentals_rows=6" in result.notes
     assert "news_rows=7" in result.notes
@@ -337,6 +354,8 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
     assert "selection_rows=20" in result.notes
     assert "alpha_training_runs=2" in result.notes
     assert "alpha_candidate_training_runs=4" in result.notes
+    assert "alpha_promotion_rows=24" in result.notes
+    assert "alpha_auto_promoted_horizons=1" in result.notes
     assert "alpha_prediction_rows=20" in result.notes
     assert "alpha_shadow_prediction_rows=60" in result.notes
     assert "alpha_shadow_ranking_rows=60" in result.notes
@@ -563,6 +582,17 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
             notes="ok",
         )
 
+    def fake_run_alpha_auto_promotion(settings_arg, *, as_of_date, horizons, **kwargs):
+        assert horizons == [1, 5]
+        return AlphaPromotionResult(
+            run_id="alpha-promotion-run",
+            as_of_date=as_of_date,
+            row_count=24,
+            promoted_horizon_count=0,
+            artifact_paths=[],
+            notes="ok",
+        )
+
     def fake_materialize_selection_engine_v2(settings_arg, *, as_of_date, horizons, **kwargs):
         assert horizons == [1, 5]
         return SelectionEngineV2Result(
@@ -624,6 +654,10 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
         fake_materialize_alpha_shadow_candidates,
     )
     monkeypatch.setattr(
+        "app.scheduler.jobs.run_alpha_auto_promotion",
+        fake_run_alpha_auto_promotion,
+    )
+    monkeypatch.setattr(
         "app.scheduler.jobs.materialize_selection_engine_v2",
         fake_materialize_selection_engine_v2,
     )
@@ -641,6 +675,8 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
     assert result.status == "success"
     assert "alpha_training_runs=2" in result.notes
     assert "alpha_candidate_training_runs=4" in result.notes
+    assert "alpha_promotion_rows=24" in result.notes
+    assert "alpha_auto_promoted_horizons=0" in result.notes
     assert "alpha_prediction_rows=20" in result.notes
     assert "alpha_shadow_prediction_rows=60" in result.notes
     assert "alpha_shadow_ranking_rows=60" in result.notes

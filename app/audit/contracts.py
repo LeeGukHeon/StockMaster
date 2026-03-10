@@ -467,6 +467,33 @@ CONTRACTS: tuple[TableContract, ...] = (
         ticket_ids=("T006",),
     ),
     _contract(
+        "fact_alpha_promotion_test",
+        grain=(
+            "1 row per promotion_date x horizon x incumbent_model_spec_id x "
+            "challenger_model_spec_id x loss_name"
+        ),
+        unique_key=(
+            "promotion_date",
+            "horizon",
+            "incumbent_model_spec_id",
+            "challenger_model_spec_id",
+            "loss_name",
+        ),
+        required_columns=(
+            "promotion_date",
+            "horizon",
+            "incumbent_model_spec_id",
+            "challenger_model_spec_id",
+            "loss_name",
+            "decision",
+            "created_at",
+        ),
+        rerun_rule="Replace within promotion test grain.",
+        lineage_columns=("detail_json", "decision", "created_at"),
+        freshness_column="promotion_date",
+        ticket_ids=("T006",),
+    ),
+    _contract(
         "fact_model_member_prediction",
         grain="1 row per training_run_id x as_of_date x symbol x horizon x prediction_role x member_name",
         unique_key=(
