@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 
 from app.common.paths import project_root as detect_project_root
 from app.common.paths import resolve_path
+from app.providers.krx.registry import canonicalize_krx_service_slugs
 
 
 class AppConfig(BaseModel):
@@ -116,6 +117,43 @@ class DartProviderConfig(BaseModel):
 class KrxProviderConfig(BaseModel):
     base_url: str
     api_key: str | None = None
+    enabled_live: bool = False
+    allowed_services: list[str] = Field(default_factory=list)
+    daily_request_budget: int = 1000
+    request_timeout_seconds: float = 20.0
+    source_attribution_label: str = "한국거래소 통계정보"
+    service_urls: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("allowed_services", mode="before")
+    @classmethod
+    def normalize_allowed_services(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            values = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            values = list(value)
+        return canonicalize_krx_service_slugs(values)
+
+    @model_validator(mode="after")
+    def validate_live_configuration(self) -> "KrxProviderConfig":
+        if self.daily_request_budget <= 0:
+            raise ValueError("KRX daily request budget must be positive.")
+        if self.request_timeout_seconds <= 0:
+            raise ValueError("KRX request timeout must be positive.")
+        cleaned_urls = {
+            slug: url
+            for slug, url in self.service_urls.items()
+            if slug in set(self.allowed_services) and str(url).strip()
+        }
+        self.service_urls = cleaned_urls
+        if not self.enabled_live:
+            return self
+        if not self.api_key:
+            raise ValueError("KRX_API_KEY is required when ENABLE_KRX_LIVE=true.")
+        if not self.allowed_services:
+            raise ValueError("KRX allowed service list is required when ENABLE_KRX_LIVE=true.")
+        return self
 
 
 class NaverNewsProviderConfig(BaseModel):
@@ -281,6 +319,38 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
 
     krx = providers.setdefault("krx", {})
     krx["api_key"] = env_values.get("KRX_API_KEY")
+    krx["enabled_live"] = _parse_bool(
+        env_values.get("ENABLE_KRX_LIVE"),
+        krx.get("enabled_live", False),
+    )
+    allowed_services = env_values.get(
+        "KRX_ALLOWED_SERVICES",
+        env_values.get("KRX_APPROVED_SERVICE_SLUGS"),
+    )
+    if allowed_services is not None:
+        krx["allowed_services"] = allowed_services
+    krx["daily_request_budget"] = int(
+        env_values.get("KRX_DAILY_REQUEST_BUDGET", krx.get("daily_request_budget", 1000))
+    )
+    krx["request_timeout_seconds"] = float(
+        env_values.get(
+            "KRX_REQUEST_TIMEOUT_SECONDS",
+            krx.get("request_timeout_seconds", 20.0),
+        )
+    )
+    krx["source_attribution_label"] = env_values.get(
+        "KRX_SOURCE_ATTRIBUTION_LABEL",
+        krx.get("source_attribution_label", "한국거래소 통계정보"),
+    )
+    configured_service_urls = dict(krx.get("service_urls", {}))
+    for env_key, env_value in env_values.items():
+        if not env_key.startswith("KRX_SERVICE_URL_") or not env_value:
+            continue
+        raw_slug = env_key.removeprefix("KRX_SERVICE_URL_").strip().lower()
+        service_slug = raw_slug.replace("__", "-").replace("_", "_")
+        configured_service_urls[service_slug] = env_value
+    if configured_service_urls:
+        krx["service_urls"] = configured_service_urls
 
     naver_news = providers.setdefault("naver_news", {})
     naver_news["client_id"] = env_values.get("NAVER_CLIENT_ID")

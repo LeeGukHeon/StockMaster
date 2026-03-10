@@ -31,6 +31,12 @@ providers:
     base_url: https://opendart.fss.or.kr
   krx:
     base_url: https://data.krx.co.kr
+    enabled_live: false
+    allowed_services: []
+    daily_request_budget: 1000
+    request_timeout_seconds: 20.0
+    source_attribution_label: 한국거래소 통계정보
+    service_urls: {}
   naver_news:
     base_url: https://openapi.naver.com
 
