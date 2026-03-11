@@ -34,6 +34,9 @@ if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:
 
   log "bootstrapping metadata store"
   compose run --rm app python scripts/bootstrap_metadata_store.py
+
+  log "running initial metadata migration if postgres target is empty"
+  compose run --rm app python scripts/migrate_duckdb_metadata_to_postgres.py --truncate-first --if-target-empty
 fi
 
 log "running bootstrap"

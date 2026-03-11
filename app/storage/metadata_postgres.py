@@ -65,6 +65,35 @@ def _frame_from_duckdb(settings: Settings, table_name: str) -> pd.DataFrame:
         return connection.execute(f"SELECT * FROM {table_name}").fetchdf()
 
 
+def duckdb_metadata_row_counts(
+    settings: Settings,
+    *,
+    tables: tuple[str, ...] = METADATA_TABLES,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        bootstrap_core_tables(connection)
+        for table_name in tables:
+            row = connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
+            counts[table_name] = int(row[0]) if row is not None and row[0] is not None else 0
+    return counts
+
+
+def postgres_metadata_row_counts(
+    settings: Settings,
+    *,
+    tables: tuple[str, ...] = METADATA_TABLES,
+) -> dict[str, int]:
+    if not metadata_postgres_enabled(settings):
+        raise RuntimeError("Postgres metadata store is not enabled in settings.")
+    bootstrap_postgres_metadata_store(settings)
+    counts: dict[str, int] = {}
+    for table_name in tables:
+        row = fetchone_postgres_sql(settings, f"SELECT COUNT(*) FROM {table_name}")
+        counts[table_name] = int(row[0]) if row is not None and row[0] is not None else 0
+    return counts
+
+
 def _normalize_value(value):
     if pd.isna(value):
         return None

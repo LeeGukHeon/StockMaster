@@ -14,7 +14,9 @@ from app.logging import configure_logging, get_logger
 from app.settings import load_settings
 from app.storage.metadata_postgres import (
     copy_duckdb_metadata_to_postgres,
+    duckdb_metadata_row_counts,
     metadata_postgres_enabled,
+    postgres_metadata_row_counts,
 )
 from app.storage.metadata_schema import METADATA_TABLES
 
@@ -24,6 +26,11 @@ def main() -> int:
         description="Copy operational metadata tables from DuckDB to Postgres."
     )
     parser.add_argument("--truncate-first", action="store_true")
+    parser.add_argument(
+        "--if-target-empty",
+        action="store_true",
+        help="Run the migration only when the Postgres metadata store is empty.",
+    )
     parser.add_argument("--tables", nargs="*")
     args = parser.parse_args()
 
@@ -33,6 +40,19 @@ def main() -> int:
         print("Metadata migration skipped. Enable postgres metadata store first.")
         return 0
     selected_tables = tuple(args.tables) if args.tables else METADATA_TABLES
+    if args.if_target_empty:
+        source_counts = duckdb_metadata_row_counts(settings, tables=selected_tables)
+        source_total = sum(source_counts.values())
+        if source_total == 0:
+            print("Metadata migration skipped. DuckDB metadata source is empty.")
+            return 0
+        target_counts = postgres_metadata_row_counts(settings, tables=selected_tables)
+        target_total = sum(target_counts.values())
+        if target_total > 0:
+            print(
+                "Metadata migration skipped. Postgres metadata store already contains rows."
+            )
+            return 0
     results = copy_duckdb_metadata_to_postgres(
         settings,
         tables=selected_tables,
