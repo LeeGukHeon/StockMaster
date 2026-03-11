@@ -59,10 +59,6 @@ def log_disk_usage(
 def bootstrap_storage(settings: Settings) -> BootstrapResult:
     created_directories = ensure_storage_layout(settings)
     as_of_date = today_local(settings.app.timezone)
-    if settings.metadata.enabled and settings.metadata.backend == "postgres":
-        from app.storage.metadata_postgres import bootstrap_postgres_metadata_store
-
-        bootstrap_postgres_metadata_store(settings)
 
     with activate_run_context("bootstrap", as_of_date=as_of_date) as run_context:
         with duckdb_connection(settings.paths.duckdb_path) as connection:
