@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 
-from app.ops.bundles import run_daily_close_bundle, run_news_sync_bundle
+from app.ops.bundles import run_daily_close_bundle, run_evaluation_bundle, run_news_sync_bundle
 from app.ops.common import JobStatus
 from app.ops.scheduler import get_scheduled_job, read_scheduler_state
 from app.ops.serial import acquire_serial_lock, release_serial_lock
@@ -128,3 +129,61 @@ def test_daily_close_bundle_self_skips_on_non_trading_day(tmp_path) -> None:
     )
 
     assert result.status == JobStatus.SKIPPED_NON_TRADING_DAY
+
+
+def test_daily_close_bundle_passes_requested_date_to_daily_pipeline(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    captured: dict[str, date | None] = {}
+    noop_result = SimpleNamespace(artifact_paths=[])
+
+    def fake_daily_pipeline_job(_settings, *, pipeline_date=None, **_kwargs):
+        captured["pipeline_date"] = pipeline_date
+        return noop_result
+
+    monkeypatch.setattr("app.ops.bundles.run_daily_pipeline_job", fake_daily_pipeline_job)
+    monkeypatch.setattr("app.ops.bundles.build_portfolio_candidate_book", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.validate_portfolio_candidate_book", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_portfolio_target_book", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_portfolio_rebalance_plan", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_portfolio_position_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.render_daily_research_report", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.render_portfolio_report", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._refresh_release_views", lambda *a, **k: None)
+
+    result = run_daily_close_bundle(
+        settings,
+        as_of_date=date(2026, 3, 9),
+        force=True,
+        publish_discord=False,
+    )
+
+    assert result.status == JobStatus.SUCCESS
+    assert captured["pipeline_date"] == date(2026, 3, 9)
+
+
+def test_evaluation_bundle_passes_requested_date_to_evaluation_job(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    captured: dict[str, date | None] = {}
+    noop_result = SimpleNamespace(artifact_paths=[])
+
+    def fake_evaluation_job(_settings, *, selection_end_date=None, **_kwargs):
+        captured["selection_end_date"] = selection_end_date
+        return noop_result
+
+    monkeypatch.setattr("app.ops.bundles.run_evaluation_job", fake_evaluation_job)
+    monkeypatch.setattr("app.ops.bundles.evaluate_portfolio_policies", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.render_evaluation_report", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._refresh_release_views", lambda *a, **k: None)
+
+    result = run_evaluation_bundle(
+        settings,
+        as_of_date=date(2026, 3, 10),
+        force=True,
+    )
+
+    assert result.status == JobStatus.SUCCESS
+    assert captured["selection_end_date"] == date(2026, 3, 10)

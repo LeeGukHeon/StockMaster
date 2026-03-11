@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -12,13 +13,17 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.logging import configure_logging, get_logger
 from app.scheduler.jobs import run_daily_pipeline_job
 from app.settings import load_settings
+from scripts._ops_cli import parse_date
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Run the daily pipeline job.")
+    parser.add_argument("--as-of-date", type=parse_date)
+    args = parser.parse_args()
     settings = load_settings(project_root=PROJECT_ROOT)
     configure_logging(settings)
     logger = get_logger(__name__)
-    result = run_daily_pipeline_job(settings)
+    result = run_daily_pipeline_job(settings, pipeline_date=args.as_of_date)
     logger.info(
         "Daily pipeline finished.",
         extra={"run_id_value": result.run_id, "status": result.status},

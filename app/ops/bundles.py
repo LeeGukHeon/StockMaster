@@ -314,6 +314,7 @@ def run_daily_research_pipeline(
                     "daily_pipeline",
                     run_daily_pipeline_job,
                     settings,
+                    pipeline_date=target_date,
                     run_training=run_training,
                     publish_discord=publish_discord,
                 )
@@ -353,9 +354,13 @@ def run_daily_post_close_bundle(
     policy_config_path: str | None = None,
 ) -> OpsJobResult:
     ensure_storage_layout(settings)
-    target_date = _resolve_latest_selection_date(settings, fallback=as_of_date)
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
+        target_date = _resolve_latest_selection_date(
+            settings,
+            fallback=as_of_date,
+            connection=connection,
+        )
         with JobRunContext(
             settings,
             connection,
@@ -460,10 +465,19 @@ def run_daily_evaluation_bundle(
     policy_config_path: str | None = None,
 ) -> OpsJobResult:
     ensure_storage_layout(settings)
-    target_date = _resolve_latest_selection_date(settings, fallback=as_of_date)
-    start_date = _resolve_recent_start_date(settings, end_date=target_date, trading_days=60)
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
+        target_date = _resolve_latest_selection_date(
+            settings,
+            fallback=as_of_date,
+            connection=connection,
+        )
+        start_date = _resolve_recent_start_date(
+            settings,
+            end_date=target_date,
+            trading_days=60,
+            connection=connection,
+        )
         with JobRunContext(
             settings,
             connection,
@@ -480,7 +494,12 @@ def run_daily_evaluation_bundle(
             if dry_run:
                 job.skip("Dry-run: evaluation bundle steps skipped.")
             else:
-                job.run_step("evaluation_pipeline", run_evaluation_job, settings)
+                job.run_step(
+                    "evaluation_pipeline",
+                    run_evaluation_job,
+                    settings,
+                    selection_end_date=target_date,
+                )
                 job.run_step(
                     "evaluate_portfolio_policies",
                     evaluate_portfolio_policies,
@@ -789,6 +808,7 @@ def run_daily_close_bundle(
                     "daily_pipeline",
                     run_daily_pipeline_job,
                     settings,
+                    pipeline_date=target_date,
                     run_training=True,
                     publish_discord=publish_discord,
                 )
@@ -942,7 +962,12 @@ def run_evaluation_bundle(
             if dry_run:
                 job.skip("Dry-run: evaluation bundle skipped.")
             else:
-                job.run_step("evaluation_pipeline", run_evaluation_job, settings)
+                job.run_step(
+                    "evaluation_pipeline",
+                    run_evaluation_job,
+                    settings,
+                    selection_end_date=target_date,
+                )
                 job.run_step(
                     "evaluate_portfolio_policies",
                     evaluate_portfolio_policies,

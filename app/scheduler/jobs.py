@@ -211,11 +211,12 @@ def _is_optional_calibration_error(exc: RuntimeError) -> bool:
 def run_daily_pipeline_job(
     settings: Settings,
     *,
+    pipeline_date: date | None = None,
     run_training: bool = True,
     publish_discord: bool = True,
 ) -> JobExecutionResult:
     ensure_storage_layout(settings)
-    pipeline_date = _resolve_pipeline_date(settings)
+    pipeline_date = pipeline_date or _resolve_pipeline_date(settings)
     calibration_start_date = _resolve_lookback_start_date(
         settings,
         end_date=pipeline_date,
@@ -452,9 +453,13 @@ def run_daily_pipeline_job(
             raise
 
 
-def run_evaluation_job(settings: Settings) -> JobExecutionResult:
+def run_evaluation_job(
+    settings: Settings,
+    *,
+    selection_end_date: date | None = None,
+) -> JobExecutionResult:
     ensure_storage_layout(settings)
-    selection_end_date = _resolve_latest_ranking_date(settings)
+    selection_end_date = selection_end_date or _resolve_latest_ranking_date(settings)
     selection_start_date = _resolve_lookback_start_date(
         settings,
         end_date=selection_end_date,
