@@ -43,6 +43,48 @@ def _merge_seed_reference(frame: pd.DataFrame, seed_frame: pd.DataFrame) -> pd.D
     return merged
 
 
+def _merge_krx_reference(frame: pd.DataFrame, reference_frame: pd.DataFrame) -> pd.DataFrame:
+    if reference_frame.empty:
+        return frame
+    available_columns = [
+        column
+        for column in ("symbol", "market_segment", "sector", "industry")
+        if column in reference_frame.columns
+    ]
+    if "symbol" not in available_columns:
+        return frame
+    merged = frame.merge(
+        reference_frame[available_columns].drop_duplicates("symbol"),
+        on="symbol",
+        how="left",
+        suffixes=("", "_krx"),
+    )
+    for column in ("market_segment", "sector", "industry"):
+        krx_column = f"{column}_krx"
+        if krx_column not in merged.columns:
+            continue
+        merged[column] = merged[krx_column].combine_first(merged[column])
+        merged = merged.drop(columns=[krx_column])
+    return merged
+
+
+def _apply_code_fallback_labels(frame: pd.DataFrame) -> pd.DataFrame:
+    labeled = frame.copy()
+    if "sector" in labeled.columns and "sector_code" in labeled.columns:
+        labeled["sector"] = labeled["sector"].combine_first(
+            labeled["sector_code"].map(
+                lambda value: f"업종군 {value}" if pd.notna(value) else pd.NA
+            )
+        )
+    if "industry" in labeled.columns and "industry_code" in labeled.columns:
+        labeled["industry"] = labeled["industry"].combine_first(
+            labeled["industry_code"].map(
+                lambda value: f"업종 {value}" if pd.notna(value) else pd.NA
+            )
+        )
+    return labeled
+
+
 def _attach_dart_mapping(
     frame: pd.DataFrame, corp_codes: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.Series]:
@@ -68,6 +110,9 @@ def upsert_dim_symbol(connection, frame: pd.DataFrame) -> None:
             "market_segment",
             "sector",
             "industry",
+            "sector_code",
+            "industry_code",
+            "subindustry_code",
             "listing_date",
             "security_type",
             "is_common_stock",
@@ -103,6 +148,9 @@ def upsert_dim_symbol(connection, frame: pd.DataFrame) -> None:
             market_segment,
             sector,
             industry,
+            sector_code,
+            industry_code,
+            subindustry_code,
             listing_date,
             security_type,
             is_common_stock,
@@ -128,6 +176,9 @@ def upsert_dim_symbol(connection, frame: pd.DataFrame) -> None:
             market_segment,
             sector,
             industry,
+            sector_code,
+            industry_code,
+            subindustry_code,
             listing_date,
             security_type,
             is_common_stock,
@@ -163,6 +214,7 @@ def sync_universe(
     run_date = as_of_date or today_local(settings.app.timezone)
     owns_kis = kis_provider is None
     owns_dart = dart_provider is None
+    owns_krx = krx_adapter is None
     kis = kis_provider or KISProvider(settings)
     dart = dart_provider or DartProvider(settings)
     krx = krx_adapter or KrxReferenceAdapter(settings)
@@ -202,7 +254,14 @@ def sync_universe(
 
                 normalized, match_methods = _attach_dart_mapping(normalized, corp_codes)
                 match_counts = match_methods.value_counts(dropna=False)
+                reference_result = krx.load_reference_enrichment(
+                    as_of_date=run_date,
+                    connection=connection,
+                    run_id=run_context.run_id,
+                )
+                normalized = _merge_krx_reference(normalized, reference_result.frame)
                 normalized = _merge_seed_reference(normalized, krx.load_seed_fallback())
+                normalized = _apply_code_fallback_labels(normalized)
                 normalized["updated_at"] = now_local(settings.app.timezone)
 
                 upsert_dim_symbol(connection, normalized)
@@ -251,3 +310,5 @@ def sync_universe(
                     kis.close()
                 if owns_dart:
                     dart.close()
+                if owns_krx:
+                    krx.close()

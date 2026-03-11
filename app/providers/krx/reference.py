@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
@@ -58,6 +59,7 @@ class KrxReferenceAdapter:
         run_id: str | None = None,
     ) -> KrxReferenceResult:
         seed = self.load_seed_fallback()
+        effective_date = pd.Timestamp(as_of_date).date() if as_of_date is not None else None
         live_services = [
             slug
             for slug in ("stock_kospi_symbol_master", "stock_kosdaq_symbol_master")
@@ -75,22 +77,32 @@ class KrxReferenceAdapter:
         frames: list[pd.DataFrame] = []
         fallback_reason: str | None = None
         for service_slug in live_services:
-            result = self.provider.fetch_service_rows(
-                service_slug=service_slug,
-                as_of_date=as_of_date,
-                run_id=run_id,
-                connection=connection,
-                record_attribution=connection is not None,
-            )
-            if result.frame.empty:
-                fallback_reason = result.fallback_reason or "empty_live_response"
-                continue
-            frame = result.frame.copy()
-            if "reference_source" not in frame.columns:
-                frame["reference_source"] = "krx_live"
-            if "source_note" not in frame.columns:
-                frame["source_note"] = service_slug
-            frames.append(frame)
+            candidate_dates: list[date | None] = [effective_date]
+            if effective_date is not None:
+                candidate_dates.extend(
+                    effective_date - timedelta(days=offset)
+                    for offset in range(1, 8)
+                )
+            for candidate_date in candidate_dates:
+                result = self.provider.fetch_service_rows(
+                    service_slug=service_slug,
+                    as_of_date=candidate_date,
+                    run_id=run_id,
+                    connection=connection,
+                    record_attribution=connection is not None,
+                )
+                if result.frame.empty:
+                    fallback_reason = result.fallback_reason or "empty_live_response"
+                    continue
+                frame = result.frame.copy()
+                if "reference_source" not in frame.columns:
+                    frame["reference_source"] = "krx_live"
+                if "source_note" not in frame.columns:
+                    frame["source_note"] = service_slug
+                if candidate_date is not None:
+                    frame["reference_as_of_date"] = candidate_date
+                frames.append(frame)
+                break
 
         if not frames:
             return KrxReferenceResult(

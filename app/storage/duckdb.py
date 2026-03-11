@@ -46,6 +46,9 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         market_segment VARCHAR,
         sector VARCHAR,
         industry VARCHAR,
+        sector_code VARCHAR,
+        industry_code VARCHAR,
+        subindustry_code VARCHAR,
         listing_date DATE,
         security_type VARCHAR,
         is_common_stock BOOLEAN,
@@ -1951,6 +1954,9 @@ CORE_TABLE_DDL: tuple[str, ...] = (
 
 SYMBOL_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS market_segment VARCHAR",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS sector_code VARCHAR",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS industry_code VARCHAR",
+    "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS subindustry_code VARCHAR",
     "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS security_type VARCHAR",
     "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS is_preferred_stock BOOLEAN",
     "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS is_reit BOOLEAN",

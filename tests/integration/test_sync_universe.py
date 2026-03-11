@@ -6,6 +6,7 @@ import pandas as pd
 
 from app.common.paths import project_root
 from app.ingestion.universe_sync import sync_universe
+from app.providers.krx.reference import KrxReferenceResult
 from app.settings import load_settings
 from app.storage.bootstrap import bootstrap_storage
 from app.storage.duckdb import duckdb_connection
@@ -52,6 +53,15 @@ class FakeKrxAdapter:
 
     def load_seed_fallback(self) -> pd.DataFrame:
         return self.seed.copy()
+
+    def load_reference_enrichment(self, *, as_of_date, connection=None, run_id=None):
+        return KrxReferenceResult(
+            frame=pd.DataFrame(),
+            source="test",
+            fallback_used=True,
+            fallback_reason="test_empty",
+            service_slugs=tuple(),
+        )
 
 
 def test_sync_universe_populates_dimension_and_view(tmp_path):
@@ -176,9 +186,14 @@ def test_sync_universe_populates_dimension_and_view(tmp_path):
         assert active_common_count == 1
         samsung_row = connection.execute(
             """
-            SELECT sector, industry, dart_corp_code
+            SELECT sector, industry, sector_code, industry_code, subindustry_code, dart_corp_code
             FROM dim_symbol
             WHERE symbol = '005930'
             """
         ).fetchone()
-        assert samsung_row == ("Information Technology", "Semiconductors", "00126380")
+        assert samsung_row[0] == "Information Technology"
+        assert samsung_row[1] == "Semiconductors"
+        assert samsung_row[2] == "0027"
+        assert samsung_row[3] == "0013"
+        assert samsung_row[4] is None
+        assert samsung_row[5] == "00126380"

@@ -440,11 +440,12 @@ class KrxProvider(BaseProvider):
                 "market",
                 "mkt_nm",
                 "MKT_NM",
+                "MKT_TP_NM",
                 "mrkt_ctg",
             ],
-            "sector": ["sector", "sector_nm"],
+            "sector": ["sector", "sector_nm", "SECT_TP_NM"],
             "industry": ["industry", "induty_nm", "industry_nm"],
-            "listing_date": ["listing_date", "lstg_dt"],
+            "listing_date": ["listing_date", "lstg_dt", "LIST_DD"],
         }
 
         for target, candidates in coalesce_map.items():
@@ -467,6 +468,9 @@ class KrxProvider(BaseProvider):
                 output["listing_date"],
                 errors="coerce",
             ).dt.date
+        for column in ("company_name", "market_segment", "sector", "industry"):
+            if column in output.columns:
+                output[column] = output[column].replace("", pd.NA)
         output["krx_service_slug"] = service_slug
         output["source"] = "krx_live"
         return output

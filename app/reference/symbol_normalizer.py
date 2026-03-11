@@ -39,6 +39,13 @@ def parse_yyyymmdd(value: object) -> date | None:
     return parsed.date()
 
 
+def normalize_reference_code(value: object) -> str | pd.NA:
+    normalized = str(value).strip()
+    if not normalized or normalized.upper() in {"0", "0000", "NAN", "NONE", "NULL"}:
+        return pd.NA
+    return normalized
+
+
 def build_status_flags(row: pd.Series) -> str | None:
     flags: list[str] = []
     for key in (
@@ -69,6 +76,9 @@ def normalize_symbol_master(frame: pd.DataFrame, *, as_of_date: date) -> pd.Data
                 "market_segment",
                 "sector",
                 "industry",
+                "sector_code",
+                "industry_code",
+                "subindustry_code",
                 "listing_date",
                 "security_type",
                 "is_common_stock",
@@ -94,6 +104,15 @@ def normalize_symbol_master(frame: pd.DataFrame, *, as_of_date: date) -> pd.Data
     normalized["company_name"] = normalized["company_name"].astype(str).str.strip()
     normalized["market"] = normalized["market"].astype(str).str.strip().str.upper()
     normalized["market_segment"] = normalized["market"]
+    normalized["sector_code"] = normalized.get("sector_code", pd.Series(dtype="object")).map(
+        normalize_reference_code
+    )
+    normalized["industry_code"] = normalized.get(
+        "industry_code", pd.Series(dtype="object")
+    ).map(normalize_reference_code)
+    normalized["subindustry_code"] = normalized.get(
+        "subindustry_code", pd.Series(dtype="object")
+    ).map(normalize_reference_code)
     normalized["security_type"] = normalized["group_code"].map(SECURITY_TYPE_MAP).fillna("other")
     normalized["listing_date"] = normalized["listing_date_raw"].map(parse_yyyymmdd)
     normalized["is_preferred_stock"] = normalized["preferred_flag_raw"].map(flag_is_true)
@@ -130,6 +149,9 @@ def normalize_symbol_master(frame: pd.DataFrame, *, as_of_date: date) -> pd.Data
             "market_segment",
             "sector",
             "industry",
+            "sector_code",
+            "industry_code",
+            "subindustry_code",
             "listing_date",
             "security_type",
             "is_common_stock",
