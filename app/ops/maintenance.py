@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,6 +40,15 @@ from app.storage.duckdb import bootstrap_core_tables
 class _CleanupStats:
     removed_file_count: int = 0
     reclaimed_bytes: int = 0
+
+
+_SIZE_MULTIPLIERS = {
+    "B": 1,
+    "KB": 1024,
+    "MB": 1024**2,
+    "GB": 1024**3,
+    "TB": 1024**4,
+}
 
 
 def _safe_relative(path: Path, root: Path) -> str:
@@ -97,6 +109,19 @@ def _latest_referenced_artifact_paths(
     return protected_paths
 
 
+def _parse_reclaimed_bytes(output: str) -> int:
+    match = re.search(
+        r"Total reclaimed space:\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGT]?B)",
+        output,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return 0
+    value = float(match.group(1))
+    unit = match.group(2).upper()
+    return int(value * _SIZE_MULTIPLIERS.get(unit, 1))
+
+
 def summarize_storage_usage(
     settings: Settings,
     *,
@@ -135,6 +160,131 @@ def summarize_storage_usage(
         notes=f"Storage usage summarized. rows={len(frame)}",
         artifact_paths=[str(artifact_path)],
         row_count=len(frame),
+    )
+
+
+def cleanup_docker_build_cache(
+    settings: Settings,
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    job_run_id: str | None = None,
+    dry_run: bool,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    bootstrap_core_tables(connection)
+    resolved = load_active_or_default_ops_policy(
+        settings,
+        connection,
+        as_of_at=utc_now(),
+        policy_config_path=policy_config_path,
+    )
+    if not resolved.policy.docker_builder_prune_enabled:
+        return OpsJobResult(
+            run_id=job_run_id or "embedded",
+            job_name="cleanup_docker_build_cache",
+            status=JobStatus.SKIPPED,
+            notes="Docker builder cache prune is disabled by ops policy.",
+        )
+
+    docker_bin = shutil.which("docker")
+    if docker_bin is None:
+        return OpsJobResult(
+            run_id=job_run_id or "embedded",
+            job_name="cleanup_docker_build_cache",
+            status=JobStatus.SKIPPED,
+            notes="Docker CLI is not available on this host.",
+        )
+
+    until_hours = max(1, int(resolved.policy.docker_builder_prune_until_hours))
+    command = [
+        docker_bin,
+        "builder",
+        "prune",
+        "--force",
+        "--filter",
+        f"until={until_hours}h",
+    ]
+    artifact_dir = settings.paths.artifacts_dir / "ops" / "docker_build_cache"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_dir / f"{utc_now().strftime('%Y%m%dT%H%M%S%f')}.json"
+
+    if dry_run:
+        payload = {
+            "mode": "dry_run",
+            "command": command,
+            "until_hours": until_hours,
+            "policy_id": resolved.policy.policy_id,
+            "policy_version": resolved.policy.policy_version,
+        }
+        artifact_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return OpsJobResult(
+            run_id=job_run_id or "embedded",
+            job_name="cleanup_docker_build_cache",
+            status=JobStatus.SUCCESS,
+            notes=f"Dry-run: would prune Docker builder cache older than {until_hours}h.",
+            artifact_paths=[str(artifact_path)],
+        )
+
+    try:
+        completed = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        stdout = (exc.stdout or "").strip()
+        raise RuntimeError(
+            "Docker builder prune failed."
+            + (f" stdout={stdout}" if stdout else "")
+            + (f" stderr={stderr}" if stderr else "")
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Docker builder prune timed out.") from exc
+
+    combined_output = "\n".join(
+        part for part in [completed.stdout.strip(), completed.stderr.strip()] if part
+    )
+    reclaimed_bytes = _parse_reclaimed_bytes(combined_output)
+    payload = {
+        "mode": "execute",
+        "command": command,
+        "until_hours": until_hours,
+        "policy_id": resolved.policy.policy_id,
+        "policy_version": resolved.policy.policy_version,
+        "reclaimed_bytes": reclaimed_bytes,
+        "output": combined_output,
+    }
+    artifact_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    insert_retention_cleanup_run(
+        connection,
+        cleanup_run_id=f"docker-build-cache-{utc_now().strftime('%Y%m%dT%H%M%S%f')}",
+        started_at=now_local(settings.app.timezone),
+        finished_at=now_local(settings.app.timezone),
+        status=JobStatus.SUCCESS,
+        dry_run=False,
+        cleanup_scope="DOCKER_BUILD_CACHE",
+        removed_file_count=0,
+        reclaimed_bytes=reclaimed_bytes,
+        target_paths=[],
+        notes=f"Docker builder cache pruned for cache older than {until_hours}h.",
+        job_run_id=job_run_id,
+        details={
+            "command": command,
+            "output_artifact": str(artifact_path),
+        },
+    )
+    return OpsJobResult(
+        run_id=job_run_id or "embedded",
+        job_name="cleanup_docker_build_cache",
+        status=JobStatus.SUCCESS,
+        notes=(
+            f"Docker builder cache pruned. until={until_hours}h "
+            f"reclaimed_bytes={reclaimed_bytes}"
+        ),
+        artifact_paths=[str(artifact_path)],
     )
 
 

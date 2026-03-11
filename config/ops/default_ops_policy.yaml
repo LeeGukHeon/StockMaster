@@ -7,6 +7,8 @@ emergency_ratio: 0.90
 stale_lock_minutes: 180
 default_dry_run: false
 log_compression_after_days: 1
+docker_builder_prune_enabled: true
+docker_builder_prune_until_hours: 24
 high_frequency_blocked_jobs:
   - run_intraday_candidate_collector
   - sync_investor_flow

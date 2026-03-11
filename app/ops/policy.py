@@ -35,6 +35,8 @@ class OpsPolicy:
     protected_prefixes: list[str] = field(default_factory=list)
     default_dry_run: bool = False
     log_compression_after_days: int = 1
+    docker_builder_prune_enabled: bool = True
+    docker_builder_prune_until_hours: int = 24
 
 
 @dataclass(slots=True)
@@ -78,6 +80,10 @@ def _parse_ops_policy(payload: dict[str, Any]) -> OpsPolicy:
         protected_prefixes=[str(item) for item in payload.get("protected_prefixes", [])],
         default_dry_run=bool(payload.get("default_dry_run", False)),
         log_compression_after_days=int(payload.get("log_compression_after_days", 1)),
+        docker_builder_prune_enabled=bool(payload.get("docker_builder_prune_enabled", True)),
+        docker_builder_prune_until_hours=int(
+            payload.get("docker_builder_prune_until_hours", 24)
+        ),
     )
 
 
