@@ -12,6 +12,7 @@ from app.common.time import now_local
 from app.ml.promotion import load_alpha_promotion_summary
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
+from app.selection.sector_outlook import sector_outlook_frame
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -199,6 +200,8 @@ def _load_top_selection_rows(
             ranking.symbol,
             symbol.company_name,
             symbol.market,
+            symbol.sector,
+            symbol.industry,
             ranking.final_selection_value,
             ranking.grade,
             ranking.top_reason_tags_json,
@@ -247,31 +250,35 @@ def _load_official_target_rows(
     return connection.execute(
         """
         SELECT
-            as_of_date,
-            execution_mode,
-            symbol,
-            company_name,
-            market,
-            target_rank,
-            target_weight,
-            target_price,
-            plan_horizon,
-            entry_trade_date,
-            exit_trade_date,
-            action_plan_label,
-            action_target_price,
-            action_stretch_price,
-            action_stop_price,
-            model_spec_id,
-            active_alpha_model_id,
-            score_value,
-            gate_status
-        FROM fact_portfolio_target_book
-        WHERE as_of_date = ?
-          AND execution_mode = 'OPEN_ALL'
-          AND included_flag = TRUE
-          AND symbol <> '__CASH__'
-        ORDER BY target_rank, symbol
+            target.as_of_date,
+            target.execution_mode,
+            target.symbol,
+            target.company_name,
+            target.market,
+            symbol_meta.sector,
+            symbol_meta.industry,
+            target.target_rank,
+            target.target_weight,
+            target.target_price,
+            target.plan_horizon,
+            target.entry_trade_date,
+            target.exit_trade_date,
+            target.action_plan_label,
+            target.action_target_price,
+            target.action_stretch_price,
+            target.action_stop_price,
+            target.model_spec_id,
+            target.active_alpha_model_id,
+            target.score_value,
+            target.gate_status
+        FROM fact_portfolio_target_book AS target
+        LEFT JOIN dim_symbol AS symbol_meta
+          ON target.symbol = symbol_meta.symbol
+        WHERE target.as_of_date = ?
+          AND target.execution_mode = 'OPEN_ALL'
+          AND target.included_flag = TRUE
+          AND target.symbol <> '__CASH__'
+        ORDER BY target.target_rank, target.symbol
         LIMIT ?
         """,
         [as_of_date, limit],
@@ -316,6 +323,10 @@ def _format_pick_block(row: pd.Series, *, rank: int) -> list[str]:
         f"{rank}. `{row['symbol']}` {row['company_name']} ({row['market']})",
         f"   - 왜 봐야 하나: 등급 {row['grade']} / 종합점수 {float(row['final_selection_value']):.1f}",
     ]
+    if pd.notna(row.get("sector")) or pd.notna(row.get("industry")):
+        lines.append(
+            f"   - 업종: {row.get('industry') or '-'} / 상위 섹터 {row.get('sector') or '-'}"
+        )
     if pd.notna(row.get("selection_date")) or pd.notna(row.get("next_entry_trade_date")):
         lines.append(
             f"   - 언제 보나: 선정일 {row.get('selection_date') or '-'} / 진입 예정일 {row.get('next_entry_trade_date') or '-'}"
@@ -349,6 +360,17 @@ def _format_pick_block(row: pd.Series, *, rank: int) -> list[str]:
     return lines
 
 
+def _format_sector_outlook_line(row: pd.Series, *, rank: int) -> str:
+    broad_sector = row.get("broad_sector") or "-"
+    examples = row.get("sample_symbols") or "-"
+    return (
+        f"{rank}. {row['outlook_label']} ({broad_sector})"
+        f" | 상위 10위 내 {int(row['top10_count'] or 0)}종목"
+        f" | 평균 기대 초과수익 {_pct_text(row.get('avg_expected_excess_return'))}"
+        f" | 대표 종목 {examples}"
+    )
+
+
 def _format_official_pick_block(row: pd.Series, *, rank: int) -> list[str]:
     lines = [
         f"{rank}. `{row['symbol']}` {row['company_name']} ({row['market']})",
@@ -366,6 +388,10 @@ def _format_official_pick_block(row: pd.Series, *, rank: int) -> list[str]:
     lines.append(
         f"   - 공식 추천안: {' | '.join(summary_parts) if summary_parts else '다음 거래일 공식 추천안에 포함'}"
     )
+    if pd.notna(row.get("sector")) or pd.notna(row.get("industry")):
+        lines.append(
+            f"   - 업종: {row.get('industry') or '-'} / 상위 섹터 {row.get('sector') or '-'}"
+        )
 
     schedule_parts: list[str] = []
     if pd.notna(row.get("entry_trade_date")):
@@ -423,6 +449,8 @@ def _build_payload_content(
     as_of_date: date,
     market_pulse: dict[str, object],
     alpha_promotion: pd.DataFrame,
+    sector_outlook: pd.DataFrame,
+    single_buy_candidates: pd.DataFrame,
     official_targets: pd.DataFrame,
     market_news: pd.DataFrame,
 ) -> str:
@@ -440,7 +468,7 @@ def _build_payload_content(
             f" | 외국인 플러스 비율 {_pct_text(market_pulse.get('foreign_positive_ratio'))}"
             f" | 기관 플러스 비율 {_pct_text(market_pulse.get('institution_positive_ratio'))}"
         ),
-        "- 아래 종목은 웹의 '오늘의 주목 종목'과 같은 공식 추천안 기준입니다.",
+        "- 아래는 상위 업종 흐름, 단일매수 상위 후보, 공식 추천안을 순서대로 정리한 장마감 요약입니다.",
         "- 기대수익과 참고 범위는 과거 통계 기반 참고치일 뿐, 실제 수익을 보장하는 값은 아닙니다.",
         "",
         "**모델 점검**",
@@ -449,6 +477,28 @@ def _build_payload_content(
         lines.append("- 오늘 확인할 모델 점검 결과는 아직 없습니다.")
     else:
         lines.extend(_format_alpha_promotion_line(row) for _, row in alpha_promotion.iterrows())
+    lines.extend(
+        [
+            "",
+            "**다음 거래일 강세 예상 업종**",
+        ]
+    )
+    if sector_outlook.empty:
+        lines.append("- 상위 랭킹 기준으로 눈에 띄는 업종 집중이 아직 없습니다.")
+    else:
+        for index, (_, row) in enumerate(sector_outlook.iterrows(), start=1):
+            lines.append(_format_sector_outlook_line(row, rank=index))
+    lines.extend(
+        [
+            "",
+            "**단일매수 상위 5종목**",
+        ]
+    )
+    if single_buy_candidates.empty:
+        lines.append("- 단일매수 상위 후보가 아직 없습니다.")
+    else:
+        for index, (_, row) in enumerate(single_buy_candidates.iterrows(), start=1):
+            lines.extend(_format_pick_block(row, rank=index))
     lines.extend(
         [
             "",
@@ -565,6 +615,7 @@ def render_discord_eod_report(
                     "fact_news_item",
                     "fact_alpha_promotion_test",
                     "fact_alpha_active_model",
+                    "dim_symbol",
                 ],
                 notes=f"Render Discord EOD report for {as_of_date.isoformat()}",
                 ranking_version=SELECTION_ENGINE_V2_VERSION,
@@ -574,6 +625,21 @@ def render_discord_eod_report(
                 alpha_promotion = load_alpha_promotion_summary(
                     connection,
                     as_of_date=as_of_date,
+                )
+                sector_outlook = sector_outlook_frame(
+                    connection,
+                    as_of_date=as_of_date,
+                    ranking_version=SELECTION_ENGINE_V2_VERSION,
+                    prediction_version=ALPHA_PREDICTION_VERSION,
+                    horizon=5,
+                    candidate_limit=max(top_limit * 8, 30),
+                    limit=3,
+                )
+                single_buy_candidates = _load_top_selection_rows(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizon=5,
+                    limit=top_limit,
                 )
                 official_targets = _load_official_target_rows(
                     connection,
@@ -585,6 +651,8 @@ def render_discord_eod_report(
                     as_of_date=as_of_date,
                     market_pulse=market_pulse,
                     alpha_promotion=alpha_promotion,
+                    sector_outlook=sector_outlook,
+                    single_buy_candidates=single_buy_candidates,
                     official_targets=official_targets,
                     market_news=market_news,
                 )

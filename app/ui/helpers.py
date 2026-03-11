@@ -37,6 +37,7 @@ from app.providers.krx.client import KrxProvider
 from app.providers.krx.registry import KRX_SERVICE_REGISTRY
 from app.providers.naver_news.client import NaverNewsProvider
 from app.ranking.explanatory_score import RANKING_VERSION as EXPLANATORY_RANKING_VERSION
+from app.selection.sector_outlook import sector_outlook_frame
 from app.selection.calibration import PREDICTION_VERSION
 from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.settings import Settings, load_settings
@@ -823,6 +824,8 @@ UI_COLUMN_LABELS: dict[str, str] = {
     "symbol": "종목코드",
     "company_name": "종목명",
     "market": "시장",
+    "sector": "섹터",
+    "industry": "업종",
     "horizon": "기간",
     "final_selection_value": "최종 선택 점수",
     "final_selection_rank_pct": "선택 상위 비율",
@@ -898,6 +901,12 @@ UI_COLUMN_LABELS: dict[str, str] = {
     "foreign_positive_ratio": "외국인 순매수 비율",
     "institution_positive_ratio": "기관 순매수 비율",
     "selection_rows": "선정 엔진 행수",
+    "outlook_label": "강세 예상 업종",
+    "broad_sector": "상위 섹터",
+    "sample_symbols": "대표 종목",
+    "top10_count": "상위 10위 내 종목 수",
+    "rank_weight_sum": "상위권 집중도",
+    "outlook_score": "섹터 강도 점수",
     "prediction_rows": "예측 밴드 행수",
     "open": "시가",
     "high": "고가",
@@ -2913,6 +2922,8 @@ def leaderboard_frame(
                 ranking.symbol,
                 symbol.company_name,
                 symbol.market,
+                symbol.sector,
+                symbol.industry,
                 ranking.horizon,
                 ranking.final_selection_value,
                 ranking.final_selection_rank_pct,
@@ -2974,6 +2985,36 @@ def leaderboard_frame(
     frame["reasons"] = frame["top_reason_tags_json"].fillna("[]")
     frame["risks"] = frame["risk_flags_json"].fillna("[]")
     return frame.head(limit).reset_index(drop=True)
+
+
+def latest_sector_outlook_frame(
+    settings: Settings,
+    *,
+    as_of_date: str | None = None,
+    horizon: int = 5,
+    ranking_version: str | None = None,
+    limit: int = 3,
+    candidate_limit: int = 40,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        effective_version = _resolve_latest_ranking_version(connection, ranking_version)
+        if effective_version is None:
+            return pd.DataFrame()
+        prediction_version = _prediction_version_for_ranking(effective_version)
+        selected_date = as_of_date or _resolve_latest_ranking_date(connection, effective_version)
+        if selected_date is None:
+            return pd.DataFrame()
+        return sector_outlook_frame(
+            connection,
+            as_of_date=selected_date,
+            ranking_version=effective_version,
+            prediction_version=prediction_version,
+            horizon=int(horizon),
+            candidate_limit=int(candidate_limit),
+            limit=int(limit),
+        )
 
 
 def leaderboard_grade_count_frame(

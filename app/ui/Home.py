@@ -34,6 +34,7 @@ from app.ui.helpers import (
     latest_app_snapshot_frame,
     latest_market_news_frame,
     latest_portfolio_target_book_frame,
+    latest_sector_outlook_frame,
     latest_recommendation_timeline_text,
     latest_release_candidate_preview,
     latest_report_index_frame,
@@ -134,15 +135,21 @@ def render_today_page() -> None:
     selection_preview = leaderboard_frame(
         settings,
         horizon=5,
-        limit=12,
+        limit=5,
         ranking_version=SELECTION_ENGINE_V2_VERSION,
+    )
+    sector_outlook = latest_sector_outlook_frame(
+        settings,
+        horizon=5,
+        ranking_version=SELECTION_ENGINE_V2_VERSION,
+        limit=3,
     )
     official_targets = latest_portfolio_target_book_frame(
         settings,
         execution_mode="OPEN_ALL",
         include_cash=False,
         included_only=True,
-        limit=12,
+        limit=6,
     )
     latest_reports = latest_report_index_frame(settings, limit=12, latest_only=True)
     latest_news = latest_market_news_frame(settings, limit=6)
@@ -235,9 +242,50 @@ def render_today_page() -> None:
     with actionable_left:
         st.subheader("오늘의 주목 종목")
         st.caption(
-            "공식 추천안이 준비되면 다음 거래일 기준 진입 예정일, 관찰 종료일, 기준가, 목표가, 손절 참고선까지 함께 보여줍니다."
+            "단일매수 상위 후보, 강세 예상 업종, 공식 추천안을 나눠서 보여줍니다."
         )
         render_top_actionable_badges(settings)
+        render_record_cards(
+            sector_outlook,
+            title="다음 거래일 강세 예상 업종",
+            primary_column="outlook_label",
+            secondary_columns=["broad_sector"],
+            detail_columns=[
+                "top10_count",
+                "symbol_count",
+                "avg_expected_excess_return",
+                "sample_symbols",
+            ],
+            limit=3,
+            empty_message="강세 예상 업종 데이터가 아직 없습니다.",
+            table_expander_label="강세 예상 업종 원본 표 보기",
+        )
+        if not selection_preview.empty:
+            render_record_cards(
+                selection_preview,
+                title="단일매수 상위 5종목",
+                primary_column="symbol",
+                secondary_columns=["company_name", "industry"],
+                detail_columns=[
+                    "sector",
+                    "selection_date",
+                    "next_entry_trade_date",
+                    "selection_close_price",
+                    "final_selection_value",
+                    "expected_excess_return",
+                    "flat_target_price",
+                    "flat_upper_target_price",
+                    "flat_stop_price",
+                    "model_spec_id",
+                    "risks",
+                ],
+                limit=5,
+                empty_message="단일매수 상위 후보가 아직 없습니다.",
+                table_expander_label="단일매수 상위 후보 원본 표 보기",
+            )
+        elif official_targets.empty:
+            st.info("단일매수 후보와 공식 추천안이 아직 없습니다.")
+
         if not official_targets.empty:
             render_record_cards(
                 official_targets,
@@ -245,6 +293,7 @@ def render_today_page() -> None:
                 primary_column="symbol",
                 secondary_columns=["company_name", "action_plan_label"],
                 detail_columns=[
+                    "sector",
                     "entry_trade_date",
                     "exit_trade_date",
                     "target_price",
@@ -257,31 +306,6 @@ def render_today_page() -> None:
                 limit=6,
                 empty_message="공식 추천안이 아직 없습니다.",
                 table_expander_label="공식 추천안 원본 표 보기",
-            )
-        elif selection_preview.empty:
-            st.info("공식 추천안과 리더보드 미리보기가 아직 없습니다.")
-        else:
-            render_record_cards(
-                selection_preview,
-                title="리더보드 기준 참고 종목",
-                primary_column="symbol",
-                secondary_columns=["company_name", "grade"],
-                detail_columns=[
-                    "selection_date",
-                    "next_entry_trade_date",
-                    "selection_close_price",
-                    "final_selection_value",
-                    "expected_excess_return",
-                    "flat_target_price",
-                    "flat_upper_target_price",
-                    "flat_stop_price",
-                    "model_spec_id",
-                    "flow_score",
-                    "risks",
-                ],
-                limit=6,
-                empty_message="선정 엔진 v2 미리보기가 없습니다.",
-                table_expander_label="리더보드 원본 표 보기",
             )
     with actionable_right:
         render_record_cards(
