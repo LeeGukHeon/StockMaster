@@ -141,6 +141,7 @@ def render_today_page() -> None:
         settings,
         execution_mode="OPEN_ALL",
         include_cash=False,
+        included_only=True,
         limit=12,
     )
     latest_reports = latest_report_index_frame(settings, limit=12, latest_only=True)

@@ -1355,6 +1355,7 @@ def latest_portfolio_target_book_frame(
     as_of_date=None,
     execution_mode: str | None = None,
     include_cash: bool = False,
+    included_only: bool = False,
     limit: int = 30,
 ) -> pd.DataFrame:
     target_date = as_of_date or _latest_portfolio_as_of_date(settings)
@@ -1367,6 +1368,8 @@ def latest_portfolio_target_book_frame(
         params.append(str(execution_mode).upper())
     if not include_cash:
         filters.append("symbol <> '__CASH__'")
+    if included_only:
+        filters.append("included_flag = TRUE")
     query = f"""
         SELECT
             as_of_date,
@@ -1400,6 +1403,7 @@ def latest_portfolio_target_book_frame(
             current_weight,
             score_value,
             gate_status,
+            included_flag,
             waitlist_flag,
             waitlist_rank,
             blocked_flag,
