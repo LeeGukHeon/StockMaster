@@ -21,6 +21,14 @@ fi
 if [[ ! -x "${WORKER_VENV}/bin/python" ]]; then
   log "creating scheduler worker venv at ${WORKER_VENV}"
   "${PYTHON_BIN}" -m venv "${WORKER_VENV}"
+elif ! "${WORKER_VENV}/bin/python" - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
+then
+  log "recreating scheduler worker venv with Python 3.11+ at ${WORKER_VENV}"
+  rm -rf "${WORKER_VENV}"
+  "${PYTHON_BIN}" -m venv "${WORKER_VENV}"
 fi
 
 log "installing scheduler worker dependencies"
