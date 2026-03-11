@@ -45,6 +45,7 @@ REPORT_TYPE_BY_PREVIEW_NAME: dict[str, str] = {
     "release_candidate_checklist_preview.md": "release_candidate_checklist",
     "ops_report_preview.md": "ops_report",
     "discord_preview.md": "daily_discord_preview",
+    "after_close_brief_preview.md": "after_close_brief",
     "postmortem_preview.md": "evaluation_postmortem_report",
     "intraday_monitor_preview.md": "intraday_monitor_report",
     "intraday_postmortem_preview.md": "intraday_postmortem_report",

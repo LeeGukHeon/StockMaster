@@ -16,11 +16,13 @@
 ## 기준 리포트
 
 - `daily_research_report`: 오늘 시장과 주목 종목을 읽기 쉽게 정리한 요약
+- `after_close_brief`: 장마감 직후 뉴스와 준비 상태만 정리한 브리핑
 - `portfolio_report`: 목표 보유안과 리밸런스 방향을 정리한 요약
 - `evaluation_report`: 시간이 지난 뒤 추천 결과가 어땠는지 보는 사후 평가 요약
 - `intraday_summary_report`: 장중 판단 흐름을 시간대별로 요약한 보고서
 - `evaluation_postmortem_report`: 추천 결과를 다시 점검하는 사후 점검 보고서
 - `daily_discord_preview`: 디스코드로 보내는 장마감 요약
+- `after_close_brief`: 디스코드로 보내는 장마감 직후 브리핑
 - `release_candidate_checklist`: 운영 점검표
 
 ## 화면별 의미

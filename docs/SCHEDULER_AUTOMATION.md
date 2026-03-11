@@ -30,7 +30,7 @@
 | ops maintenance | `ops-maintenance` | daily 02:30 | stale lock 정리, 로그/보관/health 갱신 |
 | morning news | `news-morning` | Mon-Fri 08:30 | 야간 및 아침 뉴스 메타데이터 수집 |
 | intraday assist | `intraday-assist` | Mon-Fri 08:55-15:15 every 5 min | 장중 후보군/요약/보조 시그널 갱신 |
-| after-close news | `news-after-close` | Mon-Fri 16:10 | 장중/장후 뉴스 메타데이터 재수집 |
+| after-close news | `news-after-close` | Mon-Fri 16:10 | 장중/장후 뉴스 메타데이터 재수집 + 장마감 직후 브리핑 |
 | evaluation | `evaluation` | Mon-Fri 16:20 | matured outcome 평가, 사후 평가 집계 |
 | daily close | `daily-close` | Mon-Fri 18:40 | 추천/리포트/latest snapshot 갱신 |
 | daily audit lite | `daily-audit-lite` | Mon-Fri 19:05 | latest consistency / artifact integrity 점검 |
@@ -47,6 +47,14 @@
 - `FAILED`: 예외 또는 회귀
 
 현재 운영 기준에서는 active lock 충돌도 scheduler 레이어에서 `SKIPPED_LOCKED` 정상 스킵으로 취급합니다.
+
+## 장마감 메시지 구분
+
+- `16:10` 장마감 직후: 추천 없는 `장마감 직후 브리핑`
+- `18:40` 일일 추천 배치 완료 후: 최종 추천이 포함된 `장마감 요약`
+
+즉 장마감 직후 브리핑은 뉴스와 준비 상태를 알려주는 메시지이고,
+최종 추천 종목은 `daily-close` 완료 이후 메시지에서만 다룹니다.
 
 ## 날짜 기준
 

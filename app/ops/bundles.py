@@ -69,6 +69,7 @@ from app.ops.scheduler import (
     resolve_reference_trading_date,
 )
 from app.pipelines.news_metadata import sync_news_metadata
+from app.reports.close_brief import publish_discord_close_brief
 from app.portfolio.allocation import (
     evaluate_portfolio_policies,
     materialize_portfolio_nav,
@@ -734,6 +735,15 @@ def run_news_sync_bundle(
                         settings,
                         signal_date=signal_date,
                         mode="market_and_focus",
+                        critical=False,
+                    )
+                if profile == "after_close":
+                    job.run_step(
+                        "publish_discord_close_brief",
+                        publish_discord_close_brief,
+                        settings,
+                        as_of_date=requested_date,
+                        dry_run=True if dry_run else not settings.discord.enabled,
                         critical=False,
                     )
                 _refresh_release_views(

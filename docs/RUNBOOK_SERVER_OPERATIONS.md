@@ -137,6 +137,7 @@ sudo systemctl start stockmaster-scheduler@evaluation.service
 | morning news | `news-morning` | Mon-Fri 08:30 |
 | intraday assist | `intraday-assist` | Mon-Fri 08:55-15:15 every 5 min |
 | after-close news | `news-after-close` | Mon-Fri 16:10 |
+| after-close brief | same run | Mon-Fri 16:10 | 장마감 직후 브리핑만 발행 |
 | evaluation | `evaluation` | Mon-Fri 16:20 |
 | daily close | `daily-close` | Mon-Fri 18:40 |
 | daily audit lite | `daily-audit-lite` | Mon-Fri 19:05 |
@@ -152,6 +153,11 @@ sudo systemctl start stockmaster-scheduler@evaluation.service
 - 예외/회귀는 `FAILED`
 
 즉 `scheduler_global_write`가 이미 잡혀 있을 때의 스킵은 정상 운영 범주이며, 바로 장애로 취급하지 않습니다.
+
+메시지 운영 기준:
+
+- `16:10`은 최종 추천이 아니라 장마감 직후 브리핑
+- 최종 추천 종목 Discord 발행은 `18:40 daily-close` 완료 이후만 허용
 
 ## 7. 메타데이터 / Postgres 운영
 

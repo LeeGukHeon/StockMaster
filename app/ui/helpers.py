@@ -990,6 +990,8 @@ UI_VALUE_LABELS: dict[str, dict[str, str]] = {
         "validate_selection_engine_v1": "기존 추천 모델 검증",
         "render_discord_eod_report": "디스코드 장마감 요약 생성",
         "publish_discord_eod_report": "디스코드 장마감 요약 발행",
+        "render_discord_close_brief": "디스코드 장마감 직후 브리핑 생성",
+        "publish_discord_close_brief": "디스코드 장마감 직후 브리핑 발행",
         "materialize_selection_outcomes": "추천 결과 사후 기록 생성",
         "materialize_prediction_evaluation": "예측 사후 평가 요약 생성",
         "materialize_calibration_diagnostics": "예측 범위 진단 생성",
@@ -6052,6 +6054,7 @@ UI_VALUE_LABELS.setdefault("report_type", {}).update(
     {
         "daily_research_report": "일일 리서치 리포트",
         "daily_discord_preview": "디스코드 장마감 요약",
+        "after_close_brief": "장마감 직후 브리핑",
         "portfolio_report": "포트폴리오 리포트",
         "evaluation_report": "사후 평가 리포트",
         "evaluation_postmortem_report": "사후 점검 리포트",
