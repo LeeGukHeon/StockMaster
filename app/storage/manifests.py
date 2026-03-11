@@ -146,7 +146,7 @@ def append_artifact(
         )
 
 
-def fetch_recent_runs(connection: duckdb.DuckDBPyConnection, limit: int = 10):
+def fetch_recent_runs(connection: duckdb.DuckDBPyConnection | None, limit: int = 10):
     query = """
         SELECT
             run_id,
@@ -168,4 +168,6 @@ def fetch_recent_runs(connection: duckdb.DuckDBPyConnection, limit: int = 10):
     settings = get_settings()
     if metadata_postgres_enabled(settings):
         return fetchdf_postgres_sql(settings, query, [limit])
+    if connection is None:
+        raise ValueError("duckdb connection is required when metadata store is disabled")
     return connection.execute(query, [limit]).fetchdf()

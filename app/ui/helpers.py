@@ -61,6 +61,10 @@ def _metadata_frame(
         return connection.execute(query, params or []).fetchdf()
 
 
+def _metadata_available(settings: Settings) -> bool:
+    return metadata_postgres_enabled(settings) or settings.paths.duckdb_path.exists()
+
+
 def _metadata_fetchone(
     settings: Settings,
     query: str,
@@ -73,7 +77,7 @@ def _metadata_fetchone(
 
 
 def _latest_manifest_preview(settings: Settings, *, run_type: str) -> str | None:
-    if not settings.paths.duckdb_path.exists():
+    if not _metadata_available(settings):
         return None
     row = _metadata_fetchone(
         settings,
@@ -1550,7 +1554,7 @@ def latest_portfolio_constraint_frame(
 
 
 def latest_portfolio_run_status_frame(settings: Settings, *, limit: int = 12) -> pd.DataFrame:
-    if not settings.paths.duckdb_path.exists():
+    if not _metadata_available(settings):
         return pd.DataFrame()
     return _metadata_frame(
         settings,
@@ -2025,11 +2029,12 @@ def format_disk_status_label(value: object) -> str:
 
 
 def recent_runs_frame(settings: Settings, *, limit: int = 10) -> pd.DataFrame:
-    if not settings.paths.duckdb_path.exists():
+    if not _metadata_available(settings):
         return pd.DataFrame()
+    if metadata_postgres_enabled(settings):
+        return fetch_recent_runs(None, limit=limit)
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        frame = fetch_recent_runs(connection, limit=limit)
-    return frame
+        return fetch_recent_runs(connection, limit=limit)
 
 
 def disk_report(settings: Settings) -> DiskUsageReport:
@@ -2481,7 +2486,7 @@ def research_data_summary_frame(settings: Settings) -> pd.DataFrame:
 
 
 def recent_failure_runs_frame(settings: Settings, *, limit: int = 5) -> pd.DataFrame:
-    if not settings.paths.duckdb_path.exists():
+    if not _metadata_available(settings):
         return pd.DataFrame()
     return _metadata_frame(
         settings,
@@ -2661,7 +2666,7 @@ def latest_regime_frame(settings: Settings) -> pd.DataFrame:
 
 
 def latest_version_frame(settings: Settings) -> pd.DataFrame:
-    if not settings.paths.duckdb_path.exists():
+    if not _metadata_available(settings):
         return pd.DataFrame()
     return _metadata_frame(
         settings,
@@ -4556,7 +4561,7 @@ def latest_intraday_publish_status_frame(
     *,
     limit: int = 20,
 ) -> pd.DataFrame:
-    if not settings.paths.duckdb_path.exists():
+    if not _metadata_available(settings):
         return pd.DataFrame()
     return _metadata_frame(
         settings,
@@ -5176,7 +5181,7 @@ def latest_intraday_policy_publish_status_frame(
     *,
     limit: int = 20,
 ) -> pd.DataFrame:
-    if not settings.paths.duckdb_path.exists():
+    if not _metadata_available(settings):
         return pd.DataFrame()
     return _metadata_frame(
         settings,
@@ -5478,7 +5483,7 @@ def latest_intraday_meta_run_status_frame(
     *,
     limit: int = 12,
 ) -> pd.DataFrame:
-    if not settings.paths.duckdb_path.exists():
+    if not _metadata_available(settings):
         return pd.DataFrame()
     return _metadata_frame(
         settings,
