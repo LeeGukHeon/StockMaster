@@ -184,7 +184,7 @@ def _display_value(value: object) -> str:
     if value is None:
         return "-"
     text = str(value).strip()
-    return text if text else "-"
+    return text if text and text not in {"nan", "NaN", "NaT", "None"} else "-"
 
 
 def render_record_cards(

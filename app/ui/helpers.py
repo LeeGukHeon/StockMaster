@@ -2032,7 +2032,11 @@ def _format_price_value(value: object) -> object:
 
 
 def _format_scalar_for_display(column: str, value: object) -> object:
+    if pd.isna(value):
+        return "-"
     translated = _translate_scalar(column, value)
+    if isinstance(translated, str) and translated.strip() in {"", "nan", "NaN", "NaT", "None"}:
+        return "-"
     if _is_percent_display_column(column):
         return _format_percent_value(translated)
     if _is_price_display_column(column):

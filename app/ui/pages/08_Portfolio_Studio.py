@@ -44,7 +44,12 @@ execution_mode = st.selectbox(
 
 active_policy = latest_portfolio_policy_registry_frame(settings, active_only=True, limit=10)
 candidate_book = latest_portfolio_candidate_frame(settings, execution_mode=execution_mode, limit=30)
-target_book = latest_portfolio_target_book_frame(settings, execution_mode=execution_mode, limit=30)
+target_book = latest_portfolio_target_book_frame(
+    settings,
+    execution_mode=execution_mode,
+    included_only=True,
+    limit=30,
+)
 waitlist = latest_portfolio_waitlist_frame(settings, execution_mode=execution_mode, limit=20)
 rebalance = latest_portfolio_rebalance_plan_frame(settings, execution_mode=execution_mode, limit=30)
 constraints = latest_portfolio_constraint_frame(settings, limit=20)
