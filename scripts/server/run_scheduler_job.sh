@@ -13,7 +13,10 @@ shift || true
 [[ -n "${SERVICE_SLUG}" ]] || fail "usage: run_scheduler_job.sh <service-slug> [extra args...]"
 
 log "ensuring stockmaster stack is up for scheduler job ${SERVICE_SLUG}"
+if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:-duckdb}" == "postgres" ]]; then
+  compose up -d metadata_db >/dev/null
+fi
 compose up -d app nginx >/dev/null
 
 log "running scheduler job ${SERVICE_SLUG}"
-compose exec -T app python scripts/run_scheduled_bundle.py --service-slug "${SERVICE_SLUG}" --scheduler-run "$@"
+compose run --rm app python scripts/run_scheduled_bundle.py --service-slug "${SERVICE_SLUG}" --scheduler-run "$@"
