@@ -3,8 +3,13 @@ from __future__ import annotations
 from datetime import date
 from types import SimpleNamespace
 
-from app.ops.bundles import run_daily_close_bundle, run_evaluation_bundle, run_news_sync_bundle
-from app.ops.common import JobStatus
+from app.ops.bundles import (
+    run_daily_close_bundle,
+    run_evaluation_bundle,
+    run_news_sync_bundle,
+    run_ops_maintenance_bundle,
+)
+from app.ops.common import JobStatus, TriggerType
 from app.ops.scheduler import get_scheduled_job, read_scheduler_state
 from app.ops.serial import acquire_serial_lock, release_serial_lock
 from app.storage.duckdb import duckdb_connection
@@ -161,6 +166,103 @@ def test_daily_close_bundle_passes_requested_date_to_daily_pipeline(tmp_path, mo
 
     assert result.status == JobStatus.SUCCESS
     assert captured["pipeline_date"] == date(2026, 3, 9)
+
+
+def test_daily_close_recovery_disables_discord_publish(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    captured: dict[str, object] = {}
+    noop_result = SimpleNamespace(artifact_paths=[])
+
+    def fake_daily_pipeline_job(_settings, *, pipeline_date=None, publish_discord=None, **_kwargs):
+        captured["pipeline_date"] = pipeline_date
+        captured["publish_discord"] = publish_discord
+        return noop_result
+
+    monkeypatch.setattr("app.ops.bundles.run_daily_pipeline_job", fake_daily_pipeline_job)
+    monkeypatch.setattr("app.ops.bundles.build_portfolio_candidate_book", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.validate_portfolio_candidate_book", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_portfolio_target_book", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_portfolio_rebalance_plan", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_portfolio_position_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.render_daily_research_report", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.render_portfolio_report", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._refresh_release_views", lambda *a, **k: None)
+
+    result = run_daily_close_bundle(
+        settings,
+        as_of_date=date(2026, 3, 9),
+        trigger_type=TriggerType.RECOVERY,
+        force=True,
+        publish_discord=True,
+    )
+
+    assert result.status == JobStatus.SUCCESS
+    assert captured["pipeline_date"] == date(2026, 3, 9)
+    assert captured["publish_discord"] is False
+
+
+def test_news_sync_recovery_suppresses_close_brief_publish(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    calls: list[bool] = []
+    noop_result = SimpleNamespace(artifact_paths=[])
+
+    monkeypatch.setattr("app.ops.bundles.sync_news_metadata", lambda *a, **k: noop_result)
+
+    def fake_publish_discord_close_brief(_settings, *, dry_run=False, **_kwargs):
+        calls.append(bool(dry_run))
+        return noop_result
+
+    monkeypatch.setattr("app.ops.bundles.publish_discord_close_brief", fake_publish_discord_close_brief)
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._refresh_release_views", lambda *a, **k: None)
+
+    result = run_news_sync_bundle(
+        settings,
+        as_of_date=date(2026, 3, 9),
+        profile="after_close",
+        trigger_type=TriggerType.RECOVERY,
+        force=True,
+        dry_run=False,
+    )
+
+    assert result.status == JobStatus.SUCCESS
+    assert calls == [True]
+
+
+def test_ops_maintenance_scheduled_run_suppresses_discord_publish(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    calls: list[bool] = []
+    noop_result = SimpleNamespace(artifact_paths=[], status=JobStatus.SUCCESS, notes="ok")
+
+    monkeypatch.setattr("app.ops.bundles.check_pipeline_dependencies", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.summarize_storage_usage", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.cleanup_docker_build_cache", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.rotate_and_compress_logs", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.cleanup_disk_watermark", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.cleanup_stale_job_runs", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.reconcile_failed_runs", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.recover_incomplete_runs", lambda *a, **k: noop_result)
+
+    def fake_publish_discord_ops_alerts(_settings, *, dry_run=False, **_kwargs):
+        calls.append(bool(dry_run))
+        return noop_result
+
+    monkeypatch.setattr("app.ops.bundles.publish_discord_ops_alerts", fake_publish_discord_ops_alerts)
+
+    result = run_ops_maintenance_bundle(
+        settings,
+        as_of_date=date(2026, 3, 9),
+        trigger_type=TriggerType.SCHEDULED,
+        dry_run=False,
+    )
+
+    assert result.status == JobStatus.SUCCESS
+    assert calls == [True]
 
 
 def test_evaluation_bundle_passes_requested_date_to_evaluation_job(tmp_path, monkeypatch) -> None:

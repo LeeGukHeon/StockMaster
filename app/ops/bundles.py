@@ -295,6 +295,7 @@ def run_daily_research_pipeline(
 ) -> OpsJobResult:
     ensure_storage_layout(settings)
     target_date = _resolve_pipeline_date(settings, fallback=as_of_date)
+    should_publish_discord = publish_discord and trigger_type != TriggerType.RECOVERY
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
         with JobRunContext(
@@ -319,7 +320,7 @@ def run_daily_research_pipeline(
                     settings,
                     pipeline_date=target_date,
                     run_training=run_training,
-                    publish_discord=publish_discord,
+                    publish_discord=should_publish_discord,
                 )
             job.run_step(
                 "check_pipeline_dependencies",
@@ -541,6 +542,7 @@ def run_ops_maintenance_bundle(
 ) -> OpsJobResult:
     ensure_storage_layout(settings)
     target_date = as_of_date or today_local(settings.app.timezone)
+    should_publish_ops_alerts = trigger_type == TriggerType.MANUAL and settings.discord.enabled
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
         with JobRunContext(
@@ -639,7 +641,7 @@ def run_ops_maintenance_bundle(
                 connection=connection,
                 as_of_date=target_date,
                 job_run_id=job.run_id,
-                dry_run=True if dry_run else not settings.discord.enabled,
+                dry_run=True if dry_run else not should_publish_ops_alerts,
                 critical=False,
             )
             return job_result_from_context(
@@ -693,6 +695,11 @@ def run_news_sync_bundle(
 ) -> OpsJobResult:
     ensure_storage_layout(settings)
     requested_date = _scheduler_calendar_date(settings, requested_date=as_of_date)
+    should_publish_close_brief = (
+        profile == "after_close"
+        and trigger_type != TriggerType.RECOVERY
+        and settings.discord.enabled
+    )
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
         reference_trading_date = _scheduler_target_date(
@@ -754,7 +761,7 @@ def run_news_sync_bundle(
                         publish_discord_close_brief,
                         settings,
                         as_of_date=requested_date,
-                        dry_run=True if dry_run else not settings.discord.enabled,
+                        dry_run=True if dry_run else not should_publish_close_brief,
                         critical=False,
                     )
                 _refresh_release_views(
@@ -795,6 +802,7 @@ def run_daily_close_bundle(
 ) -> OpsJobResult:
     ensure_storage_layout(settings)
     requested_date = as_of_date or today_local(settings.app.timezone)
+    should_publish_discord = publish_discord and trigger_type != TriggerType.RECOVERY
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
         target_date = _scheduler_target_date(
@@ -840,7 +848,7 @@ def run_daily_close_bundle(
                     settings,
                     pipeline_date=target_date,
                     run_training=True,
-                    publish_discord=publish_discord,
+                    publish_discord=should_publish_discord,
                 )
                 job.run_step(
                     "build_portfolio_candidate_book",
