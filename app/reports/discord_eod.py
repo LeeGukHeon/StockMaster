@@ -124,8 +124,24 @@ def _publish_readiness(connection, *, as_of_date: date) -> tuple[bool, dict[str,
             ).fetchone()[0]
             or 0
         ),
+        "portfolio_rows": int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM fact_portfolio_target_book
+                WHERE as_of_date = ?
+                  AND execution_mode = 'OPEN_ALL'
+                  AND symbol <> '__CASH__'
+                """,
+                [as_of_date],
+            ).fetchone()[0]
+            or 0
+        ),
     }
-    ready = all(readiness[key] > 0 for key in ("ranking_rows", "prediction_rows", "regime_rows", "ohlcv_rows"))
+    ready = all(
+        readiness[key] > 0
+        for key in ("ranking_rows", "prediction_rows", "regime_rows", "ohlcv_rows", "portfolio_rows")
+    )
     return ready, readiness
 
 
@@ -222,6 +238,46 @@ def _load_top_selection_rows(
     ).fetchdf()
 
 
+def _load_official_target_rows(
+    connection,
+    *,
+    as_of_date: date,
+    limit: int,
+) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            as_of_date,
+            execution_mode,
+            symbol,
+            company_name,
+            market,
+            target_rank,
+            target_weight,
+            target_price,
+            plan_horizon,
+            entry_trade_date,
+            exit_trade_date,
+            action_plan_label,
+            action_target_price,
+            action_stretch_price,
+            action_stop_price,
+            model_spec_id,
+            active_alpha_model_id,
+            score_value,
+            gate_status
+        FROM fact_portfolio_target_book
+        WHERE as_of_date = ?
+          AND execution_mode = 'OPEN_ALL'
+          AND included_flag = TRUE
+          AND symbol <> '__CASH__'
+        ORDER BY target_rank, symbol
+        LIMIT ?
+        """,
+        [as_of_date, limit],
+    ).fetchdf()
+
+
 def _load_market_news(connection, *, as_of_date: date, limit: int = 3) -> pd.DataFrame:
     return connection.execute(
         """
@@ -293,6 +349,52 @@ def _format_pick_block(row: pd.Series, *, rank: int) -> list[str]:
     return lines
 
 
+def _format_official_pick_block(row: pd.Series, *, rank: int) -> list[str]:
+    lines = [
+        f"{rank}. `{row['symbol']}` {row['company_name']} ({row['market']})",
+    ]
+
+    summary_parts: list[str] = []
+    if pd.notna(row.get("action_plan_label")):
+        summary_parts.append(str(row["action_plan_label"]))
+    if pd.notna(row.get("target_weight")):
+        summary_parts.append(f"목표 비중 {float(row['target_weight']):.1%}")
+    if pd.notna(row.get("score_value")):
+        summary_parts.append(f"추천 점수 {float(row['score_value']):+.2f}")
+    if pd.notna(row.get("gate_status")):
+        summary_parts.append(f"진입 판단 {row['gate_status']}")
+    lines.append(
+        f"   - 공식 추천안: {' | '.join(summary_parts) if summary_parts else '다음 거래일 공식 추천안에 포함'}"
+    )
+
+    schedule_parts: list[str] = []
+    if pd.notna(row.get("entry_trade_date")):
+        schedule_parts.append(f"진입 예정일 {row['entry_trade_date']}")
+    if pd.notna(row.get("exit_trade_date")):
+        schedule_parts.append(f"관찰 종료일 {row['exit_trade_date']}")
+    if pd.notna(row.get("plan_horizon")):
+        schedule_parts.append(f"관찰 기간 {int(row['plan_horizon'])}거래일")
+    if schedule_parts:
+        lines.append(f"   - 언제 보나: {' / '.join(schedule_parts)}")
+
+    if pd.notna(row.get("target_price")):
+        price_parts = [f"기준가 {float(row['target_price']):,.0f}원"]
+        if pd.notna(row.get("action_target_price")):
+            price_parts.append(f"목표가 {float(row['action_target_price']):,.0f}원")
+        if pd.notna(row.get("action_stretch_price")):
+            price_parts.append(f"강한 흐름 목표가 {float(row['action_stretch_price']):,.0f}원")
+        if pd.notna(row.get("action_stop_price")):
+            price_parts.append(f"손절 참고선 {float(row['action_stop_price']):,.0f}원")
+        lines.append(f"   - 참고 가격선: {' / '.join(price_parts)}")
+
+    model_spec = MODEL_SPEC_LABELS.get(str(row.get("model_spec_id")), str(row.get("model_spec_id") or "-"))
+    if row.get("active_alpha_model_id") or row.get("model_spec_id"):
+        lines.append(
+            f"   - 사용 모델: {model_spec} / 활성 모델 ID {row.get('active_alpha_model_id') or '-'}"
+        )
+    return lines
+
+
 def _format_alpha_promotion_line(row: pd.Series) -> str:
     p_value = ""
     if pd.notna(row.get("p_value")):
@@ -321,8 +423,7 @@ def _build_payload_content(
     as_of_date: date,
     market_pulse: dict[str, object],
     alpha_promotion: pd.DataFrame,
-    d1_board: pd.DataFrame,
-    d5_board: pd.DataFrame,
+    official_targets: pd.DataFrame,
     market_news: pd.DataFrame,
 ) -> str:
     lines = [
@@ -339,7 +440,7 @@ def _build_payload_content(
             f" | 외국인 플러스 비율 {_pct_text(market_pulse.get('foreign_positive_ratio'))}"
             f" | 기관 플러스 비율 {_pct_text(market_pulse.get('institution_positive_ratio'))}"
         ),
-        "- 아래 종목은 당일 장마감 기준으로 다시 읽기 쉽게 정리한 참고 목록입니다.",
+        "- 아래 종목은 웹의 '오늘의 주목 종목'과 같은 공식 추천안 기준입니다.",
         "- 기대수익과 참고 범위는 과거 통계 기반 참고치일 뿐, 실제 수익을 보장하는 값은 아닙니다.",
         "",
         "**모델 점검**",
@@ -351,21 +452,14 @@ def _build_payload_content(
     lines.extend(
         [
             "",
-            "**오늘 바로 볼 1거래일 후보**",
+            "**다음 거래일 공식 추천안**",
         ]
     )
-    if d1_board.empty:
-        lines.append("- 1거래일 기준으로 정리된 후보가 없습니다.")
+    if official_targets.empty:
+        lines.append("- 오늘 생성된 공식 추천안에는 바로 담을 종목이 없습니다.")
     else:
-        for index, (_, row) in enumerate(d1_board.iterrows(), start=1):
-            lines.extend(_format_pick_block(row, rank=index))
-    lines.append("")
-    lines.append("**조금 더 길게 보는 5거래일 후보**")
-    if d5_board.empty:
-        lines.append("- 5거래일 기준으로 정리된 후보가 없습니다.")
-    else:
-        for index, (_, row) in enumerate(d5_board.iterrows(), start=1):
-            lines.extend(_format_pick_block(row, rank=index))
+        for index, (_, row) in enumerate(official_targets.iterrows(), start=1):
+            lines.extend(_format_official_pick_block(row, rank=index))
     lines.append("")
     lines.append("**시장 전체 주요 뉴스**")
     if market_news.empty:
@@ -466,6 +560,7 @@ def render_discord_eod_report(
                 input_sources=[
                     "fact_ranking",
                     "fact_prediction",
+                    "fact_portfolio_target_book",
                     "fact_market_regime_snapshot",
                     "fact_news_item",
                     "fact_alpha_promotion_test",
@@ -480,16 +575,9 @@ def render_discord_eod_report(
                     connection,
                     as_of_date=as_of_date,
                 )
-                d1_board = _load_top_selection_rows(
+                official_targets = _load_official_target_rows(
                     connection,
                     as_of_date=as_of_date,
-                    horizon=1,
-                    limit=top_limit,
-                )
-                d5_board = _load_top_selection_rows(
-                    connection,
-                    as_of_date=as_of_date,
-                    horizon=5,
                     limit=top_limit,
                 )
                 market_news = _load_market_news(connection, as_of_date=as_of_date)
@@ -497,8 +585,7 @@ def render_discord_eod_report(
                     as_of_date=as_of_date,
                     market_pulse=market_pulse,
                     alpha_promotion=alpha_promotion,
-                    d1_board=d1_board,
-                    d5_board=d5_board,
+                    official_targets=official_targets,
                     market_news=market_news,
                 )
                 messages = _build_payload_messages(
@@ -597,7 +684,8 @@ def publish_discord_eod_report(
                     f"ranking_rows={readiness['ranking_rows']}, "
                     f"prediction_rows={readiness['prediction_rows']}, "
                     f"regime_rows={readiness['regime_rows']}, "
-                    f"ohlcv_rows={readiness['ohlcv_rows']}."
+                    f"ohlcv_rows={readiness['ohlcv_rows']}, "
+                    f"portfolio_rows={readiness['portfolio_rows']}."
                 )
                 record_run_finish(
                     connection,

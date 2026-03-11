@@ -53,30 +53,30 @@ report_preview = latest_portfolio_report_preview(settings)
 
 render_page_header(
     settings,
-    page_name="포트폴리오",
-    title="포트폴리오",
-    description="오늘 추천을 실제 보유안으로 어떻게 옮길지, 목표 비중과 리밸런스 계획 중심으로 확인합니다.",
+    page_name="추천 구성안",
+    title="추천 구성안",
+    description="오늘 추천을 다음 거래일 공식 추천안으로 어떻게 정리했는지, 비중 제안과 제외 사유 중심으로 확인합니다.",
 )
 render_screen_guide(
-    summary="오늘 추천을 실제 보유안으로 바꾸면 어떤 모습이 되는지 보는 화면입니다. 무엇을 살지보다 얼마나 담을지, 왜 일부 종목이 빠졌는지를 이해하는 데 초점을 두면 됩니다.",
+    summary="오늘 추천을 최종 추천 묶음으로 어떻게 정리했는지 보는 화면입니다. 무엇을 살지, 얼마나 담을지, 왜 일부 종목이 빠졌는지를 이해하는 데 초점을 두면 됩니다.",
     bullets=[
-        "목표 보유안과 리밸런스 계획을 먼저 보세요.",
+        "공식 추천안과 추천 조정 계획을 먼저 보세요.",
         "대기/차단 종목은 왜 지금 바로 담지 않는지 설명해 주는 영역입니다.",
-        "순자산가치 요약은 최근 제안 포트폴리오 흐름을 간단히 보여줍니다.",
+        "가상 추천 묶음 성과 요약은 최근 제안 흐름을 간단히 보여줍니다.",
     ],
 )
 
 if active_policy.empty:
     render_narrative_card(
-        "포트폴리오 요약",
-        "활성 포트폴리오 정책은 없지만, 현재 실행 기준으로 후보와 목표 보유안을 미리 볼 수 있습니다.",
+        "추천 구성 요약",
+        "활성 추천 구성 정책은 없지만, 현재 실행 기준으로 후보와 공식 추천안을 미리 볼 수 있습니다.",
     )
 else:
     row = active_policy.iloc[0]
     render_narrative_card(
-        "포트폴리오 요약",
+        "추천 구성 요약",
         (
-            f"현재 활성 정책은 {row.get('active_portfolio_policy_id', '-')}이고, "
+            f"현재 활성 추천 구성 정책은 {row.get('active_portfolio_policy_id', '-')}이고, "
             f"실행 모드는 {format_execution_mode_label(execution_mode)}입니다. "
             "타이밍 보조는 신규 진입과 추가 매수에만 선택적으로 반영합니다."
         ),
@@ -86,18 +86,18 @@ render_narrative_card("추천 기준 안내", latest_recommendation_timeline_tex
 
 render_record_cards(
     active_policy,
-    title="활성 포트폴리오 정책",
+    title="활성 추천 구성 정책",
     primary_column="active_portfolio_policy_id",
     secondary_columns=["display_name"],
     detail_columns=["promotion_type", "effective_from_date", "note"],
     limit=3,
-    empty_message="활성 포트폴리오 정책이 아직 없습니다.",
-    table_expander_label="포트폴리오 정책 원본 표 보기",
+    empty_message="활성 추천 구성 정책이 아직 없습니다.",
+    table_expander_label="추천 구성 정책 원본 표 보기",
 )
 
 render_record_cards(
     target_book,
-    title="목표 보유안",
+    title="공식 추천안",
     primary_column="symbol",
     secondary_columns=["company_name", "action_plan_label"],
     detail_columns=[
@@ -115,19 +115,19 @@ render_record_cards(
         "model_spec_id",
     ],
     limit=8,
-    empty_message="목표 보유안 데이터가 없습니다.",
-    table_expander_label="목표 보유안 원본 표 보기",
+    empty_message="공식 추천안 데이터가 없습니다.",
+    table_expander_label="공식 추천안 원본 표 보기",
 )
 
 render_record_cards(
     rebalance,
-    title="리밸런스 계획",
+    title="추천 조정 계획",
     primary_column="symbol",
     secondary_columns=["rebalance_action", "gate_status"],
     detail_columns=["delta_shares", "cash_delta", "blocked_reason"],
     limit=8,
-    empty_message="리밸런스 계획이 없습니다.",
-    table_expander_label="리밸런스 원본 표 보기",
+    empty_message="추천 조정 계획이 없습니다.",
+    table_expander_label="추천 조정 원본 표 보기",
 )
 
 render_record_cards(
@@ -171,24 +171,24 @@ render_record_cards(
 
 render_record_cards(
     nav_frame,
-    title="최근 순자산가치 요약",
+    title="최근 가상 추천안 성과 요약",
     primary_column="snapshot_date",
     secondary_columns=["execution_mode"],
     detail_columns=["nav", "cash_weight", "holding_count", "turnover"],
     limit=6,
-    empty_message="순자산가치 스냅샷이 없습니다.",
-    table_expander_label="NAV 원본 표 보기",
+    empty_message="가상 추천안 성과 스냅샷이 없습니다.",
+    table_expander_label="가상 성과 원본 표 보기",
 )
 
 if report_preview:
-    with st.expander("최신 포트폴리오 리포트 미리보기", expanded=False):
+    with st.expander("최신 추천 구성 리포트 미리보기", expanded=False):
         render_report_preview(
-            title="포트폴리오 리포트 미리보기",
+            title="추천 구성 리포트 미리보기",
             preview=report_preview,
         )
 
 render_page_footer(
     settings,
-    page_name="포트폴리오",
+    page_name="추천 구성안",
     extra_items=[f"실행 모드: {format_execution_mode_label(execution_mode)}"],
 )

@@ -223,7 +223,7 @@ def render_today_page() -> None:
     link_left, link_mid, link_right = st.columns(3)
     with link_left:
         _quick_link("리더보드", "leaderboard", "오늘 바로 볼 종목 선별 결과와 위험 신호를 확인합니다.")
-        _quick_link("포트폴리오", "portfolio", "목표 보유, 리밸런스, 현금 비중과 제약 사유를 확인합니다.")
+        _quick_link("추천 구성안", "portfolio", "공식 추천안, 비중 제안, 대기 종목과 제외 사유를 확인합니다.")
     with link_mid:
         _quick_link("장중 콘솔", "intraday_console", "처음 판단, 보정 후 판단, 최종 판단이 어떻게 달라졌는지 확인합니다.")
         _quick_link("사후 평가", "evaluation", "1거래일·5거래일 뒤 결과와 예측 범위 점검 상태를 확인합니다.")

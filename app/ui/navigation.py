@@ -44,14 +44,14 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
         ),
         PageSpec(
             key="portfolio",
-            title="포트폴리오",
+            title="추천 구성안",
             icon=":material/account_balance:",
             url_path="portfolio",
             path=_page_path(project_root, "app/ui/pages/08_Portfolio_Studio.py"),
         ),
         PageSpec(
             key="portfolio_evaluation",
-            title="포트폴리오 평가",
+            title="추천안 평가",
             icon=":material/analytics:",
             url_path="portfolio-evaluation",
             path=_page_path(project_root, "app/ui/pages/09_Portfolio_Evaluation.py"),
