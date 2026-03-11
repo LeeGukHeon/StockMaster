@@ -13,7 +13,7 @@ from app.common.time import utc_now
 from app.ops.common import LockConflictError, LockStatus
 from app.ops.repository import insert_recovery_action, json_text
 from app.settings import get_settings
-from app.storage.metadata_postgres import execute_postgres_sql
+from app.storage.metadata_postgres import execute_postgres_sql, metadata_postgres_enabled
 
 
 @dataclass(slots=True)
@@ -165,7 +165,37 @@ class LockManager:
             now,
         ]
         self.connection.execute(query, params)
-        execute_postgres_sql(get_settings(), query, params)
+        settings = get_settings()
+        if metadata_postgres_enabled(settings):
+            execute_postgres_sql(
+                settings,
+                """
+                INSERT INTO fact_active_lock (
+                    lock_name,
+                    job_name,
+                    owner_run_id,
+                    acquired_at,
+                    expires_at,
+                    released_at,
+                    release_reason,
+                    status,
+                    details_json,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (lock_name) DO UPDATE SET
+                    job_name = EXCLUDED.job_name,
+                    owner_run_id = EXCLUDED.owner_run_id,
+                    acquired_at = EXCLUDED.acquired_at,
+                    expires_at = EXCLUDED.expires_at,
+                    released_at = EXCLUDED.released_at,
+                    release_reason = EXCLUDED.release_reason,
+                    status = EXCLUDED.status,
+                    details_json = EXCLUDED.details_json,
+                    created_at = EXCLUDED.created_at
+                """,
+                params,
+            )
         return LockHandle(
             lock_name=lock_name,
             job_name=job_name,
