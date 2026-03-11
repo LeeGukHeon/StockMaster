@@ -6,6 +6,8 @@ source "${SERVER_SCRIPT_DIR}/common.sh"
 
 require_cmd systemctl
 
+bash "${SERVER_SCRIPT_DIR}/ensure_scheduler_worker_venv.sh"
+
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 UNIT_SOURCE_DIR="${PROJECT_ROOT}/deploy/systemd"
 TIMER_UNITS=(

@@ -42,7 +42,11 @@ from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.settings import Settings, load_settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
-from app.storage.metadata_postgres import fetchdf_postgres_sql, metadata_postgres_enabled
+from app.storage.metadata_postgres import (
+    fetchdf_postgres_sql,
+    fetchone_postgres_sql,
+    metadata_postgres_enabled,
+)
 from app.storage.manifests import fetch_recent_runs
 
 
@@ -55,6 +59,44 @@ def _metadata_frame(
         return fetchdf_postgres_sql(settings, query, params or [])
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
         return connection.execute(query, params or []).fetchdf()
+
+
+def _metadata_fetchone(
+    settings: Settings,
+    query: str,
+    params: list[object] | None = None,
+):
+    if metadata_postgres_enabled(settings):
+        return fetchone_postgres_sql(settings, query, params or [])
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(query, params or []).fetchone()
+
+
+def _latest_manifest_preview(settings: Settings, *, run_type: str) -> str | None:
+    if not settings.paths.duckdb_path.exists():
+        return None
+    row = _metadata_fetchone(
+        settings,
+        """
+        SELECT output_artifacts_json
+        FROM ops_run_manifest
+        WHERE run_type = ?
+          AND status = 'success'
+        ORDER BY started_at DESC
+        LIMIT 1
+        """,
+        [run_type],
+    )
+    if row is None or not row[0]:
+        return None
+    artifacts = json.loads(row[0])
+    preview_candidates = [Path(item) for item in artifacts if str(item).endswith(".md")]
+    if not preview_candidates:
+        return None
+    preview_path = preview_candidates[-1]
+    if not preview_path.exists():
+        return None
+    return preview_path.read_text(encoding="utf-8")
 
 
 def latest_job_runs_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
@@ -1510,9 +1552,9 @@ def latest_portfolio_constraint_frame(
 def latest_portfolio_run_status_frame(settings: Settings, *, limit: int = 12) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 run_type,
                 status,
@@ -1538,9 +1580,9 @@ def latest_portfolio_run_status_frame(settings: Settings, *, limit: int = 12) ->
             )
             ORDER BY started_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_portfolio_report_preview(settings: Settings) -> str | None:
@@ -2250,45 +2292,57 @@ def calendar_summary_frame(settings: Settings) -> pd.DataFrame:
 def latest_sync_runs_frame(settings: Settings) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
+            WITH ranked_runs AS (
+                SELECT
+                    run_type,
+                    started_at,
+                    finished_at,
+                    status,
+                    notes,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY run_type
+                        ORDER BY started_at DESC
+                    ) AS row_number
+                FROM ops_run_manifest
+                WHERE run_type IN (
+                    'sync_universe',
+                    'sync_trading_calendar',
+                    'sync_daily_ohlcv',
+                    'sync_fundamentals_snapshot',
+                    'sync_news_metadata',
+                    'sync_investor_flow',
+                    'build_feature_store',
+                    'build_forward_labels',
+                    'build_market_regime_snapshot',
+                    'materialize_explanatory_ranking',
+                    'materialize_selection_engine_v1',
+                    'calibrate_proxy_prediction_bands',
+                    'materialize_selection_outcomes',
+                    'materialize_prediction_evaluation',
+                    'materialize_calibration_diagnostics',
+                    'validate_explanatory_ranking',
+                    'validate_selection_engine_v1',
+                    'validate_evaluation_pipeline',
+                    'render_discord_eod_report',
+                    'publish_discord_eod_report',
+                    'render_postmortem_report',
+                    'publish_discord_postmortem_report'
+                )
+            )
             SELECT
                 run_type,
                 started_at,
                 finished_at,
                 status,
                 notes
-            FROM ops_run_manifest
-            WHERE run_type IN (
-                'sync_universe',
-                'sync_trading_calendar',
-                'sync_daily_ohlcv',
-                'sync_fundamentals_snapshot',
-                'sync_news_metadata',
-                'sync_investor_flow',
-                'build_feature_store',
-                'build_forward_labels',
-                'build_market_regime_snapshot',
-                'materialize_explanatory_ranking',
-                'materialize_selection_engine_v1',
-                'calibrate_proxy_prediction_bands',
-                'materialize_selection_outcomes',
-                'materialize_prediction_evaluation',
-                'materialize_calibration_diagnostics',
-                'validate_explanatory_ranking'
-                ,
-                'validate_selection_engine_v1',
-                'validate_evaluation_pipeline',
-                'render_discord_eod_report',
-                'publish_discord_eod_report',
-                'render_postmortem_report',
-                'publish_discord_postmortem_report'
-            )
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY run_type ORDER BY started_at DESC) = 1
+            FROM ranked_runs
+            WHERE row_number = 1
             ORDER BY run_type
-            """
-        ).fetchdf()
+        """,
+    )
 
 
 def research_data_summary_frame(settings: Settings) -> pd.DataFrame:
@@ -2429,9 +2483,9 @@ def research_data_summary_frame(settings: Settings) -> pd.DataFrame:
 def recent_failure_runs_frame(settings: Settings, *, limit: int = 5) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 run_type,
                 as_of_date,
@@ -2442,9 +2496,9 @@ def recent_failure_runs_frame(settings: Settings, *, limit: int = 5) -> pd.DataF
             WHERE status = 'failed'
             ORDER BY started_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_ohlcv_sample_frame(settings: Settings, *, limit: int = 10) -> pd.DataFrame:
@@ -2609,9 +2663,9 @@ def latest_regime_frame(settings: Settings) -> pd.DataFrame:
 def latest_version_frame(settings: Settings) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 (
                     SELECT feature_version
@@ -2679,7 +2733,7 @@ def latest_version_frame(settings: Settings) -> pd.DataFrame:
                     LIMIT 1
                 ) AS latest_alpha_prediction_version
             """
-        ).fetchdf()
+    )
 
 
 def latest_validation_summary_frame(settings: Settings, *, limit: int = 20) -> pd.DataFrame:
@@ -3744,55 +3798,11 @@ def stock_workbench_outcome_frame(
 
 
 def latest_discord_preview(settings: Settings) -> str | None:
-    if not settings.paths.duckdb_path.exists():
-        return None
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        row = connection.execute(
-            """
-            SELECT output_artifacts_json
-            FROM ops_run_manifest
-            WHERE run_type = 'render_discord_eod_report'
-              AND status = 'success'
-            ORDER BY started_at DESC
-            LIMIT 1
-            """
-        ).fetchone()
-    if row is None or not row[0]:
-        return None
-    artifacts = json.loads(row[0])
-    preview_candidates = [Path(item) for item in artifacts if str(item).endswith(".md")]
-    if not preview_candidates:
-        return None
-    preview_path = preview_candidates[-1]
-    if not preview_path.exists():
-        return None
-    return preview_path.read_text(encoding="utf-8")
+    return _latest_manifest_preview(settings, run_type="render_discord_eod_report")
 
 
 def latest_postmortem_preview(settings: Settings) -> str | None:
-    if not settings.paths.duckdb_path.exists():
-        return None
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        row = connection.execute(
-            """
-            SELECT output_artifacts_json
-            FROM ops_run_manifest
-            WHERE run_type = 'render_postmortem_report'
-              AND status = 'success'
-            ORDER BY started_at DESC
-            LIMIT 1
-            """
-        ).fetchone()
-    if row is None or not row[0]:
-        return None
-    artifacts = json.loads(row[0])
-    preview_candidates = [Path(item) for item in artifacts if str(item).endswith(".md")]
-    if not preview_candidates:
-        return None
-    preview_path = preview_candidates[-1]
-    if not preview_path.exists():
-        return None
-    return preview_path.read_text(encoding="utf-8")
+    return _latest_manifest_preview(settings, run_type="render_postmortem_report")
 
 
 UI_COLUMN_LABELS.update(
@@ -4548,62 +4558,50 @@ def latest_intraday_publish_status_frame(
 ) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
+            WITH ranked_runs AS (
+                SELECT
+                    run_type,
+                    started_at,
+                    finished_at,
+                    status,
+                    notes,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY run_type
+                        ORDER BY started_at DESC
+                    ) AS row_number
+                FROM ops_run_manifest
+                WHERE run_type IN (
+                    'materialize_intraday_market_context_snapshots',
+                    'materialize_intraday_regime_adjustments',
+                    'materialize_intraday_adjusted_entry_decisions',
+                    'materialize_intraday_decision_outcomes',
+                    'evaluate_intraday_strategy_comparison',
+                    'materialize_intraday_timing_calibration',
+                    'render_intraday_postmortem_report',
+                    'publish_discord_intraday_postmortem',
+                    'validate_intraday_strategy_pipeline'
+                )
+            )
             SELECT
                 run_type,
                 started_at,
                 finished_at,
                 status,
                 notes
-            FROM ops_run_manifest
-            WHERE run_type IN (
-                'materialize_intraday_market_context_snapshots',
-                'materialize_intraday_regime_adjustments',
-                'materialize_intraday_adjusted_entry_decisions',
-                'materialize_intraday_decision_outcomes',
-                'evaluate_intraday_strategy_comparison',
-                'materialize_intraday_timing_calibration',
-                'render_intraday_postmortem_report',
-                'publish_discord_intraday_postmortem',
-                'validate_intraday_strategy_pipeline'
-            )
-            QUALIFY ROW_NUMBER() OVER (
-                PARTITION BY run_type
-                ORDER BY started_at DESC
-            ) = 1
+            FROM ranked_runs
+            WHERE row_number = 1
             ORDER BY started_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_intraday_postmortem_preview(settings: Settings) -> str | None:
-    if not settings.paths.duckdb_path.exists():
-        return None
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        row = connection.execute(
-            """
-            SELECT output_artifacts_json
-            FROM ops_run_manifest
-            WHERE run_type = 'render_intraday_postmortem_report'
-              AND status = 'success'
-            ORDER BY started_at DESC
-            LIMIT 1
-            """
-        ).fetchone()
-    if row is None or not row[0]:
-        return None
-    artifacts = json.loads(row[0])
-    preview_candidates = [Path(item) for item in artifacts if str(item).endswith(".md")]
-    if not preview_candidates:
-        return None
-    preview_path = preview_candidates[-1]
-    if not preview_path.exists():
-        return None
-    return preview_path.read_text(encoding="utf-8")
+    return _latest_manifest_preview(settings, run_type="render_intraday_postmortem_report")
 
 
 def intraday_console_market_context_frame(
@@ -5180,63 +5178,51 @@ def latest_intraday_policy_publish_status_frame(
 ) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
+            WITH ranked_runs AS (
+                SELECT
+                    run_type,
+                    started_at,
+                    finished_at,
+                    status,
+                    notes,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY run_type
+                        ORDER BY started_at DESC
+                    ) AS row_number
+                FROM ops_run_manifest
+                WHERE run_type IN (
+                    'materialize_intraday_policy_candidates',
+                    'run_intraday_policy_calibration',
+                    'run_intraday_policy_walkforward',
+                    'evaluate_intraday_policy_ablation',
+                    'materialize_intraday_policy_recommendations',
+                    'freeze_intraday_active_policy',
+                    'rollback_intraday_active_policy',
+                    'render_intraday_policy_research_report',
+                    'publish_discord_intraday_policy_summary',
+                    'validate_intraday_policy_framework'
+                )
+            )
             SELECT
                 run_type,
                 started_at,
                 finished_at,
                 status,
                 notes
-            FROM ops_run_manifest
-            WHERE run_type IN (
-                'materialize_intraday_policy_candidates',
-                'run_intraday_policy_calibration',
-                'run_intraday_policy_walkforward',
-                'evaluate_intraday_policy_ablation',
-                'materialize_intraday_policy_recommendations',
-                'freeze_intraday_active_policy',
-                'rollback_intraday_active_policy',
-                'render_intraday_policy_research_report',
-                'publish_discord_intraday_policy_summary',
-                'validate_intraday_policy_framework'
-            )
-            QUALIFY ROW_NUMBER() OVER (
-                PARTITION BY run_type
-                ORDER BY started_at DESC
-            ) = 1
+            FROM ranked_runs
+            WHERE row_number = 1
             ORDER BY started_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_intraday_policy_report_preview(settings: Settings) -> str | None:
-    if not settings.paths.duckdb_path.exists():
-        return None
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        row = connection.execute(
-            """
-            SELECT output_artifacts_json
-            FROM ops_run_manifest
-            WHERE run_type = 'render_intraday_policy_research_report'
-              AND status = 'success'
-            ORDER BY started_at DESC
-            LIMIT 1
-            """
-        ).fetchone()
-    if row is None or not row[0]:
-        return None
-    artifacts = json.loads(row[0])
-    preview_candidates = [Path(item) for item in artifacts if str(item).endswith(".md")]
-    if not preview_candidates:
-        return None
-    preview_path = preview_candidates[-1]
-    if not preview_path.exists():
-        return None
-    return preview_path.read_text(encoding="utf-8")
+    return _latest_manifest_preview(settings, run_type="render_intraday_policy_research_report")
 
 
 def intraday_console_tuned_action_frame(
@@ -5494,40 +5480,50 @@ def latest_intraday_meta_run_status_frame(
 ) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
+            WITH ranked_runs AS (
+                SELECT
+                    run_type,
+                    started_at,
+                    finished_at,
+                    status,
+                    notes,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY run_type
+                        ORDER BY started_at DESC
+                    ) AS row_number
+                FROM ops_run_manifest
+                WHERE run_type IN (
+                    'build_intraday_meta_training_dataset',
+                    'validate_intraday_meta_dataset',
+                    'train_intraday_meta_models',
+                    'run_intraday_meta_walkforward',
+                    'calibrate_intraday_meta_thresholds',
+                    'evaluate_intraday_meta_models',
+                    'materialize_intraday_meta_predictions',
+                    'materialize_intraday_final_actions',
+                    'freeze_intraday_active_meta_model',
+                    'rollback_intraday_active_meta_model',
+                    'render_intraday_meta_model_report',
+                    'publish_discord_intraday_meta_summary',
+                    'validate_intraday_meta_model_framework'
+                )
+            )
             SELECT
                 run_type,
                 started_at,
                 finished_at,
                 status,
                 notes
-            FROM ops_run_manifest
-            WHERE run_type IN (
-                'build_intraday_meta_training_dataset',
-                'validate_intraday_meta_dataset',
-                'train_intraday_meta_models',
-                'run_intraday_meta_walkforward',
-                'calibrate_intraday_meta_thresholds',
-                'evaluate_intraday_meta_models',
-                'materialize_intraday_meta_predictions',
-                'materialize_intraday_final_actions',
-                'freeze_intraday_active_meta_model',
-                'rollback_intraday_active_meta_model',
-                'render_intraday_meta_model_report',
-                'publish_discord_intraday_meta_summary',
-                'validate_intraday_meta_model_framework'
-            )
-            QUALIFY ROW_NUMBER() OVER (
-                PARTITION BY run_type
-                ORDER BY started_at DESC
-            ) = 1
+            FROM ranked_runs
+            WHERE row_number = 1
             ORDER BY started_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def _latest_intraday_meta_session_date(settings: Settings):

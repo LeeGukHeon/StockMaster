@@ -64,6 +64,8 @@ services:
       POSTGRES_DB: ${METADATA_DB_POSTGRES_DB:-stockmaster_meta}
       POSTGRES_USER: ${METADATA_DB_POSTGRES_USER:-stockmaster}
       POSTGRES_PASSWORD: ${METADATA_DB_POSTGRES_PASSWORD:-change_me}
+    ports:
+      - "127.0.0.1:${METADATA_DB_HOST_PORT:-5433}:5432"
     volumes:
       - ${STOCKMASTER_RUNTIME_ROOT:-/opt/stockmaster/runtime}/metadata-postgres:/var/lib/postgresql/data
     healthcheck:
