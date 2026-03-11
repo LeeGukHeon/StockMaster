@@ -5,8 +5,13 @@ from pathlib import Path
 from typing import Iterator
 
 import pandas as pd
-import psycopg
-from psycopg import sql
+
+try:
+    import psycopg
+    from psycopg import sql
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in local dev
+    psycopg = None
+    sql = None
 
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -21,9 +26,17 @@ def metadata_postgres_enabled(settings: Settings) -> bool:
 def postgres_metadata_connection(settings: Settings) -> Iterator[psycopg.Connection]:
     if not metadata_postgres_enabled(settings):
         raise RuntimeError("Postgres metadata store is not enabled in settings.")
+    if psycopg is None or sql is None:
+        raise RuntimeError("psycopg is required when postgres metadata store is enabled.")
     assert settings.metadata.db_url
     connection = psycopg.connect(settings.metadata.db_url)
     try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL("SET search_path TO {}").format(
+                    sql.Identifier(settings.metadata.db_schema)
+                )
+            )
         yield connection
         connection.commit()
     except Exception:
@@ -95,6 +108,58 @@ def copy_duckdb_metadata_to_postgres(
                 ]
                 cursor.executemany(query, rows)
     return results
+
+
+def _postgres_query(query: str) -> str:
+    return query.replace("?", "%s")
+
+
+def execute_postgres_sql(settings: Settings, query: str, params: list | tuple | None = None) -> None:
+    if not metadata_postgres_enabled(settings):
+        return
+    with postgres_metadata_connection(settings) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(_postgres_query(query), list(params or []))
+
+
+def executemany_postgres_sql(
+    settings: Settings,
+    query: str,
+    rows: list[list | tuple],
+) -> None:
+    if not metadata_postgres_enabled(settings) or not rows:
+        return
+    with postgres_metadata_connection(settings) as connection:
+        with connection.cursor() as cursor:
+            cursor.executemany(_postgres_query(query), rows)
+
+
+def fetchone_postgres_sql(
+    settings: Settings,
+    query: str,
+    params: list | tuple | None = None,
+):
+    if not metadata_postgres_enabled(settings):
+        return None
+    with postgres_metadata_connection(settings) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(_postgres_query(query), list(params or []))
+            return cursor.fetchone()
+
+
+def fetchdf_postgres_sql(
+    settings: Settings,
+    query: str,
+    params: list | tuple | None = None,
+) -> pd.DataFrame:
+    if not metadata_postgres_enabled(settings):
+        return pd.DataFrame()
+    with postgres_metadata_connection(settings) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(_postgres_query(query), list(params or []))
+            rows = cursor.fetchall()
+            columns = [item.name for item in cursor.description] if cursor.description else []
+    return pd.DataFrame(rows, columns=columns)
 
 
 def export_duckdb_metadata_snapshot(

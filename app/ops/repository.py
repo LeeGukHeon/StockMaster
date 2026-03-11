@@ -6,11 +6,34 @@ from typing import Any, Iterable
 
 import duckdb
 
+from app.settings import get_settings
+from app.storage.metadata_postgres import execute_postgres_sql, executemany_postgres_sql
+
 
 def json_text(value: Any) -> str | None:
     if value is None:
         return None
     return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _dual_execute(
+    connection: duckdb.DuckDBPyConnection,
+    query: str,
+    params: list[Any],
+) -> None:
+    connection.execute(query, params)
+    execute_postgres_sql(get_settings(), query, params)
+
+
+def _dual_executemany(
+    connection: duckdb.DuckDBPyConnection,
+    query: str,
+    rows: list[list[Any]],
+) -> None:
+    if not rows:
+        return
+    connection.executemany(query, rows)
+    executemany_postgres_sql(get_settings(), query, rows)
 
 
 def _executemany_dicts(
@@ -25,10 +48,7 @@ def _executemany_dicts(
         return
     placeholders = ", ".join("?" for _ in columns)
     sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
-    connection.executemany(
-        sql,
-        [[row.get(column) for column in columns] for row in payload],
-    )
+    _dual_executemany(connection, sql, [[row.get(column) for column in columns] for row in payload])
 
 
 def record_job_run_start(
@@ -49,8 +69,7 @@ def record_job_run_start(
     notes: str | None,
     details: dict[str, Any] | None,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         INSERT INTO fact_job_run (
             run_id,
             job_name,
@@ -75,31 +94,31 @@ def record_job_run_start(
             created_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            run_id,
-            job_name,
-            trigger_type,
-            "RUNNING",
-            as_of_date,
-            started_at,
-            None,
-            root_run_id,
-            parent_run_id,
-            recovery_of_run_id,
-            lock_name,
-            policy_id,
-            policy_version,
-            dry_run,
-            0,
-            0,
-            0,
-            notes,
-            None,
-            json_text(details),
-            started_at,
-        ],
-    )
+        """
+    params = [
+        run_id,
+        job_name,
+        trigger_type,
+        "RUNNING",
+        as_of_date,
+        started_at,
+        None,
+        root_run_id,
+        parent_run_id,
+        recovery_of_run_id,
+        lock_name,
+        policy_id,
+        policy_version,
+        dry_run,
+        0,
+        0,
+        0,
+        notes,
+        None,
+        json_text(details),
+        started_at,
+    ]
+    _dual_execute(connection, query, params)
 
 
 def record_job_run_finish(
@@ -115,8 +134,7 @@ def record_job_run_finish(
     error_message: str | None,
     details: dict[str, Any] | None,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         UPDATE fact_job_run
         SET finished_at = ?,
             status = ?,
@@ -127,19 +145,19 @@ def record_job_run_finish(
             error_message = ?,
             details_json = ?
         WHERE run_id = ?
-        """,
-        [
-            finished_at,
-            status,
-            step_count,
-            failed_step_count,
-            artifact_count,
-            notes,
-            error_message,
-            json_text(details),
-            run_id,
-        ],
-    )
+        """
+    params = [
+        finished_at,
+        status,
+        step_count,
+        failed_step_count,
+        artifact_count,
+        notes,
+        error_message,
+        json_text(details),
+        run_id,
+    ]
+    _dual_execute(connection, query, params)
 
 
 def record_step_run_start(
@@ -153,8 +171,7 @@ def record_step_run_start(
     critical_flag: bool,
     notes: str | None,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         INSERT INTO fact_job_step_run (
             step_run_id,
             job_run_id,
@@ -170,22 +187,22 @@ def record_step_run_start(
             created_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            step_run_id,
-            job_run_id,
-            step_name,
-            step_order,
-            "RUNNING",
-            started_at,
-            None,
-            critical_flag,
-            notes,
-            None,
-            None,
-            started_at,
-        ],
-    )
+        """
+    params = [
+        step_run_id,
+        job_run_id,
+        step_name,
+        step_order,
+        "RUNNING",
+        started_at,
+        None,
+        critical_flag,
+        notes,
+        None,
+        None,
+        started_at,
+    ]
+    _dual_execute(connection, query, params)
 
 
 def record_step_run_finish(
@@ -198,8 +215,7 @@ def record_step_run_finish(
     error_message: str | None,
     details: dict[str, Any] | None,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         UPDATE fact_job_step_run
         SET finished_at = ?,
             status = ?,
@@ -207,16 +223,16 @@ def record_step_run_finish(
             error_message = ?,
             details_json = ?
         WHERE step_run_id = ?
-        """,
-        [
-            finished_at,
-            status,
-            notes,
-            error_message,
-            json_text(details),
-            step_run_id,
-        ],
-    )
+        """
+    params = [
+        finished_at,
+        status,
+        notes,
+        error_message,
+        json_text(details),
+        step_run_id,
+    ]
+    _dual_execute(connection, query, params)
 
 
 def insert_pipeline_dependency_rows(
@@ -285,8 +301,7 @@ def insert_disk_watermark_event(
     details: dict[str, Any] | None,
     job_run_id: str | None,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         INSERT INTO fact_disk_watermark_event (
             event_id,
             measured_at,
@@ -305,25 +320,25 @@ def insert_disk_watermark_event(
             created_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            event_id,
-            measured_at,
-            disk_status,
-            usage_ratio,
-            used_gb,
-            available_gb,
-            total_gb,
-            policy_id,
-            policy_version,
-            cleanup_required_flag,
-            emergency_block_flag,
-            notes,
-            json_text(details),
-            job_run_id,
-            measured_at,
-        ],
-    )
+        """
+    params = [
+        event_id,
+        measured_at,
+        disk_status,
+        usage_ratio,
+        used_gb,
+        available_gb,
+        total_gb,
+        policy_id,
+        policy_version,
+        cleanup_required_flag,
+        emergency_block_flag,
+        notes,
+        json_text(details),
+        job_run_id,
+        measured_at,
+    ]
+    _dual_execute(connection, query, params)
 
 
 def insert_retention_cleanup_run(
@@ -342,8 +357,7 @@ def insert_retention_cleanup_run(
     job_run_id: str | None,
     details: dict[str, Any] | None,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         INSERT INTO fact_retention_cleanup_run (
             cleanup_run_id,
             started_at,
@@ -360,23 +374,23 @@ def insert_retention_cleanup_run(
             created_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            cleanup_run_id,
-            started_at,
-            finished_at,
-            status,
-            dry_run,
-            cleanup_scope,
-            removed_file_count,
-            reclaimed_bytes,
-            json_text(target_paths),
-            notes,
-            json_text(details),
-            job_run_id,
-            started_at,
-        ],
-    )
+        """
+    params = [
+        cleanup_run_id,
+        started_at,
+        finished_at,
+        status,
+        dry_run,
+        cleanup_scope,
+        removed_file_count,
+        reclaimed_bytes,
+        json_text(target_paths),
+        notes,
+        json_text(details),
+        job_run_id,
+        started_at,
+    ]
+    _dual_execute(connection, query, params)
 
 
 def insert_alert_event(
@@ -393,8 +407,7 @@ def insert_alert_event(
     job_run_id: str | None,
     resolved_at: datetime | None = None,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         INSERT INTO fact_alert_event (
             alert_id,
             created_at,
@@ -408,20 +421,20 @@ def insert_alert_event(
             resolved_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            alert_id,
-            created_at,
-            alert_type,
-            severity,
-            component_name,
-            status,
-            message,
-            json_text(details),
-            job_run_id,
-            resolved_at,
-        ],
-    )
+        """
+    params = [
+        alert_id,
+        created_at,
+        alert_type,
+        severity,
+        component_name,
+        status,
+        message,
+        json_text(details),
+        job_run_id,
+        resolved_at,
+    ]
+    _dual_execute(connection, query, params)
 
 
 def insert_recovery_action(
@@ -439,8 +452,7 @@ def insert_recovery_action(
     details: dict[str, Any] | None,
     finished_at: datetime | None = None,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         INSERT INTO fact_recovery_action (
             recovery_action_id,
             created_at,
@@ -455,21 +467,21 @@ def insert_recovery_action(
             finished_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            recovery_action_id,
-            created_at,
-            action_type,
-            status,
-            target_job_run_id,
-            triggered_by_run_id,
-            recovery_run_id,
-            lock_name,
-            notes,
-            json_text(details),
-            finished_at,
-        ],
-    )
+        """
+    params = [
+        recovery_action_id,
+        created_at,
+        action_type,
+        status,
+        target_job_run_id,
+        triggered_by_run_id,
+        recovery_run_id,
+        lock_name,
+        notes,
+        json_text(details),
+        finished_at,
+    ]
+    _dual_execute(connection, query, params)
 
 
 def update_recovery_action(
@@ -482,8 +494,7 @@ def update_recovery_action(
     recovery_run_id: str | None = None,
     finished_at: datetime | None = None,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         UPDATE fact_recovery_action
         SET status = ?,
             notes = ?,
@@ -491,16 +502,16 @@ def update_recovery_action(
             recovery_run_id = COALESCE(?, recovery_run_id),
             finished_at = COALESCE(?, finished_at)
         WHERE recovery_action_id = ?
-        """,
-        [
-            status,
-            notes,
-            json_text(details),
-            recovery_run_id,
-            finished_at,
-            recovery_action_id,
-        ],
-    )
+        """
+    params = [
+        status,
+        notes,
+        json_text(details),
+        recovery_run_id,
+        finished_at,
+        recovery_action_id,
+    ]
+    _dual_execute(connection, query, params)
 
 
 def deactivate_active_ops_policies(
@@ -508,16 +519,14 @@ def deactivate_active_ops_policies(
     *,
     effective_to_at: datetime,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         UPDATE fact_active_ops_policy
         SET active_flag = FALSE,
             effective_to_at = ?
         WHERE active_flag = TRUE
           AND (effective_to_at IS NULL OR effective_to_at > ?)
-        """,
-        [effective_to_at, effective_to_at],
-    )
+        """
+    _dual_execute(connection, query, [effective_to_at, effective_to_at])
 
 
 def insert_active_ops_policy(
@@ -536,8 +545,7 @@ def insert_active_ops_policy(
     rollback_of_registry_id: str | None,
     config_payload: dict[str, Any],
 ) -> None:
-    connection.execute(
-        """
+    query = """
         INSERT INTO fact_active_ops_policy (
             ops_policy_registry_id,
             policy_id,
@@ -554,20 +562,20 @@ def insert_active_ops_policy(
             created_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            registry_id,
-            policy_id,
-            policy_version,
-            policy_name,
-            policy_path,
-            effective_from_at,
-            effective_to_at,
-            active_flag,
-            promotion_type,
-            note,
-            rollback_of_registry_id,
-            json_text(config_payload),
-            effective_from_at,
-        ],
-    )
+        """
+    params = [
+        registry_id,
+        policy_id,
+        policy_version,
+        policy_name,
+        policy_path,
+        effective_from_at,
+        effective_to_at,
+        active_flag,
+        promotion_type,
+        note,
+        rollback_of_registry_id,
+        json_text(config_payload),
+        effective_from_at,
+    ]
+    _dual_execute(connection, query, params)

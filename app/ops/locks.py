@@ -12,6 +12,8 @@ import duckdb
 from app.common.time import utc_now
 from app.ops.common import LockConflictError, LockStatus
 from app.ops.repository import insert_recovery_action, json_text
+from app.settings import get_settings
+from app.storage.metadata_postgres import execute_postgres_sql
 
 
 @dataclass(slots=True)
@@ -135,8 +137,7 @@ class LockManager:
                 owner_run_id=str(row[0]) if row[0] is not None else None,
             )
         expires_at = now + timedelta(minutes=max(1, stale_lock_minutes))
-        self.connection.execute(
-            """
+        query = """
             INSERT OR REPLACE INTO fact_active_lock (
                 lock_name,
                 job_name,
@@ -150,20 +151,21 @@ class LockManager:
                 created_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                lock_name,
-                job_name,
-                owner_run_id,
-                now,
-                expires_at,
-                None,
-                None,
-                LockStatus.ACTIVE,
-                json_text(details),
-                now,
-            ],
-        )
+            """
+        params = [
+            lock_name,
+            job_name,
+            owner_run_id,
+            now,
+            expires_at,
+            None,
+            None,
+            LockStatus.ACTIVE,
+            json_text(details),
+            now,
+        ]
+        self.connection.execute(query, params)
+        execute_postgres_sql(get_settings(), query, params)
         return LockHandle(
             lock_name=lock_name,
             job_name=job_name,
@@ -207,20 +209,17 @@ class LockManager:
                 ).fetchone()[0]
             )
         if owner_run_id is None:
-            self.connection.execute(
-                """
+            query = """
                 UPDATE fact_active_lock
                 SET released_at = ?,
                     release_reason = ?,
                     status = ?
                 WHERE lock_name = ?
                   AND released_at IS NULL
-                """,
-                [now, reason, status, lock_name],
-            )
-        else:
-            self.connection.execute(
                 """
+            params = [now, reason, status, lock_name]
+        else:
+            query = """
                 UPDATE fact_active_lock
                 SET released_at = ?,
                     release_reason = ?,
@@ -228,9 +227,10 @@ class LockManager:
                 WHERE lock_name = ?
                   AND owner_run_id = ?
                   AND released_at IS NULL
-                """,
-                [now, reason, status, lock_name, owner_run_id],
-            )
+                """
+            params = [now, reason, status, lock_name, owner_run_id]
+        self.connection.execute(query, params)
+        execute_postgres_sql(get_settings(), query, params)
         return count
 
     def release_stale(

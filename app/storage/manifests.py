@@ -5,6 +5,15 @@ from datetime import date, datetime
 from typing import Any
 
 import duckdb
+import pandas as pd
+
+from app.settings import get_settings
+from app.storage.metadata_postgres import (
+    execute_postgres_sql,
+    fetchdf_postgres_sql,
+    fetchone_postgres_sql,
+    metadata_postgres_enabled,
+)
 
 
 def _json_text(value: Any) -> str | None:
@@ -25,8 +34,7 @@ def record_run_start(
     git_commit: str | None = None,
     ranking_version: str | None = None,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         INSERT INTO ops_run_manifest (
             run_id,
             run_type,
@@ -44,24 +52,26 @@ def record_run_start(
             error_message
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            run_id,
-            run_type,
-            as_of_date,
-            started_at,
-            None,
-            "running",
-            _json_text(input_sources or []),
-            _json_text([]),
-            None,
-            None,
-            ranking_version,
-            git_commit,
-            notes,
-            None,
-        ],
-    )
+        """
+    params = [
+        run_id,
+        run_type,
+        as_of_date,
+        started_at,
+        None,
+        "running",
+        _json_text(input_sources or []),
+        _json_text([]),
+        None,
+        None,
+        ranking_version,
+        git_commit,
+        notes,
+        None,
+    ]
+    connection.execute(query, params)
+    settings = get_settings()
+    execute_postgres_sql(settings, query, params)
 
 
 def record_run_finish(
@@ -77,8 +87,7 @@ def record_run_finish(
     feature_version: str | None = None,
     ranking_version: str | None = None,
 ) -> None:
-    connection.execute(
-        """
+    query = """
         UPDATE ops_run_manifest
         SET finished_at = ?,
             status = ?,
@@ -89,19 +98,21 @@ def record_run_finish(
             feature_version = ?,
             ranking_version = ?
         WHERE run_id = ?
-        """,
-        [
-            finished_at,
-            status,
-            _json_text(output_artifacts or []),
-            notes,
-            error_message,
-            model_version,
-            feature_version,
-            ranking_version,
-            run_id,
-        ],
-    )
+        """
+    params = [
+        finished_at,
+        status,
+        _json_text(output_artifacts or []),
+        notes,
+        error_message,
+        model_version,
+        feature_version,
+        ranking_version,
+        run_id,
+    ]
+    connection.execute(query, params)
+    settings = get_settings()
+    execute_postgres_sql(settings, query, params)
 
 
 def append_artifact(
@@ -116,15 +127,27 @@ def append_artifact(
     ).fetchone()
     artifacts = json.loads(existing[0]) if existing and existing[0] else []
     artifacts.append(artifact_path)
-    connection.execute(
-        "UPDATE ops_run_manifest SET output_artifacts_json = ? WHERE run_id = ?",
-        [_json_text(artifacts), run_id],
-    )
+    query = "UPDATE ops_run_manifest SET output_artifacts_json = ? WHERE run_id = ?"
+    params = [_json_text(artifacts), run_id]
+    connection.execute(query, params)
+    settings = get_settings()
+    if metadata_postgres_enabled(settings):
+        existing_pg = fetchone_postgres_sql(
+            settings,
+            "SELECT output_artifacts_json FROM ops_run_manifest WHERE run_id = ?",
+            [run_id],
+        )
+        pg_artifacts = json.loads(existing_pg[0]) if existing_pg and existing_pg[0] else []
+        pg_artifacts.append(artifact_path)
+        execute_postgres_sql(
+            settings,
+            query,
+            [_json_text(pg_artifacts), run_id],
+        )
 
 
 def fetch_recent_runs(connection: duckdb.DuckDBPyConnection, limit: int = 10):
-    return connection.execute(
-        """
+    query = """
         SELECT
             run_id,
             run_type,
@@ -141,6 +164,8 @@ def fetch_recent_runs(connection: duckdb.DuckDBPyConnection, limit: int = 10):
         FROM ops_run_manifest
         ORDER BY started_at DESC
         LIMIT ?
-        """,
-        [limit],
-    ).fetchdf()
+        """
+    settings = get_settings()
+    if metadata_postgres_enabled(settings):
+        return fetchdf_postgres_sql(settings, query, [limit])
+    return connection.execute(query, [limit]).fetchdf()
