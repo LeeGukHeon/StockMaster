@@ -3714,6 +3714,37 @@ def available_symbols(settings: Settings, *, limit: int | None = None) -> list[s
     return [str(row[0]).zfill(6) for row in rows]
 
 
+def available_symbol_options(
+    settings: Settings,
+    *,
+    limit: int | None = None,
+) -> list[tuple[str, str | None]]:
+    if not settings.paths.duckdb_path.exists():
+        return []
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        if limit is not None and int(limit) > 0:
+            rows = connection.execute(
+                """
+                SELECT symbol, company_name
+                FROM dim_symbol
+                WHERE market IN ('KOSPI', 'KOSDAQ')
+                ORDER BY symbol
+                LIMIT ?
+                """,
+                [int(limit)],
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT symbol, company_name
+                FROM dim_symbol
+                WHERE market IN ('KOSPI', 'KOSDAQ')
+                ORDER BY symbol
+                """
+            ).fetchall()
+    return [(str(row[0]).zfill(6), row[1]) for row in rows]
+
+
 def stock_workbench_summary_frame(settings: Settings, *, symbol: str) -> pd.DataFrame:
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()

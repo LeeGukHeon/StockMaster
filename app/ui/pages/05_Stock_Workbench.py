@@ -20,7 +20,7 @@ from app.ui.components import (
     render_warning_banner,
 )
 from app.ui.helpers import (
-    available_symbols,
+    available_symbol_options,
     latest_intraday_decision_lineage_frame,
     load_ui_settings,
     stock_workbench_flow_frame,
@@ -34,7 +34,11 @@ from app.ui.helpers import (
 )
 
 settings = load_ui_settings(PROJECT_ROOT)
-symbols = available_symbols(settings, limit=None)
+symbol_options = available_symbol_options(settings, limit=None)
+symbol_lookup = {
+    f"{symbol} | {company_name}" if company_name else symbol: symbol
+    for symbol, company_name in symbol_options
+}
 
 render_page_header(
     settings,
@@ -54,10 +58,16 @@ render_warning_banner(
     "장중 판단과 메타 오버레이는 연구용 비매매 출력입니다. 실제 주문은 연결되지 않습니다.",
 )
 
-if not symbols:
+if not symbol_lookup:
     st.info("조회 가능한 종목이 아직 없습니다.")
 else:
-    selected_symbol = st.selectbox("종목코드", options=symbols, index=0)
+    selected_option = st.selectbox(
+        "종목 검색",
+        options=list(symbol_lookup.keys()),
+        index=0,
+        help="종목코드나 종목명으로 검색할 수 있습니다.",
+    )
+    selected_symbol = symbol_lookup[selected_option]
     summary = stock_workbench_summary_frame(settings, symbol=selected_symbol)
     price_history = stock_workbench_price_frame(settings, symbol=selected_symbol, limit=30)
     flow_history = stock_workbench_flow_frame(settings, symbol=selected_symbol, limit=30)
