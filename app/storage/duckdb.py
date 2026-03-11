@@ -3101,13 +3101,34 @@ def connect_duckdb(
         raise
 
 
+def _is_read_only_conflict(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in (
+            "different configuration",
+            "could not set lock on file",
+            "conflicting lock is held",
+        )
+    )
+
+
 @contextmanager
 def duckdb_connection(
     db_path: Path,
     *,
     read_only: bool = False,
 ) -> Iterator[duckdb.DuckDBPyConnection]:
-    connection = connect_duckdb(db_path, read_only=read_only)
+    try:
+        connection = connect_duckdb(db_path, read_only=read_only)
+    except (duckdb.ConnectionException, duckdb.IOException) as exc:
+        # Server/UI read paths should degrade to a temporary snapshot instead of
+        # blocking bundle writers when the main file is already locked.
+        if not read_only or not _is_read_only_conflict(exc):
+            raise
+        with duckdb_snapshot_connection(db_path) as snapshot_connection:
+            yield snapshot_connection
+        return
     try:
         yield connection
     finally:

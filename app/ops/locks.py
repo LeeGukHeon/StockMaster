@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -24,6 +27,73 @@ class LockManager:
     def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
         self.connection = connection
 
+    def _owner_run_is_terminal(self, owner_run_id: str | None) -> bool:
+        if not owner_run_id:
+            return False
+        row = self.connection.execute(
+            """
+            SELECT status, finished_at
+            FROM fact_job_run
+            WHERE run_id = ?
+            """,
+            [owner_run_id],
+        ).fetchone()
+        if row is None:
+            return True
+        status, finished_at = row
+        return finished_at is not None or str(status).upper() != "RUNNING"
+
+    def _same_host_process_is_dead(self, details_json: str | None) -> bool:
+        if not details_json:
+            return False
+        try:
+            details = json.loads(str(details_json))
+        except json.JSONDecodeError:
+            return False
+        hostname = str(details.get("hostname") or "")
+        pid = details.get("pid")
+        if not hostname or hostname != socket.gethostname():
+            return False
+        if pid in (None, "", 0):
+            return False
+        try:
+            os.kill(int(pid), 0)
+        except (OSError, ValueError):
+            return True
+        return False
+
+    def _release_orphaned_lock(
+        self,
+        *,
+        lock_name: str,
+        owner_run_id: str | None,
+        expires_at,
+        details_json: str | None,
+    ) -> bool:
+        now = utc_now()
+        if expires_at is not None and expires_at < now:
+            self.release(
+                lock_name=lock_name,
+                reason="force_release_stale_lock",
+                status=LockStatus.STALE_RELEASED,
+            )
+            return True
+        if self._owner_run_is_terminal(owner_run_id):
+            self.release(
+                lock_name=lock_name,
+                reason="owner_run_already_finished",
+                status=LockStatus.STALE_RELEASED,
+            )
+            return True
+        if self._same_host_process_is_dead(details_json):
+            self.release(
+                lock_name=lock_name,
+                reason="owner_process_missing",
+                status=LockStatus.STALE_RELEASED,
+            )
+            return True
+        return False
+
     def acquire(
         self,
         *,
@@ -36,13 +106,28 @@ class LockManager:
         now = utc_now()
         row = self.connection.execute(
             """
-            SELECT owner_run_id
+            SELECT owner_run_id, expires_at, details_json
             FROM fact_active_lock
             WHERE lock_name = ?
               AND released_at IS NULL
             """,
             [lock_name],
         ).fetchone()
+        if row is not None and self._release_orphaned_lock(
+            lock_name=lock_name,
+            owner_run_id=str(row[0]) if row[0] is not None else None,
+            expires_at=row[1],
+            details_json=str(row[2]) if row[2] is not None else None,
+        ):
+            row = self.connection.execute(
+                """
+                SELECT owner_run_id, expires_at, details_json
+                FROM fact_active_lock
+                WHERE lock_name = ?
+                  AND released_at IS NULL
+                """,
+                [lock_name],
+            ).fetchone()
         if row is not None:
             raise LockConflictError(
                 f"Active lock already exists for {lock_name}.",
@@ -157,23 +242,32 @@ class LockManager:
     ) -> int:
         stale_before = stale_before or utc_now()
         query = """
-            SELECT lock_name, owner_run_id, job_name, acquired_at, expires_at
+            SELECT lock_name, owner_run_id, job_name, acquired_at, expires_at, details_json
             FROM fact_active_lock
             WHERE released_at IS NULL
-              AND expires_at < ?
         """
-        params: list[Any] = [stale_before]
+        params: list[Any] = []
         if lock_name is not None:
             query += " AND lock_name = ?"
             params.append(lock_name)
         rows = self.connection.execute(query, params).fetchall()
         released = 0
-        for current_lock_name, owner_run_id, job_name, acquired_at, expires_at in rows:
-            released += self.release(
+        for current_lock_name, owner_run_id, job_name, acquired_at, expires_at, details_json in rows:
+            if expires_at is not None and expires_at >= stale_before:
+                if not self._owner_run_is_terminal(
+                    str(owner_run_id) if owner_run_id is not None else None
+                ) and not self._same_host_process_is_dead(
+                    str(details_json) if details_json is not None else None
+                ):
+                    continue
+            if not self._release_orphaned_lock(
                 lock_name=str(current_lock_name),
-                reason="force_release_stale_lock",
-                status=LockStatus.STALE_RELEASED,
-            )
+                owner_run_id=str(owner_run_id) if owner_run_id is not None else None,
+                expires_at=expires_at,
+                details_json=str(details_json) if details_json is not None else None,
+            ):
+                continue
+            released += 1
             insert_recovery_action(
                 self.connection,
                 recovery_action_id=f"recovery-lock-{current_lock_name}-{utc_now().strftime('%Y%m%dT%H%M%S')}",

@@ -77,7 +77,7 @@ render_page_header(
     settings,
     page_name="사후 평가",
     title="사후 평가",
-    description="D+1 / D+5 결과와 보정 상태, 장중 비교 결과를 한눈에 확인합니다.",
+    description="1거래일·5거래일 뒤 결과와 예측 범위 점검 상태, 장중 비교 결과를 한눈에 확인합니다.",
 )
 render_warning_banner(
     "INFO",

@@ -139,13 +139,13 @@ def _format_pick_line(row: pd.Series) -> str:
     band = ""
     if pd.notna(row.get("expected_excess_return")):
         band = (
-            f" | proxy ex-ret {float(row['expected_excess_return']):+.2%}"
-            f" [{float(row['lower_band']):+.2%}, {float(row['upper_band']):+.2%}]"
+            f" | 참고 기대수익 {float(row['expected_excess_return']):+.2%}"
+            f" (참고범위 {float(row['lower_band']):+.2%} ~ {float(row['upper_band']):+.2%})"
         )
     return (
         f"- `{row['symbol']}` {row['company_name']} ({row['market']})"
-        f" score={float(row['final_selection_value']):.1f} grade={row['grade']}{band}"
-        f" | reasons: {reasons or '-'} | risks: {risks or '-'}"
+        f" 종합점수={float(row['final_selection_value']):.1f} 등급={row['grade']}{band}"
+        f" | 근거: {reasons or '-'} | 주의: {risks or '-'}"
     )
 
 
@@ -166,9 +166,9 @@ def _format_alpha_promotion_line(row: pd.Series) -> str:
     if active_top10:
         active_text = f"{active_text} {active_top10}"
     return (
-        f"- H{int(row['horizon'])} {row['decision_label']} | active={active_text} "
-        f"| compare={compare_text} | samples={int(row['sample_count'])}{p_value} "
-        f"| reason={row['decision_reason_label']}"
+        f"- {int(row['horizon'])}거래일 모델 점검 | 결정={row['decision_label']} "
+        f"| 현재 사용={active_text} | 비교 후보={compare_text} "
+        f"| 비교 표본={int(row['sample_count'])}{p_value} | 사유={row['decision_reason_label']}"
     )
 
 
@@ -182,43 +182,43 @@ def _build_payload_content(
     market_news: pd.DataFrame,
 ) -> str:
     lines = [
-        f"**StockMaster EOD Report | {as_of_date.isoformat()}**",
+        f"**StockMaster 장마감 요약 | {as_of_date.isoformat()}**",
         "",
         (
-            f"Market pulse: regime=`{market_pulse.get('regime_state') or 'n/a'}` "
-            f"score={market_pulse.get('regime_score') or 'n/a'} "
-            f"| breadth_up={market_pulse.get('breadth_up_ratio') or 'n/a'} "
-            f"| flow_rows={market_pulse.get('flow_row_count') or 0}"
+            f"시장 상황: 국면=`{market_pulse.get('regime_state') or '미확인'}` "
+            f"점수={market_pulse.get('regime_score') or '미확인'} "
+            f"| 상승 종목 비율={market_pulse.get('breadth_up_ratio') or '미확인'} "
+            f"| 수급 집계 종목수={market_pulse.get('flow_row_count') or 0}"
         ),
-        "Selection engine v1 uses explanatory + flow + proxy penalties. "
-        "Prediction bands below are calibrated historical proxies, not ML forecasts.",
+        "아래 후보는 종목명, 점수, 최근 재무/수급 근거를 바탕으로 정리한 장마감 참고 목록입니다.",
+        "표시된 기대수익과 범위는 과거 통계 기반 참고치이며, 실제 수익을 보장하는 예측값은 아닙니다.",
         "",
-        "**Alpha promotion**",
+        "**알파 모델 교체 점검**",
     ]
     if alpha_promotion.empty:
-        lines.append("- no alpha promotion audit is available yet")
+        lines.append("- 아직 알파 모델 교체 점검 결과가 없습니다.")
     else:
         lines.extend(_format_alpha_promotion_line(row) for _, row in alpha_promotion.iterrows())
     lines.extend(
         [
             "",
-        "**Top D+1 candidates**",
+            "**1거래일 기준 상위 후보**",
         ]
     )
     if d1_board.empty:
-        lines.append("- no D+1 selection rows")
+        lines.append("- 1거래일 기준 후보가 없습니다.")
     else:
         lines.extend(_format_pick_line(row) for _, row in d1_board.iterrows())
     lines.append("")
-    lines.append("**Top D+5 candidates**")
+    lines.append("**5거래일 기준 상위 후보**")
     if d5_board.empty:
-        lines.append("- no D+5 selection rows")
+        lines.append("- 5거래일 기준 후보가 없습니다.")
     else:
         lines.extend(_format_pick_line(row) for _, row in d5_board.iterrows())
     lines.append("")
-    lines.append("**Market-wide headlines**")
+    lines.append("**시장 전체 주요 뉴스**")
     if market_news.empty:
-        lines.append("- no market-wide news metadata for the date")
+        lines.append("- 해당 날짜의 시장 전체 뉴스가 없습니다.")
     else:
         for _, row in market_news.iterrows():
             lines.append(f"- {row['title']} ({row['publisher']})")
@@ -286,8 +286,8 @@ def _build_payload_messages(
             content_text = chunk
         else:
             header = (
-                f"**StockMaster EOD Report | {as_of_date.isoformat()} "
-                f"(cont. {index}/{total})**"
+                f"**StockMaster 장마감 요약 | {as_of_date.isoformat()} "
+                f"(계속 {index}/{total})**"
             )
             content_text = f"{header}\n\n{chunk}"
         messages.append({"username": username, "content": content_text})

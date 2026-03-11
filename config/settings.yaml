@@ -52,6 +52,12 @@ discord:
   enabled: false
   username: KR Stock Research Bot
 
+metadata:
+  enabled: false
+  backend: duckdb
+  db_url:
+  db_schema: public
+
 model:
   default_horizons:
     - D1

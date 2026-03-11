@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import os
+import socket
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Callable
 
 import duckdb
@@ -27,6 +30,84 @@ from app.ops.repository import (
 )
 from app.settings import Settings
 from app.storage.manifests import record_run_finish, record_run_start
+
+
+def _cleanup_orphaned_job_runs(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    job_name: str,
+    stale_after_minutes: int,
+) -> None:
+    cutoff = utc_now() - timedelta(minutes=max(5, stale_after_minutes))
+    rows = connection.execute(
+        """
+        SELECT run_id, notes, details_json, artifact_count
+        FROM fact_job_run
+        WHERE job_name = ?
+          AND status = 'RUNNING'
+          AND finished_at IS NULL
+          AND started_at < ?
+          AND run_id NOT IN (
+              SELECT owner_run_id
+              FROM fact_active_lock
+              WHERE released_at IS NULL
+                AND owner_run_id IS NOT NULL
+          )
+        """,
+        [job_name, cutoff],
+    ).fetchall()
+    for run_id, notes, details_json, artifact_count in rows:
+        now = utc_now()
+        connection.execute(
+            """
+            UPDATE fact_job_step_run
+            SET finished_at = ?,
+                status = 'FAILED',
+                error_message = COALESCE(error_message, ?)
+            WHERE job_run_id = ?
+              AND status = 'RUNNING'
+            """,
+            [now, "Marked failed after stale running state cleanup.", run_id],
+        )
+        current_details = json.loads(details_json) if details_json else {}
+        current_details["cleanup_recovered"] = True
+        current_details["cleanup_recovered_at"] = now.isoformat()
+        merged_notes = " | ".join(
+            part for part in [notes, "Cleared as stale before new run start."] if part
+        )
+        step_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM fact_job_step_run WHERE job_run_id = ?",
+                [run_id],
+            ).fetchone()[0]
+        )
+        failed_step_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM fact_job_step_run WHERE job_run_id = ? AND status = 'FAILED'",
+                [run_id],
+            ).fetchone()[0]
+        )
+        record_job_run_finish(
+            connection,
+            run_id=str(run_id),
+            finished_at=now,
+            status=JobStatus.FAILED,
+            step_count=step_count,
+            failed_step_count=failed_step_count,
+            artifact_count=int(artifact_count or 0),
+            notes=merged_notes,
+            error_message="Marked failed after stale running state cleanup.",
+            details=current_details,
+        )
+        record_run_finish(
+            connection,
+            run_id=str(run_id),
+            finished_at=now,
+            status=manifest_status(JobStatus.FAILED),
+            output_artifacts=[],
+            notes=merged_notes,
+            error_message="Marked failed after stale running state cleanup.",
+        )
 
 
 @dataclass(slots=True)
@@ -124,6 +205,11 @@ class JobRunContext:
             as_of_at=self.run_context.started_at,
             policy_config_path=self.policy_config_path,
         )
+        _cleanup_orphaned_job_runs(
+            self.connection,
+            job_name=self.job_name,
+            stale_after_minutes=max(5, self._resolved_policy.policy.stale_lock_minutes // 6),
+        )
         record_job_run_start(
             self.connection,
             run_id=self.run_context.run_id,
@@ -199,7 +285,12 @@ class JobRunContext:
                 job_name=self.job_name,
                 owner_run_id=self.run_context.run_id,
                 stale_lock_minutes=self.resolved_policy.policy.stale_lock_minutes,
-                details={"trigger_type": self.trigger_type, "dry_run": self.dry_run},
+                details={
+                    "trigger_type": self.trigger_type,
+                    "dry_run": self.dry_run,
+                    "pid": os.getpid(),
+                    "hostname": socket.gethostname(),
+                },
             )
             self._lock_acquired = True
         except LockConflictError as exc:

@@ -53,5 +53,5 @@ def test_postmortem_report_render_and_publish_dry_run(tmp_path):
     )
 
     assert any(path.endswith(".md") for path in render_result.artifact_paths)
-    assert "StockMaster Postmortem" in render_result.payload["content"]
+    assert "StockMaster 사후 점검" in render_result.payload["content"]
     assert publish_result.published is False

@@ -155,9 +155,9 @@ def test_discord_report_render_and_publish_dry_run(tmp_path):
     all_messages = "\n".join(
         str(message["content"]) for message in render_result.payload["messages"]
     )
-    assert "StockMaster EOD Report" in all_messages
-    assert "**Alpha promotion**" in all_messages
-    assert "Challenger promoted" in all_messages
+    assert "StockMaster 장마감 요약" in all_messages
+    assert "**알파 모델 교체 점검**" in all_messages
+    assert "비교 후보=" in all_messages
     assert render_result.payload["message_count"] >= 1
     assert len(render_result.payload["messages"]) == render_result.payload["message_count"]
     assert publish_result.published is False

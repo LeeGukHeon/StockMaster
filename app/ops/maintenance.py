@@ -12,7 +12,14 @@ import pandas as pd
 
 from app.common.disk import DiskWatermark, measure_disk_usage
 from app.common.time import now_local, utc_now
-from app.ops.common import AlertSeverity, JobStatus, OpsJobResult, RecoveryStatus, TriggerType
+from app.ops.common import (
+    AlertSeverity,
+    JobStatus,
+    OpsJobResult,
+    RecoveryStatus,
+    TriggerType,
+    manifest_status,
+)
 from app.ops.locks import LockManager
 from app.ops.policy import load_active_or_default_ops_policy
 from app.ops.repository import (
@@ -311,6 +318,115 @@ def rotate_and_compress_logs(
         notes=f"Compressed {compressed} log files.",
         artifact_paths=artifact_paths[:50],
         row_count=compressed,
+    )
+
+
+def cleanup_stale_job_runs(
+    settings: Settings,
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    job_run_id: str | None = None,
+    stale_after_minutes: int = 10,
+) -> OpsJobResult:
+    bootstrap_core_tables(connection)
+    cutoff = utc_now() - timedelta(minutes=max(5, int(stale_after_minutes)))
+    rows = connection.execute(
+        """
+        SELECT run_id, notes, details_json, artifact_count
+        FROM fact_job_run
+        WHERE status = 'RUNNING'
+          AND finished_at IS NULL
+          AND started_at < ?
+          AND run_id NOT IN (
+              SELECT owner_run_id
+              FROM fact_active_lock
+              WHERE released_at IS NULL
+                AND owner_run_id IS NOT NULL
+          )
+        ORDER BY started_at ASC
+        """,
+        [cutoff],
+    ).fetchall()
+    cleared = 0
+    for run_id, notes, details_json, artifact_count in rows:
+        now = utc_now()
+        connection.execute(
+            """
+            UPDATE fact_job_step_run
+            SET finished_at = ?,
+                status = 'FAILED',
+                error_message = COALESCE(error_message, ?)
+            WHERE job_run_id = ?
+              AND status = 'RUNNING'
+            """,
+            [now, "Cleared as stale during ops maintenance.", run_id],
+        )
+        details = json.loads(details_json) if details_json else {}
+        details["cleanup_recovered"] = True
+        details["cleanup_recovered_at"] = now.isoformat()
+        merged_notes = " | ".join(
+            part for part in [notes, "Cleared as stale during ops maintenance."] if part
+        )
+        step_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM fact_job_step_run WHERE job_run_id = ?",
+                [run_id],
+            ).fetchone()[0]
+        )
+        failed_step_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM fact_job_step_run WHERE job_run_id = ? AND status = 'FAILED'",
+                [run_id],
+            ).fetchone()[0]
+        )
+        connection.execute(
+            """
+            UPDATE fact_job_run
+            SET finished_at = ?,
+                status = 'FAILED',
+                step_count = ?,
+                failed_step_count = ?,
+                artifact_count = ?,
+                notes = ?,
+                error_message = ?,
+                details_json = ?
+            WHERE run_id = ?
+            """,
+            [
+                now,
+                step_count,
+                failed_step_count,
+                int(artifact_count or 0),
+                merged_notes,
+                "Cleared as stale during ops maintenance.",
+                json.dumps(details, ensure_ascii=False, default=str),
+                run_id,
+            ],
+        )
+        connection.execute(
+            """
+            UPDATE ops_run_manifest
+            SET finished_at = ?,
+                status = ?,
+                notes = ?,
+                error_message = ?
+            WHERE run_id = ?
+            """,
+            [
+                now,
+                manifest_status(JobStatus.FAILED),
+                merged_notes,
+                "Cleared as stale during ops maintenance.",
+                run_id,
+            ],
+        )
+        cleared += 1
+    return OpsJobResult(
+        run_id=job_run_id or "embedded",
+        job_name="cleanup_stale_job_runs",
+        status=JobStatus.SUCCESS,
+        notes=f"Stale running job rows cleared={cleared}",
+        row_count=cleared,
     )
 
 

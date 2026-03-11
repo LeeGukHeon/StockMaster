@@ -207,7 +207,7 @@ def render_today_page() -> None:
         _quick_link("포트폴리오", "portfolio", "목표 보유, 리밸런스, 현금 비중과 제약 사유를 확인합니다.")
     with link_mid:
         _quick_link("장중 콘솔", "intraday_console", "원시 판단, 조정 판단, 최종 행동과 지연 경고를 확인합니다.")
-        _quick_link("사후 평가", "evaluation", "D+1/D+5 성숙 결과와 보정 상태를 점검합니다.")
+        _quick_link("사후 평가", "evaluation", "1거래일·5거래일 뒤 결과와 예측 범위 점검 상태를 확인합니다.")
     with link_right:
         _quick_link("운영", "ops", "최근 실행 이력, 알림, 정책, 리포트 상태를 점검합니다.")
         _quick_link("문서 / 도움말", "docs", "용어집, 사용자 가이드, 알려진 한계를 확인합니다.")

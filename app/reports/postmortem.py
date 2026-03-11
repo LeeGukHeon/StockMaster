@@ -37,6 +37,18 @@ class PostmortemPublishResult:
     notes: str
 
 
+def _horizon_label(horizon: int) -> str:
+    return f"{int(horizon)}거래일"
+
+
+def _window_label(window_type: str) -> str:
+    mapping = {
+        "rolling_20d": "최근 20거래일",
+        "rolling_60d": "최근 60거래일",
+    }
+    return mapping.get(str(window_type), str(window_type))
+
+
 def _load_evaluation_summary(
     connection, *, evaluation_date: date, horizons: list[int]
 ) -> pd.DataFrame:
@@ -193,15 +205,15 @@ def _load_calibration_summary(connection, *, horizons: list[int]) -> pd.DataFram
 def _format_summary_line(row: pd.Series) -> str:
     band_text = ""
     if pd.notna(row.get("band_coverage_rate")):
-        band_text = f" | band_cov={float(row['band_coverage_rate']):.1%}"
+        band_text = f" | 범위 적중률={float(row['band_coverage_rate']):.1%}"
     expected_text = ""
     if pd.notna(row.get("avg_expected_excess_return")):
-        expected_text = f" | avg_proxy={float(row['avg_expected_excess_return']):+.2%}"
+        expected_text = f" | 평균 참고 기대수익={float(row['avg_expected_excess_return']):+.2%}"
     return (
-        f"- H{int(row['horizon'])} `{row['ranking_version']}` "
-        f"rows={int(row['row_count'])} "
-        f"avg_excess={float(row['avg_realized_excess_return']):+.2%} "
-        f"hit={float(row['hit_rate']):.1%}{expected_text}{band_text}"
+        f"- {_horizon_label(int(row['horizon']))} / `{row['ranking_version']}` "
+        f"평가건수={int(row['row_count'])} "
+        f"평균 초과수익률={float(row['avg_realized_excess_return']):+.2%} "
+        f"수익 플러스 비율={float(row['hit_rate']):.1%}{expected_text}{band_text}"
     )
 
 
@@ -209,11 +221,11 @@ def _format_top_line(row: pd.Series) -> str:
     reasons = ", ".join(json.loads(row["top_reason_tags_json"] or "[]")[:2])
     proxy = ""
     if pd.notna(row.get("expected_excess_return_at_selection")):
-        proxy = f" | proxy={float(row['expected_excess_return_at_selection']):+.2%}"
+        proxy = f" | 당시 참고 기대수익={float(row['expected_excess_return_at_selection']):+.2%}"
     return (
         f"- `{row['symbol']}` {row['company_name']} ({row['market']}) "
-        f"sel={row['selection_date']} realized_excess={float(row['realized_excess_return']):+.2%}"
-        f"{proxy} | band={row['band_status']} | reasons: {reasons or '-'}"
+        f"선정일={row['selection_date']} 실현 초과수익률={float(row['realized_excess_return']):+.2%}"
+        f"{proxy} | 범위 판정={row['band_status']} | 근거={reasons or '-'}"
     )
 
 
@@ -227,66 +239,65 @@ def _build_report_content(
     top_by_horizon: dict[int, pd.DataFrame],
 ) -> str:
     lines = [
-        f"**StockMaster Postmortem | {evaluation_date.isoformat()}**",
+        f"**StockMaster 사후 점검 | {evaluation_date.isoformat()}**",
         "",
-        "Pre-cost evaluation only. Frozen ranking/prediction snapshots are compared against "
-        "realized next-open to future-close labels; no transaction-cost simulator is applied.",
+        "이 보고서는 수수료와 세금을 뺀 실제 투자 손익이 아니라, 당시 저장된 추천 결과와 이후 가격 흐름을 비교한 사후 점검입니다.",
+        "거래비용 시뮬레이션은 포함하지 않았고, 당시 저장된 추천/예상 범위를 다시 계산하지 않고 그대로 사용합니다.",
         "",
-        "**Matured Cohorts**",
+        "**결과가 확정된 추천 요약**",
     ]
     if summary.empty:
-        lines.append("- no matured outcomes were available for the requested evaluation date")
+        lines.append("- 요청한 평가일에 결과가 확정된 추천이 없습니다.")
     else:
         lines.extend(_format_summary_line(row) for _, row in summary.iterrows())
 
     lines.append("")
-    lines.append("**Selection v1 vs Explanatory v0**")
+    lines.append("**추천 모델과 설명형 기준 비교**")
     if comparison.empty:
-        lines.append("- no same-date comparison cohort was available")
+        lines.append("- 같은 날짜 기준 비교 결과가 없습니다.")
     else:
         for _, row in comparison.iterrows():
             lines.append(
-                f"- H{int(row['horizon'])} avg_excess_gap={float(row['avg_excess_gap']):+.2%} "
-                f"hit_gap={float(row['hit_rate_gap']):+.1%}"
+                f"- {_horizon_label(int(row['horizon']))} 평균 초과수익률 차이={float(row['avg_excess_gap']):+.2%} "
+                f"| 수익 플러스 비율 차이={float(row['hit_rate_gap']):+.1%}"
             )
 
     lines.append("")
-    lines.append("**Rolling Evaluation Snapshot**")
+    lines.append("**최근 구간 흐름 요약**")
     if rolling_summary.empty:
-        lines.append("- no rolling evaluation summary is available yet")
+        lines.append("- 최근 구간 요약이 아직 없습니다.")
     else:
         for _, row in rolling_summary.iterrows():
             lines.append(
-                f"- {row['window_type']} H{int(row['horizon'])} `{row['ranking_version']}` "
-                f"evaluated={int(row['count_evaluated'])} "
-                f"avg_excess={float(row['mean_realized_excess_return']):+.2%} "
-                f"hit={float(row['hit_rate']):.1%}"
+                f"- {_window_label(str(row['window_type']))} / {_horizon_label(int(row['horizon']))} / `{row['ranking_version']}` "
+                f"평가건수={int(row['count_evaluated'])} "
+                f"| 평균 초과수익률={float(row['mean_realized_excess_return']):+.2%} "
+                f"| 수익 플러스 비율={float(row['hit_rate']):.1%}"
             )
 
     lines.append("")
-    lines.append("**Calibration Snapshot**")
+    lines.append("**예상 범위 점검**")
     if calibration_summary.empty:
-        lines.append("- no calibration diagnostics are available yet")
+        lines.append("- 예상 범위 점검 결과가 아직 없습니다.")
     else:
         for _, row in calibration_summary.iterrows():
             lines.append(
-                f"- H{int(row['horizon'])} coverage={float(row['coverage_rate']):.1%} "
-                f"median_bias={float(row['median_bias']):+.2%} quality={row['quality_flag']}"
+                f"- {_horizon_label(int(row['horizon']))} 범위 적중률={float(row['coverage_rate']):.1%} "
+                f"| 중앙 편차={float(row['median_bias']):+.2%} | 품질={row['quality_flag']}"
             )
 
     for horizon, top_frame in sorted(top_by_horizon.items()):
         lines.append("")
-        lines.append(f"**Top Matured Picks | H{int(horizon)}**")
+        lines.append(f"**상위 확정 결과 종목 | {_horizon_label(int(horizon))}**")
         if top_frame.empty:
-            lines.append("- no matured selection_engine_v1 outcomes")
+            lines.append("- 결과가 확정된 종목이 없습니다.")
         else:
             lines.extend(_format_top_line(row) for _, row in top_frame.iterrows())
 
     lines.append("")
     lines.append(
-        "Proxy bands remain calibrated historical ranges, not ML forecasts. "
-        "Selection engine v1 and explanatory ranking v0 are compared "
-        "side-by-side without mixing cohorts."
+        "여기서 말하는 예상 범위는 과거 통계 기반 참고 구간이며, 미래를 보장하는 예측값은 아닙니다. "
+        "비교는 같은 날짜에 기록된 추천 묶음끼리만 수행했습니다."
     )
     return "\n".join(lines)
 

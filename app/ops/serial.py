@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -66,6 +67,13 @@ def _write_lock_metadata(lock_dir: Path, payload: dict[str, Any]) -> Path:
 
 
 def _is_stale(metadata: dict[str, Any], *, stale_after_minutes: int, now_ts: datetime) -> bool:
+    hostname = str(metadata.get("hostname") or "")
+    pid = metadata.get("pid")
+    if hostname and hostname == socket.gethostname() and pid not in (None, "", 0):
+        try:
+            os.kill(int(pid), 0)
+        except (OSError, ValueError):
+            return True
     acquired_at = metadata.get("acquired_at")
     if not acquired_at:
         return True
@@ -94,6 +102,7 @@ def acquire_serial_lock(
         "owner_run_id": owner_run_id,
         "job_name": job_name,
         "pid": os.getpid(),
+        "hostname": socket.gethostname(),
         "acquired_at": now_ts.isoformat(),
         "details": details or {},
     }
@@ -125,4 +134,3 @@ def release_serial_lock(handle: SerialLockHandle) -> None:
         handle.meta_path.unlink()
     if handle.lock_dir.exists():
         shutil.rmtree(handle.lock_dir, ignore_errors=True)
-

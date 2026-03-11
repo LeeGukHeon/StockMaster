@@ -114,3 +114,25 @@ def test_load_settings_enables_krx_live_with_allowlist(tmp_path):
     assert settings.providers.krx.service_urls["etf_daily_trade"].endswith(
         "/svc/apis/etp/etf_bydd_trd"
     )
+
+
+def test_load_settings_accepts_postgres_metadata_store(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "METADATA_DB_ENABLED=true",
+                "METADATA_DB_BACKEND=postgres",
+                "METADATA_DB_URL=postgresql://stockmaster:secret@127.0.0.1:5432/stockmaster_meta",
+                "METADATA_DB_SCHEMA=stockmaster_meta",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(project_root=project_root(), env_file=env_file)
+
+    assert settings.metadata.enabled is True
+    assert settings.metadata.backend == "postgres"
+    assert settings.metadata.db_schema == "stockmaster_meta"
+    assert settings.metadata.db_url.startswith("postgresql://stockmaster:")

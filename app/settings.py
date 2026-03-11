@@ -175,6 +175,19 @@ class DiscordConfig(BaseModel):
     username: str = "KR Stock Research Bot"
 
 
+class MetadataStoreConfig(BaseModel):
+    enabled: bool = False
+    backend: Literal["duckdb", "postgres"] = "duckdb"
+    db_url: str | None = None
+    db_schema: str = "public"
+
+    @model_validator(mode="after")
+    def validate_backend(self) -> "MetadataStoreConfig":
+        if self.enabled and self.backend == "postgres" and not self.db_url:
+            raise ValueError("METADATA_DB_URL is required when metadata backend is postgres.")
+        return self
+
+
 class ModelConfig(BaseModel):
     default_horizons: list[str] = Field(default_factory=lambda: ["D1", "D5"])
     uncertainty_lambda: float = 1.0
@@ -210,6 +223,7 @@ class Settings(BaseModel):
     retention: RetentionConfig
     providers: ProviderConfig
     discord: DiscordConfig
+    metadata: MetadataStoreConfig
     model: ModelConfig
     intraday_research: IntradayResearchConfig
 
@@ -263,6 +277,7 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
     storage = config.setdefault("storage", {})
     providers = config.setdefault("providers", {})
     discord = config.setdefault("discord", {})
+    metadata = config.setdefault("metadata", {})
     model = config.setdefault("model", {})
     retention = config.setdefault("retention", {})
     intraday_research = config.setdefault("intraday_research", {})
@@ -362,6 +377,17 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
     )
     discord["webhook_url"] = env_values.get("DISCORD_WEBHOOK_URL")
     discord["username"] = env_values.get("DISCORD_USERNAME", discord.get("username"))
+
+    metadata["enabled"] = _parse_bool(
+        env_values.get("METADATA_DB_ENABLED"),
+        metadata.get("enabled", False),
+    )
+    metadata["backend"] = env_values.get("METADATA_DB_BACKEND", metadata.get("backend", "duckdb"))
+    metadata["db_url"] = env_values.get("METADATA_DB_URL", metadata.get("db_url"))
+    metadata["db_schema"] = env_values.get(
+        "METADATA_DB_SCHEMA",
+        metadata.get("db_schema", "public"),
+    )
 
     model["default_horizons"] = env_values.get(
         "MODEL_DEFAULT_HORIZONS",

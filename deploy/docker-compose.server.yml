@@ -13,6 +13,10 @@ services:
       APP_ENV: ${APP_ENV:-server}
       APP_DATA_DIR: /workspace/data
       APP_DUCKDB_PATH: /workspace/data/marts/main.duckdb
+      METADATA_DB_ENABLED: ${METADATA_DB_ENABLED:-false}
+      METADATA_DB_BACKEND: ${METADATA_DB_BACKEND:-duckdb}
+      METADATA_DB_URL: ${METADATA_DB_URL:-}
+      METADATA_DB_SCHEMA: ${METADATA_DB_SCHEMA:-public}
       PYTHONUNBUFFERED: "1"
     command:
       [
@@ -44,6 +48,30 @@ services:
       timeout: 10s
       retries: 5
       start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    networks:
+      - stockmaster_net
+
+  metadata_db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles: ["metadata"]
+    environment:
+      POSTGRES_DB: ${METADATA_DB_POSTGRES_DB:-stockmaster_meta}
+      POSTGRES_USER: ${METADATA_DB_POSTGRES_USER:-stockmaster}
+      POSTGRES_PASSWORD: ${METADATA_DB_POSTGRES_PASSWORD:-change_me}
+    volumes:
+      - ${STOCKMASTER_RUNTIME_ROOT:-/opt/stockmaster/runtime}/metadata-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${METADATA_DB_POSTGRES_USER:-stockmaster} -d ${METADATA_DB_POSTGRES_DB:-stockmaster_meta}"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     logging:
       driver: json-file
       options:
