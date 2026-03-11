@@ -37,10 +37,11 @@ def upsert_portfolio_target_book(connection, frame: pd.DataFrame) -> None:
     if frame.empty:
         return
     connection.register("portfolio_target_book_stage", frame)
+    columns = list(frame.columns)
     connection.execute(
-        """
-        INSERT OR REPLACE INTO fact_portfolio_target_book
-        SELECT * FROM portfolio_target_book_stage
+        f"""
+        INSERT OR REPLACE INTO fact_portfolio_target_book ({", ".join(columns)})
+        SELECT {", ".join(columns)} FROM portfolio_target_book_stage
         """
     )
     connection.unregister("portfolio_target_book_stage")

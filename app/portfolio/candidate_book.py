@@ -79,10 +79,11 @@ def upsert_portfolio_candidate(connection, frame: pd.DataFrame) -> None:
         return
     frame = frame.drop_duplicates(subset=["as_of_date", "execution_mode", "symbol"], keep="last")
     connection.register("portfolio_candidate_stage", frame)
+    columns = list(frame.columns)
     connection.execute(
-        """
-        INSERT OR REPLACE INTO fact_portfolio_candidate
-        SELECT * FROM portfolio_candidate_stage
+        f"""
+        INSERT OR REPLACE INTO fact_portfolio_candidate ({", ".join(columns)})
+        SELECT {", ".join(columns)} FROM portfolio_candidate_stage
         """
     )
     connection.unregister("portfolio_candidate_stage")
