@@ -375,6 +375,11 @@ def run_daily_pipeline_job(
             if discord_result is not None:
                 artifact_paths.extend(discord_result.artifact_paths)
 
+            alpha_candidate_training_run_count = (
+                alpha_candidate_training_result.training_run_count
+                if alpha_candidate_training_result
+                else 0
+            )
             notes = (
                 f"Daily pipeline completed for {pipeline_date.isoformat()}. "
                 f"ohlcv_rows={ohlcv_result.row_count}, "
@@ -388,11 +393,7 @@ def run_daily_pipeline_job(
                 "alpha_training_runs="
                 f"{alpha_training_result.training_run_count if alpha_training_result else 0}, "
                 "alpha_candidate_training_runs="
-                f"{(
-                    alpha_candidate_training_result.training_run_count
-                    if alpha_candidate_training_result
-                    else 0
-                )}, "
+                f"{alpha_candidate_training_run_count}, "
                 f"alpha_promotion_rows={alpha_promotion_result.row_count}, "
                 "alpha_auto_promoted_horizons="
                 f"{alpha_promotion_result.promoted_horizon_count}, "
