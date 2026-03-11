@@ -16,6 +16,7 @@ from app.ops.common import JobStatus, OpsJobResult
 from app.ops.repository import json_text
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables
+from app.storage.metadata_postgres import execute_postgres_sql, executemany_postgres_sql
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,24 +276,25 @@ def _path_hash(path: Path) -> str:
 
 
 def _deduplicate_report_index(connection: duckdb.DuckDBPyConnection) -> None:
-    connection.execute(
-        """
-        DELETE FROM fact_latest_report_index
-        WHERE report_index_id IN (
-            SELECT report_index_id
-            FROM (
-                SELECT
-                    report_index_id,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY report_key
-                        ORDER BY generated_ts DESC, created_at DESC, report_index_id DESC
-                    ) AS row_number
-                FROM fact_latest_report_index
-            )
-            WHERE row_number > 1
-        )
-        """
+    connection.execute(REPORT_INDEX_DEDUP_SQL)
+
+
+REPORT_INDEX_DEDUP_SQL = """
+    DELETE FROM fact_latest_report_index
+    WHERE report_index_id IN (
+        SELECT report_index_id
+        FROM (
+            SELECT
+                report_index_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY report_key
+                    ORDER BY generated_ts DESC, created_at DESC, report_index_id DESC
+                ) AS row_number
+            FROM fact_latest_report_index
+        ) ranked
+        WHERE row_number > 1
     )
+"""
 
 
 def _parse_as_of_date(path: Path) -> date | None:
@@ -688,6 +690,14 @@ def build_latest_app_snapshot(
         """,
         [snapshot_row[column] for column in columns],
     )
+    execute_postgres_sql(
+        settings,
+        f"""
+        INSERT INTO fact_latest_app_snapshot ({", ".join(columns)})
+        VALUES ({", ".join("?" for _ in columns)})
+        """,
+        [snapshot_row[column] for column in columns],
+    )
     return OpsJobResult(
         run_id=job_run_id or snapshot_row["snapshot_id"],
         job_name="build_latest_app_snapshot",
@@ -742,6 +752,28 @@ def build_report_index(
             [[row[column] for column in columns] for row in rows],
         )
         _deduplicate_report_index(connection)
+        executemany_postgres_sql(
+            settings,
+            f"""
+            INSERT INTO fact_latest_report_index ({", ".join(columns)})
+            VALUES ({", ".join("?" for _ in columns)})
+            ON CONFLICT (report_index_id) DO UPDATE SET
+                report_type = EXCLUDED.report_type,
+                report_key = EXCLUDED.report_key,
+                as_of_date = EXCLUDED.as_of_date,
+                generated_ts = EXCLUDED.generated_ts,
+                status = EXCLUDED.status,
+                run_id = EXCLUDED.run_id,
+                artifact_path = EXCLUDED.artifact_path,
+                artifact_format = EXCLUDED.artifact_format,
+                published_flag = EXCLUDED.published_flag,
+                dry_run_flag = EXCLUDED.dry_run_flag,
+                summary_json = EXCLUDED.summary_json,
+                created_at = EXCLUDED.created_at
+            """,
+            [[row[column] for column in columns] for row in rows],
+        )
+        execute_postgres_sql(settings, REPORT_INDEX_DEDUP_SQL)
     return OpsJobResult(
         run_id=job_run_id or "embedded",
         job_name="build_report_index",
@@ -788,6 +820,14 @@ def build_ui_freshness_snapshot(
         )
     columns = list(rows[0].keys())
     connection.executemany(
+        f"""
+        INSERT INTO fact_ui_data_freshness_snapshot ({", ".join(columns)})
+        VALUES ({", ".join("?" for _ in columns)})
+        """,
+        [[row[column] for column in columns] for row in rows],
+    )
+    executemany_postgres_sql(
+        settings,
         f"""
         INSERT INTO fact_ui_data_freshness_snapshot ({", ".join(columns)})
         VALUES ({", ".join("?" for _ in columns)})

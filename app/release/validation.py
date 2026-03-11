@@ -15,6 +15,7 @@ from app.ops.common import JobStatus, OpsValidationResult
 from app.ops.repository import json_text
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables
+from app.storage.metadata_postgres import executemany_postgres_sql
 from app.ui.navigation import PAGE_SPECS
 
 
@@ -62,6 +63,14 @@ def _insert_checks(
     ]
     columns = list(rows[0].keys())
     connection.executemany(
+        f"""
+        INSERT INTO fact_release_candidate_check ({", ".join(columns)})
+        VALUES ({", ".join("?" for _ in columns)})
+        """,
+        [[row[column] for column in columns] for row in rows],
+    )
+    executemany_postgres_sql(
+        settings,
         f"""
         INSERT INTO fact_release_candidate_check ({", ".join(columns)})
         VALUES ({", ".join("?" for _ in columns)})
