@@ -1,6 +1,9 @@
 # OCI 배포 가이드
 
-이 문서는 StockMaster를 Oracle Cloud Infrastructure 단일 Ubuntu 서버에 배포하는 절차를 정리합니다.
+이 문서는 StockMaster를 Oracle Cloud Infrastructure 단일 Ubuntu 서버에 처음 구축하는 절차를 정리합니다.
+
+현재 운영 중 서버의 일상 점검, scheduler, metadata split, 장애 대응은
+[RUNBOOK_SERVER_OPERATIONS.md](d:/MyApps/StockMaster/docs/RUNBOOK_SERVER_OPERATIONS.md)를 우선합니다.
 
 ## 1. 전제
 

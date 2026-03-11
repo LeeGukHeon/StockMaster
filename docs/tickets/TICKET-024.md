@@ -26,3 +26,8 @@
 
 - 1차 완료
 
+진행 메모:
+
+- stale `RUNNING` row / active lock / serial lock auto-heal 로직 반영
+- 서버 metadata 이력에서 `STALE_RELEASED`, stale cleanup 흔적 확인
+- ops maintenance와 host scheduler 경로 기준으로 운영 해석 문서화

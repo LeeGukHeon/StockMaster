@@ -25,10 +25,13 @@ Metadata store split 1차 이행.
 
 현재 상태:
 
-- 진행 중
+- 1차 완료
 
 진행 메모:
 
 - metadata schema/bootstrap/migration 구현
-- 서버 metadata_db 기동 및 초기 migration 확인
-
+- 서버 `metadata_db` 기동 확인
+- 서버 `.env.server` 기준 `METADATA_DB_ENABLED=true`, `METADATA_DB_BACKEND=postgres` 운영 반영
+- 운영 메타데이터 latest rebuild 및 최근 run 기록 Postgres 적재 확인
+- 로컬 `.env`는 계속 `METADATA_DB_ENABLED=false`, `METADATA_DB_BACKEND=duckdb`로 유지
+- 운영 기준 문서는 `docs/RUNBOOK_SERVER_OPERATIONS.md`로 통합

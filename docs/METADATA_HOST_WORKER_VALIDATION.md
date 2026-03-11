@@ -1,19 +1,14 @@
 # Metadata / Host Worker Validation
 
-## Purpose
-
-This document records the validation sequence after introducing:
-
-- postgres metadata store
-- metadata dual-write
-- host scheduler worker
+이 문서는 metadata Postgres + host scheduler worker 전환 후 검증 순서를 남기는 체크리스트입니다.
+운영 절차 전체는 [RUNBOOK_SERVER_OPERATIONS.md](d:/MyApps/StockMaster/docs/RUNBOOK_SERVER_OPERATIONS.md)를 우선합니다.
 
 ## Server Preconditions
 
-- `stockmaster-app-1` is healthy
-- `stockmaster-nginx-1` is healthy
-- `stockmaster-metadata_db-1` is healthy
-- server code is at the latest `main`
+- `stockmaster-app-1` healthy
+- `stockmaster-nginx-1` healthy
+- `stockmaster-metadata_db-1` healthy
+- server code is on intended revision
 - `deploy/env/.env.server` contains:
   - `METADATA_DB_ENABLED=true`
   - `METADATA_DB_BACKEND=postgres`
@@ -43,7 +38,7 @@ docker compose --profile metadata --env-file deploy/env/.env.server -f deploy/do
 
 Expected:
 
-- table row counts printed
+- row counts are printed
 - no psycopg or schema errors
 
 ### 3. latest metadata rebuild
@@ -62,7 +57,7 @@ docker compose --profile metadata --env-file deploy/env/.env.server -f deploy/do
 
 Expected:
 
-- latest metadata timestamps move forward in postgres
+- latest metadata timestamps move forward in Postgres
 - release validation finishes without connection errors
 
 ### 4. host worker dry-run
@@ -77,12 +72,12 @@ sudo -E bash scripts/server/run_scheduler_job_host.sh daily-audit-lite --as-of-d
 
 Expected:
 
-- command runs through `/opt/stockmaster/worker-venv`
+- commands run through `/opt/stockmaster/worker-venv`
 - scheduler path no longer depends on `docker compose exec -T app ...`
-- if another bundle currently holds the single-writer lock, result may be `SKIPPED_LOCKED` rather than failure
+- if another writer currently holds the single-writer lock, `SKIPPED_LOCKED` is acceptable
 
 ## Operational Interpretation
 
-- `SKIPPED_LOCKED` during validation is acceptable if there is a real active writer
-- stale `RUNNING` rows or stale active locks must be cleaned before treating the path as broken
-- a psycopg syntax error or metadata connection error is a real regression
+- `SKIPPED_LOCKED` during validation is acceptable when a real writer already exists
+- stale `RUNNING` rows or stale active locks should be cleaned before calling the new path broken
+- psycopg connection errors or schema errors are real regressions

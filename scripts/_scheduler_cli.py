@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.common.time import now_local
-from app.ops.common import JobStatus
+from app.ops.common import JobStatus, LockConflictError
 from app.ops.scheduler import get_scheduled_job, read_scheduler_state, write_scheduler_state
 from app.ops.serial import SerialLockConflictError, acquire_serial_lock, release_serial_lock
 from scripts._ops_cli import load_cli_settings, log_and_print
@@ -187,6 +187,14 @@ def run_scheduled_bundle(
                 as_of_date=identity.get("as_of_date"),
                 details=exc.details,
             )
+        except LockConflictError as exc:
+            result = bundle_result(
+                job_key=job_key,
+                status=JobStatus.SKIPPED_LOCKED,
+                notes=f"Active lock occupied: {exc.lock_name}",
+                as_of_date=identity.get("as_of_date"),
+                details={"lock_name": exc.lock_name, "owner_run_id": exc.owner_run_id},
+            )
         except Exception as exc:
             result = bundle_result(
                 job_key=job_key,
@@ -221,4 +229,3 @@ def run_scheduled_bundle(
     )
     log_and_print(f"{job.label}: {result.status} {result.notes}")
     return scheduler_exit_code(result.status)
-

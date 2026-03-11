@@ -24,11 +24,13 @@ Scheduler host worker 분리.
 
 현재 상태:
 
-- 진행 중
+- 1차 완료
 
 진행 메모:
 
 - systemd unit / host runner / venv 재생성 로직 반영
-- 서버 Python 3.11 설치 완료
-- 실제 dry-run은 기존 active lock 영향으로 추가 점검 필요
-
+- 서버 `stockmaster-scheduler@.service`가 `run_scheduler_job_host.sh`를 사용
+- 서버 worker venv 경로 `/opt/stockmaster/worker-venv`, Python 3.11 확인
+- metadata db loopback 포트 `127.0.0.1:5433` 경로 확인
+- active lock 충돌은 scheduler 경로에서 `SKIPPED_LOCKED` 정상 스킵으로 정리
+- 운영 기준 문서는 `docs/RUNBOOK_SERVER_OPERATIONS.md`로 통합
