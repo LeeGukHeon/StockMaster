@@ -34,7 +34,7 @@ from app.ui.helpers import (
 )
 
 settings = load_ui_settings(PROJECT_ROOT)
-symbols = available_symbols(settings)
+symbols = available_symbols(settings, limit=None)
 
 render_page_header(
     settings,

@@ -3687,20 +3687,30 @@ def latest_market_news_frame(settings: Settings, *, limit: int = 5) -> pd.DataFr
         ).fetchdf()
 
 
-def available_symbols(settings: Settings, *, limit: int = 200) -> list[str]:
+def available_symbols(settings: Settings, *, limit: int | None = None) -> list[str]:
     if not settings.paths.duckdb_path.exists():
         return []
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        rows = connection.execute(
-            """
-            SELECT symbol
-            FROM dim_symbol
-            WHERE market IN ('KOSPI', 'KOSDAQ')
-            ORDER BY symbol
-            LIMIT ?
-            """,
-            [limit],
-        ).fetchall()
+        if limit is not None and int(limit) > 0:
+            rows = connection.execute(
+                """
+                SELECT symbol
+                FROM dim_symbol
+                WHERE market IN ('KOSPI', 'KOSDAQ')
+                ORDER BY symbol
+                LIMIT ?
+                """,
+                [int(limit)],
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT symbol
+                FROM dim_symbol
+                WHERE market IN ('KOSPI', 'KOSDAQ')
+                ORDER BY symbol
+                """
+            ).fetchall()
     return [str(row[0]).zfill(6) for row in rows]
 
 
