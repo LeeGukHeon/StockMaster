@@ -28,6 +28,33 @@ class UniverseSyncResult:
     notes: str
 
 
+GENERIC_SECTOR_LABELS = {
+    "기술성장기업부",
+    "벤처기업부",
+    "우량기업부",
+    "중견기업부",
+    "중소기업부",
+    "SPAC",
+    "스팩",
+}
+
+
+def _load_code_label_map(settings: Settings, filename: str) -> dict[str, str]:
+    path = settings.paths.project_root / "config" / "seeds" / filename
+    if not path.exists():
+        return {}
+    frame = pd.read_csv(path, dtype=str).fillna("")
+    if "code" not in frame.columns or "label_ko" not in frame.columns:
+        return {}
+    mapping: dict[str, str] = {}
+    for row in frame.itertuples(index=False):
+        code = str(getattr(row, "code", "")).strip()
+        label = str(getattr(row, "label_ko", "")).strip()
+        if code and label:
+            mapping[code] = label
+    return mapping
+
+
 def _merge_seed_reference(frame: pd.DataFrame, seed_frame: pd.DataFrame) -> pd.DataFrame:
     if seed_frame.empty:
         return frame
@@ -68,19 +95,29 @@ def _merge_krx_reference(frame: pd.DataFrame, reference_frame: pd.DataFrame) -> 
     return merged
 
 
-def _apply_code_fallback_labels(frame: pd.DataFrame) -> pd.DataFrame:
+def _apply_code_fallback_labels(frame: pd.DataFrame, *, settings: Settings) -> pd.DataFrame:
     labeled = frame.copy()
+    sector_map = _load_code_label_map(settings, "kis_sector_code_labels.csv")
+    industry_map = _load_code_label_map(settings, "kis_industry_code_labels.csv")
+
     if "sector" in labeled.columns and "sector_code" in labeled.columns:
-        labeled["sector"] = labeled["sector"].combine_first(
-            labeled["sector_code"].map(
-                lambda value: f"업종군 {value}" if pd.notna(value) else pd.NA
-            )
+        mapped_sector = labeled["sector_code"].map(sector_map).astype("object")
+        fallback_sector = labeled["sector_code"].map(
+            lambda value: f"업종군 {value}" if pd.notna(value) else pd.NA
         )
+        generic_mask = labeled["sector"].isna() | labeled["sector"].isin(GENERIC_SECTOR_LABELS)
+        labeled.loc[generic_mask, "sector"] = mapped_sector.loc[generic_mask].combine_first(
+            fallback_sector.loc[generic_mask]
+        )
+
     if "industry" in labeled.columns and "industry_code" in labeled.columns:
-        labeled["industry"] = labeled["industry"].combine_first(
-            labeled["industry_code"].map(
-                lambda value: f"업종 {value}" if pd.notna(value) else pd.NA
-            )
+        mapped_industry = labeled["industry_code"].map(industry_map).astype("object")
+        fallback_industry = labeled["industry_code"].map(
+            lambda value: f"업종 {value}" if pd.notna(value) else pd.NA
+        )
+        generic_mask = labeled["industry"].isna() | labeled["industry"].astype(str).str.startswith("업종 ")
+        labeled.loc[generic_mask, "industry"] = mapped_industry.loc[generic_mask].combine_first(
+            fallback_industry.loc[generic_mask]
         )
     return labeled
 
@@ -261,7 +298,7 @@ def sync_universe(
                 )
                 normalized = _merge_krx_reference(normalized, reference_result.frame)
                 normalized = _merge_seed_reference(normalized, krx.load_seed_fallback())
-                normalized = _apply_code_fallback_labels(normalized)
+                normalized = _apply_code_fallback_labels(normalized, settings=settings)
                 normalized["updated_at"] = now_local(settings.app.timezone)
 
                 upsert_dim_symbol(connection, normalized)

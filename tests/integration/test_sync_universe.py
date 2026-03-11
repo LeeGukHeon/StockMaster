@@ -197,3 +197,11 @@ def test_sync_universe_populates_dimension_and_view(tmp_path):
         assert samsung_row[3] == "0013"
         assert samsung_row[4] is None
         assert samsung_row[5] == "00126380"
+        preferred_row = connection.execute(
+            """
+            SELECT sector, industry
+            FROM dim_symbol
+            WHERE symbol = '005935'
+            """
+        ).fetchone()
+        assert preferred_row == ("제조/산업재", "전기전자/반도체")
