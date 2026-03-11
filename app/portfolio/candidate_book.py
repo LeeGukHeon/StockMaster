@@ -259,7 +259,9 @@ def _load_ranking_prediction_frame(
             disagreement_score,
             fallback_flag,
             fallback_reason,
-            prediction_version
+            prediction_version,
+            model_spec_id,
+            active_alpha_model_id
         FROM fact_prediction
         WHERE as_of_date = ?
           AND horizon = ?
