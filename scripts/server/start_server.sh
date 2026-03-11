@@ -19,6 +19,12 @@ fi
 log "running bootstrap"
 compose run --rm app python scripts/bootstrap.py
 
+if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:-duckdb}" == "postgres" ]]; then
+  log "bootstrapping metadata store"
+  compose up -d metadata_db
+  compose run --rm app python scripts/bootstrap_metadata_store.py
+fi
+
 log "starting server stack"
 compose up -d
 compose ps

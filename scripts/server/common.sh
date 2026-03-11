@@ -30,7 +30,13 @@ load_server_env() {
 }
 
 compose() {
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@"
+  docker compose $(compose_profile_args) --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@"
+}
+
+compose_profile_args() {
+  if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:-duckdb}" == "postgres" ]]; then
+    printf '%s ' --profile metadata
+  fi
 }
 
 runtime_root() {
@@ -52,6 +58,7 @@ mkdir_runtime_dirs() {
     "${root}/artifacts" \
     "${root}/logs/app" \
     "${root}/logs/nginx" \
+    "${root}/metadata-postgres" \
     "${root}/backups"
   mkdir -p "$(backup_root)"
 }
