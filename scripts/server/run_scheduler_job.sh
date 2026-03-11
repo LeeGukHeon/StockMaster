@@ -12,11 +12,5 @@ SERVICE_SLUG="${1:-}"
 shift || true
 [[ -n "${SERVICE_SLUG}" ]] || fail "usage: run_scheduler_job.sh <service-slug> [extra args...]"
 
-log "ensuring stockmaster stack is up for scheduler job ${SERVICE_SLUG}"
-if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:-duckdb}" == "postgres" ]]; then
-  compose up -d metadata_db >/dev/null
-fi
-compose up -d app nginx >/dev/null
-
-log "running scheduler job ${SERVICE_SLUG}"
-compose run --rm app python scripts/run_scheduled_bundle.py --service-slug "${SERVICE_SLUG}" --scheduler-run "$@"
+log "run_scheduler_job.sh is deprecated; delegating to host worker runner"
+exec "${SERVER_SCRIPT_DIR}/run_scheduler_job_host.sh" "${SERVICE_SLUG}" "$@"
