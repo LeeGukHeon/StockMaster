@@ -74,6 +74,61 @@ class DiscordPublishResult:
     notes: str
 
 
+def _publish_readiness(connection, *, as_of_date: date) -> tuple[bool, dict[str, int]]:
+    readiness = {
+        "ranking_rows": int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM fact_ranking
+                WHERE as_of_date = ?
+                  AND ranking_version = ?
+                """,
+                [as_of_date, SELECTION_ENGINE_V2_VERSION],
+            ).fetchone()[0]
+            or 0
+        ),
+        "prediction_rows": int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM fact_prediction
+                WHERE as_of_date = ?
+                  AND ranking_version = ?
+                  AND prediction_version = ?
+                """,
+                [as_of_date, SELECTION_ENGINE_V2_VERSION, ALPHA_PREDICTION_VERSION],
+            ).fetchone()[0]
+            or 0
+        ),
+        "regime_rows": int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM fact_market_regime_snapshot
+                WHERE as_of_date = ?
+                  AND market_scope = 'KR_ALL'
+                """,
+                [as_of_date],
+            ).fetchone()[0]
+            or 0
+        ),
+        "ohlcv_rows": int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM fact_daily_ohlcv
+                WHERE trading_date = ?
+                """,
+                [as_of_date],
+            ).fetchone()[0]
+            or 0
+        ),
+    }
+    ready = all(readiness[key] > 0 for key in ("ranking_rows", "prediction_rows", "regime_rows", "ohlcv_rows"))
+    return ready, readiness
+
+
 def _load_market_pulse(connection, *, as_of_date: date) -> dict[str, object]:
     regime_row = connection.execute(
         """
@@ -534,6 +589,33 @@ def publish_discord_eod_report(
                 notes=f"Publish Discord EOD report for {as_of_date.isoformat()}",
                 ranking_version=SELECTION_ENGINE_V2_VERSION,
             )
+            ready, readiness = _publish_readiness(connection, as_of_date=as_of_date)
+            if not ready:
+                notes = (
+                    f"Discord publish skipped for {as_of_date.isoformat()}. "
+                    "Required same-day inputs are not ready: "
+                    f"ranking_rows={readiness['ranking_rows']}, "
+                    f"prediction_rows={readiness['prediction_rows']}, "
+                    f"regime_rows={readiness['regime_rows']}, "
+                    f"ohlcv_rows={readiness['ohlcv_rows']}."
+                )
+                record_run_finish(
+                    connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="success",
+                    output_artifacts=[],
+                    notes=notes,
+                    ranking_version=SELECTION_ENGINE_V2_VERSION,
+                )
+                return DiscordPublishResult(
+                    run_id=run_context.run_id,
+                    as_of_date=as_of_date,
+                    dry_run=dry_run,
+                    published=False,
+                    artifact_paths=[],
+                    notes=notes,
+                )
 
         render_result = render_discord_eod_report(settings, as_of_date=as_of_date, dry_run=dry_run)
         artifact_paths = list(render_result.artifact_paths)
