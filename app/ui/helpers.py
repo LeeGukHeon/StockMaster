@@ -882,6 +882,18 @@ UI_COLUMN_LABELS: dict[str, str] = {
     "flat_stop_price": "참고 손절선(시장 보합 가정)",
     "active_alpha_model_id": "사용 중인 알파 모델 ID",
     "model_spec_id": "사용 모델 방식",
+    "plan_horizon": "관찰 기간",
+    "entry_trade_date": "진입 예정일",
+    "exit_trade_date": "관찰 종료일",
+    "entry_basis": "진입 기준",
+    "exit_basis": "종료 기준",
+    "action_plan_label": "추천 행동",
+    "target_return": "기본 목표수익 참고치",
+    "stretch_target_return": "강한 흐름 목표수익 참고치",
+    "stop_return": "손절 참고치",
+    "action_target_price": "기본 목표가",
+    "action_stretch_price": "강한 흐름 목표가",
+    "action_stop_price": "손절 참고선",
     "investor_flow_rows": "수급 행수",
     "foreign_positive_ratio": "외국인 순매수 비율",
     "institution_positive_ratio": "기관 순매수 비율",
@@ -1370,6 +1382,20 @@ def latest_portfolio_target_book_frame(
             target_notional,
             target_shares,
             target_price,
+            plan_horizon,
+            entry_trade_date,
+            exit_trade_date,
+            entry_basis,
+            exit_basis,
+            model_spec_id,
+            active_alpha_model_id,
+            action_plan_label,
+            target_return,
+            stretch_target_return,
+            stop_return,
+            action_target_price,
+            action_stretch_price,
+            action_stop_price,
             current_shares,
             current_weight,
             score_value,
@@ -3450,6 +3476,18 @@ UI_VALUE_LABELS.setdefault("model_spec_id", {}).update(
         "alpha_rolling_120_v1": "최근 120거래일 중심 학습",
         "alpha_rolling_250_v1": "최근 250거래일 중심 학습",
         "alpha_recursive_rolling_combo": "누적+최근 구간 혼합",
+    }
+)
+UI_VALUE_LABELS.setdefault("entry_basis", {}).update(
+    {
+        "next_open": "다음 거래일 시가 기준",
+        "cash_buffer": "현금 유지",
+    }
+)
+UI_VALUE_LABELS.setdefault("exit_basis", {}).update(
+    {
+        "same_day_close": "같은 날 종가 기준",
+        "future_close": "관찰 종료일 종가 기준",
     }
 )
 UI_VALUE_LABELS.setdefault("estimation_scheme", {}).update(

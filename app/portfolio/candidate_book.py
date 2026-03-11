@@ -292,6 +292,20 @@ def _load_ranking_prediction_frame(
             ALPHA_PREDICTION_VERSION,
         ],
     ).fetchdf()
+    forward_label = connection.execute(
+        """
+        SELECT
+            symbol,
+            entry_date AS entry_trade_date,
+            exit_date AS exit_trade_date,
+            entry_basis,
+            exit_basis
+        FROM fact_forward_return_label
+        WHERE as_of_date = ?
+          AND horizon = ?
+        """,
+        [as_of_date, primary_horizon],
+    ).fetchdf()
     symbols_dim = connection.execute(
         """
         SELECT symbol, company_name, market, COALESCE(sector, '미분류') AS sector
@@ -303,6 +317,7 @@ def _load_ranking_prediction_frame(
         .merge(ranking, on="symbol", how="left")
         .merge(primary_prediction, on="symbol", how="left")
         .merge(tactical_prediction, on="symbol", how="left")
+        .merge(forward_label, on="symbol", how="left")
     )
     frame = _coalesce_variant_columns(frame, {
         "uncertainty_score": ("uncertainty_score_y", "uncertainty_score_x"),
@@ -653,16 +668,24 @@ def build_portfolio_candidate_book(
                                 "current_weight",
                                 "final_selection_value",
                                 "effective_alpha_long",
+                                "expected_excess_return",
                                 "tactical_expected_excess_return",
                                 "lower_band",
+                                "upper_band",
                                 "flow_score",
                                 "regime_fit_score",
                                 "uncertainty_score",
                                 "disagreement_score",
                                 "implementation_penalty_score",
+                                "model_spec_id",
+                                "active_alpha_model_id",
                                 "volatility_proxy",
                                 "adv20_krw",
                                 "risk_scaled_conviction",
+                                "entry_trade_date",
+                                "exit_trade_date",
+                                "entry_basis",
+                                "exit_basis",
                                 "candidate_state",
                                 "timing_action",
                                 "timing_gate_status",
@@ -701,16 +724,24 @@ def build_portfolio_candidate_book(
                             "current_weight",
                             "final_selection_value",
                             "effective_alpha_long",
+                            "expected_excess_return",
                             "tactical_alpha",
                             "lower_band",
+                            "upper_band",
                             "flow_score",
                             "regime_score",
                             "uncertainty_score",
                             "disagreement_score",
                             "implementation_penalty_score",
+                            "model_spec_id",
+                            "active_alpha_model_id",
                             "volatility_proxy",
                             "adv20_krw",
                             "risk_scaled_conviction",
+                            "entry_trade_date",
+                            "exit_trade_date",
+                            "entry_basis",
+                            "exit_basis",
                             "candidate_state",
                             "timing_action",
                             "timing_gate_status",

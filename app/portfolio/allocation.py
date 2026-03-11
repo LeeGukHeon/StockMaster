@@ -29,6 +29,7 @@ from .common import (
     PortfolioWalkforwardResult,
     json_text,
     load_active_or_default_portfolio_policy,
+    ordered_frame,
 )
 
 
@@ -227,6 +228,44 @@ def _cash_target_from_candidates(frame: pd.DataFrame, default_value: float) -> f
         if "regime_cash_target" in payload:
             return float(payload["regime_cash_target"])
     return default_value
+
+
+def _plan_stop_return(lower_band: object, *, lower_band_floor: float) -> float:
+    lower_value = pd.to_numeric(lower_band, errors="coerce")
+    if pd.isna(lower_value):
+        return float(min(0.0, lower_band_floor))
+    return float(min(0.0, float(lower_value), lower_band_floor))
+
+
+def _action_plan_label(
+    *,
+    symbol: str,
+    candidate_state: object,
+    execution_mode: str,
+    gate_status: object,
+    included: bool,
+    blocked: bool,
+    waitlist: bool,
+) -> str:
+    if symbol == CASH_SYMBOL:
+        return "현금 유지"
+    if blocked:
+        return "진입 보류"
+    if waitlist and not included:
+        return "후순위 관찰"
+    state = str(candidate_state or "")
+    gate = str(gate_status or "")
+    if state == "NEW_ENTRY_CANDIDATE":
+        if execution_mode == "TIMING_ASSISTED":
+            return "장중 신호 확인 후 신규 진입" if gate != "ENTER_ALLOWED" else "장중 신호 기준 신규 진입"
+        return "다음 거래일 시가 기준 신규 진입"
+    if state == "HOLD_CANDIDATE":
+        return "기존 보유 유지"
+    if state == "TRIM_CANDIDATE":
+        return "기존 보유 일부 축소"
+    if state == "EXIT_CANDIDATE":
+        return "기존 보유 정리"
+    return "관찰 유지"
 
 
 def _candidate_score_base(frame: pd.DataFrame) -> pd.Series:
@@ -471,6 +510,55 @@ def materialize_portfolio_target_book(
                         target_shares = int(target_notional // reference_price) if reference_price > 0 else 0
                         included = target_weight > 0 or bool(row.get("current_holding_flag"))
                         blocked = row.get("candidate_state") == "BLOCKED"
+                        expected_return = pd.to_numeric(row.get("expected_excess_return"), errors="coerce")
+                        upper_band = pd.to_numeric(row.get("upper_band"), errors="coerce")
+                        base_target_return = (
+                            None
+                            if pd.isna(expected_return)
+                            else float(max(float(expected_return), 0.0))
+                        )
+                        stretch_target_return = (
+                            None
+                            if pd.isna(upper_band)
+                            else float(
+                                max(
+                                    float(upper_band),
+                                    float(base_target_return or 0.0),
+                                )
+                            )
+                        )
+                        stop_return = _plan_stop_return(
+                            row.get("lower_band"),
+                            lower_band_floor=policy.lower_band_floor,
+                        )
+                        if not included or symbol == CASH_SYMBOL:
+                            base_target_return = None
+                            stretch_target_return = None
+                            stop_return = None
+                        action_plan_label = _action_plan_label(
+                            symbol=symbol,
+                            candidate_state=row.get("candidate_state"),
+                            execution_mode=mode,
+                            gate_status=row.get("timing_gate_status"),
+                            included=included,
+                            blocked=blocked,
+                            waitlist=symbol in waitlist_rank,
+                        )
+                        action_target_price = (
+                            reference_price * (1.0 + float(base_target_return))
+                            if reference_price > 0 and base_target_return is not None
+                            else None
+                        )
+                        action_stretch_price = (
+                            reference_price * (1.0 + float(stretch_target_return))
+                            if reference_price > 0 and stretch_target_return is not None
+                            else None
+                        )
+                        action_stop_price = (
+                            reference_price * (1.0 + float(stop_return))
+                            if reference_price > 0 and stop_return is not None
+                            else None
+                        )
                         rows.append(
                             {
                                 "run_id": run_context.run_id,
@@ -490,6 +578,20 @@ def materialize_portfolio_target_book(
                                 "target_notional": target_shares * reference_price,
                                 "target_shares": target_shares,
                                 "target_price": reference_price if reference_price > 0 else None,
+                                "plan_horizon": int(row.get("primary_horizon") or policy.primary_horizon),
+                                "entry_trade_date": row.get("entry_trade_date") or session_date,
+                                "exit_trade_date": row.get("exit_trade_date"),
+                                "entry_basis": row.get("entry_basis") or "next_open",
+                                "exit_basis": row.get("exit_basis"),
+                                "model_spec_id": row.get("model_spec_id"),
+                                "active_alpha_model_id": row.get("active_alpha_model_id"),
+                                "action_plan_label": action_plan_label,
+                                "target_return": base_target_return,
+                                "stretch_target_return": stretch_target_return,
+                                "stop_return": stop_return,
+                                "action_target_price": action_target_price,
+                                "action_stretch_price": action_stretch_price,
+                                "action_stop_price": action_stop_price,
                                 "current_shares": int(row.get("current_shares") or 0),
                                 "current_weight": float(row.get("current_weight") or 0.0),
                                 "score_value": float(row.get("risk_scaled_conviction") or 0.0),
@@ -529,6 +631,20 @@ def materialize_portfolio_target_book(
                             "target_notional": cash_value,
                             "target_shares": 0,
                             "target_price": 1.0,
+                            "plan_horizon": policy.primary_horizon,
+                            "entry_trade_date": session_date,
+                            "exit_trade_date": None,
+                            "entry_basis": "cash_buffer",
+                            "exit_basis": None,
+                            "model_spec_id": None,
+                            "active_alpha_model_id": None,
+                            "action_plan_label": "현금 유지",
+                            "target_return": None,
+                            "stretch_target_return": None,
+                            "stop_return": None,
+                            "action_target_price": None,
+                            "action_stretch_price": None,
+                            "action_stop_price": None,
                             "current_shares": 0,
                             "current_weight": max(0.0, 1.0 - investable_weight),
                             "score_value": 0.0,
@@ -542,7 +658,53 @@ def materialize_portfolio_target_book(
                             "created_at": pd.Timestamp.now(tz="UTC"),
                         }
                     )
-                    output = pd.DataFrame(rows)
+                    output = ordered_frame(
+                        pd.DataFrame(rows),
+                        [
+                            "run_id",
+                            "as_of_date",
+                            "session_date",
+                            "execution_mode",
+                            "portfolio_policy_id",
+                            "portfolio_policy_version",
+                            "active_portfolio_policy_id",
+                            "symbol",
+                            "company_name",
+                            "market",
+                            "sector",
+                            "candidate_state",
+                            "target_rank",
+                            "target_weight",
+                            "target_notional",
+                            "target_shares",
+                            "target_price",
+                            "plan_horizon",
+                            "entry_trade_date",
+                            "exit_trade_date",
+                            "entry_basis",
+                            "exit_basis",
+                            "model_spec_id",
+                            "active_alpha_model_id",
+                            "action_plan_label",
+                            "target_return",
+                            "stretch_target_return",
+                            "stop_return",
+                            "action_target_price",
+                            "action_stretch_price",
+                            "action_stop_price",
+                            "current_shares",
+                            "current_weight",
+                            "score_value",
+                            "gate_status",
+                            "included_flag",
+                            "blocked_flag",
+                            "waitlist_flag",
+                            "waitlist_rank",
+                            "constraint_flags_json",
+                            "notes_json",
+                            "created_at",
+                        ],
+                    )
                     output_frames.append(output)
                     if constraint_rows:
                         constraint_frame = pd.DataFrame(constraint_rows)

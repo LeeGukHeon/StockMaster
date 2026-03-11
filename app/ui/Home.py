@@ -33,6 +33,7 @@ from app.ui.helpers import (
     latest_alpha_promotion_summary_frame,
     latest_app_snapshot_frame,
     latest_market_news_frame,
+    latest_portfolio_target_book_frame,
     latest_recommendation_timeline_text,
     latest_release_candidate_preview,
     latest_report_index_frame,
@@ -136,6 +137,12 @@ def render_today_page() -> None:
         limit=12,
         ranking_version=SELECTION_ENGINE_V2_VERSION,
     )
+    official_targets = latest_portfolio_target_book_frame(
+        settings,
+        execution_mode="OPEN_ALL",
+        include_cash=False,
+        limit=12,
+    )
     latest_reports = latest_report_index_frame(settings, limit=12, latest_only=True)
     latest_news = latest_market_news_frame(settings, limit=6)
     alpha_promotion = latest_alpha_promotion_summary_frame(settings, limit=6)
@@ -227,16 +234,35 @@ def render_today_page() -> None:
     with actionable_left:
         st.subheader("오늘의 주목 종목")
         st.caption(
-            "진입 예정일은 다음 거래일 기준입니다. 참고 목표가와 손절선은 추천이 만들어진 날 종가에 "
-            "예측 범위를 단순 반영한 참고선이며, 실제 자동 매매 규칙은 아닙니다."
+            "공식 추천안이 준비되면 다음 거래일 기준 진입 예정일, 관찰 종료일, 기준가, 목표가, 손절 참고선까지 함께 보여줍니다."
         )
         render_top_actionable_badges(settings)
-        if selection_preview.empty:
-            st.info("선정 엔진 v2 미리보기가 없습니다.")
+        if not official_targets.empty:
+            render_record_cards(
+                official_targets,
+                title="다음 거래일 공식 추천안",
+                primary_column="symbol",
+                secondary_columns=["company_name", "action_plan_label"],
+                detail_columns=[
+                    "entry_trade_date",
+                    "exit_trade_date",
+                    "target_price",
+                    "action_target_price",
+                    "action_stretch_price",
+                    "action_stop_price",
+                    "plan_horizon",
+                    "model_spec_id",
+                ],
+                limit=6,
+                empty_message="공식 추천안이 아직 없습니다.",
+                table_expander_label="공식 추천안 원본 표 보기",
+            )
+        elif selection_preview.empty:
+            st.info("공식 추천안과 리더보드 미리보기가 아직 없습니다.")
         else:
             render_record_cards(
                 selection_preview,
-                title="오늘 바로 볼 추천 종목",
+                title="리더보드 기준 참고 종목",
                 primary_column="symbol",
                 secondary_columns=["company_name", "grade"],
                 detail_columns=[
@@ -254,7 +280,7 @@ def render_today_page() -> None:
                 ],
                 limit=6,
                 empty_message="선정 엔진 v2 미리보기가 없습니다.",
-                table_expander_label="추천 종목 원본 표 보기",
+                table_expander_label="리더보드 원본 표 보기",
             )
     with actionable_right:
         render_record_cards(

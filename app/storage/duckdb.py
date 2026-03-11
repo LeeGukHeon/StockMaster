@@ -1280,16 +1280,24 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         current_weight DOUBLE,
         final_selection_value DOUBLE,
         effective_alpha_long DOUBLE,
+        expected_excess_return DOUBLE,
         tactical_alpha DOUBLE,
         lower_band DOUBLE,
+        upper_band DOUBLE,
         flow_score DOUBLE,
         regime_score DOUBLE,
         uncertainty_score DOUBLE,
         disagreement_score DOUBLE,
         implementation_penalty_score DOUBLE,
+        model_spec_id VARCHAR,
+        active_alpha_model_id VARCHAR,
         volatility_proxy DOUBLE,
         adv20_krw DOUBLE,
         risk_scaled_conviction DOUBLE,
+        entry_trade_date DATE,
+        exit_trade_date DATE,
+        entry_basis VARCHAR,
+        exit_basis VARCHAR,
         candidate_state VARCHAR,
         timing_action VARCHAR,
         timing_gate_status VARCHAR,
@@ -1322,6 +1330,20 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         target_notional DOUBLE,
         target_shares BIGINT,
         target_price DOUBLE,
+        plan_horizon INTEGER,
+        entry_trade_date DATE,
+        exit_trade_date DATE,
+        entry_basis VARCHAR,
+        exit_basis VARCHAR,
+        model_spec_id VARCHAR,
+        active_alpha_model_id VARCHAR,
+        action_plan_label VARCHAR,
+        target_return DOUBLE,
+        stretch_target_return DOUBLE,
+        stop_return DOUBLE,
+        action_target_price DOUBLE,
+        action_stretch_price DOUBLE,
+        action_stop_price DOUBLE,
         current_shares BIGINT,
         current_weight DOUBLE,
         score_value DOUBLE,
@@ -2017,6 +2039,34 @@ SELECTION_OUTCOME_COLUMN_MIGRATIONS: tuple[str, ...] = (
         "ALTER TABLE fact_selection_outcome "
         "ADD COLUMN IF NOT EXISTS active_alpha_model_id_at_selection VARCHAR"
     ),
+)
+
+PORTFOLIO_CANDIDATE_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE fact_portfolio_candidate ADD COLUMN IF NOT EXISTS expected_excess_return DOUBLE",
+    "ALTER TABLE fact_portfolio_candidate ADD COLUMN IF NOT EXISTS upper_band DOUBLE",
+    "ALTER TABLE fact_portfolio_candidate ADD COLUMN IF NOT EXISTS model_spec_id VARCHAR",
+    "ALTER TABLE fact_portfolio_candidate ADD COLUMN IF NOT EXISTS active_alpha_model_id VARCHAR",
+    "ALTER TABLE fact_portfolio_candidate ADD COLUMN IF NOT EXISTS entry_trade_date DATE",
+    "ALTER TABLE fact_portfolio_candidate ADD COLUMN IF NOT EXISTS exit_trade_date DATE",
+    "ALTER TABLE fact_portfolio_candidate ADD COLUMN IF NOT EXISTS entry_basis VARCHAR",
+    "ALTER TABLE fact_portfolio_candidate ADD COLUMN IF NOT EXISTS exit_basis VARCHAR",
+)
+
+PORTFOLIO_TARGET_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS plan_horizon INTEGER",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS entry_trade_date DATE",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS exit_trade_date DATE",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS entry_basis VARCHAR",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS exit_basis VARCHAR",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS model_spec_id VARCHAR",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS active_alpha_model_id VARCHAR",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS action_plan_label VARCHAR",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS target_return DOUBLE",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS stretch_target_return DOUBLE",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS stop_return DOUBLE",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS action_target_price DOUBLE",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS action_stretch_price DOUBLE",
+    "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS action_stop_price DOUBLE",
 )
 
 CORE_VIEW_DDL: tuple[str, ...] = (
@@ -3184,6 +3234,12 @@ def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
             connection.execute(ddl)
 
         for ddl in SELECTION_OUTCOME_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in PORTFOLIO_CANDIDATE_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in PORTFOLIO_TARGET_COLUMN_MIGRATIONS:
             connection.execute(ddl)
 
         for ddl in CORE_VIEW_DDL:
