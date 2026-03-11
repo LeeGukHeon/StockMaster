@@ -605,7 +605,6 @@ def reconcile_failed_runs(
             SELECT COUNT(*)
             FROM fact_recovery_action
             WHERE target_job_run_id = ?
-              AND status = 'OPEN'
             """,
             [run_id],
         ).fetchone()[0]

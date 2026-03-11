@@ -44,6 +44,71 @@ def _frame_to_markdown(frame) -> str:
     return "\n".join([header, separator, *body])
 
 
+def _status_label(value: object) -> str:
+    mapping = {
+        "SUCCESS": "정상",
+        "PARTIAL_SUCCESS": "부분 완료",
+        "DEGRADED_SUCCESS": "주의",
+        "SKIPPED": "건너뜀",
+        "BLOCKED": "차단",
+        "FAILED": "장애",
+    }
+    text = str(value or "").upper()
+    return mapping.get(text, text or "미확인")
+
+
+def _metric_value(frame, *, scope: str, component: str, metric: str):
+    if frame.empty:
+        return None
+    matched = frame.loc[
+        (frame["health_scope"] == scope)
+        & (frame["component_name"] == component)
+        & (frame["metric_name"] == metric)
+    ]
+    if matched.empty:
+        return None
+    row = matched.iloc[0]
+    if "metric_value_text" in matched.columns and row.get("metric_value_text") not in (None, "", "nan"):
+        return row.get("metric_value_text")
+    return row.get("metric_value_double")
+
+
+def _build_ops_discord_summary(*, as_of_date: date, health, recovery) -> str:
+    overall_status = "미확인"
+    if not health.empty:
+        overall_rows = health.loc[
+            (health["health_scope"] == "overall") & (health["component_name"] == "platform")
+        ]
+        if not overall_rows.empty:
+            overall_status = _status_label(overall_rows.iloc[0]["status"])
+
+    failed_24h = int(float(_metric_value(health, scope="overall", component="platform", metric="failed_run_count_24h") or 0))
+    open_alerts = int(float(_metric_value(health, scope="overall", component="platform", metric="open_alert_count") or 0))
+    active_locks = int(float(_metric_value(health, scope="overall", component="platform", metric="active_lock_count") or 0))
+    stale_locks = int(float(_metric_value(health, scope="overall", component="platform", metric="stale_lock_count") or 0))
+    disk_watermark = _metric_value(health, scope="overall", component="platform", metric="disk_watermark") or "미확인"
+    disk_ratio = _metric_value(health, scope="overall", component="platform", metric="disk_usage_ratio")
+    latest_daily = _metric_value(health, scope="pipeline", component="daily_report", metric="latest_successful_output") or "-"
+    latest_eval = _metric_value(health, scope="pipeline", component="evaluation_summary", metric="latest_successful_output") or "-"
+    open_recovery = 0 if recovery.empty else int((recovery["status"] == "OPEN").sum())
+
+    pieces = [
+        f"**운영 요약 | {as_of_date.isoformat()}**",
+        f"- 전체 상태: {overall_status}",
+        f"- 최근 24시간 실패 작업: {failed_24h}건",
+        f"- 열린 경고: {open_alerts}건 / 복구 대기: {open_recovery}건",
+    ]
+    if disk_ratio not in (None, "", "nan"):
+        pieces.append(f"- 디스크: {float(disk_ratio):.1%} ({disk_watermark})")
+    else:
+        pieces.append(f"- 디스크 상태: {disk_watermark}")
+    if active_locks or stale_locks:
+        pieces.append(f"- 락 상태: 활성 {active_locks}개 / stale {stale_locks}개")
+    pieces.append(f"- 최신 일일 요약 기준일: {latest_daily}")
+    pieces.append(f"- 최신 사후평가 기준일: {latest_eval}")
+    return "\n".join(pieces)
+
+
 def render_ops_report(
     settings: Settings,
     *,
@@ -202,8 +267,43 @@ def publish_discord_ops_alerts(
         job_run_id=job_run_id,
         dry_run=dry_run,
     )
-    payload_path = next(Path(path) for path in rendered.artifact_paths if path.endswith(".json"))
-    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    health = _fetch_frame(
+        connection,
+        """
+        SELECT *
+        FROM vw_latest_health_snapshot
+        ORDER BY health_scope, component_name, metric_name
+        """,
+    )
+    recovery = _fetch_frame(
+        connection,
+        """
+        SELECT *
+        FROM vw_latest_recovery_action
+        ORDER BY created_at DESC
+        LIMIT 20
+        """,
+    )
+    summary = _build_ops_discord_summary(
+        as_of_date=as_of_date,
+        health=health,
+        recovery=recovery,
+    )
+    artifact_dir = (
+        settings.paths.artifacts_dir
+        / "ops"
+        / "report"
+        / f"as_of_date={as_of_date.isoformat()}"
+        / (job_run_id or "embedded")
+    )
+    summary_payload_path = artifact_dir / "ops_report_discord_summary.json"
+    payload = {
+        "username": settings.discord.username,
+        "messages": [{"content": summary}],
+        "message_count": 1,
+        "dry_run": dry_run,
+    }
+    summary_payload_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     published = False
     if not dry_run and settings.discord.webhook_url:
         publish_discord_messages(
@@ -218,5 +318,5 @@ def publish_discord_ops_alerts(
         job_name="publish_discord_ops_alerts",
         status=JobStatus.SUCCESS,
         notes=notes,
-        artifact_paths=rendered.artifact_paths,
+        artifact_paths=[*rendered.artifact_paths, str(summary_payload_path)],
     )
