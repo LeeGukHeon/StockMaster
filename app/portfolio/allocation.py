@@ -706,6 +706,9 @@ def materialize_portfolio_target_book(
                             "created_at",
                         ],
                     )
+                    for date_column in ["as_of_date", "session_date", "entry_trade_date", "exit_trade_date"]:
+                        if date_column in output.columns:
+                            output[date_column] = pd.to_datetime(output[date_column], errors="coerce")
                     output_frames.append(output)
                     if constraint_rows:
                         constraint_frame = pd.DataFrame(constraint_rows)
