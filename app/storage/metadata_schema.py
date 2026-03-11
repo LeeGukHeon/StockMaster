@@ -293,4 +293,87 @@ def postgres_metadata_ddl(schema: str) -> tuple[str, ...]:
             created_at TIMESTAMPTZ NOT NULL
         )
         """,
+        f"""
+        CREATE OR REPLACE VIEW "{schema}"."vw_latest_pipeline_dependency_state" AS
+        SELECT *
+        FROM (
+            SELECT
+                *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY pipeline_name, dependency_name
+                    ORDER BY checked_at DESC, created_at DESC
+                ) AS row_number
+            FROM {qualified("fact_pipeline_dependency_state")}
+        ) ranked
+        WHERE row_number = 1
+        """,
+        f"""
+        CREATE OR REPLACE VIEW "{schema}"."vw_latest_health_snapshot" AS
+        SELECT *
+        FROM (
+            SELECT
+                *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY health_scope, component_name, metric_name
+                    ORDER BY snapshot_at DESC, created_at DESC
+                ) AS row_number
+            FROM {qualified("fact_health_snapshot")}
+        ) ranked
+        WHERE row_number = 1
+        """,
+        f"""
+        CREATE OR REPLACE VIEW "{schema}"."vw_latest_app_snapshot" AS
+        SELECT *
+        FROM (
+            SELECT
+                *,
+                ROW_NUMBER() OVER (
+                    ORDER BY snapshot_ts DESC, created_at DESC
+                ) AS row_number
+            FROM {qualified("fact_latest_app_snapshot")}
+        ) ranked
+        WHERE row_number = 1
+        """,
+        f"""
+        CREATE OR REPLACE VIEW "{schema}"."vw_latest_report_index" AS
+        SELECT *
+        FROM (
+            SELECT
+                *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY report_type
+                    ORDER BY generated_ts DESC, created_at DESC
+                ) AS row_number
+            FROM {qualified("fact_latest_report_index")}
+        ) ranked
+        WHERE row_number = 1
+        """,
+        f"""
+        CREATE OR REPLACE VIEW "{schema}"."vw_latest_release_candidate_check" AS
+        SELECT *
+        FROM (
+            SELECT
+                *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY check_name
+                    ORDER BY check_ts DESC, created_at DESC
+                ) AS row_number
+            FROM {qualified("fact_release_candidate_check")}
+        ) ranked
+        WHERE row_number = 1
+        """,
+        f"""
+        CREATE OR REPLACE VIEW "{schema}"."vw_latest_ui_data_freshness_snapshot" AS
+        SELECT *
+        FROM (
+            SELECT
+                *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY page_name, dataset_name
+                    ORDER BY snapshot_ts DESC, created_at DESC
+                ) AS row_number
+            FROM {qualified("fact_ui_data_freshness_snapshot")}
+        ) ranked
+        WHERE row_number = 1
+        """,
     )

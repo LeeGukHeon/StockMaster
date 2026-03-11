@@ -42,13 +42,25 @@ from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.settings import Settings, load_settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
+from app.storage.metadata_postgres import fetchdf_postgres_sql, metadata_postgres_enabled
 from app.storage.manifests import fetch_recent_runs
 
 
-def latest_job_runs_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+def _metadata_frame(
+    settings: Settings,
+    query: str,
+    params: list[object] | None = None,
+) -> pd.DataFrame:
+    if metadata_postgres_enabled(settings):
+        return fetchdf_postgres_sql(settings, query, params or [])
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+        return connection.execute(query, params or []).fetchdf()
+
+
+def latest_job_runs_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 run_id,
                 job_name,
@@ -64,15 +76,15 @@ def latest_job_runs_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
             FROM fact_job_run
             ORDER BY started_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_step_failure_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 job_run_id,
                 step_name,
@@ -85,15 +97,15 @@ def latest_step_failure_frame(settings: Settings, limit: int = 20) -> pd.DataFra
             WHERE status = 'FAILED'
             ORDER BY started_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_pipeline_dependency_frame(settings: Settings, limit: int = 50) -> pd.DataFrame:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 pipeline_name,
                 dependency_name,
@@ -105,15 +117,15 @@ def latest_pipeline_dependency_frame(settings: Settings, limit: int = 50) -> pd.
             FROM vw_latest_pipeline_dependency_state
             ORDER BY pipeline_name, dependency_name
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_health_snapshot_frame(settings: Settings, limit: int = 100) -> pd.DataFrame:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 health_scope,
                 component_name,
@@ -125,15 +137,15 @@ def latest_health_snapshot_frame(settings: Settings, limit: int = 100) -> pd.Dat
             FROM vw_latest_health_snapshot
             ORDER BY health_scope, component_name, metric_name
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_disk_watermark_event_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 measured_at,
                 disk_status,
@@ -146,15 +158,15 @@ def latest_disk_watermark_event_frame(settings: Settings, limit: int = 20) -> pd
             FROM fact_disk_watermark_event
             ORDER BY measured_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_retention_cleanup_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 started_at,
                 finished_at,
@@ -167,15 +179,15 @@ def latest_retention_cleanup_frame(settings: Settings, limit: int = 20) -> pd.Da
             FROM fact_retention_cleanup_run
             ORDER BY started_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_active_lock_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 lock_name,
                 job_name,
@@ -188,15 +200,15 @@ def latest_active_lock_frame(settings: Settings, limit: int = 20) -> pd.DataFram
             WHERE released_at IS NULL
             ORDER BY acquired_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_recovery_queue_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 recovery_action_id,
                 action_type,
@@ -211,15 +223,15 @@ def latest_recovery_queue_frame(settings: Settings, limit: int = 20) -> pd.DataF
             FROM fact_recovery_action
             ORDER BY created_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_alert_event_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 created_at,
                 alert_type,
@@ -231,15 +243,15 @@ def latest_alert_event_frame(settings: Settings, limit: int = 20) -> pd.DataFram
             FROM fact_alert_event
             ORDER BY created_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_active_ops_policy_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 policy_id,
                 policy_version,
@@ -253,9 +265,9 @@ def latest_active_ops_policy_frame(settings: Settings, limit: int = 20) -> pd.Da
             FROM fact_active_ops_policy
             ORDER BY effective_from_at DESC
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def scheduler_job_catalog_frame(settings: Settings) -> pd.DataFrame:
@@ -462,13 +474,13 @@ def latest_successful_pipeline_output_frame(settings: Settings, limit: int = 20)
 
 
 def latest_app_snapshot_frame(settings: Settings) -> pd.DataFrame:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT *
             FROM vw_latest_app_snapshot
-            """
-        ).fetchdf()
+        """,
+    )
 
 
 def latest_report_index_frame(
@@ -485,9 +497,9 @@ def latest_report_index_frame(
         where_clause = "WHERE report_type = ?"
         params.append(report_type)
     params.append(limit)
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            f"""
+    return _metadata_frame(
+        settings,
+        f"""
             SELECT
                 report_type,
                 report_key,
@@ -504,15 +516,15 @@ def latest_report_index_frame(
             {where_clause}
             ORDER BY generated_ts DESC, created_at DESC
             LIMIT ?
-            """,
-            params,
-        ).fetchdf()
+        """,
+        params,
+    )
 
 
 def latest_release_candidate_check_frame(settings: Settings, *, limit: int = 20) -> pd.DataFrame:
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            """
+    return _metadata_frame(
+        settings,
+        """
             SELECT
                 check_ts,
                 check_name,
@@ -523,9 +535,9 @@ def latest_release_candidate_check_frame(settings: Settings, *, limit: int = 20)
             FROM fact_release_candidate_check
             ORDER BY check_ts DESC, check_name
             LIMIT ?
-            """,
-            [limit],
-        ).fetchdf()
+        """,
+        [limit],
+    )
 
 
 def latest_ui_freshness_frame(
@@ -540,9 +552,9 @@ def latest_ui_freshness_frame(
         where_clause = "WHERE page_name = ?"
         params.append(page_name)
     params.append(limit)
-    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
-        return connection.execute(
-            f"""
+    return _metadata_frame(
+        settings,
+        f"""
             SELECT
                 snapshot_ts,
                 page_name,
@@ -556,9 +568,9 @@ def latest_ui_freshness_frame(
             {where_clause}
             ORDER BY page_name, dataset_name
             LIMIT ?
-            """,
-            params,
-        ).fetchdf()
+        """,
+        params,
+    )
 
 
 HOME_OPERATIONAL_CRITICAL_FRESHNESS_KEYS: tuple[tuple[str, str], ...] = (
