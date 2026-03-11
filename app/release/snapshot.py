@@ -14,9 +14,14 @@ import duckdb
 from app.common.time import now_local
 from app.ops.common import JobStatus, OpsJobResult
 from app.ops.repository import json_text
-from app.settings import Settings
+from app.settings import Settings, get_settings
 from app.storage.duckdb import bootstrap_core_tables
-from app.storage.metadata_postgres import execute_postgres_sql, executemany_postgres_sql
+from app.storage.metadata_postgres import (
+    execute_postgres_sql,
+    executemany_postgres_sql,
+    fetchone_postgres_sql,
+    metadata_postgres_enabled,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,7 +329,20 @@ def _resolve_run_status(connection: duckdb.DuckDBPyConnection, run_id: str | Non
     status = _scalar(connection, "SELECT status FROM fact_job_run WHERE run_id = ?", [run_id])
     if status:
         return str(status)
-    manifest_status = _scalar(connection, "SELECT status FROM ops_run_manifest WHERE run_id = ?", [run_id])
+    settings = get_settings()
+    if metadata_postgres_enabled(settings):
+        row = fetchone_postgres_sql(
+            settings,
+            "SELECT status FROM ops_run_manifest WHERE run_id = ?",
+            [run_id],
+        )
+        manifest_status = row[0] if row else None
+    else:
+        manifest_status = _scalar(
+            connection,
+            "SELECT status FROM ops_run_manifest WHERE run_id = ?",
+            [run_id],
+        )
     if manifest_status:
         normalized = str(manifest_status).upper()
         if normalized == "SUCCESS":
