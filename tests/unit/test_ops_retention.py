@@ -8,6 +8,7 @@ from app.ops.common import JobStatus
 from app.ops.maintenance import (
     _parse_reclaimed_bytes,
     cleanup_docker_build_cache,
+    cleanup_model_artifacts,
     enforce_retention_policies,
     reconcile_failed_runs,
 )
@@ -133,3 +134,87 @@ def test_reconcile_failed_runs_does_not_requeue_targets_with_prior_recovery_acti
         ).fetchone()[0]
     assert result.row_count == 0
     assert count == 1
+
+
+def test_cleanup_model_artifacts_keeps_active_and_latest_runs(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+
+    stale_artifact = settings.paths.artifacts_dir / "models" / "alpha" / "stale.pkl"
+    active_artifact = settings.paths.artifacts_dir / "models" / "alpha" / "active.pkl"
+    latest_artifact = settings.paths.artifacts_dir / "models" / "alpha" / "latest.pkl"
+    stale_artifact.parent.mkdir(parents=True, exist_ok=True)
+    stale_artifact.write_bytes(b"stale")
+    active_artifact.write_bytes(b"active")
+    latest_artifact.write_bytes(b"latest")
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        connection.execute(
+            """
+            INSERT INTO fact_model_training_run (
+                training_run_id, run_id, model_domain, model_version, model_spec_id,
+                estimation_scheme, rolling_window_days, horizon, panel_name, train_end_date,
+                training_window_start, training_window_end, validation_window_start, validation_window_end,
+                train_row_count, validation_row_count, train_session_count, validation_session_count,
+                feature_count, ensemble_weight_json, model_family_json, threshold_payload_json,
+                diagnostic_artifact_uri, metadata_json, fallback_flag, fallback_reason, artifact_uri,
+                notes, status, created_at
+            ) VALUES
+            (
+                'stale-run', 'run-1', 'alpha', 'alpha_model_v1', 'alpha_recursive_expanding_v1',
+                'recursive', NULL, 1, NULL, DATE '2026-03-09',
+                NULL, NULL, NULL, NULL, 100, 20, NULL, NULL,
+                10, '{}', '{}', NULL, NULL, NULL, FALSE, NULL, ?, 'stale', 'success', TIMESTAMPTZ '2026-03-09 10:00:00+00'
+            ),
+            (
+                'active-run', 'run-2', 'alpha', 'alpha_model_v1', 'alpha_recursive_expanding_v1',
+                'recursive', NULL, 1, NULL, DATE '2026-03-10',
+                NULL, NULL, NULL, NULL, 100, 20, NULL, NULL,
+                10, '{}', '{}', NULL, NULL, NULL, FALSE, NULL, ?, 'active', 'success', TIMESTAMPTZ '2026-03-10 10:00:00+00'
+            ),
+            (
+                'latest-run', 'run-3', 'alpha', 'alpha_model_v1', 'alpha_recursive_expanding_v1',
+                'recursive', NULL, 1, NULL, DATE '2026-03-11',
+                NULL, NULL, NULL, NULL, 100, 20, NULL, NULL,
+                10, '{}', '{}', NULL, NULL, NULL, FALSE, NULL, ?, 'latest', 'success', TIMESTAMPTZ '2026-03-11 10:00:00+00'
+            )
+            """,
+            [str(stale_artifact), str(active_artifact), str(latest_artifact)],
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_alpha_active_model (
+                active_alpha_model_id, horizon, model_spec_id, training_run_id, model_version,
+                source_type, promotion_type, promotion_report_json, effective_from_date, effective_to_date,
+                active_flag, rollback_of_active_alpha_model_id, note, created_at, updated_at
+            ) VALUES (
+                'active-model-1', 1, 'alpha_recursive_expanding_v1', 'active-run', 'alpha_model_v1',
+                'manual', 'MANUAL_FREEZE', NULL, DATE '2026-03-10', NULL,
+                TRUE, NULL, NULL, now(), now()
+            )
+            """
+        )
+
+        result = cleanup_model_artifacts(
+            settings,
+            connection=connection,
+            dry_run=False,
+            policy_config_path=project_root() / "config" / "ops" / "default_ops_policy.yaml",
+        )
+        cleanup_rows = connection.execute(
+            """
+            SELECT removed_file_count, reclaimed_bytes
+            FROM fact_retention_cleanup_run
+            WHERE cleanup_scope = 'MODEL_ARTIFACTS'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+    assert result.status == JobStatus.SUCCESS
+    assert result.row_count == 1
+    assert not stale_artifact.exists()
+    assert active_artifact.exists()
+    assert latest_artifact.exists()
+    assert cleanup_rows[0] == 1
+    assert cleanup_rows[1] >= 5

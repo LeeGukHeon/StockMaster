@@ -9,6 +9,8 @@ default_dry_run: false
 log_compression_after_days: 1
 docker_builder_prune_enabled: true
 docker_builder_prune_until_hours: 24
+model_artifact_cleanup_enabled: true
+model_artifact_keep_latest_per_group: 1
 high_frequency_blocked_jobs:
   - run_intraday_candidate_collector
   - sync_investor_flow

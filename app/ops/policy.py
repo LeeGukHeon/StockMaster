@@ -37,6 +37,8 @@ class OpsPolicy:
     log_compression_after_days: int = 1
     docker_builder_prune_enabled: bool = True
     docker_builder_prune_until_hours: int = 24
+    model_artifact_cleanup_enabled: bool = True
+    model_artifact_keep_latest_per_group: int = 1
 
 
 @dataclass(slots=True)
@@ -83,6 +85,10 @@ def _parse_ops_policy(payload: dict[str, Any]) -> OpsPolicy:
         docker_builder_prune_enabled=bool(payload.get("docker_builder_prune_enabled", True)),
         docker_builder_prune_until_hours=int(
             payload.get("docker_builder_prune_until_hours", 24)
+        ),
+        model_artifact_cleanup_enabled=bool(payload.get("model_artifact_cleanup_enabled", True)),
+        model_artifact_keep_latest_per_group=int(
+            payload.get("model_artifact_keep_latest_per_group", 1)
         ),
     )
 

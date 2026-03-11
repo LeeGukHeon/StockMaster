@@ -51,6 +51,7 @@ from app.ops.common import OpsJobResult, TriggerType
 from app.ops.health import check_pipeline_dependencies, materialize_health_snapshots
 from app.ops.maintenance import (
     cleanup_docker_build_cache,
+    cleanup_model_artifacts,
     cleanup_stale_job_runs,
     cleanup_disk_watermark,
     reconcile_failed_runs,
@@ -585,6 +586,16 @@ def run_ops_maintenance_bundle(
             job.run_step(
                 "cleanup_docker_build_cache",
                 cleanup_docker_build_cache,
+                settings,
+                connection=connection,
+                job_run_id=job.run_id,
+                dry_run=dry_run,
+                policy_config_path=policy_config_path,
+                critical=False,
+            )
+            job.run_step(
+                "cleanup_model_artifacts",
+                cleanup_model_artifacts,
                 settings,
                 connection=connection,
                 job_run_id=job.run_id,

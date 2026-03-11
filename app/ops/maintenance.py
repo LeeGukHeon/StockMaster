@@ -122,6 +122,39 @@ def _parse_reclaimed_bytes(output: str) -> int:
     return int(value * _SIZE_MULTIPLIERS.get(unit, 1))
 
 
+def _remove_empty_parents(path: Path, *, stop_roots: set[Path]) -> None:
+    current = path.parent
+    normalized_roots = {root.resolve() for root in stop_roots}
+    while current.exists():
+        resolved_current = current.resolve()
+        if resolved_current in normalized_roots:
+            return
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
+def _safe_artifact_path(
+    path_value: object,
+    *,
+    project_root: Path,
+    allowed_roots: set[Path],
+) -> Path | None:
+    if path_value in (None, ""):
+        return None
+    candidate = Path(str(path_value))
+    if not candidate.is_absolute():
+        candidate = (project_root / candidate).resolve()
+    else:
+        candidate = candidate.resolve()
+    normalized_roots = [root.resolve() for root in allowed_roots]
+    if not any(candidate == root or root in candidate.parents for root in normalized_roots):
+        return None
+    return candidate
+
+
 def summarize_storage_usage(
     settings: Settings,
     *,
@@ -285,6 +318,191 @@ def cleanup_docker_build_cache(
             f"reclaimed_bytes={reclaimed_bytes}"
         ),
         artifact_paths=[str(artifact_path)],
+    )
+
+
+def cleanup_model_artifacts(
+    settings: Settings,
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    job_run_id: str | None = None,
+    dry_run: bool,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    bootstrap_core_tables(connection)
+    resolved = load_active_or_default_ops_policy(
+        settings,
+        connection,
+        as_of_at=utc_now(),
+        policy_config_path=policy_config_path,
+    )
+    if not resolved.policy.model_artifact_cleanup_enabled:
+        return OpsJobResult(
+            run_id=job_run_id or "embedded",
+            job_name="cleanup_model_artifacts",
+            status=JobStatus.SKIPPED,
+            notes="Model artifact cleanup is disabled by ops policy.",
+        )
+
+    keep_latest = max(1, int(resolved.policy.model_artifact_keep_latest_per_group))
+    rows = connection.execute(
+        """
+        SELECT
+            training_run_id,
+            model_domain,
+            model_spec_id,
+            horizon,
+            panel_name,
+            train_end_date,
+            created_at,
+            status,
+            artifact_uri,
+            diagnostic_artifact_uri
+        FROM fact_model_training_run
+        WHERE artifact_uri IS NOT NULL OR diagnostic_artifact_uri IS NOT NULL
+        ORDER BY created_at DESC
+        """
+    ).fetchdf()
+    if rows.empty:
+        return OpsJobResult(
+            run_id=job_run_id or "embedded",
+            job_name="cleanup_model_artifacts",
+            status=JobStatus.SUCCESS,
+            notes="No model artifacts were registered for cleanup.",
+            row_count=0,
+        )
+
+    protected_training_run_ids = {
+        str(value)
+        for value in connection.execute(
+            """
+            SELECT training_run_id FROM fact_alpha_active_model
+            UNION
+            SELECT training_run_id FROM fact_intraday_active_meta_model
+            """
+        ).fetchnumpy()["training_run_id"].tolist()
+        if value is not None
+    }
+    latest_training_run_ids = {
+        str(row[0])
+        for row in connection.execute(
+            f"""
+            WITH ranked AS (
+                SELECT
+                    training_run_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY
+                            COALESCE(model_domain, 'default'),
+                            COALESCE(model_spec_id, '__default__'),
+                            horizon,
+                            COALESCE(panel_name, '__all__')
+                        ORDER BY train_end_date DESC, created_at DESC
+                    ) AS row_number
+                FROM fact_model_training_run
+                WHERE status = 'success'
+                  AND (artifact_uri IS NOT NULL OR diagnostic_artifact_uri IS NOT NULL)
+            )
+            SELECT training_run_id
+            FROM ranked
+            WHERE row_number <= {keep_latest}
+            """
+        ).fetchall()
+        if row[0] is not None
+    }
+    keep_training_run_ids = protected_training_run_ids | latest_training_run_ids
+
+    legacy_artifacts_root = (settings.paths.project_root / "data" / "artifacts").resolve()
+    allowed_roots = {settings.paths.artifacts_dir.resolve()}
+    if legacy_artifacts_root != settings.paths.artifacts_dir.resolve():
+        allowed_roots.add(legacy_artifacts_root)
+
+    records: list[dict[str, object]] = []
+    removed_files: set[Path] = set()
+    reclaimed_bytes = 0
+    removed_count = 0
+    for row in rows.itertuples(index=False):
+        training_run_id = str(row.training_run_id)
+        if training_run_id in keep_training_run_ids:
+            continue
+        candidate_paths = [
+            _safe_artifact_path(
+                row.artifact_uri,
+                project_root=settings.paths.project_root,
+                allowed_roots=allowed_roots,
+            ),
+            _safe_artifact_path(
+                row.diagnostic_artifact_uri,
+                project_root=settings.paths.project_root,
+                allowed_roots=allowed_roots,
+            ),
+        ]
+        existing_paths = [path for path in candidate_paths if path is not None and path.exists()]
+        if not existing_paths:
+            continue
+        for path in existing_paths:
+            if path in removed_files:
+                continue
+            file_size = int(path.stat().st_size)
+            records.append(
+                {
+                    "training_run_id": training_run_id,
+                    "model_domain": row.model_domain,
+                    "model_spec_id": row.model_spec_id,
+                    "horizon": row.horizon,
+                    "panel_name": row.panel_name,
+                    "train_end_date": str(row.train_end_date) if row.train_end_date is not None else None,
+                    "path": str(path),
+                    "size_bytes": file_size,
+                }
+            )
+            removed_files.add(path)
+            reclaimed_bytes += file_size
+            removed_count += 1
+            if not dry_run:
+                path.unlink(missing_ok=True)
+                _remove_empty_parents(path, stop_roots=allowed_roots)
+
+    artifact_dir = settings.paths.artifacts_dir / "ops" / "model_artifact_cleanup"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_dir / f"{utc_now().strftime('%Y%m%dT%H%M%S%f')}.json"
+    payload = {
+        "mode": "dry_run" if dry_run else "execute",
+        "keep_latest_per_group": keep_latest,
+        "protected_training_run_ids": sorted(keep_training_run_ids),
+        "removed_file_count": removed_count,
+        "reclaimed_bytes": reclaimed_bytes,
+        "records": records[:500],
+    }
+    artifact_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    insert_retention_cleanup_run(
+        connection,
+        cleanup_run_id=f"model-artifacts-{utc_now().strftime('%Y%m%dT%H%M%S%f')}",
+        started_at=now_local(settings.app.timezone),
+        finished_at=now_local(settings.app.timezone),
+        status=JobStatus.SUCCESS,
+        dry_run=dry_run,
+        cleanup_scope="MODEL_ARTIFACTS",
+        removed_file_count=removed_count,
+        reclaimed_bytes=reclaimed_bytes,
+        target_paths=[str(record["path"]) for record in records[:500]],
+        notes="Model artifact cleanup completed.",
+        job_run_id=job_run_id,
+        details={
+            "keep_latest_per_group": keep_latest,
+            "output_artifact": str(artifact_path),
+        },
+    )
+    return OpsJobResult(
+        run_id=job_run_id or "embedded",
+        job_name="cleanup_model_artifacts",
+        status=JobStatus.SUCCESS,
+        notes=(
+            f"Model artifact cleanup completed. files={removed_count} "
+            f"reclaimed_bytes={reclaimed_bytes}"
+        ),
+        artifact_paths=[str(artifact_path)],
+        row_count=removed_count,
     )
 
 
