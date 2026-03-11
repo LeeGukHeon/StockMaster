@@ -164,7 +164,7 @@ def render_today_page() -> None:
         summary="처음 앱을 열었을 때 가장 먼저 보는 시작 화면입니다. 오늘 기준일, 열린 경고, 주목 종목, 최신 보고서를 빠르게 훑는 용도로 씁니다.",
         bullets=[
             "먼저 현재 기준일과 치명 알림 수를 확인하세요.",
-            "다음으로 오늘의 주목 종목과 추천 해석을 읽고, 더 자세한 판단은 리더보드나 포트폴리오로 이동하세요.",
+            "다음으로 오늘의 주목 종목에서 선정일, 진입 예정일, 기준 종가, 참고 목표선/손절선을 같이 보세요.",
             "성과가 궁금하면 사후 평가, 운영 상태가 궁금하면 운영 화면으로 이동하면 됩니다.",
         ],
     )
@@ -226,6 +226,10 @@ def render_today_page() -> None:
     actionable_left, actionable_right = st.columns((2, 1))
     with actionable_left:
         st.subheader("오늘의 주목 종목")
+        st.caption(
+            "진입 예정일은 다음 거래일 기준입니다. 참고 목표가와 손절선은 추천이 만들어진 날 종가에 "
+            "예측 범위를 단순 반영한 참고선이며, 실제 자동 매매 규칙은 아닙니다."
+        )
         render_top_actionable_badges(settings)
         if selection_preview.empty:
             st.info("선정 엔진 v2 미리보기가 없습니다.")
@@ -236,10 +240,15 @@ def render_today_page() -> None:
                 primary_column="symbol",
                 secondary_columns=["company_name", "grade"],
                 detail_columns=[
+                    "selection_date",
+                    "next_entry_trade_date",
+                    "selection_close_price",
                     "final_selection_value",
                     "expected_excess_return",
-                    "lower_band",
-                    "upper_band",
+                    "flat_target_price",
+                    "flat_upper_target_price",
+                    "flat_stop_price",
+                    "model_spec_id",
                     "flow_score",
                     "risks",
                 ],

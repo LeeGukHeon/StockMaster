@@ -10,8 +10,8 @@ from app.common.discord import publish_discord_messages
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.promotion import load_alpha_promotion_summary
-from app.selection.calibration import PREDICTION_VERSION
-from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
+from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
+from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -45,6 +45,13 @@ REGIME_LABELS = {
     "neutral": "뚜렷한 방향이 약한 장",
     "risk_on": "상대적으로 강한 장",
     "euphoria": "과열 느낌이 강한 장",
+}
+
+MODEL_SPEC_LABELS = {
+    "alpha_recursive_expanding_v1": "확장형 누적 학습",
+    "alpha_rolling_120_v1": "최근 120거래일 중심 학습",
+    "alpha_rolling_250_v1": "최근 250거래일 중심 학습",
+    "alpha_recursive_rolling_combo": "누적+최근 구간 혼합",
 }
 
 
@@ -111,6 +118,13 @@ def _load_top_selection_rows(
     return connection.execute(
         """
         SELECT
+            ranking.as_of_date AS selection_date,
+            (
+                SELECT MIN(calendar.trading_date)
+                FROM dim_trading_calendar AS calendar
+                WHERE calendar.trading_date > ranking.as_of_date
+                  AND calendar.is_trading_day
+            ) AS next_entry_trade_date,
             ranking.symbol,
             symbol.company_name,
             symbol.market,
@@ -120,7 +134,10 @@ def _load_top_selection_rows(
             ranking.risk_flags_json,
             prediction.expected_excess_return,
             prediction.lower_band,
-            prediction.upper_band
+            prediction.upper_band,
+            prediction.model_spec_id,
+            prediction.active_alpha_model_id,
+            daily.close AS selection_close_price
         FROM fact_ranking AS ranking
         JOIN dim_symbol AS symbol
           ON ranking.symbol = symbol.symbol
@@ -130,6 +147,9 @@ def _load_top_selection_rows(
          AND ranking.horizon = prediction.horizon
          AND prediction.prediction_version = ?
          AND prediction.ranking_version = ?
+        LEFT JOIN fact_daily_ohlcv AS daily
+          ON ranking.symbol = daily.symbol
+         AND ranking.as_of_date = daily.trading_date
         WHERE ranking.as_of_date = ?
           AND ranking.horizon = ?
           AND ranking.ranking_version = ?
@@ -137,11 +157,11 @@ def _load_top_selection_rows(
         LIMIT ?
         """,
         [
-            PREDICTION_VERSION,
-            SELECTION_ENGINE_VERSION,
+            ALPHA_PREDICTION_VERSION,
+            SELECTION_ENGINE_V2_VERSION,
             as_of_date,
             horizon,
-            SELECTION_ENGINE_VERSION,
+            SELECTION_ENGINE_V2_VERSION,
             limit,
         ],
     ).fetchdf()
@@ -185,6 +205,12 @@ def _format_pick_block(row: pd.Series, *, rank: int) -> list[str]:
         f"{rank}. `{row['symbol']}` {row['company_name']} ({row['market']})",
         f"   - 왜 봐야 하나: 등급 {row['grade']} / 종합점수 {float(row['final_selection_value']):.1f}",
     ]
+    if pd.notna(row.get("selection_date")) or pd.notna(row.get("next_entry_trade_date")):
+        lines.append(
+            f"   - 언제 보나: 선정일 {row.get('selection_date') or '-'} / 진입 예정일 {row.get('next_entry_trade_date') or '-'}"
+        )
+    if pd.notna(row.get("selection_close_price")):
+        lines.append(f"   - 참고 기준가: {float(row['selection_close_price']):,.0f}원")
     if all(pd.notna(row.get(key)) for key in ("expected_excess_return", "lower_band", "upper_band")):
         lines.append(
             "   - 참고 흐름: 기대수익 {expected:+.2%}, 참고 범위 {lower:+.2%} ~ {upper:+.2%}".format(
@@ -192,6 +218,20 @@ def _format_pick_block(row: pd.Series, *, rank: int) -> list[str]:
                 lower=float(row["lower_band"]),
                 upper=float(row["upper_band"]),
             )
+        )
+    if all(pd.notna(row.get(key)) for key in ("selection_close_price", "expected_excess_return", "lower_band", "upper_band")):
+        base_price = float(row["selection_close_price"])
+        lines.append(
+            "   - 참고 가격선: 목표 {target:,.0f}원 / 강한 흐름 {upper:,.0f}원 / 손절선 {stop:,.0f}원".format(
+                target=base_price * (1.0 + float(row["expected_excess_return"])),
+                upper=base_price * (1.0 + float(row["upper_band"])),
+                stop=base_price * (1.0 + float(row["lower_band"])),
+            )
+        )
+    model_spec = MODEL_SPEC_LABELS.get(str(row.get("model_spec_id")), str(row.get("model_spec_id") or "-"))
+    if row.get("active_alpha_model_id") or row.get("model_spec_id"):
+        lines.append(
+            f"   - 사용 모델: {model_spec} / 활성 모델 ID {row.get('active_alpha_model_id') or '-'}"
         )
     lines.append(f"   - 주요 근거: {reasons}")
     lines.append(f"   - 주의할 점: {risks}")
@@ -377,7 +417,7 @@ def render_discord_eod_report(
                     "fact_alpha_active_model",
                 ],
                 notes=f"Render Discord EOD report for {as_of_date.isoformat()}",
-                ranking_version=SELECTION_ENGINE_VERSION,
+                ranking_version=SELECTION_ENGINE_V2_VERSION,
             )
             try:
                 market_pulse = _load_market_pulse(connection, as_of_date=as_of_date)
@@ -450,7 +490,7 @@ def render_discord_eod_report(
                     status="success",
                     output_artifacts=artifact_paths,
                     notes=notes,
-                    ranking_version=SELECTION_ENGINE_VERSION,
+                    ranking_version=SELECTION_ENGINE_V2_VERSION,
                 )
                 return DiscordRenderResult(
                     run_id=run_context.run_id,
@@ -468,7 +508,7 @@ def render_discord_eod_report(
                     output_artifacts=[],
                     notes=f"Discord render failed for {as_of_date.isoformat()}",
                     error_message=str(exc),
-                    ranking_version=SELECTION_ENGINE_VERSION,
+                    ranking_version=SELECTION_ENGINE_V2_VERSION,
                 )
                 raise
 
@@ -492,7 +532,7 @@ def publish_discord_eod_report(
                 as_of_date=run_context.as_of_date,
                 input_sources=["render_discord_eod_report"],
                 notes=f"Publish Discord EOD report for {as_of_date.isoformat()}",
-                ranking_version=SELECTION_ENGINE_VERSION,
+                ranking_version=SELECTION_ENGINE_V2_VERSION,
             )
 
         render_result = render_discord_eod_report(settings, as_of_date=as_of_date, dry_run=dry_run)
@@ -553,7 +593,7 @@ def publish_discord_eod_report(
                     status="success",
                     output_artifacts=artifact_paths,
                     notes=notes,
-                    ranking_version=SELECTION_ENGINE_VERSION,
+                    ranking_version=SELECTION_ENGINE_V2_VERSION,
                 )
 
         return DiscordPublishResult(

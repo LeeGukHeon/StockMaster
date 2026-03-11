@@ -875,6 +875,13 @@ UI_COLUMN_LABELS: dict[str, str] = {
     "median_bias": "중앙값 편향",
     "quality_flag": "품질 플래그",
     "selection_date": "선정일",
+    "next_entry_trade_date": "진입 예정일",
+    "selection_close_price": "추천 기준 종가",
+    "flat_target_price": "참고 목표가(시장 보합 가정)",
+    "flat_upper_target_price": "강한 흐름 목표가(시장 보합 가정)",
+    "flat_stop_price": "참고 손절선(시장 보합 가정)",
+    "active_alpha_model_id": "사용 중인 알파 모델 ID",
+    "model_spec_id": "사용 모델 방식",
     "investor_flow_rows": "수급 행수",
     "foreign_positive_ratio": "외국인 순매수 비율",
     "institution_positive_ratio": "기관 순매수 비율",
@@ -1948,11 +1955,19 @@ PERCENT_COLUMN_TOKENS: tuple[str, ...] = (
 PERCENT_COLUMN_EXACT: set[str] = {
     "drawdown",
 }
+PRICE_COLUMN_TOKENS: tuple[str, ...] = ("_price",)
+PRICE_COLUMN_EXACT: set[str] = {"open", "high", "low", "close", "target_price", "reference_price"}
 
 
 def _is_percent_display_column(column: str) -> bool:
     return column in PERCENT_COLUMN_EXACT or any(
         token in column for token in PERCENT_COLUMN_TOKENS
+    )
+
+
+def _is_price_display_column(column: str) -> bool:
+    return column in PRICE_COLUMN_EXACT or any(
+        token in column for token in PRICE_COLUMN_TOKENS
     )
 
 
@@ -1967,10 +1982,20 @@ def _format_percent_value(value: object) -> object:
     return f"{scaled:.2f}%"
 
 
+def _format_price_value(value: object) -> object:
+    if pd.isna(value) or isinstance(value, bool):
+        return value
+    if not isinstance(value, numbers.Real):
+        return value
+    return f"{float(value):,.0f}원"
+
+
 def _format_scalar_for_display(column: str, value: object) -> object:
     translated = _translate_scalar(column, value)
     if _is_percent_display_column(column):
         return _format_percent_value(translated)
+    if _is_price_display_column(column):
+        return _format_price_value(translated)
     return translated
 
 
@@ -2846,6 +2871,13 @@ def leaderboard_frame(
             """
             SELECT
                 ranking.as_of_date,
+                ranking.as_of_date AS selection_date,
+                (
+                    SELECT MIN(calendar.trading_date)
+                    FROM dim_trading_calendar AS calendar
+                    WHERE calendar.trading_date > ranking.as_of_date
+                      AND calendar.is_trading_day
+                ) AS next_entry_trade_date,
                 ranking.symbol,
                 symbol.company_name,
                 symbol.market,
@@ -2862,10 +2894,13 @@ def leaderboard_frame(
                 prediction.lower_band,
                 prediction.median_band,
                 prediction.upper_band,
+                prediction.model_spec_id,
+                prediction.active_alpha_model_id,
                 prediction.uncertainty_score,
                 prediction.disagreement_score,
                 prediction.fallback_flag,
                 prediction.fallback_reason,
+                daily.close AS selection_close_price,
                 outcome.outcome_status,
                 outcome.realized_excess_return,
                 outcome.band_status
@@ -2876,8 +2911,11 @@ def leaderboard_frame(
               ON ranking.as_of_date = prediction.as_of_date
              AND ranking.symbol = prediction.symbol
              AND ranking.horizon = prediction.horizon
-             AND prediction.prediction_version = ?
-             AND prediction.ranking_version = ranking.ranking_version
+              AND prediction.prediction_version = ?
+              AND prediction.ranking_version = ranking.ranking_version
+            LEFT JOIN fact_daily_ohlcv AS daily
+              ON ranking.symbol = daily.symbol
+             AND ranking.as_of_date = daily.trading_date
             LEFT JOIN fact_selection_outcome AS outcome
               ON ranking.as_of_date = outcome.selection_date
              AND ranking.symbol = outcome.symbol
@@ -2894,6 +2932,13 @@ def leaderboard_frame(
         return frame
     if market.upper() != "ALL":
         frame = frame.loc[frame["market"].str.upper() == market.upper()].copy()
+    base_price = pd.to_numeric(frame.get("selection_close_price"), errors="coerce")
+    expected = pd.to_numeric(frame.get("expected_excess_return"), errors="coerce")
+    upper = pd.to_numeric(frame.get("upper_band"), errors="coerce")
+    lower = pd.to_numeric(frame.get("lower_band"), errors="coerce")
+    frame["flat_target_price"] = base_price * (1.0 + expected)
+    frame["flat_upper_target_price"] = base_price * (1.0 + upper)
+    frame["flat_stop_price"] = base_price * (1.0 + lower)
     frame["reasons"] = frame["top_reason_tags_json"].fillna("[]")
     frame["risks"] = frame["risk_flags_json"].fillna("[]")
     return frame.head(limit).reset_index(drop=True)
@@ -3399,10 +3444,10 @@ UI_VALUE_LABELS.setdefault("run_type", {}).update(
 )
 UI_VALUE_LABELS.setdefault("model_spec_id", {}).update(
     {
-        "alpha_recursive_expanding_v1": "recursive",
-        "alpha_rolling_120_v1": "rolling 120d",
-        "alpha_rolling_250_v1": "rolling 250d",
-        "alpha_recursive_rolling_combo": "recursive+rolling combo",
+        "alpha_recursive_expanding_v1": "확장형 누적 학습",
+        "alpha_rolling_120_v1": "최근 120거래일 중심 학습",
+        "alpha_rolling_250_v1": "최근 250거래일 중심 학습",
+        "alpha_recursive_rolling_combo": "누적+최근 구간 혼합",
     }
 )
 UI_VALUE_LABELS.setdefault("estimation_scheme", {}).update(
