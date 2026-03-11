@@ -20,8 +20,10 @@ from app.ui.components import (
     render_narrative_card,
     render_page_footer,
     render_page_header,
+    render_report_preview,
     render_record_cards,
     render_report_center,
+    render_screen_guide,
 )
 from app.ui.helpers import (
     krx_service_registry_frame,
@@ -90,6 +92,14 @@ render_page_header(
     title="운영",
     description="최근 실행 이력, 단계별 실패, 의존성, 디스크, 정리 이력, 복구, 알림, 최신 산출물을 한 번에 점검하는 운영 화면입니다.",
 )
+render_screen_guide(
+    summary="서버와 배치가 잘 돌아가고 있는지 확인하는 운영자 화면입니다. 투자 판단용 화면이 아니라, 시스템이 정상인지 점검하는 곳으로 보면 됩니다.",
+    bullets=[
+        "먼저 운영 요약과 자동 스케줄러 상태를 보세요.",
+        "문제가 있으면 최근 실행 이력, 단계 실패, 알림 순서로 원인을 좁혀가면 됩니다.",
+        "아래 고급 모델 운영 도구는 일반 확인용이 아니라 수동 교체가 필요할 때만 사용하세요.",
+    ],
+)
 
 if snapshot.empty:
     render_narrative_card(
@@ -105,7 +115,7 @@ else:
 
 render_record_cards(
     alpha_promotion,
-    title="Alpha active vs challenger",
+    title="알파 모델 비교 요약",
     primary_column="summary_title",
     secondary_columns=["active_model_label", "comparison_model_label"],
     detail_columns=[
@@ -119,8 +129,8 @@ render_record_cards(
         "active_promotion_type",
     ],
     limit=4,
-    empty_message="No alpha promotion audit is available yet.",
-    table_expander_label="Alpha promotion details",
+    empty_message="아직 알파 모델 비교 기록이 없습니다.",
+    table_expander_label="알파 모델 비교 원본 표 보기",
 )
 
 alpha_notice = st.session_state.pop("alpha_ops_notice", None)
@@ -147,137 +157,110 @@ alpha_spec_options = (
 alpha_default_spec_id = MODEL_SPEC_ID if MODEL_SPEC_ID in alpha_spec_options else alpha_spec_options[0]
 alpha_default_spec_index = alpha_spec_options.index(alpha_default_spec_id)
 
-st.subheader("Alpha active controls")
-st.caption(
-    "Use manual freeze to pin a specific alpha candidate. "
-    "Use rollback only when the previous active registry row should be restored."
-)
+with st.expander("고급 모델 운영 도구", expanded=False):
+    st.caption(
+        "알파 모델 고정(freeze)과 되돌리기(rollback)는 일반 점검용이 아닙니다. "
+        "비교표를 충분히 확인한 뒤 필요할 때만 사용하세요."
+    )
 
-alpha_control_left, alpha_control_right = st.columns(2)
-with alpha_control_left:
-    st.caption("Current active alpha registry")
-    if alpha_active_models.empty:
-        st.info("No active alpha registry rows are available yet.")
-    else:
-        st.dataframe(localize_frame(alpha_active_models), width="stretch", hide_index=True)
-    with st.expander("Latest alpha candidate training runs", expanded=False):
-        if alpha_candidate_training.empty:
-            st.info("No alpha candidate training runs are available yet.")
+    alpha_control_left, alpha_control_right = st.columns(2)
+    with alpha_control_left:
+        st.caption("현재 사용 중인 알파 모델")
+        if alpha_active_models.empty:
+            st.info("현재 사용 중인 알파 모델 기록이 없습니다.")
         else:
-            st.dataframe(
-                localize_frame(alpha_candidate_training),
-                width="stretch",
-                hide_index=True,
+            st.dataframe(localize_frame(alpha_active_models), width="stretch", hide_index=True)
+        with st.expander("최근 알파 모델 학습 이력", expanded=False):
+            if alpha_candidate_training.empty:
+                st.info("최근 알파 모델 학습 이력이 없습니다.")
+            else:
+                st.dataframe(
+                    localize_frame(alpha_candidate_training),
+                    width="stretch",
+                    hide_index=True,
+                )
+        with st.form("freeze_alpha_active_model_form", clear_on_submit=False):
+            freeze_effective_date = st.date_input("반영 시작일", value=alpha_default_date)
+            freeze_train_end_date = st.date_input("참조 학습 종료일", value=alpha_default_train_end_date)
+            freeze_spec_id = st.selectbox(
+                "모델 묶음",
+                options=alpha_spec_options,
+                index=alpha_default_spec_index,
+                format_func=format_alpha_model_spec_id,
             )
-    with st.form("freeze_alpha_active_model_form", clear_on_submit=False):
-        freeze_effective_date = st.date_input(
-            "Freeze effective date",
-            value=alpha_default_date,
-        )
-        freeze_train_end_date = st.date_input(
-            "Reference train end date",
-            value=alpha_default_train_end_date,
-        )
-        freeze_spec_id = st.selectbox(
-            "Model spec",
-            options=alpha_spec_options,
-            index=alpha_default_spec_index,
-            format_func=format_alpha_model_spec_id,
-        )
-        freeze_horizons = st.multiselect(
-            "Horizons",
-            options=[1, 5],
-            default=[1, 5],
-        )
-        freeze_note = st.text_input(
-            "Freeze note",
-            value="Ops UI manual alpha freeze",
-        )
-        freeze_confirm = st.checkbox(
-            "I checked the candidate training table and want to replace the active alpha model."
-        )
-        freeze_submit = st.form_submit_button("Freeze alpha active model")
-        if freeze_submit:
-            if not freeze_confirm:
-                st.warning("Confirm the manual freeze before running it.")
-            elif not freeze_horizons:
-                st.warning("Select at least one horizon to freeze.")
-            else:
-                try:
-                    with st.spinner("Freezing alpha active model..."):
-                        freeze_result = freeze_alpha_active_model(
-                            settings,
-                            as_of_date=freeze_effective_date,
-                            source="ops_manual_freeze_ui",
-                            note=freeze_note,
-                            horizons=[int(value) for value in freeze_horizons],
-                            model_spec_id=str(freeze_spec_id),
-                            train_end_date=freeze_train_end_date,
-                        )
-                    st.session_state["alpha_ops_notice"] = {
-                        "level": "success" if freeze_result.row_count > 0 else "warning",
-                        "message": (
-                            f"Alpha active freeze completed. run_id={freeze_result.run_id} "
-                            f"rows={freeze_result.row_count}"
-                        ),
-                    }
-                    st.rerun()
-                except Exception as exc:  # pragma: no cover - UI feedback path
-                    st.error(f"Alpha active freeze failed: {exc}")
+            freeze_horizons = st.multiselect("대상 기간", options=[1, 5], default=[1, 5])
+            freeze_note = st.text_input("반영 메모", value="운영 화면에서 수동 반영")
+            freeze_confirm = st.checkbox("비교표를 확인했고 현재 모델을 이 후보로 교체하는 데 동의합니다.")
+            freeze_submit = st.form_submit_button("알파 모델 수동 반영")
+            if freeze_submit:
+                if not freeze_confirm:
+                    st.warning("먼저 비교표를 확인하고 확인 체크를 해주세요.")
+                elif not freeze_horizons:
+                    st.warning("최소 한 개 이상의 기간을 선택해 주세요.")
+                else:
+                    try:
+                        with st.spinner("알파 모델을 반영하는 중입니다..."):
+                            freeze_result = freeze_alpha_active_model(
+                                settings,
+                                as_of_date=freeze_effective_date,
+                                source="ops_manual_freeze_ui",
+                                note=freeze_note,
+                                horizons=[int(value) for value in freeze_horizons],
+                                model_spec_id=str(freeze_spec_id),
+                                train_end_date=freeze_train_end_date,
+                            )
+                        st.session_state["alpha_ops_notice"] = {
+                            "level": "success" if freeze_result.row_count > 0 else "warning",
+                            "message": (
+                                f"알파 모델 반영을 완료했습니다. run_id={freeze_result.run_id} "
+                                f"rows={freeze_result.row_count}"
+                            ),
+                        }
+                        st.rerun()
+                    except Exception as exc:  # pragma: no cover - UI feedback path
+                        st.error(f"알파 모델 반영에 실패했습니다: {exc}")
 
-with alpha_control_right:
-    st.caption("Alpha rollback history")
-    if alpha_rollbacks.empty:
-        st.info("No alpha rollback rows are available yet.")
-    else:
-        st.dataframe(localize_frame(alpha_rollbacks), width="stretch", hide_index=True)
-    with st.expander("Alpha model spec catalog", expanded=False):
-        if alpha_model_specs.empty:
-            st.info("No alpha model spec rows are available yet.")
+    with alpha_control_right:
+        st.caption("알파 모델 되돌리기 기록")
+        if alpha_rollbacks.empty:
+            st.info("알파 모델 되돌리기 기록이 없습니다.")
         else:
-            st.dataframe(localize_frame(alpha_model_specs), width="stretch", hide_index=True)
-    with st.form("rollback_alpha_active_model_form", clear_on_submit=False):
-        rollback_effective_date = st.date_input(
-            "Rollback effective date",
-            value=alpha_default_date,
-        )
-        rollback_horizons = st.multiselect(
-            "Rollback horizons",
-            options=[1, 5],
-            default=[1, 5],
-        )
-        rollback_note = st.text_input(
-            "Rollback note",
-            value="Ops UI alpha rollback",
-        )
-        rollback_confirm = st.checkbox(
-            "I checked the current active registry and want to restore the previous alpha model."
-        )
-        rollback_submit = st.form_submit_button("Rollback alpha active model")
-        if rollback_submit:
-            if not rollback_confirm:
-                st.warning("Confirm the rollback before running it.")
-            elif not rollback_horizons:
-                st.warning("Select at least one horizon to roll back.")
+            st.dataframe(localize_frame(alpha_rollbacks), width="stretch", hide_index=True)
+        with st.expander("알파 모델 사양 목록", expanded=False):
+            if alpha_model_specs.empty:
+                st.info("알파 모델 사양 목록이 없습니다.")
             else:
-                try:
-                    with st.spinner("Rolling back alpha active model..."):
-                        rollback_result = rollback_alpha_active_model(
-                            settings,
-                            as_of_date=rollback_effective_date,
-                            horizons=[int(value) for value in rollback_horizons],
-                            note=rollback_note,
-                        )
-                    st.session_state["alpha_ops_notice"] = {
-                        "level": "success" if rollback_result.row_count > 0 else "warning",
-                        "message": (
-                            f"Alpha active rollback completed. "
-                            f"run_id={rollback_result.run_id} rows={rollback_result.row_count}"
-                        ),
-                    }
-                    st.rerun()
-                except Exception as exc:  # pragma: no cover - UI feedback path
-                    st.error(f"Alpha active rollback failed: {exc}")
+                st.dataframe(localize_frame(alpha_model_specs), width="stretch", hide_index=True)
+        with st.form("rollback_alpha_active_model_form", clear_on_submit=False):
+            rollback_effective_date = st.date_input("되돌릴 기준일", value=alpha_default_date)
+            rollback_horizons = st.multiselect("대상 기간", options=[1, 5], default=[1, 5])
+            rollback_note = st.text_input("되돌리기 메모", value="운영 화면에서 수동 되돌리기")
+            rollback_confirm = st.checkbox("현재 모델 대신 직전 모델로 되돌리는 데 동의합니다.")
+            rollback_submit = st.form_submit_button("알파 모델 되돌리기")
+            if rollback_submit:
+                if not rollback_confirm:
+                    st.warning("먼저 확인 체크를 해주세요.")
+                elif not rollback_horizons:
+                    st.warning("최소 한 개 이상의 기간을 선택해 주세요.")
+                else:
+                    try:
+                        with st.spinner("알파 모델을 되돌리는 중입니다..."):
+                            rollback_result = rollback_alpha_active_model(
+                                settings,
+                                as_of_date=rollback_effective_date,
+                                horizons=[int(value) for value in rollback_horizons],
+                                note=rollback_note,
+                            )
+                        st.session_state["alpha_ops_notice"] = {
+                            "level": "success" if rollback_result.row_count > 0 else "warning",
+                            "message": (
+                                f"알파 모델 되돌리기를 완료했습니다. "
+                                f"run_id={rollback_result.run_id} rows={rollback_result.row_count}"
+                            ),
+                        }
+                        st.rerun()
+                    except Exception as exc:  # pragma: no cover - UI feedback path
+                        st.error(f"알파 모델 되돌리기에 실패했습니다: {exc}")
 
 top_left, top_right = st.columns(2)
 with top_left:
@@ -379,6 +362,9 @@ if not latest_reports.empty:
 
 if ops_preview:
     with st.expander("최신 운영 리포트 미리보기", expanded=False):
-        st.code(ops_preview)
+        render_report_preview(
+            title="운영 리포트 미리보기",
+            preview=ops_preview,
+        )
 
 render_page_footer(settings, page_name="운영")

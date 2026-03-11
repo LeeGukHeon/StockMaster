@@ -16,6 +16,7 @@ from app.ui.components import (
     render_page_footer,
     render_page_header,
     render_record_cards,
+    render_screen_guide,
     render_warning_banner,
 )
 from app.ui.helpers import (
@@ -40,6 +41,13 @@ render_page_header(
     page_name="종목 분석",
     title="종목 분석",
     description="추천 이유, 제외 이유, 장중 판단, 사후 결과를 종목별로 한눈에 확인합니다.",
+)
+render_screen_guide(
+    summary="한 종목만 깊게 보고 싶을 때 쓰는 화면입니다. 왜 추천됐는지, 왜 빠졌는지, 이후 결과가 어땠는지를 종목 단위로 확인합니다.",
+    bullets=[
+        "처음에는 종목 핵심 요약과 가격/밴드, 수급 추이만 봐도 충분합니다.",
+        "장중 판단과 메타 오버레이는 연구용 참고 정보라서 실제 주문 내역이 아니라는 점을 함께 보세요.",
+    ],
 )
 render_warning_banner(
     "INFO",
@@ -130,24 +138,24 @@ else:
 
     render_record_cards(
         intraday_decisions,
-        title="장중 원정책 / 조정정책",
+        title="장중 처음 판단 / 보정 후 판단",
         primary_column="session_date",
         secondary_columns=["checkpoint_time", "horizon"],
         detail_columns=["raw_action", "adjusted_action", "market_regime_family", "adjusted_timing_score"],
         limit=8,
-        empty_message="장중 정책 판단 이력이 없습니다.",
-        table_expander_label="장중 정책 원본 표 보기",
+        empty_message="장중 판단 기록이 없습니다.",
+        table_expander_label="장중 판단 원본 표 보기",
     )
 
     render_record_cards(
         intraday_tuned,
-        title="메타 오버레이 / 최종 액션",
+        title="메타 보정 / 최종 판단",
         primary_column="session_date",
         secondary_columns=["checkpoint_time", "horizon"],
         detail_columns=["tuned_action", "final_action", "predicted_class", "confidence_margin"],
         limit=8,
-        empty_message="장중 메타 오버레이 이력이 없습니다.",
-        table_expander_label="메타 오버레이 원본 표 보기",
+        empty_message="장중 메타 보정 기록이 없습니다.",
+        table_expander_label="메타 보정 원본 표 보기",
     )
 
     render_record_cards(

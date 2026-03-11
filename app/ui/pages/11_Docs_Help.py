@@ -15,8 +15,10 @@ from app.ui.components import (
     read_markdown,
     render_page_footer,
     render_page_header,
+    render_report_preview,
     render_release_candidate_summary,
     render_report_center,
+    render_screen_guide,
 )
 from app.ui.helpers import latest_release_candidate_preview, load_ui_settings
 
@@ -30,6 +32,13 @@ render_page_header(
         "사용자 가이드, 일일 운영 절차, 용어집, 배포/스케줄러 문서, "
         "장중 리서치 모드 문서를 한곳에서 확인합니다."
     ),
+)
+render_screen_guide(
+    summary="각 화면이 무엇을 보는 곳인지 헷갈릴 때 가장 먼저 보는 도움말 화면입니다. 사용법, 용어, 운영 문서를 한곳에서 찾도록 정리해 둔 페이지입니다.",
+    bullets=[
+        "투자 판단 흐름이 궁금하면 사용자 가이드와 화면 안내부터 보세요.",
+        "서버나 스케줄러 운영은 서버 배포와 자동 스케줄러 탭을 보면 됩니다.",
+    ],
 )
 
 tabs = st.tabs(
@@ -107,6 +116,9 @@ with tabs[12]:
     preview = latest_release_candidate_preview(settings)
     if preview:
         with st.expander("최신 릴리스 체크리스트 미리보기", expanded=False):
-            st.code(preview)
+            render_report_preview(
+                title="릴리스 체크리스트 미리보기",
+                preview=preview,
+            )
 
 render_page_footer(settings, page_name="문서 / 도움말")

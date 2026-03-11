@@ -15,7 +15,9 @@ from app.ui.components import (
     render_narrative_card,
     render_page_footer,
     render_page_header,
+    render_report_preview,
     render_record_cards,
+    render_screen_guide,
     render_warning_banner,
 )
 from app.ui.helpers import (
@@ -72,6 +74,14 @@ render_page_header(
     page_name="장중 콘솔",
     title="장중 콘솔",
     description="원정책, 조정정책, 메타 오버레이, 최종 액션을 연구용 기준으로 한 화면에서 확인합니다.",
+)
+render_screen_guide(
+    summary="장중에 추천 종목을 어떻게 다시 걸러냈는지 보는 연구용 화면입니다. 실제 주문 화면이 아니라, 시간이 지나며 판단이 어떻게 바뀌는지를 확인하는 콘솔입니다.",
+    bullets=[
+        "세션 요약과 후보 종목을 먼저 보면 오늘 장중 판단의 큰 흐름을 이해하기 쉽습니다.",
+        "원래 판단 → 보정 후 판단 → 최종 판단 순서로 내려가며 보면 왜 보수적으로 바뀌었는지 파악할 수 있습니다.",
+        "수치가 많아 보이면 최종 판단과 시점 결과만 먼저 보세요.",
+    ],
 )
 render_warning_banner(
     "INFO",
@@ -172,24 +182,24 @@ render_record_cards(
 
 render_record_cards(
     decision_frame,
-    title="원정책 판단",
+    title="처음 판단",
     primary_column="symbol",
     secondary_columns=["company_name", "checkpoint_time"],
     detail_columns=["horizon", "action", "action_score", "signal_quality_score"],
     limit=8,
-    empty_message="원정책 판단 이력이 없습니다.",
-    table_expander_label="원정책 원본 표 보기",
+    empty_message="처음 판단 기록이 없습니다.",
+    table_expander_label="처음 판단 원본 표 보기",
 )
 
 render_record_cards(
     adjusted_decision_frame,
-    title="조정정책 판단",
+    title="보정 후 판단",
     primary_column="symbol",
     secondary_columns=["company_name", "market_regime_family"],
     detail_columns=["checkpoint_time", "raw_action", "adjusted_action", "fallback_flag"],
     limit=8,
-    empty_message="조정정책 판단 이력이 없습니다.",
-    table_expander_label="조정정책 원본 표 보기",
+    empty_message="보정 후 판단 기록이 없습니다.",
+    table_expander_label="보정 후 판단 원본 표 보기",
 )
 
 render_record_cards(
@@ -211,7 +221,7 @@ render_record_cards(
 
 render_record_cards(
     meta_decision_frame,
-    title="메타 오버레이 / 최종 액션",
+    title="메타 보정 / 최종 판단",
     primary_column="symbol",
     secondary_columns=["company_name", "final_action"],
     detail_columns=[
@@ -223,8 +233,8 @@ render_record_cards(
         "fallback_flag",
     ],
     limit=8,
-    empty_message="메타 오버레이 이력이 없습니다.",
-    table_expander_label="메타 오버레이 원본 표 보기",
+    empty_message="메타 보정 기록이 없습니다.",
+    table_expander_label="메타 보정 원본 표 보기",
 )
 
 render_record_cards(
@@ -329,14 +339,14 @@ render_record_cards(
 
 if summary_preview:
     with st.expander("최신 장중 요약 리포트 미리보기", expanded=False):
-        st.code(summary_preview)
+        render_report_preview(title="장중 요약 리포트", preview=summary_preview)
 
 if policy_preview:
     with st.expander("최신 장중 정책 연구 리포트 미리보기", expanded=False):
-        st.code(policy_preview)
+        render_report_preview(title="장중 정책 연구 리포트", preview=policy_preview)
 
 if postmortem_preview:
     with st.expander("최신 장중 사후 분석 미리보기", expanded=False):
-        st.code(postmortem_preview)
+        render_report_preview(title="장중 사후 분석 리포트", preview=postmortem_preview)
 
 render_page_footer(settings, page_name="장중 콘솔")

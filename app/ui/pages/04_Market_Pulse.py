@@ -12,7 +12,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
-from app.ui.components import render_narrative_card, render_page_footer, render_page_header
+from app.ui.components import (
+    render_narrative_card,
+    render_page_footer,
+    render_page_header,
+    render_screen_guide,
+)
 from app.ui.helpers import (
     latest_flow_summary_frame,
     latest_market_news_frame,
@@ -40,6 +45,13 @@ render_page_header(
     page_name="시장 현황",
     title="시장 현황",
     description="시장 국면, 상승 폭, 변동성, 수급, 시장 뉴스 묶음, 서술형 요약을 함께 보는 화면입니다.",
+)
+render_screen_guide(
+    summary="시장 전체 분위기를 빠르게 읽는 화면입니다. 종목을 고르기 전, 오늘 장이 강한지 약한지 먼저 파악할 때 보면 됩니다.",
+    bullets=[
+        "시장 흐름과 상승 비율을 먼저 보고, 오늘 장이 편한 장인지 불안한 장인지 확인하세요.",
+        "그다음 시장 뉴스와 주목 종목 미리보기를 읽으면 왜 특정 종목이 올라오는지 이해하기 쉽습니다.",
+    ],
 )
 
 if pulse.empty and regime.empty:

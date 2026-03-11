@@ -14,6 +14,11 @@ from app.ops.common import JobStatus, OpsJobResult
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables
 
+EXECUTION_MODE_LABELS = {
+    "OPEN_ALL": "시가 일괄 진입",
+    "TIMING_ASSISTED": "장중 보조 진입",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class RenderedReport:
@@ -166,23 +171,23 @@ def render_daily_research_report(
         """,
         [as_of_date],
     )
-    lines = ["# Daily Research Report", "", f"- as_of_date: {as_of_date.isoformat()}", ""]
-    lines.append("## Current Truth")
+    lines = ["# 오늘 리서치 요약", "", f"- 기준일: {as_of_date.isoformat()}", ""]
+    lines.append("## 한눈에 보기")
     if regime.empty:
-        lines.append("- market regime snapshot unavailable")
+        lines.append("- 오늘 시장 흐름 자료가 아직 없습니다.")
     else:
         row = regime.iloc[0]
         lines.append(
-            "- regime={state} breadth={breadth:.1%} vol20={vol:.2%}".format(
+            "- 시장 흐름은 {state}이며, 상승 종목 비율은 {breadth:.1%}, 최근 변동성 참고치는 {vol:.2%}입니다.".format(
                 state=row["regime_state"],
                 breadth=float(row["breadth_up_ratio"] or 0.0),
                 vol=float(row["market_realized_vol_20d"] or 0.0),
             )
         )
     lines.append("")
-    lines.append("## Top Actionable Names")
+    lines.append("## 오늘 주목할 종목")
     if leaderboard.empty:
-        lines.append("- no selection v2 rows")
+        lines.append("- 오늘 주목할 종목이 아직 없습니다.")
     else:
         for row in leaderboard.itertuples(index=False):
             flow_score = _json_object_value(row.explanatory_score_json, "flow_score")
@@ -191,31 +196,29 @@ def render_daily_research_report(
                 "implementation_penalty_score",
             )
             lines.append(
-                f"- {row.symbol} {row.company_name or ''} "
-                f"grade={row.grade} score={float(row.final_selection_value or 0.0):+.3f} "
-                f"alpha={float(row.expected_excess_return or 0.0):+.2%} "
-                f"uncertainty={float(row.uncertainty_score or 0.0):.2f} "
-                f"disagreement={float(row.disagreement_score or 0.0):.2f} "
-                f"flow={float(flow_score or 0.0):+.2f} "
-                f"impl_penalty={float(implementation_penalty or 0.0):.2f}"
+                f"- {row.symbol} {row.company_name or ''} | 등급 {row.grade} | 종합점수 {float(row.final_selection_value or 0.0):+.3f} "
+                f"| 참고 기대수익 {float(row.expected_excess_return or 0.0):+.2%} "
+                f"| 수급 점수 {float(flow_score or 0.0):+.2f} "
+                f"| 예측 흔들림 {float(row.uncertainty_score or 0.0):.2f} "
+                f"| 모델 의견 갈림 {float(row.disagreement_score or 0.0):.2f} "
+                f"| 실행 부담 {float(implementation_penalty or 0.0):.2f}"
             )
     lines.append("")
-    lines.append("## Portfolio Context")
+    lines.append("## 포트폴리오 관점")
     if portfolio.empty:
-        lines.append("- no portfolio target book")
+        lines.append("- 현재 연결된 목표 보유안이 없습니다.")
     else:
         for row in portfolio.itertuples(index=False):
             lines.append(
-                f"- {row.execution_mode} {row.symbol}: "
-                f"weight={float(row.target_weight or 0.0):.2%} gate={row.gate_status}"
+                f"- {row.symbol}: 목표 비중 {float(row.target_weight or 0.0):.2%} | 진입 방식 {EXECUTION_MODE_LABELS.get(str(row.execution_mode), row.execution_mode)} | 진입 판단 {row.gate_status}"
             )
     lines.append("")
-    lines.append("## News Clusters")
+    lines.append("## 오늘 본 뉴스")
     if news.empty:
-        lines.append("- no recent news metadata")
+        lines.append("- 최근 뉴스 요약이 아직 없습니다.")
     else:
         for row in news.itertuples(index=False):
-            lines.append(f"- {row.signal_date} [{row.query_bucket}] {row.title} / {row.publisher}")
+            lines.append(f"- {row.signal_date} | {row.title} ({row.publisher})")
     rendered = _write_report_artifacts(
         settings,
         folder_name="daily_research_report",
@@ -268,31 +271,35 @@ def render_evaluation_report(
         """,
         [as_of_date],
     )
-    lines = ["# Evaluation Report", "", f"- as_of_date: {as_of_date.isoformat()}", ""]
-    lines.append("## D+1 / D+5 Matured Summary")
+    lines = ["# 사후 평가 요약", "", f"- 기준일: {as_of_date.isoformat()}", ""]
+    lines.append("## 최근 확정된 추천 결과")
     if summary.empty:
-        lines.append("- no evaluation summary rows")
+        lines.append("- 아직 확정된 평가 요약이 없습니다.")
     else:
         for row in summary.itertuples(index=False):
+            model_label = (
+                "현재 추천 모델"
+                if str(row.ranking_version) == SELECTION_ENGINE_V2_VERSION
+                else "비교 기준 모델"
+            )
             lines.append(
-                f"- {row.summary_date} h={row.horizon} {row.ranking_version} "
-                f"{row.segment_type}={row.segment_value} "
-                f"evaluated={int(row.count_evaluated or 0)} "
-                f"excess={float(row.mean_realized_excess_return or 0.0):+.3%} "
-                f"hit={float(row.hit_rate or 0.0):+.2%} "
-                f"band={float(row.band_coverage_rate or 0.0):.2%}"
+                f"- {row.summary_date} | {int(row.horizon)}거래일 | {model_label} "
+                f"| 평가 수 {int(row.count_evaluated or 0)} "
+                f"| 평균 초과수익률 {float(row.mean_realized_excess_return or 0.0):+.3%} "
+                f"| 수익 플러스 비율 {float(row.hit_rate or 0.0):+.2%} "
+                f"| 예상 범위 적중률 {float(row.band_coverage_rate or 0.0):.2%}"
             )
     lines.append("")
-    lines.append("## Band Coverage / Calibration")
+    lines.append("## 예상 범위 점검")
     if calibration.empty:
-        lines.append("- no calibration diagnostics")
+        lines.append("- 예상 범위 점검 자료가 아직 없습니다.")
     else:
         for row in calibration.itertuples(index=False):
             lines.append(
-                f"- {row.diagnostic_date} h={row.horizon} bin={row.bin_value} "
-                f"sample={int(row.sample_count or 0)} "
-                f"coverage={float(row.coverage_rate or 0.0):.2%} "
-                f"bias={float(row.median_bias or 0.0):+.3%}"
+                f"- {row.diagnostic_date} | {int(row.horizon)}거래일 | 구간 {row.bin_value} "
+                f"| 표본 수 {int(row.sample_count or 0)} "
+                f"| 적중률 {float(row.coverage_rate or 0.0):.2%} "
+                f"| 치우침 {float(row.median_bias or 0.0):+.3%}"
             )
     rendered = _write_report_artifacts(
         settings,
@@ -356,28 +363,27 @@ def render_intraday_summary_report(
         """,
         [session_date],
     )
-    lines = ["# Intraday Summary Report", "", f"- session_date: {session_date.isoformat()}", ""]
-    lines.append("## Final Action Overlay")
+    lines = ["# 장중 요약", "", f"- 세션일: {session_date.isoformat()}", ""]
+    lines.append("## 체크포인트별 최종 판단")
     if decisions.empty:
-        lines.append("- no intraday final action rows")
+        lines.append("- 장중 최종 판단 기록이 없습니다.")
     else:
         for row in decisions.itertuples(index=False):
             lines.append(
-                f"- {row.checkpoint_time} adjusted={row.adjusted_action} "
-                f"final={row.final_action} count={int(row.row_count)}"
+                f"- {row.checkpoint_time} | 보정 후 판단 {row.adjusted_action} | 최종 판단 {row.final_action} | 해당 종목 수 {int(row.row_count)}"
             )
     lines.append("")
-    lines.append("## Timing Edge / Strategy Trace")
+    lines.append("## 장중 시점 비교")
     if timing.empty:
-        lines.append("- no intraday strategy comparison rows")
+        lines.append("- 장중 시점 비교 자료가 없습니다.")
     else:
         for row in timing.itertuples(index=False):
             lines.append(
-                f"- {row.end_session_date} {row.strategy_id} h={row.horizon} "
-                f"executed={int(row.executed_count or 0)} "
-                f"rate={float(row.execution_rate or 0.0):.2%} "
-                f"excess={float(row.mean_realized_excess_return or 0.0):+.3%} "
-                f"edge_bps={float(row.mean_timing_edge_vs_open_bps or 0.0):+.1f}"
+                f"- {row.end_session_date} | {row.strategy_id} | {int(row.horizon)}거래일 "
+                f"| 실행 수 {int(row.executed_count or 0)} "
+                f"| 실행 비율 {float(row.execution_rate or 0.0):.2%} "
+                f"| 평균 초과수익률 {float(row.mean_realized_excess_return or 0.0):+.3%} "
+                f"| 시가 대비 유불리 {float(row.mean_timing_edge_vs_open_bps or 0.0):+.1f}bp"
             )
     rendered = _write_report_artifacts(
         settings,

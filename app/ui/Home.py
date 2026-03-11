@@ -18,9 +18,11 @@ from app.ui.components import (
     inject_app_styles,
     render_narrative_card,
     render_page_footer,
+    render_report_preview,
     render_record_cards,
     render_release_candidate_summary,
     render_report_center,
+    render_screen_guide,
     render_status_badges,
     render_top_actionable_badges,
     render_warning_banner,
@@ -158,6 +160,15 @@ def render_today_page() -> None:
             "일부 데이터셋이 경고 임계치를 넘었습니다. 최신 실행 이력과 데이터 신선도 상태를 함께 확인하세요.",
         )
 
+    render_screen_guide(
+        summary="처음 앱을 열었을 때 가장 먼저 보는 시작 화면입니다. 오늘 기준일, 열린 경고, 주목 종목, 최신 보고서를 빠르게 훑는 용도로 씁니다.",
+        bullets=[
+            "먼저 현재 기준일과 치명 알림 수를 확인하세요.",
+            "다음으로 오늘의 주목 종목과 추천 해석을 읽고, 더 자세한 판단은 리더보드나 포트폴리오로 이동하세요.",
+            "성과가 궁금하면 사후 평가, 운영 상태가 궁금하면 운영 화면으로 이동하면 됩니다.",
+        ],
+    )
+
     render_status_badges(_policy_badges(snapshot_row))
 
     top_left, top_mid, top_right = st.columns(3)
@@ -185,7 +196,7 @@ def render_today_page() -> None:
 
     render_record_cards(
         alpha_promotion,
-        title="Alpha active vs challenger",
+        title="알파 모델 비교 요약",
         primary_column="summary_title",
         secondary_columns=["active_model_label", "comparison_model_label"],
         detail_columns=[
@@ -197,8 +208,8 @@ def render_today_page() -> None:
             "window_end",
         ],
         limit=2,
-        empty_message="No alpha promotion audit is available yet.",
-        table_expander_label="Alpha promotion details",
+        empty_message="아직 알파 모델 비교 기록이 없습니다.",
+        table_expander_label="알파 모델 비교 원본 표 보기",
     )
 
     link_left, link_mid, link_right = st.columns(3)
@@ -206,7 +217,7 @@ def render_today_page() -> None:
         _quick_link("리더보드", "leaderboard", "오늘 바로 볼 종목 선별 결과와 위험 신호를 확인합니다.")
         _quick_link("포트폴리오", "portfolio", "목표 보유, 리밸런스, 현금 비중과 제약 사유를 확인합니다.")
     with link_mid:
-        _quick_link("장중 콘솔", "intraday_console", "원시 판단, 조정 판단, 최종 행동과 지연 경고를 확인합니다.")
+        _quick_link("장중 콘솔", "intraday_console", "처음 판단, 보정 후 판단, 최종 판단이 어떻게 달라졌는지 확인합니다.")
         _quick_link("사후 평가", "evaluation", "1거래일·5거래일 뒤 결과와 예측 범위 점검 상태를 확인합니다.")
     with link_right:
         _quick_link("운영", "ops", "최근 실행 이력, 알림, 정책, 리포트 상태를 점검합니다.")
@@ -281,12 +292,15 @@ def render_today_page() -> None:
         render_release_candidate_summary(settings, limit=8)
         if release_preview:
             with st.expander("최신 릴리스 점검표 미리보기", expanded=False):
-                st.code(release_preview)
+                render_report_preview(
+                    title="릴리스 체크 미리보기",
+                    preview=release_preview,
+                )
 
     if not latest_reports.empty:
         st.subheader("최신 리포트")
         display = latest_reports[
-            ["report_type", "as_of_date", "generated_ts", "status", "artifact_path"]
+            ["report_type", "as_of_date", "generated_ts", "status", "published_flag"]
         ].copy()
         st.dataframe(localize_frame(display), width="stretch", hide_index=True)
 

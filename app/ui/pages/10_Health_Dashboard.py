@@ -15,6 +15,7 @@ from app.ui.components import (
     render_narrative_card,
     render_page_footer,
     render_page_header,
+    render_screen_guide,
     render_warning_banner,
 )
 from app.ui.helpers import (
@@ -71,6 +72,13 @@ render_page_header(
     page_name="헬스 대시보드",
     title="헬스 대시보드",
     description="운영 상태, 스케줄러 상태, 장중 리서치 기능 준비도, 복구 대기열을 한 화면에서 확인합니다.",
+)
+render_screen_guide(
+    summary="서버와 배치가 건강한지 보는 화면입니다. 투자 판단용 화면이 아니라, 시스템이 정상적으로 돌아가는지 확인하는 운영 점검판입니다.",
+    bullets=[
+        "먼저 전체 헬스 요약과 스케줄러 상태를 보세요.",
+        "문제가 있으면 활성 락, 복구 대기열, 경고 순서로 내려가며 원인을 확인하면 됩니다.",
+    ],
 )
 render_warning_banner(
     "INFO",

@@ -19,6 +19,34 @@ from app.storage.manifests import record_run_finish, record_run_start
 
 DISCORD_MESSAGE_LIMIT = 1800
 
+REASON_LABELS = {
+    "ml_alpha_supportive": "최근 흐름과 모델 판단이 함께 받쳐줌",
+    "prediction_fallback_used": "예측 보조값을 함께 참고함",
+}
+
+RISK_LABELS = {
+    "high_realized_volatility": "최근 흔들림이 큼",
+    "large_recent_drawdown": "최근 낙폭이 큼",
+    "weak_fundamental_coverage": "재무 근거가 약함",
+    "thin_liquidity": "거래량이 얇음",
+    "news_link_low_confidence": "뉴스 연결 신뢰가 낮음",
+    "data_missingness_high": "데이터 비어 있는 부분이 많음",
+    "uncertainty_proxy_high": "예측 흔들림이 큼",
+    "implementation_friction_high": "실행 부담이 큼",
+    "flow_coverage_missing": "수급 정보가 부족함",
+    "model_uncertainty_high": "모델 확신이 낮음",
+    "model_disagreement_high": "모델끼리 의견이 갈림",
+    "prediction_fallback": "예측 보조값을 함께 참고함",
+}
+
+REGIME_LABELS = {
+    "panic": "매우 불안한 장",
+    "risk_off": "조심해야 하는 장",
+    "neutral": "뚜렷한 방향이 약한 장",
+    "risk_on": "상대적으로 강한 장",
+    "euphoria": "과열 느낌이 강한 장",
+}
+
 
 @dataclass(slots=True)
 class DiscordRenderResult:
@@ -133,20 +161,41 @@ def _load_market_news(connection, *, as_of_date: date, limit: int = 3) -> pd.Dat
     ).fetchdf()
 
 
-def _format_pick_line(row: pd.Series) -> str:
-    reasons = ", ".join(json.loads(row["top_reason_tags_json"] or "[]")[:2])
-    risks = ", ".join(json.loads(row["risk_flags_json"] or "[]")[:2])
-    band = ""
-    if pd.notna(row.get("expected_excess_return")):
-        band = (
-            f" | 참고 기대수익 {float(row['expected_excess_return']):+.2%}"
-            f" (참고범위 {float(row['lower_band']):+.2%} ~ {float(row['upper_band']):+.2%})"
+def _translate_tags(raw_value: object, mapping: dict[str, str]) -> str:
+    try:
+        parsed = json.loads(raw_value or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed = []
+    if not isinstance(parsed, list):
+        return "-"
+    labels = [mapping.get(str(item), str(item)) for item in parsed[:2]]
+    return ", ".join(labels) if labels else "-"
+
+
+def _pct_text(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "미확인"
+    return f"{float(value):.1%}"
+
+
+def _format_pick_block(row: pd.Series, *, rank: int) -> list[str]:
+    reasons = _translate_tags(row["top_reason_tags_json"], REASON_LABELS)
+    risks = _translate_tags(row["risk_flags_json"], RISK_LABELS)
+    lines = [
+        f"{rank}. `{row['symbol']}` {row['company_name']} ({row['market']})",
+        f"   - 왜 봐야 하나: 등급 {row['grade']} / 종합점수 {float(row['final_selection_value']):.1f}",
+    ]
+    if all(pd.notna(row.get(key)) for key in ("expected_excess_return", "lower_band", "upper_band")):
+        lines.append(
+            "   - 참고 흐름: 기대수익 {expected:+.2%}, 참고 범위 {lower:+.2%} ~ {upper:+.2%}".format(
+                expected=float(row["expected_excess_return"]),
+                lower=float(row["lower_band"]),
+                upper=float(row["upper_band"]),
+            )
         )
-    return (
-        f"- `{row['symbol']}` {row['company_name']} ({row['market']})"
-        f" 종합점수={float(row['final_selection_value']):.1f} 등급={row['grade']}{band}"
-        f" | 근거: {reasons or '-'} | 주의: {risks or '-'}"
-    )
+    lines.append(f"   - 주요 근거: {reasons}")
+    lines.append(f"   - 주의할 점: {risks}")
+    return lines
 
 
 def _format_alpha_promotion_line(row: pd.Series) -> str:
@@ -166,9 +215,9 @@ def _format_alpha_promotion_line(row: pd.Series) -> str:
     if active_top10:
         active_text = f"{active_text} {active_top10}"
     return (
-        f"- {int(row['horizon'])}거래일 모델 점검 | 결정={row['decision_label']} "
-        f"| 현재 사용={active_text} | 비교 후보={compare_text} "
-        f"| 비교 표본={int(row['sample_count'])}{p_value} | 사유={row['decision_reason_label']}"
+        f"- {int(row['horizon'])}거래일 모델 점검: {row['decision_label']} "
+        f"| 현재 사용 {active_text} | 비교 후보 {compare_text} "
+        f"| 비교 표본 {int(row['sample_count'])}{p_value} | 판단 이유 {row['decision_reason_label']}"
     )
 
 
@@ -182,39 +231,46 @@ def _build_payload_content(
     market_news: pd.DataFrame,
 ) -> str:
     lines = [
-        f"**StockMaster 장마감 요약 | {as_of_date.isoformat()}**",
+        f"**StockMaster 오늘 장마감 요약 | {as_of_date.isoformat()}**",
         "",
+        "**한눈에 보기**",
         (
-            f"시장 상황: 국면=`{market_pulse.get('regime_state') or '미확인'}` "
-            f"점수={market_pulse.get('regime_score') or '미확인'} "
-            f"| 상승 종목 비율={market_pulse.get('breadth_up_ratio') or '미확인'} "
-            f"| 수급 집계 종목수={market_pulse.get('flow_row_count') or 0}"
+            f"- 오늘 시장 흐름: {REGIME_LABELS.get(str(market_pulse.get('regime_state')), market_pulse.get('regime_state') or '미확인')}"
+            f" | 시장 점수 {market_pulse.get('regime_score') or '미확인'}"
+            f" | 상승 종목 비율 {_pct_text(market_pulse.get('breadth_up_ratio'))}"
         ),
-        "아래 후보는 종목명, 점수, 최근 재무/수급 근거를 바탕으로 정리한 장마감 참고 목록입니다.",
-        "표시된 기대수익과 범위는 과거 통계 기반 참고치이며, 실제 수익을 보장하는 예측값은 아닙니다.",
+        (
+            f"- 수급 체감: 집계 종목 {market_pulse.get('flow_row_count') or 0}개"
+            f" | 외국인 플러스 비율 {_pct_text(market_pulse.get('foreign_positive_ratio'))}"
+            f" | 기관 플러스 비율 {_pct_text(market_pulse.get('institution_positive_ratio'))}"
+        ),
+        "- 아래 종목은 당일 장마감 기준으로 다시 읽기 쉽게 정리한 참고 목록입니다.",
+        "- 기대수익과 참고 범위는 과거 통계 기반 참고치일 뿐, 실제 수익을 보장하는 값은 아닙니다.",
         "",
-        "**알파 모델 교체 점검**",
+        "**모델 점검**",
     ]
     if alpha_promotion.empty:
-        lines.append("- 아직 알파 모델 교체 점검 결과가 없습니다.")
+        lines.append("- 오늘 확인할 모델 점검 결과는 아직 없습니다.")
     else:
         lines.extend(_format_alpha_promotion_line(row) for _, row in alpha_promotion.iterrows())
     lines.extend(
         [
             "",
-            "**1거래일 기준 상위 후보**",
+            "**오늘 바로 볼 1거래일 후보**",
         ]
     )
     if d1_board.empty:
-        lines.append("- 1거래일 기준 후보가 없습니다.")
+        lines.append("- 1거래일 기준으로 정리된 후보가 없습니다.")
     else:
-        lines.extend(_format_pick_line(row) for _, row in d1_board.iterrows())
+        for index, (_, row) in enumerate(d1_board.iterrows(), start=1):
+            lines.extend(_format_pick_block(row, rank=index))
     lines.append("")
-    lines.append("**5거래일 기준 상위 후보**")
+    lines.append("**조금 더 길게 보는 5거래일 후보**")
     if d5_board.empty:
-        lines.append("- 5거래일 기준 후보가 없습니다.")
+        lines.append("- 5거래일 기준으로 정리된 후보가 없습니다.")
     else:
-        lines.extend(_format_pick_line(row) for _, row in d5_board.iterrows())
+        for index, (_, row) in enumerate(d5_board.iterrows(), start=1):
+            lines.extend(_format_pick_block(row, rank=index))
     lines.append("")
     lines.append("**시장 전체 주요 뉴스**")
     if market_news.empty:

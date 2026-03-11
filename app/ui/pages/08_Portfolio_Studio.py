@@ -15,7 +15,9 @@ from app.ui.components import (
     render_narrative_card,
     render_page_footer,
     render_page_header,
+    render_report_preview,
     render_record_cards,
+    render_screen_guide,
 )
 from app.ui.helpers import (
     format_execution_mode_label,
@@ -54,6 +56,14 @@ render_page_header(
     page_name="포트폴리오",
     title="포트폴리오",
     description="오늘 추천을 실제 보유안으로 어떻게 옮길지, 목표 비중과 리밸런스 계획 중심으로 확인합니다.",
+)
+render_screen_guide(
+    summary="오늘 추천을 실제 보유안으로 바꾸면 어떤 모습이 되는지 보는 화면입니다. 무엇을 살지보다 얼마나 담을지, 왜 일부 종목이 빠졌는지를 이해하는 데 초점을 두면 됩니다.",
+    bullets=[
+        "목표 보유안과 리밸런스 계획을 먼저 보세요.",
+        "대기/차단 종목은 왜 지금 바로 담지 않는지 설명해 주는 영역입니다.",
+        "순자산가치 요약은 최근 제안 포트폴리오 흐름을 간단히 보여줍니다.",
+    ],
 )
 
 if active_policy.empty:
@@ -165,7 +175,10 @@ render_record_cards(
 
 if report_preview:
     with st.expander("최신 포트폴리오 리포트 미리보기", expanded=False):
-        st.code(report_preview)
+        render_report_preview(
+            title="포트폴리오 리포트 미리보기",
+            preview=report_preview,
+        )
 
 render_page_footer(
     settings,

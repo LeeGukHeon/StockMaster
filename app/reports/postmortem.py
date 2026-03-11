@@ -17,6 +17,19 @@ from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from app.storage.manifests import record_run_finish, record_run_start
 
+BAND_LABELS = {
+    "in_band": "예상 범위 안",
+    "above_upper": "예상보다 강함",
+    "below_lower": "예상보다 약함",
+    "band_missing": "예상 범위 없음",
+    "label_pending": "아직 결과 대기",
+}
+
+REASON_LABELS = {
+    "ml_alpha_supportive": "최근 흐름과 모델 판단이 함께 받쳐줌",
+    "prediction_fallback_used": "예측 보조값을 함께 참고함",
+}
+
 
 @dataclass(slots=True)
 class PostmortemRenderResult:
@@ -47,6 +60,14 @@ def _window_label(window_type: str) -> str:
         "rolling_60d": "최근 60거래일",
     }
     return mapping.get(str(window_type), str(window_type))
+
+
+def _ranking_label(ranking_version: str) -> str:
+    if str(ranking_version) == SELECTION_ENGINE_VERSION:
+        return "현재 추천 모델"
+    if str(ranking_version) == EXPLANATORY_RANKING_VERSION:
+        return "비교 기준 모델"
+    return str(ranking_version)
 
 
 def _load_evaluation_summary(
@@ -210,22 +231,26 @@ def _format_summary_line(row: pd.Series) -> str:
     if pd.notna(row.get("avg_expected_excess_return")):
         expected_text = f" | 평균 참고 기대수익={float(row['avg_expected_excess_return']):+.2%}"
     return (
-        f"- {_horizon_label(int(row['horizon']))} / `{row['ranking_version']}` "
-        f"평가건수={int(row['row_count'])} "
-        f"평균 초과수익률={float(row['avg_realized_excess_return']):+.2%} "
-        f"수익 플러스 비율={float(row['hit_rate']):.1%}{expected_text}{band_text}"
+        f"- {_horizon_label(int(row['horizon']))} | {_ranking_label(str(row['ranking_version']))} "
+        f"| 평가 수 {int(row['row_count'])} "
+        f"| 평균 초과수익률 {float(row['avg_realized_excess_return']):+.2%} "
+        f"| 수익 플러스 비율 {float(row['hit_rate']):.1%}{expected_text}{band_text}"
     )
 
 
 def _format_top_line(row: pd.Series) -> str:
-    reasons = ", ".join(json.loads(row["top_reason_tags_json"] or "[]")[:2])
+    try:
+        raw_reasons = json.loads(row["top_reason_tags_json"] or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        raw_reasons = []
+    reasons = ", ".join(REASON_LABELS.get(str(item), str(item)) for item in raw_reasons[:2])
     proxy = ""
     if pd.notna(row.get("expected_excess_return_at_selection")):
         proxy = f" | 당시 참고 기대수익={float(row['expected_excess_return_at_selection']):+.2%}"
     return (
         f"- `{row['symbol']}` {row['company_name']} ({row['market']}) "
-        f"선정일={row['selection_date']} 실현 초과수익률={float(row['realized_excess_return']):+.2%}"
-        f"{proxy} | 범위 판정={row['band_status']} | 근거={reasons or '-'}"
+        f"| 선정일 {row['selection_date']} | 실제 초과수익률 {float(row['realized_excess_return']):+.2%}"
+        f"{proxy} | 예상 범위 판정 {BAND_LABELS.get(str(row['band_status']), str(row['band_status']))} | 주요 근거 {reasons or '-'}"
     )
 
 
@@ -241,10 +266,10 @@ def _build_report_content(
     lines = [
         f"**StockMaster 사후 점검 | {evaluation_date.isoformat()}**",
         "",
-        "이 보고서는 수수료와 세금을 뺀 실제 투자 손익이 아니라, 당시 저장된 추천 결과와 이후 가격 흐름을 비교한 사후 점검입니다.",
-        "거래비용 시뮬레이션은 포함하지 않았고, 당시 저장된 추천/예상 범위를 다시 계산하지 않고 그대로 사용합니다.",
+        "- 이 보고서는 실제 자동매매 손익장이 아니라, 당시 추천과 이후 흐름을 비교한 사후 점검입니다.",
+        "- 수수료·세금 시뮬레이션은 포함하지 않았고, 당시 저장된 추천과 예상 범위를 다시 계산하지 않고 그대로 사용합니다.",
         "",
-        "**결과가 확정된 추천 요약**",
+        "**한눈에 요약**",
     ]
     if summary.empty:
         lines.append("- 요청한 평가일에 결과가 확정된 추천이 없습니다.")
@@ -252,7 +277,7 @@ def _build_report_content(
         lines.extend(_format_summary_line(row) for _, row in summary.iterrows())
 
     lines.append("")
-    lines.append("**추천 모델과 설명형 기준 비교**")
+    lines.append("**추천 모델과 비교 기준의 차이**")
     if comparison.empty:
         lines.append("- 같은 날짜 기준 비교 결과가 없습니다.")
     else:
@@ -263,16 +288,16 @@ def _build_report_content(
             )
 
     lines.append("")
-    lines.append("**최근 구간 흐름 요약**")
+    lines.append("**최근 구간 흐름**")
     if rolling_summary.empty:
         lines.append("- 최근 구간 요약이 아직 없습니다.")
     else:
         for _, row in rolling_summary.iterrows():
             lines.append(
-                f"- {_window_label(str(row['window_type']))} / {_horizon_label(int(row['horizon']))} / `{row['ranking_version']}` "
-                f"평가건수={int(row['count_evaluated'])} "
-                f"| 평균 초과수익률={float(row['mean_realized_excess_return']):+.2%} "
-                f"| 수익 플러스 비율={float(row['hit_rate']):.1%}"
+                f"- {_window_label(str(row['window_type']))} | {_horizon_label(int(row['horizon']))} | {_ranking_label(str(row['ranking_version']))} "
+                f"| 평가 수 {int(row['count_evaluated'])} "
+                f"| 평균 초과수익률 {float(row['mean_realized_excess_return']):+.2%} "
+                f"| 수익 플러스 비율 {float(row['hit_rate']):.1%}"
             )
 
     lines.append("")
@@ -282,13 +307,13 @@ def _build_report_content(
     else:
         for _, row in calibration_summary.iterrows():
             lines.append(
-                f"- {_horizon_label(int(row['horizon']))} 범위 적중률={float(row['coverage_rate']):.1%} "
-                f"| 중앙 편차={float(row['median_bias']):+.2%} | 품질={row['quality_flag']}"
+                f"- {_horizon_label(int(row['horizon']))} | 예상 범위 적중률 {float(row['coverage_rate']):.1%} "
+                f"| 치우침 {float(row['median_bias']):+.2%} | 품질 {row['quality_flag']}"
             )
 
     for horizon, top_frame in sorted(top_by_horizon.items()):
         lines.append("")
-        lines.append(f"**상위 확정 결과 종목 | {_horizon_label(int(horizon))}**")
+        lines.append(f"**대표 사례 | {_horizon_label(int(horizon))}**")
         if top_frame.empty:
             lines.append("- 결과가 확정된 종목이 없습니다.")
         else:
@@ -296,7 +321,7 @@ def _build_report_content(
 
     lines.append("")
     lines.append(
-        "여기서 말하는 예상 범위는 과거 통계 기반 참고 구간이며, 미래를 보장하는 예측값은 아닙니다. "
+        "여기서 말하는 예상 범위는 과거 통계 기반 참고 구간이며 미래를 보장하는 값은 아닙니다. "
         "비교는 같은 날짜에 기록된 추천 묶음끼리만 수행했습니다."
     )
     return "\n".join(lines)

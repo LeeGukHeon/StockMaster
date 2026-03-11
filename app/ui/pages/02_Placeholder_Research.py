@@ -19,6 +19,8 @@ from app.intraday.policy import freeze_intraday_active_policy
 from app.ui.components import (
     render_page_footer,
     render_page_header,
+    render_report_preview,
+    render_screen_guide,
     render_warning_banner,
 )
 from app.ui.helpers import (
@@ -62,7 +64,7 @@ policy_apply_compare = latest_intraday_policy_apply_compare_frame(settings, limi
 active_meta_models = latest_intraday_meta_active_model_frame(settings, limit=30)
 meta_apply_compare = latest_intraday_meta_apply_compare_frame(settings, limit=30)
 
-meta_horizon = st.selectbox("메타 모델 기간", options=[1, 5], index=0, format_func=lambda value: f"D+{value}")
+meta_horizon = st.selectbox("메타 모델 기간", options=[1, 5], index=0, format_func=lambda value: f"{value}거래일")
 meta_panel = st.selectbox(
     "메타 모델 패널",
     options=[ENTER_PANEL, WAIT_PANEL],
@@ -91,6 +93,14 @@ render_page_header(
     page_name="리서치 랩",
     title="리서치 랩",
     description="장중 정책, 메타 모델, 보정, 제거 실험, 수동 반영 후보를 비교하는 고급 연구 화면입니다.",
+)
+render_screen_guide(
+    summary="일반 투자용 화면이 아니라, 추천 로직을 연구하고 비교하는 실험실입니다. 현재 정책과 새 후보를 비교한 뒤 사람이 직접 반영 여부를 결정할 때 사용합니다.",
+    bullets=[
+        "장중 기능 상태와 정책 대비 메타 오버레이부터 보면 전체 흐름을 이해하기 쉽습니다.",
+        "고급 진단은 필요할 때만 펼쳐 보세요.",
+        "수동 반영 전 비교 표는 실제 교체 버튼을 누르기 전 마지막 확인 영역입니다.",
+    ],
 )
 render_warning_banner(
     "INFO",
@@ -235,6 +245,9 @@ with st.form("apply_intraday_meta_form", clear_on_submit=False):
 
 if policy_report_preview:
     with st.expander("최신 장중 정책 연구 리포트 미리보기", expanded=False):
-        st.code(policy_report_preview)
+        render_report_preview(
+            title="장중 정책 연구 리포트 미리보기",
+            preview=policy_report_preview,
+        )
 
 render_page_footer(settings, page_name="리서치 랩")

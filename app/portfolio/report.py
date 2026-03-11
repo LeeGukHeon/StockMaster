@@ -18,6 +18,17 @@ from app.storage.manifests import record_run_finish, record_run_start
 
 from .common import PortfolioPublishResult, PortfolioReportResult
 
+EXECUTION_MODE_LABELS = {
+    "OPEN_ALL": "시가 일괄 진입",
+    "TIMING_ASSISTED": "장중 보조 진입",
+}
+
+COMPARISON_KEY_LABELS = {
+    "OPEN_ALL": "시가 일괄 진입",
+    "TIMING_ASSISTED": "장중 보조 진입",
+    "EQUAL_WEIGHT_BASELINE": "동일 비중 비교 기준",
+}
+
 
 def _portfolio_report_content(
     *,
@@ -28,58 +39,54 @@ def _portfolio_report_content(
     nav: pd.DataFrame,
     evaluation: pd.DataFrame,
 ) -> str:
-    lines = [f"**StockMaster Portfolio Report | {as_of_date.isoformat()}**", ""]
+    lines = [f"**StockMaster 포트폴리오 요약 | {as_of_date.isoformat()}**", ""]
     lines.append(
-        "This layer is a deterministic long-only portfolio proposal downstream of "
-        "selection v2 and the intraday timing overlay. It does not place orders."
+        "이 보고서는 오늘 추천을 실제 보유안으로 바꾸면 어떤 모습이 되는지 정리한 제안서입니다. "
+        "자동 주문을 넣는 화면이 아니라, 목표 비중과 리밸런스 방향을 읽는 참고 보고서입니다."
     )
     lines.append("")
-    lines.append("**Active Policy**")
+    lines.append("**현재 적용 기준**")
     if active_policy.empty:
-        lines.append("- active policy not frozen, using config fallback if present")
+        lines.append("- 아직 고정된 포트폴리오 기준이 없어 기본 설정값을 참고합니다.")
     else:
         for row in active_policy.itertuples(index=False):
             lines.append(
-                f"- {row.display_name or row.portfolio_policy_id} "
-                f"({row.portfolio_policy_version}) effective_from={row.effective_from_date}"
+                f"- {row.display_name or row.portfolio_policy_id} | 버전 {row.portfolio_policy_version} | 적용 시작일 {row.effective_from_date}"
             )
     lines.append("")
-    lines.append("**Target Holdings**")
+    lines.append("**목표 보유안**")
     if target_book.empty:
-        lines.append("- no target holdings")
+        lines.append("- 현재 목표 보유안이 없습니다.")
     else:
         for row in target_book.head(8).itertuples(index=False):
             lines.append(
-                f"- {row.symbol} {row.company_name or ''}: "
-                f"weight={float(row.target_weight or 0.0):.2%} "
-                f"shares={int(row.target_shares or 0)} gate={row.gate_status}"
+                f"- {row.symbol} {row.company_name or ''} | 목표 비중 {float(row.target_weight or 0.0):.2%} "
+                f"| 목표 수량 {int(row.target_shares or 0)} | 진입 판단 {row.gate_status}"
             )
     lines.append("")
-    lines.append("**Rebalance Monitor**")
+    lines.append("**리밸런스 계획**")
     if rebalance.empty:
-        lines.append("- no rebalance rows")
+        lines.append("- 리밸런스 계획이 없습니다.")
     else:
         for row in rebalance.head(8).itertuples(index=False):
             lines.append(
-                f"- {row.rebalance_action} {row.symbol}: "
-                f"delta_shares={int(row.delta_shares or 0)} "
-                f"cash_delta={float(row.cash_delta or 0.0):,.0f}"
+                f"- {row.symbol} | 조치 {row.rebalance_action} | 수량 변화 {int(row.delta_shares or 0)} | 현금 변화 {float(row.cash_delta or 0.0):,.0f}"
             )
     lines.append("")
-    lines.append("**Latest NAV**")
+    lines.append("**최근 포트폴리오 흐름**")
     if nav.empty:
-        lines.append("- no nav snapshots")
+        lines.append("- 최근 포트폴리오 흐름 자료가 없습니다.")
     else:
         for row in nav.head(4).itertuples(index=False):
             lines.append(
-                f"- {row.execution_mode}: nav={float(row.nav_value or 0.0):,.0f} "
-                f"cumret={float(row.cumulative_return or 0.0):+.2%} "
-                f"drawdown={float(row.drawdown or 0.0):+.2%}"
+                f"- {EXECUTION_MODE_LABELS.get(str(row.execution_mode), str(row.execution_mode))} | 순자산 가치 {float(row.nav_value or 0.0):,.0f} "
+                f"| 누적 수익률 {float(row.cumulative_return or 0.0):+.2%} "
+                f"| 최대 하락폭 {float(row.drawdown or 0.0):+.2%}"
             )
     lines.append("")
-    lines.append("**Evaluation Snapshot**")
+    lines.append("**방식별 비교 요약**")
     if evaluation.empty:
-        lines.append("- no evaluation summary rows")
+        lines.append("- 방식별 비교 자료가 없습니다.")
     else:
         grouped = evaluation.groupby("comparison_key", sort=True)
         for comparison_key, part in grouped:
@@ -87,10 +94,9 @@ def _portfolio_report_content(
                 row.metric_name: row.metric_value for row in part.itertuples(index=False)
             }
             lines.append(
-                f"- {comparison_key}: "
-                f"cumret={float(metric_map.get('cumulative_return') or 0.0):+.2%} "
-                f"vol={float(metric_map.get('annualized_volatility') or 0.0):.2%} "
-                f"sharpe_like={float(metric_map.get('sharpe_like_ratio') or 0.0):+.2f}"
+                f"- {COMPARISON_KEY_LABELS.get(str(comparison_key), str(comparison_key))} | 누적 수익률 {float(metric_map.get('cumulative_return') or 0.0):+.2%} "
+                f"| 변동성 {float(metric_map.get('annualized_volatility') or 0.0):.2%} "
+                f"| 위험 대비 점수 {float(metric_map.get('sharpe_like_ratio') or 0.0):+.2f}"
             )
     return "\n".join(lines)
 

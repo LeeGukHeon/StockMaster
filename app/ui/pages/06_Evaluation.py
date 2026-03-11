@@ -18,7 +18,9 @@ from app.ui.components import (
     render_narrative_card,
     render_page_footer,
     render_page_header,
+    render_report_preview,
     render_record_cards,
+    render_screen_guide,
     render_warning_banner,
 )
 from app.ui.helpers import (
@@ -79,6 +81,14 @@ render_page_header(
     title="사후 평가",
     description="1거래일·5거래일 뒤 결과와 예측 범위 점검 상태, 장중 비교 결과를 한눈에 확인합니다.",
 )
+render_screen_guide(
+    summary="추천이 시간이 지난 뒤 실제로 어땠는지 확인하는 화면입니다. 수익이 났는지, 예상 범위가 너무 낙관적이었는지, 최근 흐름이 좋아지는지 나빠지는지를 보는 곳입니다.",
+    bullets=[
+        "처음에는 최신 평가 요약과 평가 결과 샘플만 읽어도 충분합니다.",
+        "비교표는 우리 추천 모델이 기준선보다 나았는지 확인하는 참고 자료로 보면 됩니다.",
+        "장중 비교와 메타 오버레이는 연구용 참고이며 자동 주문과는 연결되지 않습니다.",
+    ],
+)
 render_warning_banner(
     "INFO",
     "장중 비교와 메타 오버레이는 연구용 비매매 평가입니다. 자동 주문이나 자동 승격은 없습니다.",
@@ -92,7 +102,7 @@ if not evaluation_dates:
     st.info("아직 평가 결과가 없습니다. 평가 스크립트를 먼저 실행해 주세요.")
 else:
     selected_date = st.selectbox("평가일", options=evaluation_dates, index=0)
-    horizon = st.selectbox("기간", options=[1, 5], index=1, format_func=lambda value: f"D+{value}")
+    horizon = st.selectbox("기간", options=[1, 5], index=1, format_func=lambda value: f"{value}거래일")
     ranking_version = st.selectbox(
         "순위 버전",
         options=[
@@ -124,27 +134,27 @@ else:
     )
     render_record_cards(
         latest_comparison,
-        title="설명형 대비 선정 비교",
+        title="현재 추천 모델과 비교 기준 차이",
         primary_column="metric_name",
         secondary_columns=["horizon"],
         detail_columns=["selection_v2_avg_excess", "explanatory_avg_excess"],
         limit=8,
         empty_message="비교 평가 데이터가 없습니다.",
-        table_expander_label="비교 평가 원본 표 보기",
+        table_expander_label="모델 비교 원본 표 보기",
     )
     render_record_cards(
         latest_selection_v2_comparison,
-        title="선정 엔진 비교",
+        title="추천 방식 비교",
         primary_column="metric_name",
         secondary_columns=["window_type"],
         detail_columns=["current_value", "prior_value"],
         limit=8,
         empty_message="선정 엔진 비교 데이터가 없습니다.",
-        table_expander_label="선정 엔진 비교 원본 표 보기",
+        table_expander_label="추천 방식 비교 원본 표 보기",
     )
     render_record_cards(
         latest_alpha_promotion,
-        title="Alpha active vs challenger",
+        title="알파 모델 비교 요약",
         primary_column="summary_title",
         secondary_columns=["active_model_label", "comparison_model_label"],
         detail_columns=[
@@ -158,8 +168,8 @@ else:
             "p_value",
         ],
         limit=4,
-        empty_message="No alpha promotion audit is available yet.",
-        table_expander_label="Alpha promotion details",
+        empty_message="아직 알파 모델 비교 기록이 없습니다.",
+        table_expander_label="알파 모델 비교 원본 표 보기",
     )
     render_record_cards(
         latest_calibration,
@@ -276,10 +286,16 @@ render_record_cards(
 
 if intraday_postmortem_preview:
     with st.expander("최신 장중 사후 분석 미리보기", expanded=False):
-        st.code(intraday_postmortem_preview)
+        render_report_preview(
+            title="장중 사후 분석 미리보기",
+            preview=intraday_postmortem_preview,
+        )
 
 if postmortem_preview:
     with st.expander("최신 일반 사후 분석 미리보기", expanded=False):
-        st.code(postmortem_preview)
+        render_report_preview(
+            title="사후 점검 리포트 미리보기",
+            preview=postmortem_preview,
+        )
 
 render_page_footer(settings, page_name="사후 평가")

@@ -37,6 +37,13 @@ def inject_app_styles() -> None:
     st.markdown(
         """
         <style>
+        html, body, [class*="css"]  {
+            font-family: "SUIT Variable", "Pretendard Variable", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+        }
+        .block-container {
+            padding-top: 1.1rem;
+            padding-bottom: 1.25rem;
+        }
         .sm-badge-row {display:flex; flex-wrap:wrap; gap:0.45rem; margin:0.3rem 0 1rem 0;}
         .sm-badge {
             display:inline-flex; align-items:center; gap:0.4rem;
@@ -58,6 +65,57 @@ def inject_app_styles() -> None:
         }
         .sm-card h4 {margin:0 0 0.25rem 0; font-size:1rem;}
         .sm-card p {margin:0; color:#475569;}
+        .sm-guide {
+            border:1px solid rgba(14,116,144,0.18);
+            border-radius:18px;
+            padding:1rem 1.05rem 0.8rem 1.05rem;
+            background:linear-gradient(145deg, rgba(240,249,255,0.96), rgba(248,250,252,0.98));
+            margin:0.2rem 0 1rem 0;
+        }
+        .sm-guide h4 {margin:0 0 0.35rem 0; font-size:1rem;}
+        .sm-guide p {margin:0 0 0.45rem 0; color:#334155; line-height:1.55;}
+        .sm-guide ul {margin:0.2rem 0 0 1.1rem; color:#475569;}
+        .sm-guide li {margin:0.18rem 0;}
+        .sm-report-preview {
+            border:1px solid rgba(148,163,184,0.22);
+            border-radius:18px;
+            padding:1rem 1.05rem;
+            background:linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
+        }
+        .sm-report-preview p,
+        .sm-report-preview li {
+            line-height:1.7;
+        }
+        @media (max-width: 900px) {
+            .block-container {
+                padding-left: 0.8rem;
+                padding-right: 0.8rem;
+            }
+            [data-testid="column"] {
+                min-width: 100% !important;
+                flex: 1 1 100% !important;
+            }
+            .sm-badge {
+                font-size:0.8rem;
+                padding:0.28rem 0.62rem;
+            }
+            .sm-card,
+            .sm-guide,
+            .sm-report-preview {
+                border-radius:14px;
+                padding:0.85rem 0.9rem;
+            }
+            h1 {
+                font-size: 1.8rem !important;
+            }
+            [data-testid="stDataFrame"] {
+                font-size: 0.82rem;
+            }
+            [data-testid="stTabs"] button {
+                padding-left: 0.5rem !important;
+                padding-right: 0.5rem !important;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -91,6 +149,35 @@ def render_narrative_card(title: str, body: str) -> None:
         f'<div class="sm-card"><h4>{title}</h4><p>{body}</p></div>',
         unsafe_allow_html=True,
     )
+
+
+def render_screen_guide(
+    *,
+    summary: str,
+    bullets: list[str] | None = None,
+    title: str = "이 화면은 이렇게 보세요",
+) -> None:
+    bullet_html = ""
+    if bullets:
+        bullet_html = "<ul>" + "".join(f"<li>{item}</li>" for item in bullets) + "</ul>"
+    st.markdown(
+        f'<div class="sm-guide"><h4>{title}</h4><p>{summary}</p>{bullet_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_report_preview(
+    *,
+    title: str,
+    preview: str | None,
+    empty_message: str = "미리 볼 보고서가 아직 없습니다.",
+) -> None:
+    if not preview:
+        st.info(empty_message)
+        return
+    st.subheader(title)
+    with st.container(border=True):
+        st.markdown(preview)
 
 
 def _display_value(value: object) -> str:
@@ -266,7 +353,6 @@ def render_report_center(settings: Settings, *, limit: int = 12) -> None:
             "as_of_date",
             "generated_ts",
             "status",
-            "artifact_path",
             "published_flag",
             "dry_run_flag",
         ]

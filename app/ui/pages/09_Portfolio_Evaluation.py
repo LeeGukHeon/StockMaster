@@ -11,7 +11,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.ui.components import render_narrative_card, render_page_footer, render_page_header
+from app.ui.components import (
+    render_narrative_card,
+    render_page_footer,
+    render_page_header,
+    render_screen_guide,
+)
 from app.ui.helpers import (
     latest_portfolio_evaluation_frame,
     latest_portfolio_nav_frame,
@@ -28,6 +33,13 @@ render_page_header(
     page_name="포트폴리오 평가",
     title="포트폴리오 평가",
     description="순자산 가치, 낙폭, 회전율, 보유 종목 수와 시가 일괄 진입 대비 장중 타이밍 보조 결과를 비교하는 화면입니다.",
+)
+render_screen_guide(
+    summary="포트폴리오 제안이 시간이 지나면서 어떤 성과를 냈는지 사후에 비교하는 화면입니다. 실제 자동매매 손익장이 아니라 제안 성과 비교표로 이해하면 됩니다.",
+    bullets=[
+        "왼쪽은 시간에 따른 전체 계좌 흐름, 오른쪽은 평가 요약이라고 보면 됩니다.",
+        "시가 일괄 진입과 장중 보조 방식을 비교해 어떤 방식이 더 안정적이었는지 확인할 때 유용합니다.",
+    ],
 )
 
 render_narrative_card(
