@@ -904,6 +904,7 @@ def recover_incomplete_runs(
             run_daily_evaluation_bundle,
             run_daily_post_close_bundle,
             run_daily_research_pipeline,
+            run_docker_build_cache_cleanup_bundle,
             run_evaluation_bundle,
             run_intraday_assist_bundle,
             run_news_sync_bundle,
@@ -915,6 +916,7 @@ def recover_incomplete_runs(
         bundle_map = {
             "run_news_sync_bundle": run_news_sync_bundle,
             "run_daily_close_bundle": run_daily_close_bundle,
+            "run_docker_build_cache_cleanup_bundle": run_docker_build_cache_cleanup_bundle,
             "run_evaluation_bundle": run_evaluation_bundle,
             "run_intraday_assist_bundle": run_intraday_assist_bundle,
             "run_weekly_training_bundle": run_weekly_training_bundle,

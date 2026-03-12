@@ -21,6 +21,7 @@ REQUIRED_FILES = [
     "deploy/systemd/stockmaster-evaluation.timer",
     "deploy/systemd/stockmaster-daily-close.timer",
     "deploy/systemd/stockmaster-daily-audit-lite.timer",
+    "deploy/systemd/stockmaster-docker-build-cache-cleanup.timer",
     "deploy/systemd/stockmaster-weekly-training.timer",
     "deploy/systemd/stockmaster-weekly-calibration.timer",
     "scripts/server/run_scheduler_job.sh",
@@ -42,6 +43,7 @@ def main() -> int:
         "evaluation",
         "daily_close",
         "daily_audit_lite",
+        "docker_build_cache_cleanup",
         "weekly_training_candidate",
         "weekly_calibration",
     }

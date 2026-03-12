@@ -15,6 +15,7 @@ from app.common.time import today_local
 from app.ops.bundles import (
     run_daily_audit_lite_bundle,
     run_daily_close_bundle,
+    run_docker_build_cache_cleanup_bundle,
     run_evaluation_bundle,
     run_intraday_assist_bundle,
     run_news_sync_bundle,
@@ -97,6 +98,14 @@ def main() -> int:
                 dry_run=args.dry_run,
                 force=args.force,
                 publish_discord=not args.skip_discord,
+                policy_config_path=args.policy_config_path,
+            )
+        elif job_key == "docker_build_cache_cleanup":
+            result = run_docker_build_cache_cleanup_bundle(
+                runtime_settings,
+                as_of_date=target_date,
+                trigger_type=trigger_type,
+                dry_run=args.dry_run,
                 policy_config_path=args.policy_config_path,
             )
         elif job_key == "evaluation":

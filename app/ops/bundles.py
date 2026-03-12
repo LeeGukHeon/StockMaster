@@ -662,6 +662,64 @@ def run_ops_maintenance_bundle(
             )
 
 
+def run_docker_build_cache_cleanup_bundle(
+    settings: Settings,
+    *,
+    as_of_date: date | None = None,
+    trigger_type: str = TriggerType.MANUAL,
+    dry_run: bool = False,
+    parent_run_id: str | None = None,
+    root_run_id: str | None = None,
+    recovery_of_run_id: str | None = None,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    ensure_storage_layout(settings)
+    target_date = as_of_date or today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        with JobRunContext(
+            settings,
+            connection,
+            job_name="run_docker_build_cache_cleanup_bundle",
+            as_of_date=target_date,
+            trigger_type=trigger_type,
+            dry_run=dry_run,
+            parent_run_id=parent_run_id,
+            root_run_id=root_run_id,
+            recovery_of_run_id=recovery_of_run_id,
+            policy_config_path=policy_config_path,
+            notes=f"Docker build cache cleanup bundle for {target_date.isoformat()}",
+            details={
+                "bundle_phase": "docker_build_cache_cleanup",
+                "date_semantics": "calendar_day",
+            },
+        ) as job:
+            job.run_step(
+                "cleanup_docker_build_cache",
+                cleanup_docker_build_cache,
+                settings,
+                connection=connection,
+                job_run_id=job.run_id,
+                dry_run=dry_run,
+                policy_config_path=policy_config_path,
+                critical=False,
+            )
+            job.run_step(
+                "materialize_health_snapshots",
+                materialize_health_snapshots,
+                settings,
+                connection=connection,
+                as_of_date=target_date,
+                job_run_id=job.run_id,
+                policy_config_path=policy_config_path,
+                critical=False,
+            )
+            return job_result_from_context(
+                job,
+                notes=f"Docker build cache cleanup bundle completed for {target_date.isoformat()}.",
+            )
+
+
 def _scheduler_target_date(
     settings: Settings,
     *,

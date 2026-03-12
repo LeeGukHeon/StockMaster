@@ -158,6 +158,19 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         date_semantics=DATE_SEMANTICS_CALENDAR,
     ),
     ScheduledJobDefinition(
+        job_key="docker_build_cache_cleanup",
+        label="도커 빌드 캐시 정리",
+        description="Docker builder cache만 안전하게 정리",
+        service_slug="docker-build-cache-cleanup",
+        bundle_script="scripts/run_docker_build_cache_cleanup_bundle.py",
+        bundle_args=(),
+        schedule_label="매일 23:40",
+        on_calendar=("*-*-* 23:40:00",),
+        weekdays=(0, 1, 2, 3, 4, 5, 6),
+        run_times=("23:40",),
+        date_semantics=DATE_SEMANTICS_CALENDAR,
+    ),
+    ScheduledJobDefinition(
         job_key="weekly_training_candidate",
         label="주간 학습 후보 생성",
         description="alpha/meta 재학습 후보와 비교 리포트만 생성하고 production 반영은 하지 않음",
@@ -482,6 +495,7 @@ def bundle_last_result_frame(settings: Settings, *, limit: int = 50) -> pd.DataF
     bundle_names = [
         "run_daily_close_bundle",
         "run_evaluation_bundle",
+        "run_docker_build_cache_cleanup_bundle",
         "run_intraday_assist_bundle",
         "run_weekly_training_bundle",
         "run_weekly_calibration_bundle",

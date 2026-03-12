@@ -15,6 +15,7 @@ TIMER_UNITS=(
   stockmaster-evaluation.timer
   stockmaster-daily-close.timer
   stockmaster-daily-audit-lite.timer
+  stockmaster-docker-build-cache-cleanup.timer
   stockmaster-weekly-training.timer
   stockmaster-weekly-calibration.timer
 )

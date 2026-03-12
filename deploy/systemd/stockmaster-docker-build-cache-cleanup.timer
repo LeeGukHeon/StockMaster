@@ -1,0 +1,11 @@
+[Unit]
+Description=StockMaster Docker Build Cache Cleanup Timer
+
+[Timer]
+Unit=stockmaster-scheduler@docker-build-cache-cleanup.service
+OnCalendar=*-*-* 23:40:00
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

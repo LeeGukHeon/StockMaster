@@ -18,6 +18,10 @@ _EXPORTS = {
     "rotate_and_compress_logs": ("app.ops.maintenance", "rotate_and_compress_logs"),
     "run_daily_audit_lite_bundle": ("app.ops.bundles", "run_daily_audit_lite_bundle"),
     "run_daily_close_bundle": ("app.ops.bundles", "run_daily_close_bundle"),
+    "run_docker_build_cache_cleanup_bundle": (
+        "app.ops.bundles",
+        "run_docker_build_cache_cleanup_bundle",
+    ),
     "run_daily_evaluation_bundle": ("app.ops.bundles", "run_daily_evaluation_bundle"),
     "run_daily_post_close_bundle": ("app.ops.bundles", "run_daily_post_close_bundle"),
     "run_daily_research_pipeline": ("app.ops.bundles", "run_daily_research_pipeline"),

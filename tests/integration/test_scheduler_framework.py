@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from app.ops.bundles import (
     run_daily_close_bundle,
+    run_docker_build_cache_cleanup_bundle,
     run_evaluation_bundle,
     run_news_sync_bundle,
     run_ops_maintenance_bundle,
@@ -311,6 +312,29 @@ def test_ops_maintenance_scheduled_run_suppresses_discord_publish(tmp_path, monk
 
     assert result.status == JobStatus.SUCCESS
     assert calls == [True]
+
+
+def test_docker_build_cache_cleanup_bundle_runs_cleanup_step(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    calls: list[dict[str, object]] = []
+    noop_result = SimpleNamespace(artifact_paths=[], status=JobStatus.SUCCESS, notes="ok")
+
+    def fake_cleanup_docker_build_cache(_settings, *, dry_run=False, **_kwargs):
+        calls.append({"dry_run": dry_run})
+        return noop_result
+
+    monkeypatch.setattr("app.ops.bundles.cleanup_docker_build_cache", fake_cleanup_docker_build_cache)
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+
+    result = run_docker_build_cache_cleanup_bundle(
+        settings,
+        as_of_date=date(2026, 3, 9),
+        dry_run=False,
+    )
+
+    assert result.status == JobStatus.SUCCESS
+    assert calls == [{"dry_run": False}]
 
 
 def test_evaluation_bundle_passes_requested_date_to_evaluation_job(tmp_path, monkeypatch) -> None:

@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.ops.bundles import (
     run_daily_audit_lite_bundle,
     run_daily_close_bundle,
+    run_docker_build_cache_cleanup_bundle,
     run_evaluation_bundle,
     run_intraday_assist_bundle,
     run_news_sync_bundle,
@@ -33,6 +34,7 @@ def main() -> int:
         run_evaluation_bundle(settings, as_of_date=probe_date, dry_run=True),
         run_daily_close_bundle(settings, as_of_date=probe_date, dry_run=True),
         run_daily_audit_lite_bundle(settings, as_of_date=probe_date, dry_run=True),
+        run_docker_build_cache_cleanup_bundle(settings, as_of_date=probe_date, dry_run=True),
         run_weekly_training_bundle(settings, as_of_date=probe_date, dry_run=True),
         run_weekly_calibration_bundle(settings, as_of_date=probe_date, dry_run=True),
         run_ops_maintenance_bundle(settings, as_of_date=probe_date, dry_run=True),

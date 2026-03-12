@@ -20,6 +20,7 @@ def test_scheduler_registry_contains_expected_jobs() -> None:
         "evaluation",
         "daily_close",
         "daily_audit_lite",
+        "docker_build_cache_cleanup",
         "weekly_training_candidate",
         "weekly_calibration",
     }
@@ -34,6 +35,8 @@ def test_scheduler_registry_contains_expected_jobs() -> None:
     assert SCHEDULED_JOB_MAP["daily_close"].date_semantics == "trading_day"
     assert SCHEDULED_JOB_MAP["intraday_assist"].intraday_interval_minutes == 5
     assert SCHEDULED_JOB_MAP["daily_audit_lite"].date_semantics == "calendar_day"
+    assert SCHEDULED_JOB_MAP["docker_build_cache_cleanup"].run_times == ("23:40",)
+    assert SCHEDULED_JOB_MAP["docker_build_cache_cleanup"].date_semantics == "calendar_day"
     assert SCHEDULED_JOB_MAP["weekly_training_candidate"].date_semantics == "hybrid"
     assert SCHEDULED_JOB_MAP["weekly_training_candidate"].heavy_job is True
     assert SCHEDULED_JOB_MAP["weekly_calibration"].date_semantics == "hybrid"
