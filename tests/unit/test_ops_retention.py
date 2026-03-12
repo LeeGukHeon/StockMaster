@@ -9,6 +9,7 @@ from app.ops.maintenance import (
     _parse_reclaimed_bytes,
     cleanup_docker_build_cache,
     cleanup_model_artifacts,
+    reset_open_recovery_actions,
     cleanup_stale_job_runs,
     enforce_retention_policies,
     reconcile_failed_runs,
@@ -135,6 +136,44 @@ def test_reconcile_failed_runs_does_not_requeue_targets_with_prior_recovery_acti
         ).fetchone()[0]
     assert result.row_count == 0
     assert count == 1
+
+
+def test_reset_open_recovery_actions_closes_existing_open_queue(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    now = datetime.now(tz=timezone.utc)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        insert_recovery_action(
+            connection,
+            recovery_action_id="recovery-open-1",
+            created_at=now,
+            action_type="QUEUE_RECOVERY",
+            status="OPEN",
+            target_job_run_id="failed-run-1",
+            triggered_by_run_id="maintenance-run-1",
+            recovery_run_id=None,
+            lock_name="run_daily_close_bundle",
+            notes="queued",
+            details={},
+        )
+        result = reset_open_recovery_actions(
+            settings,
+            connection=connection,
+            job_run_id="maintenance-run-2",
+        )
+        row = connection.execute(
+            """
+            SELECT status, finished_at, notes, details_json
+            FROM fact_recovery_action
+            WHERE recovery_action_id = 'recovery-open-1'
+            """
+        ).fetchone()
+
+    assert result.row_count == 1
+    assert row[0] == "SKIPPED"
+    assert row[1] is not None
+    assert "daily recovery queue reset" in str(row[2]).lower()
+    assert "daily_queue_reset" in str(row[3])
 
 
 def test_cleanup_model_artifacts_keeps_active_and_latest_runs(tmp_path) -> None:

@@ -294,6 +294,7 @@ def test_ops_maintenance_scheduled_run_suppresses_discord_publish(tmp_path, monk
     monkeypatch.setattr("app.ops.bundles.rotate_and_compress_logs", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.cleanup_disk_watermark", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.cleanup_stale_job_runs", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.reset_open_recovery_actions", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.reconcile_failed_runs", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.recover_incomplete_runs", lambda *a, **k: noop_result)
 

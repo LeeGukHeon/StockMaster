@@ -53,6 +53,7 @@ from app.ops.maintenance import (
     cleanup_disk_watermark,
     cleanup_docker_build_cache,
     cleanup_model_artifacts,
+    reset_open_recovery_actions,
     cleanup_stale_job_runs,
     reconcile_failed_runs,
     recover_incomplete_runs,
@@ -624,6 +625,14 @@ def run_ops_maintenance_bundle(
             job.run_step(
                 "cleanup_stale_job_runs",
                 cleanup_stale_job_runs,
+                settings,
+                connection=connection,
+                job_run_id=job.run_id,
+                critical=False,
+            )
+            job.run_step(
+                "reset_open_recovery_actions",
+                reset_open_recovery_actions,
                 settings,
                 connection=connection,
                 job_run_id=job.run_id,

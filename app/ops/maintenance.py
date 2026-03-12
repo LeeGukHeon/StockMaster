@@ -799,6 +799,47 @@ def cleanup_stale_job_runs(
     )
 
 
+def reset_open_recovery_actions(
+    settings: Settings,
+    *,
+    connection: duckdb.DuckDBPyConnection,
+    job_run_id: str | None = None,
+) -> OpsJobResult:
+    bootstrap_core_tables(connection)
+    rows = connection.execute(
+        """
+        SELECT recovery_action_id, notes, details_json
+        FROM fact_recovery_action
+        WHERE status = 'OPEN'
+        ORDER BY created_at
+        """
+    ).fetchall()
+    reset_count = 0
+    for recovery_action_id, notes, details_json in rows:
+        details = json.loads(details_json) if details_json else {}
+        details["daily_queue_reset"] = True
+        details["daily_queue_reset_at"] = utc_now().isoformat()
+        merged_notes = " | ".join(
+            part for part in [notes, "Cleared during daily recovery queue reset."] if part
+        )
+        update_recovery_action(
+            connection,
+            recovery_action_id=str(recovery_action_id),
+            status=RecoveryStatus.SKIPPED,
+            notes=merged_notes,
+            details=details,
+            finished_at=utc_now(),
+        )
+        reset_count += 1
+    return OpsJobResult(
+        run_id=job_run_id or "embedded",
+        job_name="reset_open_recovery_actions",
+        status=JobStatus.SUCCESS,
+        notes=f"Open recovery actions reset={reset_count}",
+        row_count=reset_count,
+    )
+
+
 def reconcile_failed_runs(
     settings: Settings,
     *,
