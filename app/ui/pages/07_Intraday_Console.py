@@ -46,30 +46,6 @@ from app.ui.helpers import (
     load_ui_settings,
 )
 
-settings = load_ui_settings(PROJECT_ROOT)
-
-status_frame = latest_intraday_status_frame(settings)
-capability_frame = latest_intraday_research_capability_frame(settings, limit=20)
-checkpoint_health = latest_intraday_checkpoint_health_frame(settings)
-candidate_frame = intraday_console_candidate_frame(settings, limit=20)
-market_context = intraday_console_market_context_frame(settings, limit=12)
-signal_frame = intraday_console_signal_frame(settings, limit=20)
-decision_frame = intraday_console_decision_frame(settings, limit=20)
-adjusted_decision_frame = intraday_console_adjusted_decision_frame(settings, limit=20)
-tuned_decision_frame = intraday_console_tuned_action_frame(settings, limit=20)
-meta_prediction_frame = latest_intraday_meta_prediction_frame(settings, limit=20)
-meta_decision_frame = latest_intraday_meta_decision_frame(settings, limit=20)
-active_policy_frame = latest_intraday_active_policy_frame(settings, limit=20)
-active_meta_model_frame = latest_intraday_meta_active_model_frame(settings, limit=20)
-recommendation_frame = latest_intraday_policy_recommendation_frame(settings, limit=20)
-strategy_trace_frame = intraday_console_strategy_trace_frame(settings, limit=20)
-timing_frame = intraday_console_timing_frame(settings, limit=20)
-lineage_frame = latest_intraday_decision_lineage_frame(settings, limit=20)
-same_exit_frame = latest_intraday_strategy_comparison_frame(settings, limit=12)
-summary_preview = latest_intraday_summary_report_preview(settings)
-postmortem_preview = latest_intraday_postmortem_preview(settings)
-policy_preview = latest_intraday_policy_report_preview(settings)
-
 
 def _safe_int(value: object) -> int:
     if value is None or pd.isna(value):
@@ -83,49 +59,87 @@ def _safe_float(value: object) -> float | None:
     return float(value)
 
 
-def _latest_checkpoint_text() -> str:
-    for frame in (checkpoint_health, market_context, signal_frame, decision_frame, meta_decision_frame):
-        if frame.empty or "checkpoint_time" not in frame.columns:
-            continue
-        values = frame["checkpoint_time"].dropna()
-        if not values.empty:
-            return str(values.astype(str).max())
+@st.cache_data(ttl=30, show_spinner=False)
+def _load_intraday_console_section(project_root_str: str, section: str) -> dict[str, object]:
+    settings = load_ui_settings(Path(project_root_str))
+    if section == "한눈에 보기":
+        return {
+            "status_frame": latest_intraday_status_frame(settings),
+            "capability_frame": latest_intraday_research_capability_frame(settings, limit=20),
+            "checkpoint_health": latest_intraday_checkpoint_health_frame(settings),
+            "market_context": intraday_console_market_context_frame(settings, limit=12),
+            "active_policy_frame": latest_intraday_active_policy_frame(settings, limit=20),
+            "active_meta_model_frame": latest_intraday_meta_active_model_frame(settings, limit=20),
+            "recommendation_frame": latest_intraday_policy_recommendation_frame(settings, limit=20),
+        }
+    if section == "판단 흐름":
+        return {
+            "candidate_frame": intraday_console_candidate_frame(settings, limit=20),
+            "signal_frame": intraday_console_signal_frame(settings, limit=20),
+            "decision_frame": intraday_console_decision_frame(settings, limit=20),
+            "adjusted_decision_frame": intraday_console_adjusted_decision_frame(settings, limit=20),
+            "meta_prediction_frame": latest_intraday_meta_prediction_frame(settings, limit=20),
+            "meta_decision_frame": latest_intraday_meta_decision_frame(settings, limit=20),
+            "tuned_decision_frame": intraday_console_tuned_action_frame(settings, limit=20),
+        }
+    if section == "결과 비교":
+        return {
+            "timing_frame": intraday_console_timing_frame(settings, limit=20),
+            "strategy_trace_frame": intraday_console_strategy_trace_frame(settings, limit=20),
+            "same_exit_frame": latest_intraday_strategy_comparison_frame(settings, limit=12),
+            "lineage_frame": latest_intraday_decision_lineage_frame(settings, limit=20),
+        }
+    return {
+        "capability_frame": latest_intraday_research_capability_frame(settings, limit=20),
+        "active_policy_frame": latest_intraday_active_policy_frame(settings, limit=20),
+        "active_meta_model_frame": latest_intraday_meta_active_model_frame(settings, limit=20),
+        "recommendation_frame": latest_intraday_policy_recommendation_frame(settings, limit=20),
+        "tuned_decision_frame": intraday_console_tuned_action_frame(settings, limit=20),
+        "summary_preview": latest_intraday_summary_report_preview(settings),
+        "postmortem_preview": latest_intraday_postmortem_preview(settings),
+        "policy_preview": latest_intraday_policy_report_preview(settings),
+    }
+
+
+def _latest_checkpoint_text(payload: dict[str, object]) -> str:
+    for key in ("checkpoint_health", "market_context"):
+        frame = payload.get(key, pd.DataFrame())
+        if isinstance(frame, pd.DataFrame) and not frame.empty and "checkpoint_time" in frame.columns:
+            values = frame["checkpoint_time"].dropna()
+            if not values.empty:
+                return str(values.astype(str).max())
     return "-"
 
 
-def _overview_row() -> dict[str, object]:
+def _render_overview(payload: dict[str, object]) -> None:
+    status_frame = payload["status_frame"]
+    capability_frame = payload["capability_frame"]
+    checkpoint_health = payload["checkpoint_health"]
+    market_context = payload["market_context"]
+    active_policy_frame = payload["active_policy_frame"]
+    active_meta_model_frame = payload["active_meta_model_frame"]
+    recommendation_frame = payload["recommendation_frame"]
+
     if status_frame.empty:
-        return {}
-    return status_frame.iloc[0].to_dict()
-
-
-def _status_narrative(row: dict[str, object]) -> str:
-    if not row:
-        return "아직 오늘 장중 보조 세션이 만들어지지 않았습니다."
-    return (
-        f"오늘 세션은 후보 {_safe_int(row.get('candidate_symbols'))}개를 대상으로 시작했고, "
-        f"현재 최종 액션까지 내려온 종목은 {_safe_int(row.get('final_action_symbols'))}개입니다. "
-        f"중간에 규칙 기반 1차 판단 {_safe_int(row.get('raw_decision_symbols'))}개, "
-        f"보정 판단 {_safe_int(row.get('adjusted_symbols'))}개, 메타 판단 {_safe_int(row.get('meta_decision_symbols'))}개가 기록됐습니다."
-    )
-
-
-def _render_overview_tab() -> None:
-    row = _overview_row()
-    if not row:
-        render_narrative_card("오늘 상태", "오늘 장중 보조 데이터가 아직 없습니다.")
+        render_narrative_card("오늘 상태", "아직 오늘 장중 보조 세션이 없습니다.")
         return
 
+    row = status_frame.iloc[0]
     render_narrative_card(
         "오늘 상태",
-        _status_narrative(row),
+        (
+            f"오늘 후보는 {_safe_int(row.get('candidate_symbols'))}개, 최종 액션까지 내려온 종목은 "
+            f"{_safe_int(row.get('final_action_symbols'))}개입니다. 규칙 기반 1차 판단 "
+            f"{_safe_int(row.get('raw_decision_symbols'))}개, 보정 판단 "
+            f"{_safe_int(row.get('adjusted_symbols'))}개가 기록됐습니다."
+        ),
     )
 
     metric_a, metric_b, metric_c, metric_d, metric_e = st.columns(5)
     metric_a.metric("후보 종목", _safe_int(row.get("candidate_symbols")))
     metric_b.metric("신호 계산", _safe_int(row.get("signal_symbols")))
     metric_c.metric("최종 액션", _safe_int(row.get("final_action_symbols")))
-    metric_d.metric("최근 체크포인트", _latest_checkpoint_text())
+    metric_d.metric("최근 체크포인트", _latest_checkpoint_text(payload))
     bar_latency = _safe_float(row.get("avg_bar_latency_ms"))
     quote_latency = _safe_float(row.get("avg_quote_latency_ms"))
     metric_e.metric(
@@ -207,28 +221,31 @@ def _render_overview_tab() -> None:
         )
 
 
-def _render_flow_tab() -> None:
+def _render_flow(payload: dict[str, object]) -> None:
+    candidate_frame = payload["candidate_frame"]
+    signal_frame = payload["signal_frame"]
+    decision_frame = payload["decision_frame"]
+    adjusted_decision_frame = payload["adjusted_decision_frame"]
+    meta_prediction_frame = payload["meta_prediction_frame"]
+    meta_decision_frame = payload["meta_decision_frame"]
+    tuned_decision_frame = payload["tuned_decision_frame"]
+
     render_narrative_card(
         "읽는 순서",
         "후보 종목 -> 장중 신호 -> 1차 판단 -> 보정 판단 -> 메타 예측 -> 최종 액션 순서로 보면 됩니다. "
         "핵심만 보려면 마지막 두 블록만 확인해도 충분합니다.",
     )
 
-    flow_tabs = st.tabs(
-        [
-            "1. 후보",
-            "2. 신호",
-            "3. 1차 판단",
-            "4. 보정 판단",
-            "5. 메타 예측",
-            "6. 최종 액션",
-        ]
+    sub = st.segmented_control(
+        "판단 흐름 단계",
+        options=["후보", "신호", "1차 판단", "보정 판단", "메타 예측", "최종 액션"],
+        default="최종 액션",
     )
 
-    with flow_tabs[0]:
+    if sub == "후보":
         render_narrative_card(
             "후보 종목이란?",
-            "전일 추천 결과에서 오늘 장중에 다시 볼 종목들입니다. 여기서는 무엇을 볼지 범위를 정합니다.",
+            "전일 추천 결과에서 오늘 장중에 다시 볼 종목들입니다. 여기서 오늘 볼 대상을 정합니다.",
         )
         render_record_cards(
             candidate_frame,
@@ -240,11 +257,10 @@ def _render_flow_tab() -> None:
             empty_message="후보 종목이 없습니다.",
             table_expander_label="후보 종목 원본 보기",
         )
-
-    with flow_tabs[1]:
+    elif sub == "신호":
         render_narrative_card(
             "장중 신호란?",
-            "호가, 체결, 활동성, 변동성 같은 장중 데이터로 지금 진입 타이밍이 좋은지 점수화한 값입니다.",
+            "호가, 체결, 활동성, 변동성 같은 장중 데이터로 지금 타이밍이 좋은지 점수화한 값입니다.",
         )
         render_record_cards(
             signal_frame,
@@ -261,11 +277,10 @@ def _render_flow_tab() -> None:
             empty_message="장중 신호가 없습니다.",
             table_expander_label="장중 신호 원본 보기",
         )
-
-    with flow_tabs[2]:
+    elif sub == "1차 판단":
         render_narrative_card(
             "1차 판단이란?",
-            "정책과 메타모델을 아직 쓰지 않은 순수 규칙 기반 초안입니다. 장중 신호를 보고 먼저 Enter/Wait/Avoid를 나눕니다.",
+            "정책과 메타모델을 아직 쓰지 않은 규칙 기반 초안입니다.",
         )
         render_record_cards(
             decision_frame,
@@ -277,11 +292,10 @@ def _render_flow_tab() -> None:
             empty_message="1차 판단 기록이 없습니다.",
             table_expander_label="1차 판단 원본 보기",
         )
-
-    with flow_tabs[3]:
+    elif sub == "보정 판단":
         render_narrative_card(
             "보정 판단이란?",
-            "시장 상태와 리스크를 반영해서 1차 판단을 더 보수적으로 또는 더 공격적으로 조정한 단계입니다.",
+            "시장 상태와 리스크를 반영해서 1차 판단을 조정한 단계입니다.",
         )
         render_record_cards(
             adjusted_decision_frame,
@@ -299,11 +313,10 @@ def _render_flow_tab() -> None:
             empty_message="보정 판단 기록이 없습니다.",
             table_expander_label="보정 판단 원본 보기",
         )
-
-    with flow_tabs[4]:
+    elif sub == "메타 예측":
         render_narrative_card(
             "메타 예측이란?",
-            "메타모델이 최종 액션에 자신이 얼마나 있는지, 다른 판단과 얼마나 엇갈리는지 확률로 보여주는 단계입니다.",
+            "메타모델이 최종 액션에 얼마나 자신이 있는지, 판단이 얼마나 엇갈리는지 보여주는 단계입니다.",
         )
         render_record_cards(
             meta_prediction_frame,
@@ -321,13 +334,12 @@ def _render_flow_tab() -> None:
             empty_message="메타 예측 기록이 없습니다.",
             table_expander_label="메타 예측 원본 보기",
         )
-
-    with flow_tabs[5]:
+    else:
+        final_frame = meta_decision_frame if not meta_decision_frame.empty else tuned_decision_frame
         render_narrative_card(
             "최종 액션이란?",
-            "지금 화면에서 가장 먼저 봐야 하는 결론입니다. 실제로는 이 블록이 오늘의 Enter / Wait / Avoid 결론이라고 보면 됩니다.",
+            "오늘 화면에서 가장 먼저 봐야 하는 결론입니다. 실제로는 이 블록이 Enter / Wait / Avoid 결론입니다.",
         )
-        final_frame = meta_decision_frame if not meta_decision_frame.empty else tuned_decision_frame
         render_record_cards(
             final_frame,
             title="오늘 최종 액션",
@@ -348,15 +360,19 @@ def _render_flow_tab() -> None:
         )
 
 
-def _render_results_tab() -> None:
-    render_narrative_card(
-        "무엇을 보면 되나",
-        "이 탭은 장중 판단이 실제로 어떤 결과를 냈는지 보는 곳입니다. 당일 최종 액션보다 사후 비교가 궁금할 때만 보면 됩니다.",
+def _render_results(payload: dict[str, object]) -> None:
+    timing_frame = payload["timing_frame"]
+    strategy_trace_frame = payload["strategy_trace_frame"]
+    same_exit_frame = payload["same_exit_frame"]
+    lineage_frame = payload["lineage_frame"]
+
+    sub = st.segmented_control(
+        "결과 비교 종류",
+        options=["시점 결과", "전략 추적", "비교 요약", "라인리지"],
+        default="시점 결과",
     )
 
-    result_tabs = st.tabs(["시점 결과", "전략 추적", "비교 요약", "라인리지"])
-
-    with result_tabs[0]:
+    if sub == "시점 결과":
         render_record_cards(
             timing_frame,
             title="체크포인트별 결과",
@@ -373,8 +389,7 @@ def _render_results_tab() -> None:
             empty_message="시점 결과가 없습니다.",
             table_expander_label="시점 결과 원본 보기",
         )
-
-    with result_tabs[1]:
+    elif sub == "전략 추적":
         render_record_cards(
             strategy_trace_frame,
             title="전략 추적",
@@ -385,8 +400,7 @@ def _render_results_tab() -> None:
             empty_message="전략 추적 이력이 없습니다.",
             table_expander_label="전략 추적 원본 보기",
         )
-
-    with result_tabs[2]:
+    elif sub == "비교 요약":
         render_record_cards(
             same_exit_frame,
             title="같은 종료 기준 비교",
@@ -402,8 +416,7 @@ def _render_results_tab() -> None:
             empty_message="비교 요약이 없습니다.",
             table_expander_label="비교 요약 원본 보기",
         )
-
-    with result_tabs[3]:
+    else:
         render_record_cards(
             lineage_frame,
             title="판단 라인리지",
@@ -423,11 +436,15 @@ def _render_results_tab() -> None:
         )
 
 
-def _render_policy_tab() -> None:
-    render_narrative_card(
-        "운영 정보",
-        "이 탭은 장중보조가 어떤 정책/메타모델 위에서 굴러가는지와, 사람이 나중에 읽을 리포트를 모아둔 영역입니다.",
-    )
+def _render_policy(payload: dict[str, object]) -> None:
+    capability_frame = payload["capability_frame"]
+    active_policy_frame = payload["active_policy_frame"]
+    active_meta_model_frame = payload["active_meta_model_frame"]
+    recommendation_frame = payload["recommendation_frame"]
+    tuned_decision_frame = payload["tuned_decision_frame"]
+    summary_preview = payload["summary_preview"]
+    postmortem_preview = payload["postmortem_preview"]
+    policy_preview = payload["policy_preview"]
 
     top_left, top_right = st.columns(2)
     with top_left:
@@ -502,20 +519,18 @@ def _render_policy_tab() -> None:
 
 
 render_page_header(
-    settings,
+    load_ui_settings(PROJECT_ROOT),
     page_name="장중 콘솔",
     title="장중 콘솔",
     description="장중 보조 판단이 오늘 어떻게 흘러가는지, 최종 액션이 무엇인지 한눈에 보는 화면입니다.",
 )
 render_screen_guide(
-    summary="핵심만 보려면 먼저 `한눈에 보기`에서 오늘 상태를 보고, 그다음 `판단 흐름` 탭의 `최종 액션`만 확인하세요. "
-    "나머지는 왜 그렇게 됐는지 설명해주는 보조 정보입니다.",
+    summary="기본 진입은 `한눈에 보기`만 불러옵니다. 필요한 섹션만 선택해서 보는 방식이라 이전보다 훨씬 가볍습니다.",
     bullets=[
-        "후보 종목: 오늘 다시 볼 종목 목록",
-        "장중 신호: 호가·체결·활동성 점수",
-        "1차 판단: 규칙 기반 초안",
-        "보정 판단: 시장 상황 반영",
-        "최종 액션: 오늘 실제로 먼저 볼 결론",
+        "한눈에 보기: 오늘 결론 요약",
+        "판단 흐름: 후보 -> 신호 -> 최종 액션",
+        "결과 비교: 사후 결과와 전략 비교",
+        "정책·리포트: 운영용 상세 정보",
     ],
 )
 render_warning_banner(
@@ -523,20 +538,22 @@ render_warning_banner(
     "이 화면은 주문 화면이 아니라 해석용 콘솔입니다. 최종 액션은 참고 신호이며 자동 주문으로 이어지지 않습니다.",
 )
 
-if status_frame.empty:
-    render_narrative_card(
-        "장중 상태",
-        "아직 오늘 장중 보조 세션이 없습니다. 후보 세션 생성과 장중 보조 실행 여부를 먼저 확인하세요.",
-    )
-else:
-    tabs = st.tabs(["한눈에 보기", "판단 흐름", "결과 비교", "정책·리포트"])
-    with tabs[0]:
-        _render_overview_tab()
-    with tabs[1]:
-        _render_flow_tab()
-    with tabs[2]:
-        _render_results_tab()
-    with tabs[3]:
-        _render_policy_tab()
+section = st.segmented_control(
+    "콘솔 보기",
+    options=["한눈에 보기", "판단 흐름", "결과 비교", "정책·리포트"],
+    default="한눈에 보기",
+)
 
-render_page_footer(settings, page_name="장중 콘솔")
+with st.spinner("장중 콘솔 데이터를 불러오는 중..."):
+    payload = _load_intraday_console_section(PROJECT_ROOT.as_posix(), section)
+
+if section == "한눈에 보기":
+    _render_overview(payload)
+elif section == "판단 흐름":
+    _render_flow(payload)
+elif section == "결과 비교":
+    _render_results(payload)
+else:
+    _render_policy(payload)
+
+render_page_footer(load_ui_settings(PROJECT_ROOT), page_name="장중 콘솔")
