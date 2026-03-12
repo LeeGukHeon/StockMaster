@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from html import escape
 from pathlib import Path
 from typing import Iterable
 
@@ -39,54 +40,195 @@ def inject_app_styles() -> None:
     st.markdown(
         """
         <style>
+        :root {
+            --sm-ink: #14231f;
+            --sm-muted: #53625d;
+            --sm-accent: #0f766e;
+            --sm-accent-soft: rgba(15, 118, 110, 0.14);
+            --sm-highlight: #b45309;
+            --sm-paper: rgba(255, 252, 247, 0.88);
+            --sm-panel: rgba(255, 255, 255, 0.72);
+            --sm-border: rgba(20, 35, 31, 0.11);
+            --sm-shadow: 0 18px 40px rgba(61, 42, 24, 0.08);
+        }
+        .stApp {
+            background:
+                radial-gradient(circle at 12% 10%, rgba(15, 118, 110, 0.16), transparent 28%),
+                radial-gradient(circle at 88% 8%, rgba(180, 83, 9, 0.14), transparent 24%),
+                linear-gradient(180deg, #f6f1e8 0%, #f1eadf 42%, #ece3d7 100%);
+            color: var(--sm-ink);
+        }
         html, body, [class*="css"]  {
             font-family: "SUIT Variable", "Pretendard Variable", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
         }
         .block-container {
-            padding-top: 1.1rem;
-            padding-bottom: 1.25rem;
+            max-width: 1220px;
+            padding-top: 1.2rem;
+            padding-bottom: 1.4rem;
         }
-        .sm-badge-row {display:flex; flex-wrap:wrap; gap:0.45rem; margin:0.3rem 0 1rem 0;}
+        h1, h2, h3 {
+            color: var(--sm-ink);
+            letter-spacing: -0.03em;
+        }
+        p, label, .stCaption, [data-testid="stMarkdownContainer"] p {
+            color: var(--sm-muted);
+        }
+        .sm-badge-row {display:flex; flex-wrap:wrap; gap:0.45rem; margin:0.35rem 0 1.05rem 0;}
         .sm-badge {
             display:inline-flex; align-items:center; gap:0.4rem;
-            padding:0.3rem 0.7rem; border-radius:999px; color:white;
-            font-size:0.85rem; font-weight:600;
+            padding:0.34rem 0.78rem; border-radius:999px; color:white;
+            font-size:0.82rem; font-weight:700; box-shadow:0 10px 24px rgba(20,35,31,0.12);
         }
         .sm-banner {
-            border-radius:14px; padding:0.85rem 1rem; margin:0.35rem 0 1rem 0;
-            border-left:6px solid transparent; background:#f8fafc;
+            border-radius:18px; padding:0.95rem 1.05rem; margin:0.45rem 0 1rem 0;
+            border:1px solid rgba(20,35,31,0.08);
+            border-left:6px solid transparent;
+            background:linear-gradient(135deg, rgba(255,255,255,0.84), rgba(255,249,240,0.72));
+            box-shadow: var(--sm-shadow);
         }
         .sm-footer {
-            margin-top:1.25rem; padding-top:0.8rem; border-top:1px solid rgba(148,163,184,0.35);
-            color:#475569; font-size:0.85rem;
+            margin-top:1.35rem; padding-top:0.95rem; border-top:1px solid rgba(20,35,31,0.12);
+            color:var(--sm-muted); font-size:0.85rem;
         }
         .sm-card {
-            border:1px solid rgba(148,163,184,0.25); border-radius:16px; padding:0.9rem 1rem;
-            background:linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.96));
-            margin-bottom:0.9rem;
+            border:1px solid var(--sm-border); border-radius:22px; padding:1rem 1.08rem;
+            background:linear-gradient(160deg, rgba(255,255,255,0.9), rgba(251,247,240,0.82));
+            box-shadow: var(--sm-shadow); backdrop-filter: blur(12px); margin-bottom:1rem;
         }
-        .sm-card h4 {margin:0 0 0.25rem 0; font-size:1rem;}
-        .sm-card p {margin:0; color:#475569;}
+        .sm-card h4 {margin:0 0 0.28rem 0; font-size:1.02rem; color:var(--sm-ink);}
+        .sm-card p {margin:0; color:var(--sm-muted); line-height:1.68;}
         .sm-guide {
-            border:1px solid rgba(14,116,144,0.18);
-            border-radius:18px;
-            padding:1rem 1.05rem 0.8rem 1.05rem;
-            background:linear-gradient(145deg, rgba(240,249,255,0.96), rgba(248,250,252,0.98));
-            margin:0.2rem 0 1rem 0;
+            border:1px solid rgba(15,118,110,0.16);
+            border-radius:22px;
+            padding:1.05rem 1.1rem 0.9rem 1.1rem;
+            background:linear-gradient(145deg, rgba(235,247,245,0.9), rgba(255,251,245,0.9));
+            box-shadow: var(--sm-shadow);
+            margin:0.25rem 0 1rem 0;
         }
-        .sm-guide h4 {margin:0 0 0.35rem 0; font-size:1rem;}
-        .sm-guide p {margin:0 0 0.45rem 0; color:#334155; line-height:1.55;}
-        .sm-guide ul {margin:0.2rem 0 0 1.1rem; color:#475569;}
+        .sm-guide h4 {margin:0 0 0.35rem 0; font-size:1.02rem; color:var(--sm-ink);}
+        .sm-guide p {margin:0 0 0.45rem 0; color:var(--sm-muted); line-height:1.62;}
+        .sm-guide ul {margin:0.24rem 0 0 1.1rem; color:var(--sm-muted);}
         .sm-guide li {margin:0.18rem 0;}
         .sm-report-preview {
-            border:1px solid rgba(148,163,184,0.22);
-            border-radius:18px;
+            border:1px solid var(--sm-border);
+            border-radius:22px;
             padding:1rem 1.05rem;
-            background:linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.98));
+            background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(248,244,237,0.92));
+            box-shadow: var(--sm-shadow);
         }
         .sm-report-preview p,
         .sm-report-preview li {
             line-height:1.7;
+        }
+        .sm-record-card {
+            border:1px solid var(--sm-border);
+            border-radius:22px;
+            padding:1rem 1.05rem;
+            margin-bottom:0.78rem;
+            background:linear-gradient(160deg, rgba(255,255,255,0.94), rgba(249,245,238,0.84));
+            box-shadow: var(--sm-shadow);
+        }
+        .sm-record-primary {
+            font-size:1.02rem;
+            font-weight:800;
+            color:var(--sm-ink);
+            letter-spacing:-0.02em;
+        }
+        .sm-record-secondary {
+            margin-top:0.2rem;
+            color:var(--sm-muted);
+            font-size:0.86rem;
+        }
+        .sm-record-grid {
+            display:grid;
+            grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
+            gap:0.62rem 0.8rem;
+            margin-top:0.82rem;
+        }
+        .sm-record-item {
+            padding:0.66rem 0.72rem;
+            border-radius:16px;
+            background:rgba(255,255,255,0.62);
+            border:1px solid rgba(20,35,31,0.08);
+        }
+        .sm-record-label {
+            font-size:0.74rem;
+            font-weight:700;
+            letter-spacing:0.02em;
+            text-transform:uppercase;
+            color:#6a7a75;
+        }
+        .sm-record-value {
+            margin-top:0.18rem;
+            color:var(--sm-ink);
+            font-size:0.96rem;
+            font-weight:700;
+            line-height:1.42;
+            word-break:break-word;
+        }
+        div[data-testid="stMetric"] {
+            background:linear-gradient(160deg, rgba(255,255,255,0.92), rgba(248,243,235,0.86));
+            border:1px solid var(--sm-border);
+            border-radius:22px;
+            padding:0.8rem 0.95rem;
+            box-shadow: var(--sm-shadow);
+        }
+        div[data-testid="stMetricLabel"] {
+            color:#61706b;
+            font-weight:700;
+        }
+        div[data-testid="stMetricValue"] {
+            color:var(--sm-ink);
+            letter-spacing:-0.03em;
+        }
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="input"] > div,
+        div[data-testid="stDateInput"] > div > div,
+        div[data-testid="stMultiSelect"] > div,
+        div[data-testid="stTextInput"] > div > div {
+            background:rgba(255,255,255,0.72);
+            border-radius:16px;
+            border:1px solid rgba(20,35,31,0.12);
+            box-shadow:0 10px 24px rgba(61,42,24,0.05);
+        }
+        div[data-testid="stDataFrame"] {
+            border:1px solid var(--sm-border);
+            border-radius:22px;
+            overflow:hidden;
+            background:rgba(255,255,255,0.74);
+            box-shadow: var(--sm-shadow);
+        }
+        div[data-testid="stExpander"] {
+            border:1px solid var(--sm-border);
+            border-radius:20px;
+            background:rgba(255,255,255,0.56);
+            box-shadow: var(--sm-shadow);
+        }
+        .stTabs [role="tablist"] {
+            gap:0.38rem;
+            padding:0.3rem;
+            border-radius:999px;
+            background:rgba(255,255,255,0.48);
+            border:1px solid rgba(20,35,31,0.08);
+            width:fit-content;
+        }
+        .stTabs [role="tab"] {
+            border-radius:999px;
+            padding:0.4rem 0.95rem;
+            height:auto;
+            background:transparent;
+            color:#4f5d58;
+        }
+        .stTabs [aria-selected="true"] {
+            background:linear-gradient(135deg, rgba(15,118,110,0.92), rgba(22,163,74,0.88));
+            color:white;
+        }
+        div[data-baseweb="button-group"] button,
+        button[kind="secondary"] {
+            border-radius:999px !important;
+            border:1px solid rgba(20,35,31,0.1) !important;
+            background:rgba(255,255,255,0.72) !important;
+            color:var(--sm-ink) !important;
         }
         @media (max-width: 900px) {
             .block-container {
@@ -103,8 +245,11 @@ def inject_app_styles() -> None:
             }
             .sm-card,
             .sm-guide,
-            .sm-report-preview {
-                border-radius:14px;
+            .sm-report-preview,
+            .sm-record-card,
+            div[data-testid="stMetric"],
+            div[data-testid="stDataFrame"] {
+                border-radius:16px;
                 padding:0.85rem 0.9rem;
             }
             h1 {
@@ -148,7 +293,7 @@ def render_warning_banner(level: str, message: str) -> None:
 
 def render_narrative_card(title: str, body: str) -> None:
     st.markdown(
-        f'<div class="sm-card"><h4>{title}</h4><p>{body}</p></div>',
+        f'<div class="sm-card"><h4>{escape(title)}</h4><p>{escape(body)}</p></div>',
         unsafe_allow_html=True,
     )
 
@@ -230,15 +375,29 @@ def render_record_cards(
             for column in secondary_columns
             if column in label_map
         )
-        with st.container(border=True):
-            st.markdown(f"**{primary_value}**")
-            if secondary_text:
-                st.caption(secondary_text)
-            for column in detail_columns:
-                if column not in label_map:
-                    continue
-                label = label_map[column]
-                st.write(f"{label}: {_display_value(row.get(label))}")
+        detail_parts: list[str] = []
+        for column in detail_columns:
+            if column not in label_map:
+                continue
+            label = label_map[column]
+            value = _display_value(row.get(label))
+            detail_parts.append(
+                f'<div class="sm-record-item"><div class="sm-record-label">{escape(str(label))}</div>'
+                f'<div class="sm-record-value">{escape(str(value))}</div></div>'
+            )
+        secondary_html = (
+            f'<div class="sm-record-secondary">{escape(str(secondary_text))}</div>'
+            if secondary_text
+            else ""
+        )
+        detail_html = f'<div class="sm-record-grid">{"".join(detail_parts)}</div>' if detail_parts else ""
+        st.markdown(
+            (
+                f'<div class="sm-record-card"><div class="sm-record-primary">{escape(str(primary_value))}</div>'
+                f"{secondary_html}{detail_html}</div>"
+            ),
+            unsafe_allow_html=True,
+        )
 
     if show_table_expander:
         with st.expander(table_expander_label, expanded=False):

@@ -2050,6 +2050,22 @@ DATETIME_COLUMN_EXACT: set[str] = {
 }
 DATETIME_COLUMN_SUFFIXES: tuple[str, ...] = ("_at", "_ts")
 RUN_ID_COLUMN_EXACT: set[str] = {"run_id", "job_run_id"}
+SCORE_COLUMN_TOKENS: tuple[str, ...] = ("_score",)
+SCORE_COLUMN_EXACT: set[str] = {
+    "avg_signal_quality",
+    "before_objective_score",
+    "d1_selection_value",
+    "d1_selection_v2_value",
+    "d5_selection_value",
+    "d5_selection_v2_value",
+    "final_selection_value",
+    "live_d1_selection_v2_value",
+    "live_d5_selection_v2_value",
+    "objective_score",
+    "score_value",
+    "stability_score",
+    "tuned_score",
+}
 RUN_ID_PATTERN = re.compile(
     r"^(?P<prefix>.+)-(?P<stamp>\d{8}T\d{6})(?:-(?P<suffix>[A-Za-z0-9]+))?$"
 )
@@ -2145,6 +2161,18 @@ def format_ui_run_id(value: object) -> str:
     return " · ".join(piece for piece in pieces if piece)
 
 
+def format_ui_number(value: object, *, decimals: int = 2) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return str(value)
+    numeric = float(value)
+    if abs(numeric - round(numeric)) < 1e-9:
+        return f"{int(round(numeric)):,}"
+    text = f"{numeric:,.{decimals}f}"
+    return text.rstrip("0").rstrip(".")
+
+
 def _is_percent_display_column(column: str) -> bool:
     return column in PERCENT_COLUMN_EXACT or any(
         token in column for token in PERCENT_COLUMN_TOKENS
@@ -2181,6 +2209,12 @@ def _is_run_id_display_column(column: str) -> bool:
     return column in RUN_ID_COLUMN_EXACT or column.endswith("_run_id")
 
 
+def _is_score_display_column(column: str) -> bool:
+    return column in SCORE_COLUMN_EXACT or any(
+        token in column for token in SCORE_COLUMN_TOKENS
+    )
+
+
 def _format_percent_value(value: object) -> object:
     if pd.isna(value) or isinstance(value, bool):
         return value
@@ -2198,6 +2232,15 @@ def _format_price_value(value: object) -> object:
     if not isinstance(value, numbers.Real):
         return value
     return f"{float(value):,.0f}원"
+
+
+def _format_score_value(value: object) -> object:
+    if pd.isna(value) or isinstance(value, bool):
+        return value
+    if not isinstance(value, numbers.Real):
+        return value
+    decimals = 1 if abs(float(value)) >= 10 else 2
+    return format_ui_number(value, decimals=decimals)
 
 
 def _format_scalar_for_display(column: str, value: object) -> object:
@@ -2218,6 +2261,10 @@ def _format_scalar_for_display(column: str, value: object) -> object:
         return _format_percent_value(translated)
     if _is_price_display_column(column):
         return _format_price_value(translated)
+    if _is_score_display_column(column):
+        return _format_score_value(translated)
+    if isinstance(translated, numbers.Real) and not isinstance(translated, bool):
+        return format_ui_number(translated)
     return translated
 
 

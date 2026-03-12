@@ -5,6 +5,7 @@ import pandas as pd
 from app.ui.helpers import (
     format_ui_date,
     format_ui_datetime,
+    format_ui_number,
     format_ui_run_id,
     localize_frame,
 )
@@ -32,7 +33,7 @@ def test_localize_frame_formats_percent_like_columns() -> None:
         "25.00%",
         "60.00%",
         "12.50%",
-        0.87,
+        "0.87",
     ]
 
 
@@ -73,4 +74,26 @@ def test_localize_frame_formats_dates_times_and_run_ids() -> None:
         "09:00",
         format_ui_datetime(started_at),
         format_ui_run_id(run_id),
+    ]
+
+
+def test_localize_frame_formats_scores_and_numbers_cleanly() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "action_score": 82.444,
+                "sample_count": 1250,
+                "metric_value": 3.14159,
+                "turnover_value": 1500000000,
+            }
+        ]
+    )
+
+    localized = localize_frame(frame)
+
+    assert localized.iloc[0].tolist() == [
+        "82.4",
+        "1,250",
+        format_ui_number(3.14159),
+        "1,500,000,000",
     ]

@@ -21,6 +21,7 @@ from app.ui.components import (
 )
 from app.ui.helpers import (
     available_symbol_options,
+    format_ui_number,
     latest_intraday_decision_lineage_frame,
     load_ui_settings,
     stock_workbench_flow_frame,
@@ -91,7 +92,7 @@ else:
             "종목 요약",
             (
                 f"{selected_symbol}의 현재 등급은 {row.get('grade', '-')}, "
-                f"선정 점수는 {row.get('final_selection_value', '-')}, "
+                f"선정 점수는 {format_ui_number(row.get('final_selection_value'))}, "
                 f"포트폴리오 진입 가능 여부는 {row.get('portfolio_eligible_flag', '-')}입니다."
             ),
         )

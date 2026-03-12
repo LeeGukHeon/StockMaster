@@ -28,6 +28,7 @@ from app.ui.components import (
     render_warning_banner,
 )
 from app.ui.helpers import (
+    format_ui_date,
     home_banner_freshness_levels,
     latest_alert_event_frame,
     latest_alpha_promotion_summary_frame,
@@ -97,7 +98,7 @@ def _today_narrative(snapshot_row, alerts: pd.DataFrame, freshness: pd.DataFrame
     regime = snapshot_row.get("market_regime_family") or "미확인"
 
     parts = [
-        f"현재 기준일은 {snapshot_row.get('as_of_date') or '미확인'}입니다.",
+        f"현재 기준일은 {format_ui_date(snapshot_row.get('as_of_date'))}입니다.",
         f"시장 국면은 {regime}입니다.",
     ]
     if critical_alert_count > 0:
@@ -188,9 +189,9 @@ def render_today_page() -> None:
 
     top_left, top_mid, top_right = st.columns(3)
     if snapshot_row is not None:
-        top_left.metric("현재 기준일", str(snapshot_row.get("as_of_date") or "-"))
-        top_mid.metric("최신 사후 평가", str(snapshot_row.get("latest_evaluation_date") or "-"))
-        top_right.metric("최신 장중 세션", str(snapshot_row.get("latest_intraday_session_date") or "-"))
+        top_left.metric("현재 기준일", format_ui_date(snapshot_row.get("as_of_date")))
+        top_mid.metric("최신 사후 평가", format_ui_date(snapshot_row.get("latest_evaluation_date")))
+        top_right.metric("최신 장중 세션", format_ui_date(snapshot_row.get("latest_intraday_session_date")))
     else:
         top_left.metric("현재 기준일", "-")
         top_mid.metric("최신 사후 평가", "-")
