@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import date
+from typing import Iterable
 
 import pandas as pd
 
@@ -49,6 +50,7 @@ INDIVIDUAL_NET_VALUE_KEYS = (
     "indv_ntby_amt",
     "indv_ntby_tr_amt",
 )
+DEFAULT_INVESTOR_FLOW_FLUSH_BATCH_SIZE = 100
 
 
 @dataclass(slots=True)
@@ -216,6 +218,117 @@ def upsert_investor_flow(connection, frame: pd.DataFrame) -> None:
     connection.unregister("investor_flow_stage")
 
 
+def _load_sync_inputs(
+    settings: Settings,
+    *,
+    trading_date: date,
+    symbols: list[str] | None,
+    limit_symbols: int | None,
+    market: str,
+    force: bool,
+) -> tuple[bool, pd.DataFrame, int, set[str]]:
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        calendar_row = connection.execute(
+            """
+            SELECT is_trading_day
+            FROM dim_trading_calendar
+            WHERE trading_date = ?
+            """,
+            [trading_date],
+        ).fetchone()
+        if calendar_row is None:
+            raise RuntimeError(
+                "Trading calendar is missing the requested date. "
+                "Run scripts/sync_trading_calendar.py first."
+            )
+
+        symbol_frame = load_symbol_frame(
+            connection,
+            symbols=symbols,
+            market=market,
+            limit_symbols=limit_symbols,
+        )
+        requested_symbol_count = len(symbol_frame)
+        existing_symbols: set[str] = set()
+        if not force:
+            existing_symbols = {
+                str(row[0]).zfill(6)
+                for row in connection.execute(
+                    "SELECT symbol FROM fact_investor_flow WHERE trading_date = ?",
+                    [trading_date],
+                ).fetchall()
+            }
+    return bool(calendar_row[0]), symbol_frame, requested_symbol_count, existing_symbols
+
+
+def _flush_investor_flow_batch(
+    settings: Settings,
+    *,
+    run_id: str,
+    rows: Iterable[pd.DataFrame],
+) -> int:
+    frames = [frame for frame in rows if not frame.empty]
+    if not frames:
+        return 0
+    combined = pd.concat(frames, ignore_index=True)
+    combined["run_id"] = run_id
+    combined["created_at"] = now_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        upsert_investor_flow(connection, combined)
+    return len(combined)
+
+
+def _load_persisted_investor_flow_frame(settings: Settings, *, trading_date: date) -> pd.DataFrame:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        return connection.execute(
+            """
+            SELECT
+                run_id,
+                trading_date,
+                symbol,
+                market,
+                foreign_net_volume,
+                institution_net_volume,
+                individual_net_volume,
+                foreign_net_value,
+                institution_net_value,
+                individual_net_value,
+                source,
+                source_notes_json,
+                created_at
+            FROM fact_investor_flow
+            WHERE trading_date = ?
+            ORDER BY symbol
+            """,
+            [trading_date],
+        ).fetchdf()
+
+
+def _record_investor_flow_finish(
+    settings: Settings,
+    *,
+    run_id: str,
+    finished_at,
+    status: str,
+    output_artifacts: list[str],
+    notes: str,
+    error_message: str | None = None,
+) -> None:
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        record_run_finish(
+            connection,
+            run_id=run_id,
+            finished_at=finished_at,
+            status=status,
+            output_artifacts=output_artifacts,
+            notes=notes,
+            error_message=error_message,
+        )
+
+
 def sync_investor_flow(
     settings: Settings,
     *,
@@ -227,11 +340,13 @@ def sync_investor_flow(
     dry_run: bool = False,
     persist_raw_artifacts: bool = False,
     persist_probe_artifacts: bool = False,
+    flush_batch_size: int = DEFAULT_INVESTOR_FLOW_FLUSH_BATCH_SIZE,
     kis_provider: KISProvider | None = None,
 ) -> InvestorFlowSyncResult:
     ensure_storage_layout(settings)
     owns_provider = kis_provider is None
     provider = kis_provider or KISProvider(settings)
+    effective_flush_batch_size = max(1, int(flush_batch_size))
 
     with activate_run_context("sync_investor_flow", as_of_date=trading_date) as run_context:
         with duckdb_connection(settings.paths.duckdb_path) as connection:
@@ -249,207 +364,191 @@ def sync_investor_flow(
                 ],
                 notes=f"Sync investor flow for {trading_date.isoformat()}",
             )
-            try:
-                calendar_row = connection.execute(
-                    """
-                    SELECT is_trading_day
-                    FROM dim_trading_calendar
-                    WHERE trading_date = ?
-                    """,
-                    [trading_date],
-                ).fetchone()
-                if calendar_row is None:
-                    raise RuntimeError(
-                        "Trading calendar is missing the requested date. "
-                        "Run scripts/sync_trading_calendar.py first."
-                    )
+        try:
+            (
+                is_trading_day,
+                symbol_frame,
+                requested_symbol_count,
+                existing_symbols,
+            ) = _load_sync_inputs(
+                settings,
+                trading_date=trading_date,
+                symbols=symbols,
+                limit_symbols=limit_symbols,
+                market=market,
+                force=force,
+            )
 
-                symbol_frame = load_symbol_frame(
-                    connection,
-                    symbols=symbols,
-                    market=market,
-                    limit_symbols=limit_symbols,
-                )
-                requested_symbol_count = len(symbol_frame)
-
-                if not bool(calendar_row[0]):
-                    notes = (
-                        f"{trading_date.isoformat()} is not a trading day. "
-                        "No flow rows fetched."
-                    )
-                    record_run_finish(
-                        connection,
-                        run_id=run_context.run_id,
-                        finished_at=now_local(settings.app.timezone),
-                        status="success",
-                        output_artifacts=[],
-                        notes=notes,
-                    )
-                    return InvestorFlowSyncResult(
-                        run_id=run_context.run_id,
-                        trading_date=trading_date,
-                        requested_symbol_count=requested_symbol_count,
-                        row_count=0,
-                        skipped_symbol_count=requested_symbol_count,
-                        failed_symbol_count=0,
-                        artifact_paths=[],
-                        notes=notes,
-                    )
-
-                existing_symbols: set[str] = set()
-                if not force:
-                    existing_symbols = {
-                        str(row[0]).zfill(6)
-                        for row in connection.execute(
-                            "SELECT symbol FROM fact_investor_flow WHERE trading_date = ?",
-                            [trading_date],
-                        ).fetchall()
-                    }
-
-                if dry_run:
-                    notes = (
-                        f"Dry run only. trading_date={trading_date.isoformat()} "
-                        f"symbols={requested_symbol_count} skipped_existing={len(existing_symbols)}"
-                    )
-                    record_run_finish(
-                        connection,
-                        run_id=run_context.run_id,
-                        finished_at=now_local(settings.app.timezone),
-                        status="success",
-                        output_artifacts=[],
-                        notes=notes,
-                    )
-                    return InvestorFlowSyncResult(
-                        run_id=run_context.run_id,
-                        trading_date=trading_date,
-                        requested_symbol_count=requested_symbol_count,
-                        row_count=0,
-                        skipped_symbol_count=len(existing_symbols),
-                        failed_symbol_count=0,
-                        artifact_paths=[],
-                        notes=notes,
-                    )
-
-                output_frames: list[pd.DataFrame] = []
-                artifact_paths: list[str] = []
-                skipped_symbol_count = 0
-                failed_symbol_count = 0
-                failed_symbols: list[str] = []
-
-                for row in symbol_frame.itertuples(index=False):
-                    symbol = str(row.symbol).zfill(6)
-                    if symbol in existing_symbols:
-                        skipped_symbol_count += 1
-                        continue
-
-                    try:
-                        probe = provider.fetch_investor_flow(
-                            symbol=symbol,
-                            trading_date=trading_date,
-                            persist_probe_artifacts=persist_probe_artifacts,
-                        )
-                        if persist_raw_artifacts:
-                            raw_json_path = (
-                                settings.paths.raw_dir
-                                / "kis"
-                                / "investor_flow"
-                                / f"trading_date={trading_date.isoformat()}"
-                                / f"symbol={symbol}"
-                                / f"{run_context.run_id}.json"
-                            )
-                            raw_parquet_path = raw_json_path.with_suffix(".parquet")
-                            artifact_paths.append(
-                                str(write_json_payload(raw_json_path, probe.payload))
-                            )
-                            probe.frame.to_parquet(raw_parquet_path, index=False)
-                            artifact_paths.append(str(raw_parquet_path))
-
-                        normalized = _normalize_investor_flow(
-                            symbol=symbol,
-                            market=str(row.market),
-                            trading_date=trading_date,
-                            frame=probe.frame,
-                        )
-                        if normalized.empty:
-                            skipped_symbol_count += 1
-                            continue
-                        output_frames.append(normalized)
-                    except Exception:
-                        failed_symbol_count += 1
-                        failed_symbols.append(symbol)
-
-                combined = (
-                    pd.concat(output_frames, ignore_index=True)
-                    if output_frames
-                    else pd.DataFrame(
-                        columns=[
-                            "trading_date",
-                            "symbol",
-                            "market",
-                            "foreign_net_volume",
-                            "institution_net_volume",
-                            "individual_net_volume",
-                            "foreign_net_value",
-                            "institution_net_value",
-                            "individual_net_value",
-                            "source",
-                            "source_notes_json",
-                        ]
-                    )
-                )
-
-                if not combined.empty:
-                    combined["run_id"] = run_context.run_id
-                    combined["created_at"] = now_local(settings.app.timezone)
-                    upsert_investor_flow(connection, combined)
-                    curated_path = write_parquet(
-                        combined,
-                        base_dir=settings.paths.curated_dir,
-                        dataset="market/investor_flow",
-                        partitions={"trading_date": trading_date.isoformat()},
-                        filename="investor_flow.parquet",
-                    )
-                    artifact_paths.append(str(curated_path))
-
-                if requested_symbol_count > 0 and combined.empty and failed_symbol_count > 0:
-                    raise RuntimeError(
-                        f"No investor flow rows were loaded. failed_symbols={failed_symbols[:10]}"
-                    )
-
+            if not is_trading_day:
                 notes = (
-                    f"Investor flow sync completed. trading_date={trading_date.isoformat()}, "
-                    f"rows={len(combined)}, requested_symbols={requested_symbol_count}, "
-                    f"skipped={skipped_symbol_count}, failed={failed_symbol_count}"
+                    f"{trading_date.isoformat()} is not a trading day. "
+                    "No flow rows fetched."
                 )
-                record_run_finish(
-                    connection,
+                _record_investor_flow_finish(
+                    settings,
                     run_id=run_context.run_id,
                     finished_at=now_local(settings.app.timezone),
                     status="success",
-                    output_artifacts=artifact_paths,
+                    output_artifacts=[],
                     notes=notes,
                 )
                 return InvestorFlowSyncResult(
                     run_id=run_context.run_id,
                     trading_date=trading_date,
                     requested_symbol_count=requested_symbol_count,
-                    row_count=len(combined),
-                    skipped_symbol_count=skipped_symbol_count,
-                    failed_symbol_count=failed_symbol_count,
-                    artifact_paths=artifact_paths,
+                    row_count=0,
+                    skipped_symbol_count=requested_symbol_count,
+                    failed_symbol_count=0,
+                    artifact_paths=[],
                     notes=notes,
                 )
-            except Exception as exc:
-                record_run_finish(
-                    connection,
+
+            if dry_run:
+                notes = (
+                    f"Dry run only. trading_date={trading_date.isoformat()} "
+                    f"symbols={requested_symbol_count} skipped_existing={len(existing_symbols)}"
+                )
+                _record_investor_flow_finish(
+                    settings,
                     run_id=run_context.run_id,
                     finished_at=now_local(settings.app.timezone),
-                    status="failed",
+                    status="success",
                     output_artifacts=[],
-                    notes=f"Investor flow sync failed for {trading_date.isoformat()}",
-                    error_message=str(exc),
+                    notes=notes,
                 )
-                raise
-            finally:
-                if owns_provider:
-                    provider.close()
+                return InvestorFlowSyncResult(
+                    run_id=run_context.run_id,
+                    trading_date=trading_date,
+                    requested_symbol_count=requested_symbol_count,
+                    row_count=0,
+                    skipped_symbol_count=len(existing_symbols),
+                    failed_symbol_count=0,
+                    artifact_paths=[],
+                    notes=notes,
+                )
+
+            output_frames: list[pd.DataFrame] = []
+            artifact_paths: list[str] = []
+            skipped_symbol_count = 0
+            failed_symbol_count = 0
+            failed_symbols: list[str] = []
+            persisted_row_count = 0
+            flush_count = 0
+
+            for row in symbol_frame.itertuples(index=False):
+                symbol = str(row.symbol).zfill(6)
+                if symbol in existing_symbols:
+                    skipped_symbol_count += 1
+                    continue
+
+                try:
+                    probe = provider.fetch_investor_flow(
+                        symbol=symbol,
+                        trading_date=trading_date,
+                        persist_probe_artifacts=persist_probe_artifacts,
+                    )
+                    if persist_raw_artifacts:
+                        raw_json_path = (
+                            settings.paths.raw_dir
+                            / "kis"
+                            / "investor_flow"
+                            / f"trading_date={trading_date.isoformat()}"
+                            / f"symbol={symbol}"
+                            / f"{run_context.run_id}.json"
+                        )
+                        raw_parquet_path = raw_json_path.with_suffix(".parquet")
+                        artifact_paths.append(
+                            str(write_json_payload(raw_json_path, probe.payload))
+                        )
+                        probe.frame.to_parquet(raw_parquet_path, index=False)
+                        artifact_paths.append(str(raw_parquet_path))
+
+                    normalized = _normalize_investor_flow(
+                        symbol=symbol,
+                        market=str(row.market),
+                        trading_date=trading_date,
+                        frame=probe.frame,
+                    )
+                    if normalized.empty:
+                        skipped_symbol_count += 1
+                        continue
+                    output_frames.append(normalized)
+                    if len(output_frames) >= effective_flush_batch_size:
+                        persisted_row_count += _flush_investor_flow_batch(
+                            settings,
+                            run_id=run_context.run_id,
+                            rows=output_frames,
+                        )
+                        flush_count += 1
+                        output_frames.clear()
+                except Exception:
+                    failed_symbol_count += 1
+                    failed_symbols.append(symbol)
+
+            if output_frames:
+                persisted_row_count += _flush_investor_flow_batch(
+                    settings,
+                    run_id=run_context.run_id,
+                    rows=output_frames,
+                )
+                flush_count += 1
+                output_frames.clear()
+
+            combined = _load_persisted_investor_flow_frame(
+                settings,
+                trading_date=trading_date,
+            )
+
+            if not combined.empty:
+                curated_path = write_parquet(
+                    combined,
+                    base_dir=settings.paths.curated_dir,
+                    dataset="market/investor_flow",
+                    partitions={"trading_date": trading_date.isoformat()},
+                    filename="investor_flow.parquet",
+                )
+                artifact_paths.append(str(curated_path))
+
+            if requested_symbol_count > 0 and combined.empty and failed_symbol_count > 0:
+                raise RuntimeError(
+                    f"No investor flow rows were loaded. failed_symbols={failed_symbols[:10]}"
+                )
+
+            notes = (
+                f"Investor flow sync completed. trading_date={trading_date.isoformat()}, "
+                f"rows={len(combined)}, requested_symbols={requested_symbol_count}, "
+                f"skipped={skipped_symbol_count}, failed={failed_symbol_count}, "
+                f"flushes={flush_count}, flush_batch_size={effective_flush_batch_size}"
+            )
+            _record_investor_flow_finish(
+                settings,
+                run_id=run_context.run_id,
+                finished_at=now_local(settings.app.timezone),
+                status="success",
+                output_artifacts=artifact_paths,
+                notes=notes,
+            )
+            return InvestorFlowSyncResult(
+                run_id=run_context.run_id,
+                trading_date=trading_date,
+                requested_symbol_count=requested_symbol_count,
+                row_count=len(combined),
+                skipped_symbol_count=skipped_symbol_count,
+                failed_symbol_count=failed_symbol_count,
+                artifact_paths=artifact_paths,
+                notes=notes,
+            )
+        except Exception as exc:
+            _record_investor_flow_finish(
+                settings,
+                run_id=run_context.run_id,
+                finished_at=now_local(settings.app.timezone),
+                status="failed",
+                output_artifacts=[],
+                notes=f"Investor flow sync failed for {trading_date.isoformat()}",
+                error_message=str(exc),
+            )
+            raise
+        finally:
+            if owns_provider:
+                provider.close()

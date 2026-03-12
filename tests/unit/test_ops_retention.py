@@ -9,6 +9,7 @@ from app.ops.maintenance import (
     _parse_reclaimed_bytes,
     cleanup_docker_build_cache,
     cleanup_model_artifacts,
+    cleanup_stale_job_runs,
     enforce_retention_policies,
     reconcile_failed_runs,
 )
@@ -218,3 +219,58 @@ def test_cleanup_model_artifacts_keeps_active_and_latest_runs(tmp_path) -> None:
     assert latest_artifact.exists()
     assert cleanup_rows[0] == 1
     assert cleanup_rows[1] >= 5
+
+
+def test_cleanup_stale_job_runs_updates_postgres_when_enabled(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    captured_calls: list[tuple[str, list[object]]] = []
+    monkeypatch.setattr("app.ops.maintenance.execute_postgres_sql", lambda _settings, query, params: captured_calls.append((query, list(params or []))))
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        started_at = datetime.now(tz=timezone.utc) - timedelta(minutes=30)
+        connection.execute(
+            """
+            INSERT INTO fact_job_run (
+                run_id, job_name, trigger_type, status, as_of_date, started_at, finished_at,
+                root_run_id, parent_run_id, recovery_of_run_id, lock_name, policy_id,
+                policy_version, dry_run, step_count, failed_step_count, artifact_count,
+                notes, error_message, details_json, created_at
+            ) VALUES (
+                'stale-run-1', 'run_daily_close_bundle', 'SCHEDULED', 'RUNNING', DATE '2026-03-12',
+                ?, NULL, 'stale-run-1', NULL, NULL, 'scheduler_global_write', NULL, NULL,
+                FALSE, 0, 0, 0, 'running', NULL, '{}', ?
+            )
+            """,
+            [started_at, started_at],
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_job_step_run (
+                step_run_id, job_run_id, step_name, step_order, status, started_at, finished_at,
+                critical_flag, notes, error_message, details_json, created_at
+            ) VALUES (
+                'stale-step-1', 'stale-run-1', 'daily_pipeline', 1, 'RUNNING', ?, NULL,
+                TRUE, NULL, NULL, NULL, ?
+            )
+            """,
+            [started_at, started_at],
+        )
+
+        result = cleanup_stale_job_runs(
+            settings,
+            connection=connection,
+            stale_after_minutes=10,
+        )
+
+        job_row = connection.execute(
+            "SELECT status, failed_step_count FROM fact_job_run WHERE run_id = 'stale-run-1'"
+        ).fetchone()
+        step_row = connection.execute(
+            "SELECT status FROM fact_job_step_run WHERE job_run_id = 'stale-run-1'"
+        ).fetchone()
+
+    assert result.row_count == 1
+    assert job_row == ("FAILED", 1)
+    assert step_row == ("FAILED",)
+    assert len(captured_calls) == 3

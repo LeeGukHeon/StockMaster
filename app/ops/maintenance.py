@@ -34,6 +34,7 @@ from app.ops.repository import (
 )
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables
+from app.storage.metadata_postgres import execute_postgres_sql
 
 
 @dataclass(slots=True)
@@ -718,17 +719,17 @@ def cleanup_stale_job_runs(
     cleared = 0
     for run_id, notes, details_json, artifact_count in rows:
         now = utc_now()
-        connection.execute(
-            """
+        step_query = """
             UPDATE fact_job_step_run
             SET finished_at = ?,
                 status = 'FAILED',
                 error_message = COALESCE(error_message, ?)
             WHERE job_run_id = ?
               AND status = 'RUNNING'
-            """,
-            [now, "Cleared as stale during ops maintenance.", run_id],
-        )
+        """
+        step_params = [now, "Cleared as stale during ops maintenance.", run_id]
+        connection.execute(step_query, step_params)
+        execute_postgres_sql(settings, step_query, step_params)
         details = json.loads(details_json) if details_json else {}
         details["cleanup_recovered"] = True
         details["cleanup_recovered_at"] = now.isoformat()
@@ -747,8 +748,7 @@ def cleanup_stale_job_runs(
                 [run_id],
             ).fetchone()[0]
         )
-        connection.execute(
-            """
+        run_query = """
             UPDATE fact_job_run
             SET finished_at = ?,
                 status = 'FAILED',
@@ -759,35 +759,36 @@ def cleanup_stale_job_runs(
                 error_message = ?,
                 details_json = ?
             WHERE run_id = ?
-            """,
-            [
-                now,
-                step_count,
-                failed_step_count,
-                int(artifact_count or 0),
-                merged_notes,
-                "Cleared as stale during ops maintenance.",
-                json.dumps(details, ensure_ascii=False, default=str),
-                run_id,
-            ],
-        )
-        connection.execute(
-            """
+        """
+        run_params = [
+            now,
+            step_count,
+            failed_step_count,
+            int(artifact_count or 0),
+            merged_notes,
+            "Cleared as stale during ops maintenance.",
+            json.dumps(details, ensure_ascii=False, default=str),
+            run_id,
+        ]
+        connection.execute(run_query, run_params)
+        execute_postgres_sql(settings, run_query, run_params)
+        manifest_query = """
             UPDATE ops_run_manifest
             SET finished_at = ?,
                 status = ?,
                 notes = ?,
                 error_message = ?
             WHERE run_id = ?
-            """,
-            [
-                now,
-                manifest_status(JobStatus.FAILED),
-                merged_notes,
-                "Cleared as stale during ops maintenance.",
-                run_id,
-            ],
-        )
+        """
+        manifest_params = [
+            now,
+            manifest_status(JobStatus.FAILED),
+            merged_notes,
+            "Cleared as stale during ops maintenance.",
+            run_id,
+        ]
+        connection.execute(manifest_query, manifest_params)
+        execute_postgres_sql(settings, manifest_query, manifest_params)
         cleared += 1
     return OpsJobResult(
         run_id=job_run_id or "embedded",
