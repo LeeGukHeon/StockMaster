@@ -1843,6 +1843,11 @@ UI_VALUE_LABELS.setdefault("selection_confidence_bucket", {}).update(
 )
 UI_VALUE_LABELS.setdefault("market_regime_family", {}).update(
     {
+        "panic": "패닉",
+        "risk_off": "리스크 오프",
+        "neutral": "중립",
+        "risk_on": "리스크 온",
+        "euphoria": "과열",
         "PANIC_OPEN": "패닉 오픈",
         "WEAK_RISK_OFF": "약한 리스크오프",
         "NEUTRAL_CHOP": "중립 박스권",
@@ -2000,7 +2005,15 @@ def _translate_scalar(column: str, value: object) -> object:
     if mapping is None:
         return value
     text = str(value)
-    return mapping.get(text, value)
+    if text in mapping:
+        return mapping[text]
+    lowered = text.lower()
+    if lowered in mapping:
+        return mapping[lowered]
+    uppered = text.upper()
+    if uppered in mapping:
+        return mapping[uppered]
+    return value
 
 
 def _translate_json_list(value: object, mapping: dict[str, str]) -> object:
@@ -2347,6 +2360,10 @@ def format_market_label(value: str) -> str:
 
 def format_execution_mode_label(value: str) -> str:
     return str(_translate_scalar("execution_mode", value))
+
+
+def format_ui_value(column: str, value: object) -> str:
+    return str(_format_scalar_for_display(column, value))
 
 
 def format_disk_status_label(value: object) -> str:
@@ -4873,6 +4890,9 @@ UI_VALUE_LABELS.setdefault("rollout_mode", {}).update(
         "RESEARCH_NON_TRADING": "리서치 전용 / 비매매",
     }
 )
+UI_VALUE_LABELS.setdefault("market_regime_state", {}).update(UI_VALUE_LABELS["regime_state"])
+UI_VALUE_LABELS.setdefault("prior_daily_regime_state", {}).update(UI_VALUE_LABELS["regime_state"])
+UI_VALUE_LABELS.setdefault("latest_daily_bundle_status", {}).update(UI_VALUE_LABELS["status"])
 UI_VALUE_LABELS.setdefault("latest_report_type", {}).update(
     {
         "intraday_summary_report": "장중 요약 리포트",
@@ -6762,6 +6782,8 @@ UI_VALUE_LABELS.setdefault("execution_mode", {}).update(
         "TIMING_ASSISTED": "장중 타이밍 보조",
     }
 )
+UI_VALUE_LABELS.setdefault("portfolio_execution_mode", {}).update(UI_VALUE_LABELS["execution_mode"])
+UI_VALUE_LABELS.setdefault("latest_portfolio_execution_mode", {}).update(UI_VALUE_LABELS["execution_mode"])
 UI_VALUE_LABELS.setdefault("candidate_state", {}).update(
     {
         "NEW_ENTRY_CANDIDATE": "신규 진입 후보",
@@ -6783,6 +6805,8 @@ UI_VALUE_LABELS.setdefault("timing_gate_status", {}).update(
         "CASH_BUFFER": "현금 버퍼",
     }
 )
+UI_VALUE_LABELS.setdefault("gate_status", {}).update(UI_VALUE_LABELS["timing_gate_status"])
+UI_VALUE_LABELS.setdefault("latest_portfolio_gate_status", {}).update(UI_VALUE_LABELS["timing_gate_status"])
 UI_VALUE_LABELS.setdefault("rebalance_action", {}).update(
     {
         "BUY_NEW": "신규 매수",
@@ -6822,6 +6846,32 @@ UI_VALUE_LABELS.setdefault("warning_level", {}).update(
         "OK": "정상",
         "WARNING": "경고",
         "CRITICAL": "치명",
+    }
+)
+UI_VALUE_LABELS.setdefault("severity", {}).update(
+    {
+        "OK": "정상",
+        "INFO": "안내",
+        "WARNING": "경고",
+        "ERROR": "오류",
+        "CRITICAL": "치명",
+    }
+)
+UI_VALUE_LABELS.setdefault("health_status", {}).update(
+    {
+        "OK": "정상",
+        "WARNING": "주의",
+        "CRITICAL": "치명",
+        "DEGRADED": "주의",
+        "DEGRADED_SUCCESS": "주의",
+    }
+)
+UI_VALUE_LABELS.setdefault("trigger_type", {}).update(
+    {
+        "SCHEDULED": "자동 실행",
+        "MANUAL": "수동 실행",
+        "RECOVERY": "자동 복구",
+        "DEPENDENCY": "의존성 실행",
     }
 )
 UI_VALUE_LABELS.setdefault("run_type", {}).update(

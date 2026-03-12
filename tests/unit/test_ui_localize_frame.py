@@ -7,6 +7,7 @@ from app.ui.helpers import (
     format_ui_datetime,
     format_ui_number,
     format_ui_run_id,
+    format_ui_value,
     localize_frame,
 )
 
@@ -97,3 +98,30 @@ def test_localize_frame_formats_scores_and_numbers_cleanly() -> None:
         format_ui_number(3.14159),
         "1,500,000,000",
     ]
+
+
+def test_localize_frame_translates_case_insensitive_enum_values() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "market_regime_family": "risk_on",
+                "health_status": "CRITICAL",
+                "trigger_type": "RECOVERY",
+                "prior_daily_regime_state": "RISK_OFF",
+            }
+        ]
+    )
+
+    localized = localize_frame(frame)
+
+    assert localized.iloc[0].tolist() == [
+        "리스크 온",
+        "치명",
+        "자동 복구",
+        "리스크 오프",
+    ]
+
+
+def test_format_ui_value_translates_scalar_outside_tables() -> None:
+    assert format_ui_value("regime_state", "risk_on") == "리스크 온"
+    assert format_ui_value("health_status", "WARNING") == "주의"

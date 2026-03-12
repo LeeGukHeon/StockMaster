@@ -29,6 +29,7 @@ from app.ui.components import (
 )
 from app.ui.helpers import (
     format_ui_date,
+    format_ui_value,
     home_banner_freshness_levels,
     latest_alert_event_frame,
     latest_alpha_promotion_summary_frame,
@@ -70,9 +71,19 @@ def _policy_badges(snapshot_row) -> list[tuple[str, str]]:
 
     badges: list[tuple[str, str]] = [("선정 엔진 v2", "INFO")]
     if snapshot_row.get("latest_daily_bundle_status"):
-        badges.append((f"일일 배치 {snapshot_row['latest_daily_bundle_status']}", str(snapshot_row["latest_daily_bundle_status"])))
+        badges.append(
+            (
+                f"일일 배치 {format_ui_value('status', snapshot_row['latest_daily_bundle_status'])}",
+                str(snapshot_row["latest_daily_bundle_status"]),
+            )
+        )
     if snapshot_row.get("health_status"):
-        badges.append((f"운영 상태 {snapshot_row['health_status']}", str(snapshot_row["health_status"])))
+        badges.append(
+            (
+                f"운영 상태 {format_ui_value('health_status', snapshot_row['health_status'])}",
+                str(snapshot_row["health_status"]),
+            )
+        )
     if snapshot_row.get("active_intraday_policy_id"):
         badges.append((f"장중 정책 {snapshot_row['active_intraday_policy_id']}", "INFO"))
     if snapshot_row.get("active_portfolio_policy_id"):
@@ -95,7 +106,7 @@ def _today_narrative(snapshot_row, alerts: pd.DataFrame, freshness: pd.DataFrame
 
     stale_count = int(freshness["stale_flag"].fillna(False).sum()) if not freshness.empty else 0
     critical_alert_count = int(snapshot_row.get("critical_alert_count") or 0)
-    regime = snapshot_row.get("market_regime_family") or "미확인"
+    regime = format_ui_value("market_regime_family", snapshot_row.get("market_regime_family"))
 
     parts = [
         f"현재 기준일은 {format_ui_date(snapshot_row.get('as_of_date'))}입니다.",
@@ -201,7 +212,7 @@ def render_today_page() -> None:
     if snapshot_row is not None:
         bottom_left.metric("치명 알림", int(snapshot_row.get("critical_alert_count") or 0))
         bottom_mid.metric("경고 알림", int(snapshot_row.get("warning_alert_count") or 0))
-        bottom_right.metric("운영 상태", str(snapshot_row.get("health_status") or "-"))
+        bottom_right.metric("운영 상태", format_ui_value("health_status", snapshot_row.get("health_status")))
     else:
         bottom_left.metric("치명 알림", 0)
         bottom_mid.metric("경고 알림", 0)

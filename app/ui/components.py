@@ -14,6 +14,7 @@ from app.ui.glossary import glossary_mapping
 from app.ui.helpers import (
     format_ui_date,
     format_ui_datetime,
+    format_ui_value,
     latest_app_snapshot_frame,
     latest_release_candidate_check_frame,
     latest_report_index_frame,
@@ -417,9 +418,19 @@ def _policy_badges(snapshot: dict[str, object] | None) -> list[tuple[str, str]]:
 
     badges: list[tuple[str, str]] = [("선정 엔진 v2", "INFO")]
     if snapshot.get("latest_daily_bundle_status"):
-        badges.append((f"일일 배치 {snapshot['latest_daily_bundle_status']}", str(snapshot["latest_daily_bundle_status"])))
+        badges.append(
+            (
+                f"일일 배치 {format_ui_value('status', snapshot['latest_daily_bundle_status'])}",
+                str(snapshot["latest_daily_bundle_status"]),
+            )
+        )
     if snapshot.get("health_status"):
-        badges.append((f"운영 상태 {snapshot['health_status']}", str(snapshot["health_status"])))
+        badges.append(
+            (
+                f"운영 상태 {format_ui_value('health_status', snapshot['health_status'])}",
+                str(snapshot["health_status"]),
+            )
+        )
     if snapshot.get("active_intraday_policy_id"):
         badges.append((f"장중 정책 {snapshot['active_intraday_policy_id']}", "INFO"))
     if snapshot.get("active_portfolio_policy_id"):
@@ -481,7 +492,7 @@ def render_provenance_footer(
         if snapshot.get("snapshot_ts") is not None:
             pieces.append(f"업데이트: {format_ui_datetime(snapshot.get('snapshot_ts'))}")
         if snapshot.get("health_status"):
-            pieces.append(f"상태: {snapshot['health_status']}")
+            pieces.append(f"상태: {format_ui_value('health_status', snapshot['health_status'])}")
     if extra_items:
         pieces.extend(extra_items)
     st.markdown(
