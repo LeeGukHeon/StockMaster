@@ -10,6 +10,7 @@ from typing import Any
 
 import duckdb
 
+from app.common.artifacts import resolve_artifact_path
 from app.common.time import now_local
 from app.ops.common import JobStatus, OpsValidationResult
 from app.ops.repository import json_text
@@ -202,29 +203,32 @@ def validate_report_artifacts(
                     detail={"report_type": report_type, "artifact_path": None},
                     recommended_action=f"{report_type} 리포트를 생성하고 인덱스를 다시 빌드하세요.",
                 )
-            )
+        )
             continue
-        artifact_path = Path(str(row[1]))
-        payload_exists = False
+        artifact_path = resolve_artifact_path(settings, row[1])
+        payload_exists = True
+        payload_path = None
         if row[2]:
             try:
                 summary = json.loads(str(row[2]))
             except json.JSONDecodeError:
                 summary = {}
-            payload_path = summary.get("payload_path")
-            payload_exists = bool(payload_path and Path(str(payload_path)).exists())
+            payload_path = resolve_artifact_path(settings, summary.get("payload_path"))
+            raw_payload_path = summary.get("payload_path")
+            payload_exists = raw_payload_path is None or payload_path is not None
         checks.append(
             ValidationCheck(
                 name=f"report:{report_type}",
-                status=JobStatus.SUCCESS if artifact_path.exists() else JobStatus.FAILED,
-                severity="INFO" if artifact_path.exists() else "CRITICAL",
+                status=JobStatus.SUCCESS if artifact_path is not None else JobStatus.FAILED,
+                severity="INFO" if artifact_path is not None else "CRITICAL",
                 detail={
                     "report_type": report_type,
-                    "artifact_path": str(artifact_path),
+                    "artifact_path": str(artifact_path) if artifact_path is not None else str(row[1]),
+                    "payload_path": str(payload_path) if payload_path is not None else None,
                     "payload_exists": payload_exists,
                     "status": row[3],
                 },
-                recommended_action="리포트 artifact 경로를 복구하세요." if not artifact_path.exists() else "none",
+                recommended_action="리포트 artifact 경로를 복구하세요." if artifact_path is None else "none",
             )
         )
     _insert_checks(connection, settings, checks)

@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from app.common.artifacts import resolve_artifact_path
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import MODEL_DOMAIN, MODEL_SPEC_ID, MODEL_VERSION
@@ -72,7 +73,15 @@ def freeze_alpha_active_model(
                     )
                     if training_row is None or not training_row.get("artifact_uri"):
                         continue
-                    selected_rows.append(training_row)
+                    resolved_artifact_path = resolve_artifact_path(
+                        settings,
+                        training_row.get("artifact_uri"),
+                    )
+                    if resolved_artifact_path is None:
+                        continue
+                    resolved_training_row = dict(training_row)
+                    resolved_training_row["artifact_uri"] = str(resolved_artifact_path)
+                    selected_rows.append(resolved_training_row)
                 if not selected_rows:
                     notes = (
                         "Alpha active model freeze was a no-op. "

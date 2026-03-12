@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from app.common.artifacts import resolve_artifact_path
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
@@ -232,7 +233,12 @@ def materialize_intraday_meta_predictions(
                                 )
                             continue
                         artifact_row = artifact_map.get(str(active_row["training_run_id"]))
-                        if artifact_row is None or pd.isna(artifact_row["artifact_uri"]):
+                        resolved_artifact_path = (
+                            None
+                            if artifact_row is None
+                            else resolve_artifact_path(settings, artifact_row["artifact_uri"])
+                        )
+                        if artifact_row is None or resolved_artifact_path is None:
                             for row in group.itertuples(index=False):
                                 prediction_rows.append(
                                     {
@@ -261,7 +267,7 @@ def materialize_intraday_meta_predictions(
                                     }
                                 )
                             continue
-                        payload = load_model_artifact(Path(str(artifact_row["artifact_uri"])))
+                        payload = load_model_artifact(resolved_artifact_path)
                         features = feature_frame_with_dummies(
                             group,
                             feature_columns=list(payload["feature_columns"]),

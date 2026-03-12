@@ -14,6 +14,7 @@ from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifie
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, log_loss, precision_recall_fscore_support
 
+from app.common.artifacts import resolve_artifact_path
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
@@ -856,7 +857,10 @@ def calibrate_intraday_meta_thresholds(
                 for row in training_rows.itertuples(index=False):
                     if not row.artifact_uri:
                         continue
-                    payload = load_model_artifact(Path(str(row.artifact_uri)))
+                    resolved_artifact_path = resolve_artifact_path(settings, row.artifact_uri)
+                    if resolved_artifact_path is None:
+                        continue
+                    payload = load_model_artifact(resolved_artifact_path)
                     validation_frame = payload.get("validation_prediction_frame")
                     if not isinstance(validation_frame, pd.DataFrame):
                         continue
@@ -867,7 +871,7 @@ def calibrate_intraday_meta_thresholds(
                         calibration_params=calibration_params,
                     )
                     payload["threshold_payload"] = threshold_payload
-                    artifact_path = write_model_artifact(Path(str(row.artifact_uri)), payload)
+                    artifact_path = write_model_artifact(resolved_artifact_path, payload)
                     updated_rows.append(
                         {
                             **row._asdict(),

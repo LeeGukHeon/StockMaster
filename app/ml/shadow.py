@@ -5,6 +5,7 @@ from datetime import date
 
 import pandas as pd
 
+from app.common.artifacts import resolve_artifact_path
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.features.feature_store import build_feature_store, load_feature_matrix
@@ -286,12 +287,20 @@ def materialize_alpha_shadow_candidates(
                         )
                         if training_run is None or not training_run.get("artifact_uri"):
                             continue
+                        resolved_artifact_path = resolve_artifact_path(
+                            settings,
+                            training_run.get("artifact_uri"),
+                        )
+                        if resolved_artifact_path is None:
+                            continue
+                        resolved_training_run = dict(training_run)
+                        resolved_training_run["artifact_uri"] = str(resolved_artifact_path)
                         prediction_frame, _ = build_prediction_frame_from_training_run(
                             run_id=run_context.run_id,
                             as_of_date=as_of_date,
                             horizon=int(horizon),
                             feature_frame=feature_frame,
-                            training_run=training_run,
+                            training_run=resolved_training_run,
                             training_run_source="shadow_candidate",
                             active_alpha_model_id=None,
                             persist_member_predictions=False,

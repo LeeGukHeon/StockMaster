@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from app.common.artifacts import resolve_artifact_path
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.features.feature_store import build_feature_store, load_feature_matrix
@@ -640,12 +641,29 @@ def materialize_alpha_predictions_v1(
                         )
                         continue
 
+                    resolved_artifact_path = resolve_artifact_path(
+                        settings,
+                        selected_training_run.get("artifact_uri"),
+                    )
+                    if resolved_artifact_path is None:
+                        proxy_frame = _prediction_from_proxy(
+                            connection,
+                            run_id=run_context.run_id,
+                            as_of_date=as_of_date,
+                            horizon=int(horizon),
+                        )
+                        if not proxy_frame.empty:
+                            prediction_frames.append(_normalise_prediction_frame(proxy_frame))
+                        continue
+                    resolved_training_run = dict(selected_training_run)
+                    resolved_training_run["artifact_uri"] = str(resolved_artifact_path)
+
                     result_frame, member_frames = build_prediction_frame_from_training_run(
                         run_id=run_context.run_id,
                         as_of_date=as_of_date,
                         horizon=int(horizon),
                         feature_frame=feature_frame,
-                        training_run=selected_training_run,
+                        training_run=resolved_training_run,
                         training_run_source=training_run_source,
                         active_alpha_model_id=(
                             active_alpha_model.get("active_alpha_model_id")

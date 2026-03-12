@@ -12,6 +12,7 @@ import duckdb
 import pandas as pd
 
 from app.audit.contracts import get_ticket_checklist, representative_contracts
+from app.common.artifacts import resolve_artifact_path
 from app.ops.common import JobStatus
 from app.ops.maintenance import _latest_referenced_artifact_paths
 from app.release.snapshot import _expected_trading_data_date
@@ -594,15 +595,23 @@ def run_artifact_reference_checks(
     ).fetchall()
     protected_paths = _latest_referenced_artifact_paths(connection, settings)
     for report_type, artifact_path, summary_json, status, run_id in rows:
-        preview_exists = Path(str(artifact_path)).exists()
+        resolved_preview_path = resolve_artifact_path(settings, artifact_path)
+        preview_exists = resolved_preview_path is not None
         payload_path = _report_payload_path(summary_json)
-        payload_exists = payload_path is None or Path(payload_path).exists()
+        resolved_payload_path = resolve_artifact_path(settings, payload_path)
+        payload_exists = payload_path is None or resolved_payload_path is not None
         relative_preview = None
         relative_payload = None
-        if artifact_path:
-            relative_preview = _safe_relative_path(artifact_path, settings.paths.project_root)
-        if payload_path:
-            relative_payload = _safe_relative_path(payload_path, settings.paths.project_root)
+        if resolved_preview_path is not None:
+            relative_preview = _safe_relative_path(
+                resolved_preview_path,
+                settings.paths.project_root,
+            )
+        if resolved_payload_path is not None:
+            relative_payload = _safe_relative_path(
+                resolved_payload_path,
+                settings.paths.project_root,
+            )
         cleanup_safe = (relative_preview in protected_paths) and (
             relative_payload is None or relative_payload in protected_paths
         )
@@ -623,8 +632,8 @@ def run_artifact_reference_checks(
                 status=result_status,
                 summary=f"preview_exists={preview_exists} payload_exists={payload_exists} cleanup_safe={cleanup_safe}",
                 detail={
-                    "artifact_path": artifact_path,
-                    "payload_path": payload_path,
+                    "artifact_path": str(resolved_preview_path) if resolved_preview_path is not None else artifact_path,
+                    "payload_path": str(resolved_payload_path) if resolved_payload_path is not None else payload_path,
                     "run_id": run_id,
                     "status": status,
                     "cleanup_safe": cleanup_safe,

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.common.artifacts import resolve_artifact_path
 from app.common.time import today_local
 from app.common.disk import DiskUsageReport, measure_disk_usage
 from app.features.builders.flow_features import build_flow_feature_frame
@@ -122,12 +123,15 @@ def _latest_manifest_preview(settings: Settings, *, run_type: str) -> str | None
     if row is None or not row[0]:
         return None
     artifacts = json.loads(row[0])
-    preview_candidates = [Path(item) for item in artifacts if str(item).endswith(".md")]
+    preview_candidates = [
+        resolve_artifact_path(settings, item)
+        for item in artifacts
+        if str(item).endswith(".md")
+    ]
+    preview_candidates = [path for path in preview_candidates if path is not None]
     if not preview_candidates:
         return None
     preview_path = preview_candidates[-1]
-    if not preview_path.exists():
-        return None
     return preview_path.read_text(encoding="utf-8")
 
 
@@ -2175,34 +2179,7 @@ def format_ui_run_id(value: object) -> str:
 
 
 def resolve_ui_artifact_path(settings: Settings, path_value: object) -> Path | None:
-    if path_value in (None, ""):
-        return None
-    raw_candidate = Path(str(path_value))
-    candidate_paths: list[Path] = []
-    if raw_candidate.is_absolute():
-        candidate_paths.append(raw_candidate)
-    else:
-        candidate_paths.append(settings.paths.project_root / raw_candidate)
-        candidate_paths.append(settings.paths.artifacts_dir / raw_candidate)
-
-    normalized_value = str(raw_candidate).replace("\\", "/")
-    for marker in ("/data/artifacts/", "/runtime/artifacts/", "/artifacts/"):
-        if marker not in normalized_value:
-            continue
-        relative_suffix = normalized_value.split(marker, 1)[1].strip("/")
-        if relative_suffix:
-            candidate_paths.append(settings.paths.artifacts_dir / Path(relative_suffix))
-            break
-
-    seen: set[Path] = set()
-    for candidate in candidate_paths:
-        resolved = candidate.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        if resolved.exists():
-            return resolved
-    return None
+    return resolve_artifact_path(settings, path_value)
 
 
 def format_ui_number(value: object, *, decimals: int = 2) -> str:
