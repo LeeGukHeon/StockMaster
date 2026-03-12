@@ -35,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit-symbols", type=int)
     parser.add_argument("--market", default="ALL", choices=["ALL", "KOSPI", "KOSDAQ"])
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--max-workers", type=int, default=4)
     parser.add_argument(
         "--persist-raw",
         action="store_true",
@@ -61,6 +62,7 @@ def main() -> int:
                 limit_symbols=args.limit_symbols,
                 market=args.market,
                 force=args.force,
+                max_workers=args.max_workers,
                 persist_raw_artifacts=args.persist_raw,
             )
             total_rows += result.row_count

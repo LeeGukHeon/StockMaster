@@ -217,15 +217,16 @@ def _wait_for_request_slot(
     if policy.min_interval_seconds <= 0:
         return
     request_key = (provider_name, endpoint_label)
+    now = time.monotonic()
     with _REQUEST_POLICY_LOCK:
-        now = time.monotonic()
-        last_ts = _LAST_REQUEST_TS.get(request_key)
-        if last_ts is not None:
-            wait_seconds = (last_ts + policy.min_interval_seconds) - now
-            if wait_seconds > 0:
-                time.sleep(wait_seconds)
-                now = time.monotonic()
-        _LAST_REQUEST_TS[request_key] = now
+        # Reserve the next allowed start time under lock, but sleep outside
+        # the lock so unrelated endpoints and in-flight requests can overlap.
+        next_allowed_ts = _LAST_REQUEST_TS.get(request_key, now)
+        scheduled_ts = max(now, next_allowed_ts)
+        _LAST_REQUEST_TS[request_key] = scheduled_ts + policy.min_interval_seconds
+    wait_seconds = scheduled_ts - now
+    if wait_seconds > 0:
+        time.sleep(wait_seconds)
 
 
 def request_with_retries(

@@ -34,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--market", default="ALL", choices=["ALL", "KOSPI", "KOSDAQ"])
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--max-workers", type=int, default=4)
     parser.add_argument(
         "--persist-raw",
         action="store_true",
@@ -56,6 +57,7 @@ def main() -> int:
         market=args.market,
         force=args.force,
         dry_run=args.dry_run,
+        max_workers=args.max_workers,
         persist_raw_artifacts=args.persist_raw,
     )
     logger.info(

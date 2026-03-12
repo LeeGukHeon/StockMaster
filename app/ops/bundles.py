@@ -50,10 +50,10 @@ from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VER
 from app.ops.common import OpsJobResult, TriggerType
 from app.ops.health import check_pipeline_dependencies, materialize_health_snapshots
 from app.ops.maintenance import (
+    cleanup_disk_watermark,
     cleanup_docker_build_cache,
     cleanup_model_artifacts,
     cleanup_stale_job_runs,
-    cleanup_disk_watermark,
     reconcile_failed_runs,
     recover_incomplete_runs,
     rotate_and_compress_logs,
@@ -71,7 +71,6 @@ from app.ops.scheduler import (
     resolve_reference_trading_date,
 )
 from app.pipelines.news_metadata import sync_news_metadata
-from app.reports.close_brief import publish_discord_close_brief
 from app.portfolio.allocation import (
     evaluate_portfolio_policies,
     materialize_portfolio_nav,
@@ -96,6 +95,7 @@ from app.release.snapshot import (
     build_ui_freshness_snapshot,
 )
 from app.release.validation import validate_release_candidate
+from app.reports.close_brief import publish_discord_close_brief
 from app.scheduler.jobs import run_daily_pipeline_job, run_evaluation_job
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout

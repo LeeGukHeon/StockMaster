@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date
+from time import perf_counter
 from typing import Iterable
 
 import pandas as pd
@@ -51,6 +53,7 @@ INDIVIDUAL_NET_VALUE_KEYS = (
     "indv_ntby_tr_amt",
 )
 DEFAULT_INVESTOR_FLOW_FLUSH_BATCH_SIZE = 100
+DEFAULT_INVESTOR_FLOW_MAX_WORKERS = 4
 
 
 @dataclass(slots=True)
@@ -63,6 +66,13 @@ class InvestorFlowSyncResult:
     failed_symbol_count: int
     artifact_paths: list[str]
     notes: str
+
+
+@dataclass(slots=True)
+class _InvestorFlowFetchResult:
+    symbol: str
+    normalized: pd.DataFrame
+    artifact_paths: list[str]
 
 
 def _pick_numeric(frame: pd.DataFrame, keys: tuple[str, ...]) -> pd.Series:
@@ -280,6 +290,50 @@ def _flush_investor_flow_batch(
     return len(combined)
 
 
+def _fetch_investor_flow_result(
+    *,
+    provider: KISProvider,
+    settings: Settings,
+    run_id: str,
+    symbol: str,
+    market: str,
+    trading_date: date,
+    persist_raw_artifacts: bool,
+    persist_probe_artifacts: bool,
+) -> _InvestorFlowFetchResult:
+    probe = provider.fetch_investor_flow(
+        symbol=symbol,
+        trading_date=trading_date,
+        persist_probe_artifacts=persist_probe_artifacts,
+    )
+    artifact_paths: list[str] = []
+    if persist_raw_artifacts:
+        raw_json_path = (
+            settings.paths.raw_dir
+            / "kis"
+            / "investor_flow"
+            / f"trading_date={trading_date.isoformat()}"
+            / f"symbol={symbol}"
+            / f"{run_id}.json"
+        )
+        raw_parquet_path = raw_json_path.with_suffix(".parquet")
+        artifact_paths.append(str(write_json_payload(raw_json_path, probe.payload)))
+        probe.frame.to_parquet(raw_parquet_path, index=False)
+        artifact_paths.append(str(raw_parquet_path))
+
+    normalized = _normalize_investor_flow(
+        symbol=symbol,
+        market=market,
+        trading_date=trading_date,
+        frame=probe.frame,
+    )
+    return _InvestorFlowFetchResult(
+        symbol=symbol,
+        normalized=normalized,
+        artifact_paths=artifact_paths,
+    )
+
+
 def _load_persisted_investor_flow_frame(settings: Settings, *, trading_date: date) -> pd.DataFrame:
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
         return connection.execute(
@@ -341,12 +395,14 @@ def sync_investor_flow(
     persist_raw_artifacts: bool = False,
     persist_probe_artifacts: bool = False,
     flush_batch_size: int = DEFAULT_INVESTOR_FLOW_FLUSH_BATCH_SIZE,
+    max_workers: int = DEFAULT_INVESTOR_FLOW_MAX_WORKERS,
     kis_provider: KISProvider | None = None,
 ) -> InvestorFlowSyncResult:
     ensure_storage_layout(settings)
     owns_provider = kis_provider is None
     provider = kis_provider or KISProvider(settings)
     effective_flush_batch_size = max(1, int(flush_batch_size))
+    effective_max_workers = max(1, int(max_workers))
 
     with activate_run_context("sync_investor_flow", as_of_date=trading_date) as run_context:
         with duckdb_connection(settings.paths.duckdb_path) as connection:
@@ -434,56 +490,87 @@ def sync_investor_flow(
             failed_symbols: list[str] = []
             persisted_row_count = 0
             flush_count = 0
-
+            fetch_targets: list[tuple[str, str]] = []
             for row in symbol_frame.itertuples(index=False):
                 symbol = str(row.symbol).zfill(6)
                 if symbol in existing_symbols:
                     skipped_symbol_count += 1
                     continue
+                fetch_targets.append((symbol, str(row.market)))
 
-                try:
-                    probe = provider.fetch_investor_flow(
-                        symbol=symbol,
-                        trading_date=trading_date,
-                        persist_probe_artifacts=persist_probe_artifacts,
-                    )
-                    if persist_raw_artifacts:
-                        raw_json_path = (
-                            settings.paths.raw_dir
-                            / "kis"
-                            / "investor_flow"
-                            / f"trading_date={trading_date.isoformat()}"
-                            / f"symbol={symbol}"
-                            / f"{run_context.run_id}.json"
-                        )
-                        raw_parquet_path = raw_json_path.with_suffix(".parquet")
-                        artifact_paths.append(
-                            str(write_json_payload(raw_json_path, probe.payload))
-                        )
-                        probe.frame.to_parquet(raw_parquet_path, index=False)
-                        artifact_paths.append(str(raw_parquet_path))
+            if fetch_targets and hasattr(provider, "get_access_token"):
+                provider.get_access_token()
 
-                    normalized = _normalize_investor_flow(
-                        symbol=symbol,
-                        market=str(row.market),
-                        trading_date=trading_date,
-                        frame=probe.frame,
-                    )
-                    if normalized.empty:
-                        skipped_symbol_count += 1
-                        continue
-                    output_frames.append(normalized)
-                    if len(output_frames) >= effective_flush_batch_size:
-                        persisted_row_count += _flush_investor_flow_batch(
-                            settings,
+            fetch_started_at = perf_counter()
+            if effective_max_workers == 1 or len(fetch_targets) <= 1:
+                for symbol, market_name in fetch_targets:
+                    try:
+                        result = _fetch_investor_flow_result(
+                            provider=provider,
+                            settings=settings,
                             run_id=run_context.run_id,
-                            rows=output_frames,
+                            symbol=symbol,
+                            market=market_name,
+                            trading_date=trading_date,
+                            persist_raw_artifacts=persist_raw_artifacts,
+                            persist_probe_artifacts=persist_probe_artifacts,
                         )
-                        flush_count += 1
-                        output_frames.clear()
-                except Exception:
-                    failed_symbol_count += 1
-                    failed_symbols.append(symbol)
+                        artifact_paths.extend(result.artifact_paths)
+                        if result.normalized.empty:
+                            skipped_symbol_count += 1
+                            continue
+                        output_frames.append(result.normalized)
+                        if len(output_frames) >= effective_flush_batch_size:
+                            persisted_row_count += _flush_investor_flow_batch(
+                                settings,
+                                run_id=run_context.run_id,
+                                rows=output_frames,
+                            )
+                            flush_count += 1
+                            output_frames.clear()
+                    except Exception:
+                        failed_symbol_count += 1
+                        failed_symbols.append(symbol)
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=min(effective_max_workers, len(fetch_targets))
+                ) as executor:
+                    future_map = {
+                        executor.submit(
+                            _fetch_investor_flow_result,
+                            provider=provider,
+                            settings=settings,
+                            run_id=run_context.run_id,
+                            symbol=symbol,
+                            market=market_name,
+                            trading_date=trading_date,
+                            persist_raw_artifacts=persist_raw_artifacts,
+                            persist_probe_artifacts=persist_probe_artifacts,
+                        ): symbol
+                        for symbol, market_name in fetch_targets
+                    }
+                    for future in as_completed(future_map):
+                        symbol = future_map[future]
+                        try:
+                            result = future.result()
+                        except Exception:
+                            failed_symbol_count += 1
+                            failed_symbols.append(symbol)
+                            continue
+                        artifact_paths.extend(result.artifact_paths)
+                        if result.normalized.empty:
+                            skipped_symbol_count += 1
+                            continue
+                        output_frames.append(result.normalized)
+                        if len(output_frames) >= effective_flush_batch_size:
+                            persisted_row_count += _flush_investor_flow_batch(
+                                settings,
+                                run_id=run_context.run_id,
+                                rows=output_frames,
+                            )
+                            flush_count += 1
+                            output_frames.clear()
+            fetch_elapsed_seconds = perf_counter() - fetch_started_at
 
             if output_frames:
                 persisted_row_count += _flush_investor_flow_batch(
@@ -518,7 +605,9 @@ def sync_investor_flow(
                 f"Investor flow sync completed. trading_date={trading_date.isoformat()}, "
                 f"rows={len(combined)}, requested_symbols={requested_symbol_count}, "
                 f"skipped={skipped_symbol_count}, failed={failed_symbol_count}, "
-                f"flushes={flush_count}, flush_batch_size={effective_flush_batch_size}"
+                f"flushes={flush_count}, flush_batch_size={effective_flush_batch_size}, "
+                f"max_workers={effective_max_workers}, "
+                f"fetch_seconds={fetch_elapsed_seconds:.2f}"
             )
             _record_investor_flow_finish(
                 settings,

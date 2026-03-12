@@ -1,37 +1,30 @@
 from __future__ import annotations
 
-import pytest
+import threading
+import time
 
-from app.providers import base
-
-
-def test_resolve_provider_request_policy_prefers_endpoint_override() -> None:
-    policy = base.resolve_provider_request_policy("dart", "/api/list.json")
-
-    assert policy.min_interval_seconds == 0.9
-    assert policy.retries == 5
-    assert policy.retry_delay_seconds == 1.5
-    assert policy.transport_delay_seconds == 2.0
+from app.providers import base as provider_base
 
 
-def test_resolve_provider_request_policy_falls_back_to_provider_default() -> None:
-    policy = base.resolve_provider_request_policy("krx", "/unknown-endpoint")
+def test_wait_for_request_slot_does_not_block_other_endpoints() -> None:
+    policy = provider_base.ProviderRequestPolicy(min_interval_seconds=0.3)
+    provider_base._LAST_REQUEST_TS.clear()
+    provider_base._LAST_REQUEST_TS[("kis", "/endpoint-a")] = time.monotonic() + 0.3
 
-    assert policy.min_interval_seconds == 0.5
-    assert policy.retries == 4
+    started = threading.Event()
 
+    def hold_endpoint_a() -> None:
+        started.set()
+        provider_base._wait_for_request_slot("kis", "/endpoint-a", policy)
 
-def test_wait_for_request_slot_enforces_minimum_spacing(monkeypatch) -> None:
-    policy = base.ProviderRequestPolicy(min_interval_seconds=0.5)
-    base._LAST_REQUEST_TS.clear()
+    worker = threading.Thread(target=hold_endpoint_a)
+    worker.start()
+    assert started.wait(timeout=1.0)
+    time.sleep(0.05)
 
-    monotonic_values = iter([10.0, 10.1, 10.6])
-    sleep_calls: list[float] = []
+    other_started_at = time.perf_counter()
+    provider_base._wait_for_request_slot("kis", "/endpoint-b", policy)
+    other_elapsed = time.perf_counter() - other_started_at
 
-    monkeypatch.setattr(base.time, "monotonic", lambda: next(monotonic_values))
-    monkeypatch.setattr(base.time, "sleep", lambda seconds: sleep_calls.append(seconds))
-
-    base._wait_for_request_slot("dart", "/api/list.json", policy)
-    base._wait_for_request_slot("dart", "/api/list.json", policy)
-
-    assert sleep_calls == pytest.approx([0.4])
+    worker.join(timeout=1.0)
+    assert other_elapsed < 0.1

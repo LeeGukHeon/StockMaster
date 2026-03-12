@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -55,6 +56,8 @@ class KisTokenManager:
         self.settings = settings
         self.client = client
         self.logger = logger
+        self._token_lock = threading.Lock()
+        self._cached_token: KisAccessToken | None = None
 
     @property
     def cache_path(self) -> Path:
@@ -104,12 +107,14 @@ class KisTokenManager:
         self.cache_path.write_text(
             json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        return KisAccessToken(
+        token = KisAccessToken(
             access_token=access_token,
             expires_at=expires_at,
             cache_path=self.cache_path,
             source="fresh",
         )
+        self._cached_token = token
+        return token
 
     def request_new_token(self) -> KisAccessToken:
         config = self.settings.providers.kis
@@ -144,8 +149,18 @@ class KisTokenManager:
         return self.save_token(response.json())
 
     def get_access_token(self, *, force_refresh: bool = False) -> KisAccessToken:
-        if not force_refresh:
-            cached = self.load_cached_token()
-            if cached is not None:
-                return cached
-        return self.request_new_token()
+        with self._token_lock:
+            if (
+                not force_refresh
+                and self._cached_token is not None
+                and self._cached_token.expires_at > utc_now() + timedelta(minutes=5)
+            ):
+                return self._cached_token
+            if not force_refresh:
+                cached = self.load_cached_token()
+                if cached is not None:
+                    self._cached_token = cached
+                    return cached
+            token = self.request_new_token()
+            self._cached_token = token
+            return token

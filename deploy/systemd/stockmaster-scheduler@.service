@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=/opt/stockmaster/app
 ExecStart=/bin/bash /opt/stockmaster/app/scripts/server/run_scheduler_job_host.sh %i
-TimeoutStartSec=14400
+TimeoutStartSec=21600
 
 [Install]
 WantedBy=multi-user.target
