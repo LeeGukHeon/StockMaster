@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.common.time import today_local
 from app.ui.components import (
     render_narrative_card,
     render_page_footer,
@@ -21,7 +22,11 @@ from app.ui.components import (
 )
 from app.ui.helpers import (
     available_symbol_options,
+    format_execution_mode_label,
+    format_ui_date,
     format_ui_number,
+    format_ui_time,
+    format_ui_value,
     latest_intraday_decision_lineage_frame,
     load_ui_settings,
     stock_workbench_flow_frame,
@@ -41,6 +46,16 @@ symbol_lookup = {
     f"{symbol} | {company_name}" if company_name else symbol: symbol
     for symbol, company_name in symbol_options
 }
+
+
+def _latest_axis_row(frame, *, date_column: str, time_column: str | None = None):
+    if frame.empty:
+        return None
+    ordered = frame.copy()
+    sort_columns = [column for column in (date_column, time_column) if column and column in ordered.columns]
+    if sort_columns:
+        ordered = ordered.sort_values(sort_columns, ascending=[False] * len(sort_columns))
+    return ordered.iloc[0]
 
 render_page_header(
     settings,
@@ -80,6 +95,84 @@ else:
     intraday_tuned = stock_workbench_intraday_tuned_frame(settings, symbol=selected_symbol, limit=20)
     intraday_timing = stock_workbench_intraday_timing_frame(settings, symbol=selected_symbol, limit=20)
     lineage = latest_intraday_decision_lineage_frame(settings, symbol=selected_symbol, limit=20)
+    live_row = live_recommendation.iloc[0] if not live_recommendation.empty else None
+    summary_row = summary.iloc[0] if not summary.empty else None
+    intraday_row = _latest_axis_row(lineage, date_column="selection_date", time_column="checkpoint_time")
+    if intraday_row is None:
+        intraday_row = _latest_axis_row(
+            intraday_decisions,
+            date_column="session_date",
+            time_column="checkpoint_time",
+        )
+
+    render_warning_banner(
+        "INFO",
+        "이 화면은 현재 다시 계산한 값, 마지막 장마감 배치값, 다음 거래일 계획, 저장된 장중 판단이 함께 있습니다. 각 카드 제목의 기준 축을 먼저 보고 읽으세요.",
+    )
+
+    axis_left, axis_right = st.columns(2)
+    with axis_left:
+        if live_row is not None:
+            render_narrative_card(
+                "즉석 계산 기준",
+                (
+                    f"{format_ui_date(live_row.get('live_as_of_date'))} 장마감 데이터로 현재 다시 계산한 값입니다. "
+                    f"기준 가격은 {format_ui_date(live_row.get('live_reference_date'))} 종가 "
+                    f"{format_ui_value('live_reference_price', live_row.get('live_reference_price'))}입니다."
+                ),
+            )
+        else:
+            render_narrative_card(
+                "즉석 계산 기준",
+                "현재 다시 계산한 즉석 추천 값이 아직 없습니다.",
+            )
+        if live_row is not None and live_row.get("latest_portfolio_as_of_date") is not None:
+            render_narrative_card(
+                "다음 거래일 계획 기준",
+                (
+                    f"{format_ui_date(live_row.get('latest_portfolio_as_of_date'))} 기준 목표북입니다. "
+                    f"실행 모드는 {format_execution_mode_label(str(live_row.get('latest_portfolio_execution_mode') or '-'))}이고 "
+                    f"진입 예정일은 {format_ui_date(live_row.get('latest_portfolio_entry_trade_date'))}입니다."
+                ),
+            )
+        else:
+            render_narrative_card(
+                "다음 거래일 계획 기준",
+                "아직 다음 거래일 목표북이 생성되지 않았습니다.",
+            )
+    with axis_right:
+        if summary_row is not None:
+            render_narrative_card(
+                "마지막 장마감 기준",
+                (
+                    f"{format_ui_date(summary_row.get('as_of_date'))} 장마감 배치 결과입니다. "
+                    "등급과 선정 점수는 현재 장중 실시간 값이 아니라 마지막 저장 배치값입니다."
+                ),
+            )
+        else:
+            render_narrative_card(
+                "마지막 장마감 기준",
+                "마지막 장마감 요약 데이터가 아직 없습니다.",
+            )
+        if intraday_row is not None:
+            session_date = intraday_row.get("session_date") or intraday_row.get("selection_date")
+            historical_suffix = (
+                "오늘 장중 값이 아니라 마지막 저장 세션입니다."
+                if session_date is not None and session_date != today_local(settings.app.timezone)
+                else "오늘 장중 저장 세션 기준입니다."
+            )
+            render_narrative_card(
+                "최근 장중 판단 기준",
+                (
+                    f"{format_ui_date(session_date)} {format_ui_time(intraday_row.get('checkpoint_time'))} 체크포인트 기준입니다. "
+                    f"{historical_suffix}"
+                ),
+            )
+        else:
+            render_narrative_card(
+                "최근 장중 판단 기준",
+                "저장된 장중 판단 기록이 아직 없습니다.",
+            )
 
     if summary.empty:
         render_narrative_card(
@@ -99,7 +192,7 @@ else:
 
     render_record_cards(
         live_recommendation,
-        title="즉석 추천 계산",
+        title="즉석 추천 계산 | 현재 다시 계산",
         primary_column="symbol",
         secondary_columns=["company_name", "live_d5_selection_v2_grade"],
         detail_columns=[
@@ -127,7 +220,7 @@ else:
 
     render_record_cards(
         summary,
-        title="종목 핵심 요약",
+        title="종목 핵심 요약 | 마지막 장마감 기준",
         primary_column="symbol",
         secondary_columns=["company_name", "grade"],
         detail_columns=[
@@ -143,7 +236,7 @@ else:
 
     render_record_cards(
         price_history,
-        title="가격 / 밴드",
+        title="가격 / 밴드 | 장마감 데이터 기준",
         primary_column="as_of_date",
         secondary_columns=["close"],
         detail_columns=["expected_excess_return", "lower_band", "upper_band"],
@@ -154,7 +247,7 @@ else:
 
     render_record_cards(
         flow_history,
-        title="수급 추이",
+        title="수급 추이 | 일별 저장 데이터",
         primary_column="trading_date",
         detail_columns=[
             "foreign_net_buy_value",
@@ -168,7 +261,7 @@ else:
 
     render_record_cards(
         outcome_history,
-        title="선정 / 사후 기록",
+        title="선정 / 사후 기록 | 과거 배치 이력",
         primary_column="selection_date",
         secondary_columns=["ranking_version", "outcome_status"],
         detail_columns=["horizon", "realized_excess_return", "band_status"],
@@ -179,7 +272,7 @@ else:
 
     render_record_cards(
         intraday_decisions,
-        title="장중 처음 판단 / 보정 후 판단",
+        title="최근 장중 판단 | 저장된 장중 세션 기준",
         primary_column="session_date",
         secondary_columns=["checkpoint_time", "horizon"],
         detail_columns=["raw_action", "adjusted_action", "market_regime_family", "adjusted_timing_score"],
@@ -190,7 +283,7 @@ else:
 
     render_record_cards(
         intraday_tuned,
-        title="메타 보정 / 최종 판단",
+        title="메타 보정 / 최종 판단 | 저장된 장중 세션 기준",
         primary_column="session_date",
         secondary_columns=["checkpoint_time", "horizon"],
         detail_columns=["tuned_action", "final_action", "predicted_class", "confidence_margin"],
@@ -201,7 +294,7 @@ else:
 
     render_record_cards(
         lineage,
-        title="장중 라인리지",
+        title="장중 라인리지 | 저장된 장중 세션 기준",
         primary_column="selection_date",
         secondary_columns=["checkpoint_time", "portfolio_execution_mode"],
         detail_columns=["raw_action", "adjusted_action", "final_action", "gate_status"],
@@ -212,7 +305,7 @@ else:
 
     render_record_cards(
         intraday_timing,
-        title="시점 대비 결과",
+        title="시점 대비 결과 | 과거 세션 평가",
         primary_column="session_date",
         secondary_columns=["horizon", "selected_checkpoint_time"],
         detail_columns=["selected_action", "timing_edge_bps", "outcome_status"],
@@ -223,7 +316,7 @@ else:
 
     render_record_cards(
         news_history,
-        title="관련 뉴스 / 리포트",
+        title="관련 뉴스 / 리포트 | 저장된 게시 시각 기준",
         primary_column="title",
         secondary_columns=["provider", "published_at"],
         detail_columns=["news_category", "linked_symbols"],

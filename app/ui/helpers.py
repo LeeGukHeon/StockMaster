@@ -4455,7 +4455,7 @@ def stock_workbench_live_recommendation_frame(
         )
         latest_target_row = connection.execute(
             """
-            SELECT execution_mode, included_flag, target_weight, gate_status
+            SELECT as_of_date, entry_trade_date, execution_mode, included_flag, target_weight, gate_status
             FROM fact_portfolio_target_book
             WHERE symbol = ?
               AND as_of_date = (SELECT MAX(as_of_date) FROM fact_portfolio_target_book)
@@ -4506,6 +4506,8 @@ def stock_workbench_live_recommendation_frame(
                     "live_d5_target_price": None if reference_price is None or expected is None else reference_price * (1.0 + expected),
                     "live_d5_upper_target_price": None if reference_price is None or upper is None else reference_price * (1.0 + upper),
                     "live_d5_stop_price": None if reference_price is None or lower is None else reference_price * (1.0 + lower),
+                    "latest_portfolio_as_of_date": latest_target.get("as_of_date"),
+                    "latest_portfolio_entry_trade_date": latest_target.get("entry_trade_date"),
                     "latest_portfolio_execution_mode": latest_target.get("execution_mode"),
                     "latest_portfolio_included_flag": latest_target.get("included_flag"),
                     "latest_portfolio_target_weight": latest_target.get("target_weight"),
@@ -5247,6 +5249,76 @@ def latest_market_mood_summary(settings: Settings) -> dict[str, str]:
         "headline": headline,
         "label": f"{format_ui_date(as_of_date)} 종가 기준",
         "detail": "오늘 장중 컨텍스트가 아직 없어 마지막 일간 시장 국면을 보여줍니다.",
+    }
+
+
+def latest_intraday_console_basis_summary(settings: Settings) -> dict[str, str]:
+    session_date = _latest_intraday_session_date(settings)
+    if session_date is None:
+        return {
+            "mode": "missing",
+            "headline": "장중 세션 없음",
+            "label": "-",
+            "detail": "저장된 장중 보조 세션이 아직 없습니다.",
+        }
+
+    context = latest_intraday_market_context_frame(settings, session_date=session_date, limit=50)
+    checkpoint = "-"
+    market_state = ""
+    prior_regime = "미상"
+    data_quality = "weak"
+    min_coverage = 0.0
+
+    if not context.empty:
+        market_only = context.loc[context["context_scope"].astype(str) == "market"].copy()
+        if not market_only.empty:
+            latest = market_only.sort_values("checkpoint_time").iloc[-1]
+            checkpoint = format_ui_time(latest.get("checkpoint_time"))
+            market_state = str(latest.get("market_session_state") or "")
+            prior_regime = format_ui_value("prior_daily_regime_state", latest.get("prior_daily_regime_state"))
+            data_quality = str(latest.get("data_quality_flag") or "weak")
+            min_coverage = min(
+                _coerce_float(latest.get("bar_coverage_ratio")),
+                _coerce_float(latest.get("trade_coverage_ratio")),
+                _coerce_float(latest.get("quote_coverage_ratio")),
+            )
+
+    session_label = format_ui_date(session_date)
+    if session_date != today_local(settings.app.timezone):
+        return {
+            "mode": "historical",
+            "headline": "마지막 저장 세션",
+            "label": f"{session_label} {checkpoint} 기준",
+            "detail": (
+                f"오늘 장중이 아니라 마지막으로 저장된 장중 세션입니다. "
+                f"직전 일간 국면은 {prior_regime}였습니다."
+            ),
+        }
+
+    if market_state == "planned":
+        return {
+            "mode": "preopen",
+            "headline": "장 시작 전",
+            "label": f"{session_label} 장전 기준",
+            "detail": f"아직 오늘 장중 판단 전입니다. 직전 일간 국면은 {prior_regime}입니다.",
+        }
+
+    if data_quality == "weak" or min_coverage < 0.35:
+        return {
+            "mode": "stale",
+            "headline": "장중 데이터 보강 중",
+            "label": f"{session_label} {checkpoint} 기준",
+            "detail": (
+                "현재 세션은 열려 있지만 장중 커버리지가 낮아 판단을 보류합니다. "
+                f"직전 일간 국면은 {prior_regime}입니다."
+            ),
+        }
+
+    return {
+        "mode": "live",
+        "headline": "오늘 장중 세션",
+        "label": f"{session_label} {checkpoint} 기준",
+        "detail": "장중 체크포인트와 커버리지가 확보된 세션입니다.",
     }
 
 
@@ -6814,6 +6886,8 @@ UI_COLUMN_LABELS.update(
         "live_d5_target_price": "즉석 목표가",
         "live_d5_upper_target_price": "즉석 강한 흐름 목표가",
         "live_d5_stop_price": "즉석 손절 참고선",
+        "latest_portfolio_as_of_date": "최신 포트폴리오 기준일",
+        "latest_portfolio_entry_trade_date": "최신 포트폴리오 진입 예정일",
         "latest_portfolio_execution_mode": "최신 포트폴리오 실행 모드",
         "latest_portfolio_included_flag": "최신 포트폴리오 편입 여부",
         "latest_portfolio_target_weight": "최신 포트폴리오 목표 비중",

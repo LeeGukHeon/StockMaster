@@ -33,6 +33,7 @@ from app.ui.helpers import (
     intraday_console_tuned_action_frame,
     latest_intraday_active_policy_frame,
     latest_intraday_checkpoint_health_frame,
+    latest_intraday_console_basis_summary,
     latest_intraday_decision_lineage_frame,
     latest_intraday_meta_active_model_frame,
     latest_intraday_meta_decision_frame,
@@ -66,6 +67,7 @@ def _load_intraday_console_section(project_root_str: str, section: str) -> dict[
     if section == "한눈에 보기":
         return {
             "status_frame": latest_intraday_status_frame(settings),
+            "basis_summary": latest_intraday_console_basis_summary(settings),
             "capability_frame": latest_intraday_research_capability_frame(settings, limit=20),
             "checkpoint_health": latest_intraday_checkpoint_health_frame(settings),
             "market_context": intraday_console_market_context_frame(settings, limit=12),
@@ -114,12 +116,24 @@ def _latest_checkpoint_text(payload: dict[str, object]) -> str:
 
 def _render_overview(payload: dict[str, object]) -> None:
     status_frame = payload["status_frame"]
+    basis_summary = payload["basis_summary"]
     capability_frame = payload["capability_frame"]
     checkpoint_health = payload["checkpoint_health"]
     market_context = payload["market_context"]
     active_policy_frame = payload["active_policy_frame"]
     active_meta_model_frame = payload["active_meta_model_frame"]
     recommendation_frame = payload["recommendation_frame"]
+
+    render_narrative_card(
+        "표시 기준",
+        f"{basis_summary.get('headline', '-')} | {basis_summary.get('label', '-')}. {basis_summary.get('detail', '')}",
+    )
+    if basis_summary.get("mode") == "historical":
+        render_warning_banner("INFO", "현재 장중이 아니라 마지막으로 저장된 장중 세션을 보고 있습니다.")
+    elif basis_summary.get("mode") == "stale":
+        render_warning_banner("WARNING", "오늘 장중 세션은 열려 있지만 커버리지가 낮아 판단을 보류하는 상태입니다.")
+    elif basis_summary.get("mode") == "preopen":
+        render_warning_banner("INFO", "장 시작 전이라 오늘 장중 판단 대신 준비 상태와 직전 장 기준을 함께 봐야 합니다.")
 
     if status_frame.empty:
         render_narrative_card("오늘 상태", "아직 오늘 장중 보조 세션이 없습니다.")
@@ -156,7 +170,7 @@ def _render_overview(payload: dict[str, object]) -> None:
     with left:
         render_record_cards(
             checkpoint_health,
-            title="체크포인트별 처리 현황",
+            title="저장 세션 체크포인트 처리 현황",
             primary_column="checkpoint_time",
             secondary_columns=["status"],
             detail_columns=[
@@ -172,7 +186,7 @@ def _render_overview(payload: dict[str, object]) -> None:
     with right:
         render_record_cards(
             market_context,
-            title="시장 맥락",
+            title="저장 세션 시장 맥락",
             primary_column="checkpoint_time",
             secondary_columns=["market_session_state"],
             detail_columns=[
