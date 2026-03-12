@@ -1057,11 +1057,11 @@ UI_VALUE_LABELS: dict[str, dict[str, str]] = {
         "prune_storage": "저장소 정리",
     },
     "regime_state": {
-        "panic": "패닉",
-        "risk_off": "리스크 오프",
-        "neutral": "중립",
-        "risk_on": "리스크 온",
-        "euphoria": "과열",
+        "panic": "공포 장",
+        "risk_off": "방어 우위 장",
+        "neutral": "방향성 탐색 장",
+        "risk_on": "상승 우위 장",
+        "euphoria": "과열 장",
     },
     "outcome_status": {
         "matured": "평가 완료",
@@ -1843,17 +1843,17 @@ UI_VALUE_LABELS.setdefault("selection_confidence_bucket", {}).update(
 )
 UI_VALUE_LABELS.setdefault("market_regime_family", {}).update(
     {
-        "panic": "패닉",
-        "risk_off": "리스크 오프",
-        "neutral": "중립",
-        "risk_on": "리스크 온",
-        "euphoria": "과열",
-        "PANIC_OPEN": "패닉 오픈",
-        "WEAK_RISK_OFF": "약한 리스크오프",
-        "NEUTRAL_CHOP": "중립 박스권",
-        "HEALTHY_TREND": "건강한 추세",
+        "panic": "공포 장",
+        "risk_off": "방어 우위 장",
+        "neutral": "방향성 탐색 장",
+        "risk_on": "상승 우위 장",
+        "euphoria": "과열 장",
+        "PANIC_OPEN": "공포성 급락 출발",
+        "WEAK_RISK_OFF": "방어 우위",
+        "NEUTRAL_CHOP": "방향성 약한 박스권",
+        "HEALTHY_TREND": "건강한 상승 추세",
         "OVERHEATED_GAP_CHASE": "과열 갭 추격",
-        "DATA_WEAK": "데이터 약함",
+        "DATA_WEAK": "데이터 신뢰 낮음",
         "unknown": "미상",
     }
 )
@@ -1861,9 +1861,9 @@ UI_VALUE_LABELS.setdefault("adjustment_profile", {}).update(
     {
         "DEFENSIVE": "방어형",
         "NEUTRAL": "중립형",
-        "SELECTIVE_RISK_ON": "선별 리스크온",
+        "SELECTIVE_RISK_ON": "선별 공격형",
         "GAP_CHASE_GUARD": "갭 추격 방지",
-        "DATA_WEAK_GUARD": "데이터 약함 방어",
+        "DATA_WEAK_GUARD": "데이터 신뢰 낮음 방어",
     }
 )
 UI_VALUE_LABELS.setdefault("strategy_id", {}).update(
@@ -1959,8 +1959,8 @@ UI_NOTE_TAG_LABELS.update(UI_RISK_TAG_LABELS)
 UI_NOTE_TAG_LABELS.update(
     {
         "panic_open_guard": "패닉 오픈 방어",
-        "weak_risk_off_guard": "약한 리스크오프 방어",
-        "healthy_trend_support": "건강한 추세 지지",
+        "weak_risk_off_guard": "방어 우위 구간 방어",
+        "healthy_trend_support": "건강한 상승 추세 지지",
         "gap_chase_guard": "갭 추격 방어",
         "data_weak_guard": "데이터 약함 방어",
         "critical_signal_quality": "신호 품질 치명",

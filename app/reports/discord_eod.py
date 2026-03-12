@@ -41,11 +41,11 @@ RISK_LABELS = {
 }
 
 REGIME_LABELS = {
-    "panic": "매우 불안한 장",
-    "risk_off": "조심해야 하는 장",
-    "neutral": "뚜렷한 방향이 약한 장",
-    "risk_on": "상대적으로 강한 장",
-    "euphoria": "과열 느낌이 강한 장",
+    "panic": "공포가 강한 장",
+    "risk_off": "방어가 우선인 장",
+    "neutral": "방향성이 뚜렷하지 않은 장",
+    "risk_on": "상승이 우세한 장",
+    "euphoria": "과열이 강한 장",
 }
 
 MODEL_SPEC_LABELS = {

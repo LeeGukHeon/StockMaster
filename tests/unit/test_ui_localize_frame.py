@@ -115,13 +115,13 @@ def test_localize_frame_translates_case_insensitive_enum_values() -> None:
     localized = localize_frame(frame)
 
     assert localized.iloc[0].tolist() == [
-        "리스크 온",
+        "상승 우위 장",
         "치명",
         "자동 복구",
-        "리스크 오프",
+        "방어 우위 장",
     ]
 
 
 def test_format_ui_value_translates_scalar_outside_tables() -> None:
-    assert format_ui_value("regime_state", "risk_on") == "리스크 온"
+    assert format_ui_value("regime_state", "risk_on") == "상승 우위 장"
     assert format_ui_value("health_status", "WARNING") == "주의"
