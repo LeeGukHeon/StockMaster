@@ -22,6 +22,7 @@ from app.ui.components import (
     render_warning_banner,
 )
 from app.ui.helpers import (
+    format_ui_time,
     intraday_console_adjusted_decision_frame,
     intraday_console_candidate_frame,
     intraday_console_decision_frame,
@@ -107,7 +108,7 @@ def _latest_checkpoint_text(payload: dict[str, object]) -> str:
         if isinstance(frame, pd.DataFrame) and not frame.empty and "checkpoint_time" in frame.columns:
             values = frame["checkpoint_time"].dropna()
             if not values.empty:
-                return str(values.astype(str).max())
+                return format_ui_time(values.astype(str).max())
     return "-"
 
 

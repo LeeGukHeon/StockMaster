@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import numbers
+import re
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime, time
 from pathlib import Path
 
 import pandas as pd
 
+from app.common.time import today_local
 from app.common.disk import DiskUsageReport, measure_disk_usage
 from app.features.builders.flow_features import build_flow_feature_frame
 from app.features.builders.fundamentals_features import build_fundamentals_feature_frame
@@ -794,6 +796,12 @@ UI_COLUMN_LABELS: dict[str, str] = {
     "trading_days": "거래일 수",
     "override_days": "오버라이드 일수",
     "run_type": "실행 종류",
+    "run_id": "실행 ID",
+    "job_run_id": "작업 실행 ID",
+    "owner_run_id": "잠금 보유 실행 ID",
+    "target_job_run_id": "복구 대상 실행 ID",
+    "triggered_by_run_id": "복구 요청 실행 ID",
+    "recovery_run_id": "복구 실행 ID",
     "started_at": "시작 시각",
     "finished_at": "종료 시각",
     "notes": "메모",
@@ -1281,18 +1289,18 @@ def latest_recommendation_timeline_text(settings: Settings) -> str:
         return "추천 기준일 데이터가 아직 없습니다."
     if portfolio_session_date is None:
         return (
-            f"현재 추천은 {selection_as_of_date} 장마감 후 산출한 결과입니다. "
+            f"현재 추천은 {format_ui_date(selection_as_of_date)} 장마감 후 산출한 결과입니다. "
             "다음 거래일 진입용 포트폴리오 목표북은 아직 생성되지 않았습니다."
         )
     if intraday_session_date is not None:
         return (
-            f"현재 추천은 {selection_as_of_date} 장마감 후 산출한 결과이며, "
-            f"실제 신규 진입 검토 기준일은 {portfolio_session_date}입니다. "
-            f"장중 연구 세션은 {intraday_session_date} 기준으로 이어집니다."
+            f"현재 추천은 {format_ui_date(selection_as_of_date)} 장마감 후 산출한 결과이며, "
+            f"실제 신규 진입 검토 기준일은 {format_ui_date(portfolio_session_date)}입니다. "
+            f"장중 연구 세션은 {format_ui_date(intraday_session_date)} 기준으로 이어집니다."
         )
     return (
-        f"현재 추천은 {selection_as_of_date} 장마감 후 산출한 결과이며, "
-        f"실제 신규 진입 검토 기준일은 {portfolio_session_date}입니다."
+        f"현재 추천은 {format_ui_date(selection_as_of_date)} 장마감 후 산출한 결과이며, "
+        f"실제 신규 진입 검토 기준일은 {format_ui_date(portfolio_session_date)}입니다."
     )
 
 
@@ -2023,6 +2031,118 @@ PERCENT_COLUMN_EXACT: set[str] = {
 }
 PRICE_COLUMN_TOKENS: tuple[str, ...] = ("_price",)
 PRICE_COLUMN_EXACT: set[str] = {"open", "high", "low", "close", "target_price", "reference_price"}
+DATE_COLUMN_EXACT: set[str] = {
+    "date_kst",
+    "window_end",
+}
+DATE_COLUMN_EXCLUDED: set[str] = {
+    "request_date_field",
+}
+TIME_COLUMN_EXACT: set[str] = {
+    "bar_time",
+    "checkpoint_time",
+    "cutoff_checkpoint_time",
+    "entry_checkpoint_time",
+    "selected_checkpoint_time",
+}
+DATETIME_COLUMN_EXACT: set[str] = {
+    "latest_available_ts",
+}
+DATETIME_COLUMN_SUFFIXES: tuple[str, ...] = ("_at", "_ts")
+RUN_ID_COLUMN_EXACT: set[str] = {"run_id", "job_run_id"}
+RUN_ID_PATTERN = re.compile(
+    r"^(?P<prefix>.+)-(?P<stamp>\d{8}T\d{6})(?:-(?P<suffix>[A-Za-z0-9]+))?$"
+)
+TIME_ONLY_PATTERN = re.compile(r"^(?P<hour>\d{1,2}):?(?P<minute>\d{2})(?::\d{2})?$")
+UI_DISPLAY_TIMEZONE = "Asia/Seoul"
+
+
+def _normalize_ui_timestamp(value: object) -> pd.Timestamp | None:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, pd.Timestamp):
+        timestamp = value
+    elif isinstance(value, datetime):
+        timestamp = pd.Timestamp(value)
+    elif isinstance(value, date):
+        timestamp = pd.Timestamp(value)
+    else:
+        try:
+            timestamp = pd.Timestamp(value)
+        except (TypeError, ValueError):
+            return None
+    if pd.isna(timestamp):
+        return None
+    if timestamp.tzinfo is not None:
+        return timestamp.tz_convert(UI_DISPLAY_TIMEZONE)
+    return timestamp
+
+
+def _should_include_year(target_date: date, *, include_year: bool | None = None) -> bool:
+    if include_year is not None:
+        return include_year
+    return target_date.year != today_local(UI_DISPLAY_TIMEZONE).year
+
+
+def format_ui_date(value: object, *, include_year: bool | None = None) -> str:
+    timestamp = _normalize_ui_timestamp(value)
+    if timestamp is None:
+        return "-"
+    target_date = timestamp.date()
+    if _should_include_year(target_date, include_year=include_year):
+        return f"{target_date.year}년 {target_date.month}월 {target_date.day}일"
+    return f"{target_date.month}월 {target_date.day}일"
+
+
+def format_ui_time(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    if isinstance(value, time):
+        return value.strftime("%H:%M")
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text in {"nan", "NaN", "NaT", "None"}:
+            return "-"
+        matched = TIME_ONLY_PATTERN.match(text)
+        if matched:
+            hour = int(matched.group("hour"))
+            minute = int(matched.group("minute"))
+            return f"{hour:02d}:{minute:02d}"
+    timestamp = _normalize_ui_timestamp(value)
+    if timestamp is None:
+        return str(value)
+    return timestamp.strftime("%H:%M")
+
+
+def format_ui_datetime(value: object, *, include_year: bool | None = None) -> str:
+    timestamp = _normalize_ui_timestamp(value)
+    if timestamp is None:
+        return "-"
+    return f"{format_ui_date(timestamp, include_year=include_year)} {timestamp.strftime('%H:%M')}"
+
+
+def format_ui_run_id(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    text = str(value).strip()
+    if not text or text in {"nan", "NaN", "NaT", "None"}:
+        return "-"
+    matched = RUN_ID_PATTERN.match(text)
+    if matched is None:
+        return text
+    try:
+        timestamp = (
+            pd.Timestamp(datetime.strptime(matched.group("stamp"), "%Y%m%dT%H%M%S"))
+            .tz_localize("UTC")
+            .tz_convert(UI_DISPLAY_TIMEZONE)
+        )
+    except ValueError:
+        return text
+    pieces = [matched.group("prefix"), format_ui_datetime(timestamp)]
+    suffix = matched.group("suffix")
+    if suffix:
+        pieces.append(suffix)
+    return " · ".join(piece for piece in pieces if piece)
 
 
 def _is_percent_display_column(column: str) -> bool:
@@ -2035,6 +2155,30 @@ def _is_price_display_column(column: str) -> bool:
     return column in PRICE_COLUMN_EXACT or any(
         token in column for token in PRICE_COLUMN_TOKENS
     )
+
+
+def _is_date_display_column(column: str) -> bool:
+    return (
+        column not in TIME_COLUMN_EXACT
+        and column not in DATETIME_COLUMN_EXACT
+        and not any(column.endswith(suffix) for suffix in DATETIME_COLUMN_SUFFIXES)
+        and column not in DATE_COLUMN_EXCLUDED
+        and (column in DATE_COLUMN_EXACT or column.endswith("_date"))
+    )
+
+
+def _is_time_display_column(column: str) -> bool:
+    return column in TIME_COLUMN_EXACT
+
+
+def _is_datetime_display_column(column: str) -> bool:
+    return column in DATETIME_COLUMN_EXACT or any(
+        column.endswith(suffix) for suffix in DATETIME_COLUMN_SUFFIXES
+    )
+
+
+def _is_run_id_display_column(column: str) -> bool:
+    return column in RUN_ID_COLUMN_EXACT or column.endswith("_run_id")
 
 
 def _format_percent_value(value: object) -> object:
@@ -2059,6 +2203,14 @@ def _format_price_value(value: object) -> object:
 def _format_scalar_for_display(column: str, value: object) -> object:
     if pd.isna(value):
         return "-"
+    if _is_run_id_display_column(column):
+        return format_ui_run_id(value)
+    if _is_time_display_column(column):
+        return format_ui_time(value)
+    if _is_date_display_column(column):
+        return format_ui_date(value)
+    if _is_datetime_display_column(column):
+        return format_ui_datetime(value)
     translated = _translate_scalar(column, value)
     if isinstance(translated, str) and translated.strip() in {"", "nan", "NaN", "NaT", "None"}:
         return "-"

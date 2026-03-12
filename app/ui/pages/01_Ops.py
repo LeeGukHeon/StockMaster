@@ -26,6 +26,7 @@ from app.ui.components import (
     render_screen_guide,
 )
 from app.ui.helpers import (
+    format_ui_date,
     krx_service_registry_frame,
     latest_active_ops_policy_frame,
     latest_alert_event_frame,
@@ -110,7 +111,12 @@ else:
     row = snapshot.iloc[0]
     render_narrative_card(
         "운영 요약",
-        f"현재 기준일은 {row['as_of_date']}이고 운영 상태는 {row['health_status']}입니다. 치명 알림 {int(row['critical_alert_count'] or 0)}건, 경고 알림 {int(row['warning_alert_count'] or 0)}건이 열려 있습니다.",
+        (
+            f"현재 기준일은 {format_ui_date(row.get('as_of_date'))}이고 "
+            f"운영 상태는 {row['health_status']}입니다. "
+            f"치명 알림 {int(row['critical_alert_count'] or 0)}건, "
+            f"경고 알림 {int(row['warning_alert_count'] or 0)}건이 열려 있습니다."
+        ),
     )
 
 render_record_cards(

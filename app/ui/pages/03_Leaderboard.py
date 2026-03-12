@@ -25,6 +25,7 @@ from app.ui.helpers import (
     available_ranking_versions,
     format_market_label,
     format_ranking_version_label,
+    format_ui_date,
     latest_evaluation_comparison_frame,
     latest_recommendation_timeline_text,
     latest_selection_validation_summary_frame,
@@ -62,7 +63,7 @@ else:
         format_func=format_ranking_version_label,
     )
     ranking_dates = available_ranking_dates(settings, ranking_version=selected_version)
-    selected_date = st.selectbox("기준일", options=ranking_dates, index=0)
+    selected_date = st.selectbox("기준일", options=ranking_dates, index=0, format_func=format_ui_date)
     horizon = st.selectbox("기간", options=[1, 5], index=1, format_func=lambda value: f"D+{value}")
     market = st.selectbox(
         "시장",

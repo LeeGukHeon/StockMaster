@@ -11,6 +11,8 @@ import streamlit as st
 from app.settings import Settings
 from app.ui.glossary import glossary_mapping
 from app.ui.helpers import (
+    format_ui_date,
+    format_ui_datetime,
     latest_app_snapshot_frame,
     latest_release_candidate_check_frame,
     latest_report_index_frame,
@@ -315,15 +317,12 @@ def render_provenance_footer(
     snapshot = _latest_snapshot_row(settings)
     pieces = [f"환경: {settings.app.env.upper()}", f"페이지: {page_name}"]
     if snapshot:
-        pieces.append(f"스냅샷: {snapshot.get('snapshot_ts')}")
-        if snapshot.get("latest_daily_bundle_run_id"):
-            pieces.append(f"일일 배치: {snapshot['latest_daily_bundle_run_id']}")
-        if snapshot.get("active_ops_policy_id"):
-            pieces.append(f"운영 정책: {snapshot['active_ops_policy_id']}")
-        if snapshot.get("active_portfolio_policy_id"):
-            pieces.append(f"포트폴리오 정책: {snapshot['active_portfolio_policy_id']}")
-        if snapshot.get("active_intraday_policy_id"):
-            pieces.append(f"장중 정책: {snapshot['active_intraday_policy_id']}")
+        if snapshot.get("as_of_date") is not None:
+            pieces.append(f"기준일: {format_ui_date(snapshot.get('as_of_date'))}")
+        if snapshot.get("snapshot_ts") is not None:
+            pieces.append(f"업데이트: {format_ui_datetime(snapshot.get('snapshot_ts'))}")
+        if snapshot.get("health_status"):
+            pieces.append(f"상태: {snapshot['health_status']}")
     if extra_items:
         pieces.extend(extra_items)
     st.markdown(

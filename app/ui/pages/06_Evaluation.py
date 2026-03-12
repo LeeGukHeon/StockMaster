@@ -27,6 +27,7 @@ from app.ui.helpers import (
     available_evaluation_dates,
     evaluation_outcomes_frame,
     format_ranking_version_label,
+    format_ui_date,
     latest_alpha_promotion_summary_frame,
     latest_calibration_diagnostic_frame,
     latest_evaluation_comparison_frame,
@@ -101,7 +102,7 @@ render_narrative_card(
 if not evaluation_dates:
     st.info("아직 평가 결과가 없습니다. 평가 스크립트를 먼저 실행해 주세요.")
 else:
-    selected_date = st.selectbox("평가일", options=evaluation_dates, index=0)
+    selected_date = st.selectbox("평가일", options=evaluation_dates, index=0, format_func=format_ui_date)
     horizon = st.selectbox("기간", options=[1, 5], index=1, format_func=lambda value: f"{value}거래일")
     ranking_version = st.selectbox(
         "순위 버전",
