@@ -3,11 +3,28 @@ from __future__ import annotations
 import json
 import numbers
 from dataclasses import asdict
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 
 from app.common.disk import DiskUsageReport, measure_disk_usage
+from app.features.builders.flow_features import build_flow_feature_frame
+from app.features.builders.fundamentals_features import build_fundamentals_feature_frame
+from app.features.builders.liquidity_features import build_liquidity_feature_frame
+from app.features.builders.news_features import build_news_feature_frame
+from app.features.builders.price_features import build_price_feature_frame
+from app.features.builders.quality_features import build_data_quality_feature_frame
+from app.features.feature_store import (
+    _load_feature_symbol_frame,
+    _load_investor_flow_history,
+    _load_latest_fundamentals,
+    _load_ohlcv_history,
+    _load_recent_news,
+    _register_symbol_stage,
+    _unregister_symbol_stage,
+    load_feature_matrix,
+)
 from app.intraday.meta_common import (
     ENTER_PANEL,
     INTRADAY_META_MODEL_DOMAIN,
@@ -15,6 +32,10 @@ from app.intraday.meta_common import (
     WAIT_PANEL,
 )
 from app.intraday.policy import apply_active_intraday_policy_frame
+from app.ml.inference import (
+    _resolve_training_run_for_inference,
+    build_prediction_frame_from_training_run,
+)
 from app.ml.constants import MODEL_DOMAIN as ALPHA_MODEL_DOMAIN
 from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
@@ -36,10 +57,14 @@ from app.providers.kis.client import KISProvider
 from app.providers.krx.client import KrxProvider
 from app.providers.krx.registry import KRX_SERVICE_REGISTRY
 from app.providers.naver_news.client import NaverNewsProvider
-from app.ranking.explanatory_score import RANKING_VERSION as EXPLANATORY_RANKING_VERSION
+from app.ranking.explanatory_score import (
+    RANKING_VERSION as EXPLANATORY_RANKING_VERSION,
+)
+from app.ranking.explanatory_score import _load_regime_map
 from app.selection.sector_outlook import sector_outlook_frame
 from app.selection.calibration import PREDICTION_VERSION
 from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
+from app.selection.engine_v2 import build_selection_engine_v2_rankings
 from app.settings import Settings, load_settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -3887,6 +3912,348 @@ def stock_workbench_summary_frame(settings: Settings, *, symbol: str) -> pd.Data
         ).fetchdf()
 
 
+def _latest_workbench_as_of_date(connection) -> date | None:
+    row = connection.execute(
+        """
+        SELECT MAX(as_of_date)
+        FROM fact_ranking
+        WHERE ranking_version = ?
+        """,
+        [SELECTION_ENGINE_V2_VERSION],
+    ).fetchone()
+    if row is not None and row[0] is not None:
+        return pd.Timestamp(row[0]).date()
+    row = connection.execute("SELECT MAX(as_of_date) FROM fact_feature_snapshot").fetchone()
+    if row is None or row[0] is None:
+        return None
+    return pd.Timestamp(row[0]).date()
+
+
+def _build_workbench_live_feature_row(
+    connection,
+    *,
+    as_of_date: date,
+    symbol: str,
+) -> pd.DataFrame:
+    symbol_frame = _load_feature_symbol_frame(
+        connection,
+        as_of_date=as_of_date,
+        symbols=[symbol],
+        limit_symbols=None,
+        market="ALL",
+    )
+    if symbol_frame.empty:
+        return pd.DataFrame()
+
+    _register_symbol_stage(connection, symbol_frame)
+    try:
+        ohlcv_history = _load_ohlcv_history(connection, as_of_date=as_of_date)
+        latest_fundamentals = _load_latest_fundamentals(connection, as_of_date=as_of_date)
+        investor_flow_history = _load_investor_flow_history(connection, as_of_date=as_of_date)
+        recent_news = _load_recent_news(connection, as_of_date=as_of_date)
+    finally:
+        _unregister_symbol_stage(connection)
+
+    latest_price_dates = (
+        ohlcv_history.groupby("symbol", as_index=False)["trading_date"].max()
+        if not ohlcv_history.empty
+        else pd.DataFrame(columns=["symbol", "trading_date"])
+    ).rename(columns={"trading_date": "latest_price_date"})
+    latest_close = (
+        ohlcv_history.loc[
+            pd.to_datetime(ohlcv_history["trading_date"]).dt.date == as_of_date,
+            ["symbol", "close", "market_cap"],
+        ]
+        if not ohlcv_history.empty
+        else pd.DataFrame(columns=["symbol", "close", "market_cap"])
+    )
+
+    feature_matrix = (
+        symbol_frame[["symbol", "company_name", "market"]]
+        .merge(latest_price_dates, on="symbol", how="left")
+        .merge(latest_close, on="symbol", how="left")
+        .merge(build_price_feature_frame(ohlcv_history, as_of_date=as_of_date), on="symbol", how="left")
+        .merge(build_liquidity_feature_frame(ohlcv_history, as_of_date=as_of_date), on="symbol", how="left")
+        .merge(
+            build_fundamentals_feature_frame(latest_fundamentals, as_of_date=as_of_date),
+            on="symbol",
+            how="left",
+        )
+        .merge(
+            build_flow_feature_frame(
+                investor_flow_history,
+                ohlcv_history=ohlcv_history,
+                as_of_date=as_of_date,
+            ),
+            on="symbol",
+            how="left",
+        )
+        .merge(build_news_feature_frame(recent_news, as_of_date=as_of_date), on="symbol", how="left")
+    )
+
+    feature_matrix["earnings_yield_proxy"] = feature_matrix["net_income_latest"] / feature_matrix[
+        "market_cap"
+    ].replace(0, pd.NA)
+    feature_matrix["value_proxy_available_flag"] = (
+        feature_matrix[
+            [
+                "earnings_yield_proxy",
+                "low_debt_preference_proxy",
+                "profitability_support_proxy",
+            ]
+        ]
+        .notna()
+        .any(axis=1)
+        .astype(float)
+    )
+    feature_matrix["liquidity_rank_pct"] = 1.0
+    quality_features = build_data_quality_feature_frame(feature_matrix, as_of_date=as_of_date)
+    feature_matrix = feature_matrix.merge(
+        quality_features,
+        on="symbol",
+        how="left",
+        suffixes=("", "_dup"),
+    )
+    feature_matrix = feature_matrix.drop(
+        columns=[column for column in feature_matrix.columns if column.endswith("_dup")]
+    )
+    feature_matrix.insert(0, "as_of_date", as_of_date)
+    return feature_matrix
+
+
+def _workbench_latest_reference_price(
+    connection,
+    *,
+    symbol: str,
+    as_of_date: date,
+) -> tuple[date | None, float | None]:
+    row = connection.execute(
+        """
+        SELECT trading_date, close
+        FROM fact_daily_ohlcv
+        WHERE symbol = ?
+          AND trading_date <= ?
+        ORDER BY trading_date DESC
+        LIMIT 1
+        """,
+        [symbol, as_of_date],
+    ).fetchone()
+    if row is None or row[0] is None or row[1] is None:
+        return None, None
+    return pd.Timestamp(row[0]).date(), float(row[1])
+
+
+def _load_live_prediction_row(
+    connection,
+    *,
+    feature_row: pd.DataFrame,
+    as_of_date: date,
+    horizon: int,
+) -> pd.DataFrame:
+    training_run, active_alpha_model, training_run_source = _resolve_training_run_for_inference(
+        connection,
+        as_of_date=as_of_date,
+        horizon=int(horizon),
+    )
+    if training_run is None or not training_run.get("artifact_uri"):
+        return pd.DataFrame()
+    result_frame, _ = build_prediction_frame_from_training_run(
+        run_id="stock-workbench-live",
+        as_of_date=as_of_date,
+        horizon=int(horizon),
+        feature_frame=feature_row,
+        training_run=training_run,
+        training_run_source=training_run_source,
+        active_alpha_model_id=(
+            active_alpha_model.get("active_alpha_model_id")
+            if active_alpha_model is not None
+            else None
+        ),
+        persist_member_predictions=False,
+    )
+    return result_frame
+
+
+def stock_workbench_live_recommendation_frame(
+    settings: Settings,
+    *,
+    symbol: str,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    normalized_symbol = str(symbol).zfill(6)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        bootstrap_core_tables(connection)
+        as_of_date = _latest_workbench_as_of_date(connection)
+        if as_of_date is None:
+            return pd.DataFrame()
+
+        feature_context = load_feature_matrix(connection, as_of_date=as_of_date, market="ALL")
+        if feature_context.empty:
+            return pd.DataFrame()
+
+        live_feature_row = _build_workbench_live_feature_row(
+            connection,
+            as_of_date=as_of_date,
+            symbol=normalized_symbol,
+        )
+        if live_feature_row.empty:
+            return pd.DataFrame()
+
+        feature_context = feature_context.loc[
+            feature_context["symbol"].astype(str).ne(normalized_symbol)
+        ].copy()
+        feature_matrix = pd.concat([feature_context, live_feature_row], ignore_index=True)
+
+        prediction_frames_by_horizon: dict[int, pd.DataFrame] = {}
+        live_prediction_rows: dict[int, pd.DataFrame] = {}
+        for horizon in (1, 5):
+            stored_prediction_frame = connection.execute(
+                """
+                SELECT
+                    symbol,
+                    expected_excess_return,
+                    lower_band,
+                    median_band,
+                    upper_band,
+                    uncertainty_score,
+                    disagreement_score,
+                    fallback_flag,
+                    fallback_reason,
+                    prediction_version,
+                    member_count,
+                    ensemble_weight_json,
+                    source_notes_json
+                FROM fact_prediction
+                WHERE as_of_date = ?
+                  AND horizon = ?
+                  AND prediction_version = ?
+                  AND ranking_version = ?
+                """,
+                [as_of_date, horizon, ALPHA_PREDICTION_VERSION, SELECTION_ENGINE_V2_VERSION],
+            ).fetchdf()
+            live_prediction_row = _load_live_prediction_row(
+                connection,
+                feature_row=live_feature_row,
+                as_of_date=as_of_date,
+                horizon=horizon,
+            )
+            live_prediction_rows[horizon] = live_prediction_row
+            if not live_prediction_row.empty:
+                stored_prediction_frame = stored_prediction_frame.loc[
+                    stored_prediction_frame["symbol"].astype(str).ne(normalized_symbol)
+                ].copy()
+                stored_prediction_frame = pd.concat(
+                    [
+                        stored_prediction_frame,
+                        live_prediction_row[
+                            [
+                                "symbol",
+                                "expected_excess_return",
+                                "lower_band",
+                                "median_band",
+                                "upper_band",
+                                "uncertainty_score",
+                                "disagreement_score",
+                                "fallback_flag",
+                                "fallback_reason",
+                                "prediction_version",
+                                "member_count",
+                                "ensemble_weight_json",
+                                "source_notes_json",
+                            ]
+                        ],
+                    ],
+                    ignore_index=True,
+                )
+            prediction_frames_by_horizon[horizon] = stored_prediction_frame
+
+        ranking_frames = build_selection_engine_v2_rankings(
+            feature_matrix=feature_matrix,
+            as_of_date=as_of_date,
+            horizons=[1, 5],
+            regime_map=_load_regime_map(connection, as_of_date=as_of_date),
+            prediction_frames_by_horizon=prediction_frames_by_horizon,
+            run_id="stock-workbench-live",
+            settings=settings,
+        )
+
+        ranking_by_horizon: dict[int, pd.Series] = {}
+        for frame in ranking_frames:
+            symbol_row = frame.loc[frame["symbol"].astype(str) == normalized_symbol]
+            if symbol_row.empty:
+                continue
+            ranking_by_horizon[int(symbol_row["horizon"].iloc[0])] = symbol_row.iloc[0]
+        if not ranking_by_horizon:
+            return pd.DataFrame()
+
+        reference_date, reference_price = _workbench_latest_reference_price(
+            connection,
+            symbol=normalized_symbol,
+            as_of_date=as_of_date,
+        )
+        latest_target_row = connection.execute(
+            """
+            SELECT execution_mode, included_flag, target_weight, gate_status
+            FROM fact_portfolio_target_book
+            WHERE symbol = ?
+              AND as_of_date = (SELECT MAX(as_of_date) FROM fact_portfolio_target_book)
+            ORDER BY included_flag DESC, target_weight DESC NULLS LAST, execution_mode
+            LIMIT 1
+            """,
+            [normalized_symbol],
+        ).fetchdf()
+        latest_target = latest_target_row.iloc[0].to_dict() if not latest_target_row.empty else {}
+
+        d5_prediction_row = None
+        if 5 in live_prediction_rows and not live_prediction_rows[5].empty:
+            d5_prediction_row = live_prediction_rows[5].iloc[0]
+        expected = (
+            None
+            if d5_prediction_row is None or pd.isna(d5_prediction_row.get("expected_excess_return"))
+            else float(d5_prediction_row["expected_excess_return"])
+        )
+        upper = (
+            None
+            if d5_prediction_row is None or pd.isna(d5_prediction_row.get("upper_band"))
+            else float(d5_prediction_row["upper_band"])
+        )
+        lower = (
+            None
+            if d5_prediction_row is None or pd.isna(d5_prediction_row.get("lower_band"))
+            else float(d5_prediction_row["lower_band"])
+        )
+
+        return pd.DataFrame(
+            [
+                {
+                    "symbol": normalized_symbol,
+                    "company_name": live_feature_row.iloc[0].get("company_name"),
+                    "market": live_feature_row.iloc[0].get("market"),
+                    "live_as_of_date": as_of_date,
+                    "live_reference_date": reference_date,
+                    "live_reference_price": reference_price,
+                    "live_d1_selection_v2_value": ranking_by_horizon.get(1, {}).get("final_selection_value"),
+                    "live_d1_selection_v2_grade": ranking_by_horizon.get(1, {}).get("grade"),
+                    "live_d1_eligible_flag": ranking_by_horizon.get(1, {}).get("eligible_flag"),
+                    "live_d1_report_candidate_flag": ranking_by_horizon.get(1, {}).get("report_candidate_flag"),
+                    "live_d5_selection_v2_value": ranking_by_horizon.get(5, {}).get("final_selection_value"),
+                    "live_d5_selection_v2_grade": ranking_by_horizon.get(5, {}).get("grade"),
+                    "live_d5_eligible_flag": ranking_by_horizon.get(5, {}).get("eligible_flag"),
+                    "live_d5_report_candidate_flag": ranking_by_horizon.get(5, {}).get("report_candidate_flag"),
+                    "live_d5_expected_excess_return": expected,
+                    "live_d5_target_price": None if reference_price is None or expected is None else reference_price * (1.0 + expected),
+                    "live_d5_upper_target_price": None if reference_price is None or upper is None else reference_price * (1.0 + upper),
+                    "live_d5_stop_price": None if reference_price is None or lower is None else reference_price * (1.0 + lower),
+                    "latest_portfolio_execution_mode": latest_target.get("execution_mode"),
+                    "latest_portfolio_included_flag": latest_target.get("included_flag"),
+                    "latest_portfolio_target_weight": latest_target.get("target_weight"),
+                    "latest_portfolio_gate_status": latest_target.get("gate_status"),
+                }
+            ]
+        )
+
+
 def stock_workbench_price_frame(
     settings: Settings,
     *,
@@ -6085,6 +6452,25 @@ UI_COLUMN_LABELS.update(
         "target_notional": "목표 금액",
         "target_shares": "목표 수량",
         "target_price": "목표 기준가",
+        "live_as_of_date": "즉석 계산 기준일",
+        "live_reference_date": "기준 가격 일자",
+        "live_reference_price": "즉석 기준가",
+        "live_d1_selection_v2_value": "즉석 D1 추천 점수",
+        "live_d1_selection_v2_grade": "즉석 D1 등급",
+        "live_d1_eligible_flag": "즉석 D1 추천 여부",
+        "live_d1_report_candidate_flag": "즉석 D1 리포트 후보",
+        "live_d5_selection_v2_value": "즉석 D5 추천 점수",
+        "live_d5_selection_v2_grade": "즉석 D5 등급",
+        "live_d5_eligible_flag": "즉석 D5 추천 여부",
+        "live_d5_report_candidate_flag": "즉석 D5 리포트 후보",
+        "live_d5_expected_excess_return": "즉석 D5 예상 초과수익률",
+        "live_d5_target_price": "즉석 목표가",
+        "live_d5_upper_target_price": "즉석 강한 흐름 목표가",
+        "live_d5_stop_price": "즉석 손절 참고선",
+        "latest_portfolio_execution_mode": "최신 포트폴리오 실행 모드",
+        "latest_portfolio_included_flag": "최신 포트폴리오 편입 여부",
+        "latest_portfolio_target_weight": "최신 포트폴리오 목표 비중",
+        "latest_portfolio_gate_status": "최신 포트폴리오 진입 상태",
         "current_shares": "현재 수량",
         "current_weight": "현재 비중",
         "score_value": "할당 점수",

@@ -24,6 +24,7 @@ from app.ui.helpers import (
     latest_intraday_decision_lineage_frame,
     load_ui_settings,
     stock_workbench_flow_frame,
+    stock_workbench_live_recommendation_frame,
     stock_workbench_intraday_decision_frame,
     stock_workbench_intraday_timing_frame,
     stock_workbench_intraday_tuned_frame,
@@ -69,6 +70,7 @@ else:
     )
     selected_symbol = symbol_lookup[selected_option]
     summary = stock_workbench_summary_frame(settings, symbol=selected_symbol)
+    live_recommendation = stock_workbench_live_recommendation_frame(settings, symbol=selected_symbol)
     price_history = stock_workbench_price_frame(settings, symbol=selected_symbol, limit=30)
     flow_history = stock_workbench_flow_frame(settings, symbol=selected_symbol, limit=30)
     news_history = stock_workbench_news_frame(settings, symbol=selected_symbol, limit=10)
@@ -93,6 +95,34 @@ else:
                 f"포트폴리오 진입 가능 여부는 {row.get('portfolio_eligible_flag', '-')}입니다."
             ),
         )
+
+    render_record_cards(
+        live_recommendation,
+        title="즉석 추천 계산",
+        primary_column="symbol",
+        secondary_columns=["company_name", "live_d5_selection_v2_grade"],
+        detail_columns=[
+            "live_as_of_date",
+            "live_reference_price",
+            "live_d1_selection_v2_value",
+            "live_d1_selection_v2_grade",
+            "live_d1_eligible_flag",
+            "live_d5_selection_v2_value",
+            "live_d5_selection_v2_grade",
+            "live_d5_eligible_flag",
+            "live_d5_report_candidate_flag",
+            "live_d5_expected_excess_return",
+            "live_d5_target_price",
+            "live_d5_upper_target_price",
+            "live_d5_stop_price",
+            "latest_portfolio_included_flag",
+            "latest_portfolio_target_weight",
+            "latest_portfolio_gate_status",
+        ],
+        limit=1,
+        empty_message="즉석 추천 계산에 필요한 최신 기준 데이터가 아직 없습니다.",
+        table_expander_label="즉석 추천 계산 원본 보기",
+    )
 
     render_record_cards(
         summary,
