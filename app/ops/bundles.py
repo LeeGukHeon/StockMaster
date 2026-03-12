@@ -96,6 +96,7 @@ from app.release.snapshot import (
 )
 from app.release.validation import validate_release_candidate
 from app.reports.close_brief import publish_discord_close_brief
+from app.reports.discord_eod import publish_discord_eod_report
 from app.scheduler.jobs import run_daily_pipeline_job, run_evaluation_job
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
@@ -859,7 +860,7 @@ def run_daily_close_bundle(
                     settings,
                     pipeline_date=target_date,
                     run_training=True,
-                    publish_discord=should_publish_discord,
+                    publish_discord=False,
                 )
                 job.run_step(
                     "build_portfolio_candidate_book",
@@ -947,6 +948,15 @@ def run_daily_close_bundle(
                     policy_config_path=policy_config_path,
                     critical=False,
                 )
+                if publish_discord:
+                    job.run_step(
+                        "publish_discord_eod_report",
+                        publish_discord_eod_report,
+                        settings,
+                        as_of_date=target_date,
+                        dry_run=(not should_publish_discord) or (not settings.discord.enabled),
+                        critical=False,
+                    )
             return job_result_from_context(
                 job,
                 notes=(

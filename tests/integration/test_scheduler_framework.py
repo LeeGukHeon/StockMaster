@@ -172,11 +172,16 @@ def test_daily_close_recovery_disables_discord_publish(tmp_path, monkeypatch) ->
     settings = build_test_settings(tmp_path)
     seed_ticket003_data(settings)
     captured: dict[str, object] = {}
-    noop_result = SimpleNamespace(artifact_paths=[])
+    publish_calls: list[dict[str, object]] = []
+    noop_result = SimpleNamespace(artifact_paths=[], published=False)
 
     def fake_daily_pipeline_job(_settings, *, pipeline_date=None, publish_discord=None, **_kwargs):
         captured["pipeline_date"] = pipeline_date
         captured["publish_discord"] = publish_discord
+        return noop_result
+
+    def fake_publish_discord_eod_report(_settings, *, as_of_date, dry_run, **_kwargs):
+        publish_calls.append({"as_of_date": as_of_date, "dry_run": dry_run})
         return noop_result
 
     monkeypatch.setattr("app.ops.bundles.run_daily_pipeline_job", fake_daily_pipeline_job)
@@ -188,6 +193,7 @@ def test_daily_close_recovery_disables_discord_publish(tmp_path, monkeypatch) ->
     monkeypatch.setattr("app.ops.bundles.render_daily_research_report", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.render_portfolio_report", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.publish_discord_eod_report", fake_publish_discord_eod_report)
     monkeypatch.setattr("app.ops.bundles._refresh_release_views", lambda *a, **k: None)
 
     result = run_daily_close_bundle(
@@ -201,6 +207,48 @@ def test_daily_close_recovery_disables_discord_publish(tmp_path, monkeypatch) ->
     assert result.status == JobStatus.SUCCESS
     assert captured["pipeline_date"] == date(2026, 3, 9)
     assert captured["publish_discord"] is False
+    assert publish_calls == [{"as_of_date": date(2026, 3, 9), "dry_run": True}]
+
+
+def test_daily_close_bundle_publishes_eod_after_post_close_steps(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    captured: dict[str, object] = {}
+    publish_calls: list[dict[str, object]] = []
+    noop_result = SimpleNamespace(artifact_paths=[], published=False)
+
+    def fake_daily_pipeline_job(_settings, *, pipeline_date=None, publish_discord=None, **_kwargs):
+        captured["pipeline_date"] = pipeline_date
+        captured["publish_discord"] = publish_discord
+        return noop_result
+
+    def fake_publish_discord_eod_report(_settings, *, as_of_date, dry_run, **_kwargs):
+        publish_calls.append({"as_of_date": as_of_date, "dry_run": dry_run})
+        return noop_result
+
+    monkeypatch.setattr("app.ops.bundles.run_daily_pipeline_job", fake_daily_pipeline_job)
+    monkeypatch.setattr("app.ops.bundles.build_portfolio_candidate_book", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.validate_portfolio_candidate_book", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_portfolio_target_book", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_portfolio_rebalance_plan", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_portfolio_position_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.render_daily_research_report", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.render_portfolio_report", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.publish_discord_eod_report", fake_publish_discord_eod_report)
+    monkeypatch.setattr("app.ops.bundles._refresh_release_views", lambda *a, **k: None)
+
+    result = run_daily_close_bundle(
+        settings,
+        as_of_date=date(2026, 3, 9),
+        force=True,
+        publish_discord=True,
+    )
+
+    assert result.status == JobStatus.SUCCESS
+    assert captured["pipeline_date"] == date(2026, 3, 9)
+    assert captured["publish_discord"] is False
+    assert publish_calls == [{"as_of_date": date(2026, 3, 9), "dry_run": True}]
 
 
 def test_news_sync_recovery_suppresses_close_brief_publish(tmp_path, monkeypatch) -> None:
