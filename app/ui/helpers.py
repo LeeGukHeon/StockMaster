@@ -2217,6 +2217,13 @@ def format_ui_number(value: object, *, decimals: int = 2) -> str:
     return text.rstrip("0").rstrip(".")
 
 
+def _coerce_float(value: object, default: float = 0.0) -> float:
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return default
+    return float(numeric)
+
+
 def _is_percent_display_column(column: str) -> bool:
     return column in PERCENT_COLUMN_EXACT or any(
         token in column for token in PERCENT_COLUMN_TOKENS
@@ -5158,6 +5165,89 @@ def latest_intraday_market_context_frame(
             """,
             [target_date, limit],
         ).fetchdf()
+
+
+def latest_market_mood_summary(settings: Settings) -> dict[str, str]:
+    today = today_local(settings.app.timezone)
+    intraday = latest_intraday_market_context_frame(settings, session_date=today, limit=50)
+    if not intraday.empty:
+        market_only = intraday.loc[intraday["context_scope"].astype(str) == "market"].copy()
+        if not market_only.empty:
+            latest = market_only.sort_values("checkpoint_time").iloc[-1]
+            bar_coverage = _coerce_float(latest.get("bar_coverage_ratio"))
+            trade_coverage = _coerce_float(latest.get("trade_coverage_ratio"))
+            quote_coverage = _coerce_float(latest.get("quote_coverage_ratio"))
+            min_coverage = min(bar_coverage, trade_coverage, quote_coverage)
+            market_state = str(latest.get("market_session_state") or "")
+            checkpoint = format_ui_time(latest.get("checkpoint_time"))
+            breadth = _coerce_float(latest.get("market_breadth_ratio"))
+            candidate_return = _coerce_float(latest.get("candidate_mean_return_from_open"))
+            data_quality = str(latest.get("data_quality_flag") or "")
+            prior_regime = format_ui_value(
+                "prior_daily_regime_state",
+                latest.get("prior_daily_regime_state") or "unknown",
+            )
+
+            if market_state != "planned" and data_quality != "weak" and min_coverage >= 0.35:
+                if breadth <= 0.40 or candidate_return <= -0.005:
+                    headline = "장중 약세"
+                elif breadth >= 0.60 and candidate_return >= 0.003:
+                    headline = "장중 강세"
+                else:
+                    headline = "장중 혼조"
+                return {
+                    "mode": "intraday",
+                    "headline": headline,
+                    "label": f"{format_ui_date(today)} {checkpoint} 기준",
+                    "detail": (
+                        f"체크포인트 {checkpoint} 기준입니다. "
+                        f"상승 비율 {breadth:.0%}, 후보 평균 시가 대비 수익률 {candidate_return:+.2%}입니다."
+                    ),
+                }
+
+            if market_state == "planned":
+                return {
+                    "mode": "preopen",
+                    "headline": "장 시작 전",
+                    "label": f"{format_ui_date(today)} 장전 기준",
+                    "detail": (
+                        f"아직 장중 데이터가 쌓이기 전이라 전일 종가 기준 흐름을 함께 봐야 합니다. "
+                        f"직전 장 국면은 {prior_regime}입니다."
+                    ),
+                }
+
+            return {
+                "mode": "intraday_stale",
+                "headline": "장중 데이터 보강 중",
+                "label": f"{format_ui_date(today)} {checkpoint} 기준",
+                "detail": (
+                    "오늘 장중 컨텍스트는 잡혔지만 커버리지가 낮아 분위기 판단을 보류합니다. "
+                    f"직전 장 국면은 {prior_regime}입니다."
+                ),
+            }
+
+    regime = latest_regime_frame(settings)
+    if regime.empty:
+        return {
+            "mode": "missing",
+            "headline": "시장 분위기 데이터 없음",
+            "label": "-",
+            "detail": "장중 컨텍스트와 일간 시장 국면 데이터가 아직 없습니다.",
+        }
+
+    regime_frame = regime.copy()
+    if "market_scope" in regime_frame.columns and regime_frame["market_scope"].astype(str).eq("KR_ALL").any():
+        row = regime_frame.loc[regime_frame["market_scope"].astype(str) == "KR_ALL"].iloc[0]
+    else:
+        row = regime_frame.iloc[0]
+    as_of_date = row.get("as_of_date")
+    headline = format_ui_value("regime_state", row.get("regime_state"))
+    return {
+        "mode": "daily",
+        "headline": headline,
+        "label": f"{format_ui_date(as_of_date)} 종가 기준",
+        "detail": "오늘 장중 컨텍스트가 아직 없어 마지막 일간 시장 국면을 보여줍니다.",
+    }
 
 
 def latest_intraday_adjustment_frame(

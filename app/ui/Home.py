@@ -35,6 +35,7 @@ from app.ui.helpers import (
     latest_alpha_promotion_summary_frame,
     latest_app_snapshot_frame,
     latest_market_news_frame,
+    latest_market_mood_summary,
     latest_portfolio_target_book_frame,
     latest_sector_outlook_frame,
     latest_recommendation_timeline_text,
@@ -97,7 +98,7 @@ def _policy_badges(snapshot_row) -> list[tuple[str, str]]:
     return badges
 
 
-def _today_narrative(snapshot_row, alerts: pd.DataFrame, freshness: pd.DataFrame) -> str:
+def _today_narrative(snapshot_row, alerts: pd.DataFrame, freshness: pd.DataFrame, market_mood: dict[str, str]) -> str:
     if snapshot_row is None:
         return (
             "현재 기준 스냅샷이 아직 없습니다. "
@@ -110,7 +111,7 @@ def _today_narrative(snapshot_row, alerts: pd.DataFrame, freshness: pd.DataFrame
 
     parts = [
         f"현재 기준일은 {format_ui_date(snapshot_row.get('as_of_date'))}입니다.",
-        f"시장 국면은 {regime}입니다.",
+        f"시장 분위기는 {market_mood.get('headline', regime)}이고, {market_mood.get('label', '-')} 기준입니다.",
     ]
     if critical_alert_count > 0:
         parts.append(f"치명 알림이 {critical_alert_count}건 열려 있습니다.")
@@ -165,6 +166,7 @@ def render_today_page() -> None:
     )
     latest_reports = latest_report_index_frame(settings, limit=12, latest_only=True)
     latest_news = latest_market_news_frame(settings, limit=6)
+    market_mood = latest_market_mood_summary(settings)
     alpha_promotion = latest_alpha_promotion_summary_frame(settings, limit=6)
     release_preview = latest_release_candidate_preview(settings)
 
@@ -202,11 +204,11 @@ def render_today_page() -> None:
     if snapshot_row is not None:
         top_left.metric("현재 기준일", format_ui_date(snapshot_row.get("as_of_date")))
         top_mid.metric("최신 사후 평가", format_ui_date(snapshot_row.get("latest_evaluation_summary_date")))
-        top_right.metric("최신 장중 세션", format_ui_date(snapshot_row.get("latest_intraday_session_date")))
+        top_right.metric("현재 장 분위기", market_mood.get("headline", "-"))
     else:
         top_left.metric("현재 기준일", "-")
         top_mid.metric("최신 사후 평가", "-")
-        top_right.metric("최신 장중 세션", "-")
+        top_right.metric("현재 장 분위기", market_mood.get("headline", "-"))
 
     bottom_left, bottom_mid, bottom_right = st.columns(3)
     if snapshot_row is not None:
@@ -218,7 +220,8 @@ def render_today_page() -> None:
         bottom_mid.metric("경고 알림", 0)
         bottom_right.metric("운영 상태", "-")
 
-    render_narrative_card("현재 기준 요약", _today_narrative(snapshot_row, alerts, freshness))
+    render_narrative_card("현재 장 분위기", f"{market_mood.get('headline', '-')} | {market_mood.get('label', '-')}. {market_mood.get('detail', '')}")
+    render_narrative_card("현재 기준 요약", _today_narrative(snapshot_row, alerts, freshness, market_mood))
     render_narrative_card("오늘 추천 해석", latest_recommendation_timeline_text(settings))
 
     st.subheader("빠른 이동")

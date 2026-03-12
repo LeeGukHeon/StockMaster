@@ -22,6 +22,7 @@ from app.ui.helpers import (
     format_ui_value,
     latest_flow_summary_frame,
     latest_market_news_frame,
+    latest_market_mood_summary,
     latest_regime_frame,
     leaderboard_frame,
     load_ui_settings,
@@ -34,6 +35,7 @@ pulse = market_pulse_frame(settings)
 regime = latest_regime_frame(settings)
 flow = latest_flow_summary_frame(settings)
 news = latest_market_news_frame(settings, limit=12)
+market_mood = latest_market_mood_summary(settings)
 leaders = leaderboard_frame(
     settings,
     ranking_version=SELECTION_ENGINE_V2_VERSION,
@@ -61,14 +63,9 @@ if pulse.empty and regime.empty:
         "현재 시장 현황 스냅샷이 없습니다. 시장 국면 스냅샷과 일일 리서치 적재 상태를 먼저 확인하세요.",
     )
 else:
-    regime_text = (
-        format_ui_value("regime_state", regime.iloc[0]["regime_state"])
-        if not regime.empty
-        else "미확인"
-    )
     render_narrative_card(
         "시장 요약",
-        f"현재 시장 국면은 {regime_text}입니다. 상승 폭, 수급, 최신 뉴스 묶음을 함께 보고 리더보드와 포트폴리오 화면으로 이어서 확인하는 흐름을 권장합니다.",
+        f"현재 장 분위기는 {market_mood.get('headline', '미확인')}이며, {market_mood.get('label', '-')} 기준입니다. {market_mood.get('detail', '')}",
     )
 
 top_left, top_right = st.columns(2)
