@@ -6,7 +6,7 @@ import pandas as pd
 
 from app.features.feature_store import build_feature_store
 from app.regime.snapshot import build_market_regime_snapshot
-from app.ui.helpers import stock_workbench_live_recommendation_frame
+from app.ui.helpers import resolve_ui_artifact_path, stock_workbench_live_recommendation_frame
 from tests._ticket003_support import build_test_settings, seed_ticket003_data
 
 
@@ -18,13 +18,16 @@ def test_stock_workbench_live_recommendation_frame_returns_on_demand_snapshot(
     seed_ticket003_data(settings)
     build_feature_store(settings, as_of_date=date(2026, 3, 11), limit_symbols=4)
     build_market_regime_snapshot(settings, as_of_date=date(2026, 3, 11))
+    dummy_artifact = settings.paths.artifacts_dir / "models" / "dummy.pkl"
+    dummy_artifact.parent.mkdir(parents=True, exist_ok=True)
+    dummy_artifact.write_bytes(b"artifact")
 
     monkeypatch.setattr(
         "app.ui.helpers._resolve_training_run_for_inference",
         lambda connection, *, as_of_date, horizon: (
             {
                 "training_run_id": f"seed-h{horizon}",
-                "artifact_uri": "dummy.pkl",
+                "artifact_uri": str(dummy_artifact),
                 "model_spec_id": "alpha_recursive_expanding_v1",
                 "validation_window_start": date(2026, 3, 1),
                 "validation_window_end": date(2026, 3, 10),
@@ -94,3 +97,16 @@ def test_stock_workbench_live_recommendation_frame_returns_on_demand_snapshot(
     assert frame.iloc[0]["live_d5_selection_v2_grade"] is not None
     assert frame.iloc[0]["live_reference_price"] > 0
     assert frame.iloc[0]["live_d5_target_price"] > frame.iloc[0]["live_reference_price"]
+
+
+def test_resolve_ui_artifact_path_maps_legacy_artifact_root(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    runtime_artifact = settings.paths.artifacts_dir / "models" / "alpha_model_v1.pkl"
+    runtime_artifact.parent.mkdir(parents=True, exist_ok=True)
+    runtime_artifact.write_bytes(b"artifact")
+
+    legacy_artifact = settings.paths.project_root / "data" / "artifacts" / "models" / "alpha_model_v1.pkl"
+
+    resolved = resolve_ui_artifact_path(settings, str(legacy_artifact))
+
+    assert resolved == runtime_artifact.resolve()

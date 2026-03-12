@@ -190,7 +190,7 @@ def render_today_page() -> None:
     top_left, top_mid, top_right = st.columns(3)
     if snapshot_row is not None:
         top_left.metric("현재 기준일", format_ui_date(snapshot_row.get("as_of_date")))
-        top_mid.metric("최신 사후 평가", format_ui_date(snapshot_row.get("latest_evaluation_date")))
+        top_mid.metric("최신 사후 평가", format_ui_date(snapshot_row.get("latest_evaluation_summary_date")))
         top_right.metric("최신 장중 세션", format_ui_date(snapshot_row.get("latest_intraday_session_date")))
     else:
         top_left.metric("현재 기준일", "-")
@@ -201,33 +201,16 @@ def render_today_page() -> None:
     if snapshot_row is not None:
         bottom_left.metric("치명 알림", int(snapshot_row.get("critical_alert_count") or 0))
         bottom_mid.metric("경고 알림", int(snapshot_row.get("warning_alert_count") or 0))
-        bottom_right.metric("최신 리포트 묶음", str(snapshot_row.get("latest_report_bundle_id") or "-"))
+        bottom_right.metric("운영 상태", str(snapshot_row.get("health_status") or "-"))
     else:
         bottom_left.metric("치명 알림", 0)
         bottom_mid.metric("경고 알림", 0)
-        bottom_right.metric("최신 리포트 묶음", "-")
+        bottom_right.metric("운영 상태", "-")
 
     render_narrative_card("현재 기준 요약", _today_narrative(snapshot_row, alerts, freshness))
     render_narrative_card("오늘 추천 해석", latest_recommendation_timeline_text(settings))
 
-    render_record_cards(
-        alpha_promotion,
-        title="알파 모델 비교 요약",
-        primary_column="summary_title",
-        secondary_columns=["active_model_label", "comparison_model_label"],
-        detail_columns=[
-            "decision_label",
-            "active_top10_mean_excess_return",
-            "comparison_top10_mean_excess_return",
-            "promotion_gap",
-            "sample_count",
-            "window_end",
-        ],
-        limit=2,
-        empty_message="아직 알파 모델 비교 기록이 없습니다.",
-        table_expander_label="알파 모델 비교 원본 표 보기",
-    )
-
+    st.subheader("빠른 이동")
     link_left, link_mid, link_right = st.columns(3)
     with link_left:
         _quick_link("리더보드", "leaderboard", "오늘 바로 볼 종목 선별 결과와 위험 신호를 확인합니다.")
@@ -239,12 +222,53 @@ def render_today_page() -> None:
         _quick_link("운영", "ops", "최근 실행 이력, 알림, 정책, 리포트 상태를 점검합니다.")
         _quick_link("문서 / 도움말", "docs", "용어집, 사용자 가이드, 알려진 한계를 확인합니다.")
 
-    actionable_left, actionable_right = st.columns((2, 1))
-    with actionable_left:
-        st.subheader("오늘의 주목 종목")
-        st.caption(
-            "단일매수 상위 후보, 강세 예상 업종, 공식 추천안을 나눠서 보여줍니다."
+    home_view = st.segmented_control(
+        "오늘 보기",
+        options=["핵심 요약", "주목 종목", "리포트 / 상태"],
+        default="핵심 요약",
+    )
+
+    if home_view == "핵심 요약":
+        render_record_cards(
+            alpha_promotion,
+            title="알파 모델 비교 요약",
+            primary_column="summary_title",
+            secondary_columns=["active_model_label", "comparison_model_label"],
+            detail_columns=[
+                "decision_label",
+                "active_top10_mean_excess_return",
+                "comparison_top10_mean_excess_return",
+                "promotion_gap",
+                "sample_count",
+                "window_end",
+            ],
+            limit=2,
+            empty_message="아직 알파 모델 비교 기록이 없습니다.",
+            table_expander_label="알파 모델 비교 원본 표 보기",
         )
+        render_record_cards(
+            alerts,
+            title="중요 알림",
+            primary_column="message",
+            secondary_columns=["severity", "component_name"],
+            detail_columns=["created_at", "alert_type", "status"],
+            limit=5,
+            empty_message="열린 알림이 없습니다.",
+            table_expander_label="알림 원본 표 보기",
+        )
+        render_record_cards(
+            freshness,
+            title="신선도 점검",
+            primary_column="dataset_name",
+            secondary_columns=["warning_level", "page_name"],
+            detail_columns=["latest_available_ts", "stale_flag"],
+            limit=6,
+            empty_message="화면 신선도 스냅샷이 없습니다.",
+            table_expander_label="신선도 원본 표 보기",
+        )
+    elif home_view == "주목 종목":
+        st.subheader("오늘의 주목 종목")
+        st.caption("단일매수 상위 후보, 강세 예상 업종, 공식 추천안을 핵심만 나눠서 보여줍니다.")
         render_top_actionable_badges(settings)
         render_record_cards(
             sector_outlook,
@@ -308,62 +332,61 @@ def render_today_page() -> None:
                 empty_message="공식 추천안이 아직 없습니다.",
                 table_expander_label="공식 추천안 원본 표 보기",
             )
-    with actionable_right:
-        render_record_cards(
-            alerts,
-            title="중요 알림",
-            primary_column="message",
-            secondary_columns=["severity", "component_name"],
-            detail_columns=["created_at", "alert_type", "status"],
-            limit=5,
-            empty_message="열린 알림이 없습니다.",
-            table_expander_label="알림 원본 표 보기",
-        )
+    else:
+        report_left, report_right = st.columns((2, 1))
+        with report_left:
+            st.subheader("통합 리포트 센터")
+            render_report_center(settings, limit=12)
+        with report_right:
+            render_record_cards(
+                alerts,
+                title="중요 알림",
+                primary_column="message",
+                secondary_columns=["severity", "component_name"],
+                detail_columns=["created_at", "alert_type", "status"],
+                limit=5,
+                empty_message="열린 알림이 없습니다.",
+                table_expander_label="알림 원본 표 보기",
+            )
+            render_record_cards(
+                freshness,
+                title="신선도 점검",
+                primary_column="dataset_name",
+                secondary_columns=["warning_level", "page_name"],
+                detail_columns=["latest_available_ts", "stale_flag"],
+                limit=6,
+                empty_message="화면 신선도 스냅샷이 없습니다.",
+                table_expander_label="신선도 원본 표 보기",
+            )
 
-    report_left, report_right = st.columns((2, 1))
-    with report_left:
-        st.subheader("통합 리포트 센터")
-        render_report_center(settings, limit=12)
-    with report_right:
-        render_record_cards(
-            freshness,
-            title="신선도 점검",
-            primary_column="dataset_name",
-            secondary_columns=["warning_level", "page_name"],
-            detail_columns=["latest_available_ts", "stale_flag"],
-            limit=6,
-            empty_message="화면 신선도 스냅샷이 없습니다.",
-            table_expander_label="신선도 원본 표 보기",
-        )
+        summary_left, summary_right = st.columns(2)
+        with summary_left:
+            render_record_cards(
+                latest_news,
+                title="시장 요약",
+                primary_column="title",
+                secondary_columns=["provider", "published_at"],
+                detail_columns=["linked_symbols", "news_category"],
+                limit=5,
+                empty_message="시장 뉴스 메타데이터가 없습니다.",
+                table_expander_label="시장 뉴스 원본 표 보기",
+            )
+        with summary_right:
+            st.subheader("릴리스 점검 상태")
+            render_release_candidate_summary(settings, limit=8)
+            if release_preview:
+                with st.expander("최신 릴리스 점검표 미리보기", expanded=False):
+                    render_report_preview(
+                        title="릴리스 체크 미리보기",
+                        preview=release_preview,
+                    )
 
-    summary_left, summary_right = st.columns(2)
-    with summary_left:
-        render_record_cards(
-            latest_news,
-            title="시장 요약",
-            primary_column="title",
-            secondary_columns=["provider", "published_at"],
-            detail_columns=["linked_symbols", "news_category"],
-            limit=5,
-            empty_message="시장 뉴스 메타데이터가 없습니다.",
-            table_expander_label="시장 뉴스 원본 표 보기",
-        )
-    with summary_right:
-        st.subheader("릴리스 점검 상태")
-        render_release_candidate_summary(settings, limit=8)
-        if release_preview:
-            with st.expander("최신 릴리스 점검표 미리보기", expanded=False):
-                render_report_preview(
-                    title="릴리스 체크 미리보기",
-                    preview=release_preview,
-                )
-
-    if not latest_reports.empty:
-        st.subheader("최신 리포트")
-        display = latest_reports[
-            ["report_type", "as_of_date", "generated_ts", "status", "published_flag"]
-        ].copy()
-        st.dataframe(localize_frame(display), width="stretch", hide_index=True)
+        if not latest_reports.empty:
+            st.subheader("최신 리포트")
+            display = latest_reports[
+                ["report_type", "as_of_date", "generated_ts", "status", "published_flag"]
+            ].copy()
+            st.dataframe(localize_frame(display), width="stretch", hide_index=True)
 
     render_page_footer(settings, page_name="오늘")
 

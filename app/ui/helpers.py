@@ -2161,6 +2161,37 @@ def format_ui_run_id(value: object) -> str:
     return " · ".join(piece for piece in pieces if piece)
 
 
+def resolve_ui_artifact_path(settings: Settings, path_value: object) -> Path | None:
+    if path_value in (None, ""):
+        return None
+    raw_candidate = Path(str(path_value))
+    candidate_paths: list[Path] = []
+    if raw_candidate.is_absolute():
+        candidate_paths.append(raw_candidate)
+    else:
+        candidate_paths.append(settings.paths.project_root / raw_candidate)
+        candidate_paths.append(settings.paths.artifacts_dir / raw_candidate)
+
+    normalized_value = str(raw_candidate).replace("\\", "/")
+    for marker in ("/data/artifacts/", "/runtime/artifacts/", "/artifacts/"):
+        if marker not in normalized_value:
+            continue
+        relative_suffix = normalized_value.split(marker, 1)[1].strip("/")
+        if relative_suffix:
+            candidate_paths.append(settings.paths.artifacts_dir / Path(relative_suffix))
+            break
+
+    seen: set[Path] = set()
+    for candidate in candidate_paths:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.exists():
+            return resolved
+    return None
+
+
 def format_ui_number(value: object, *, decimals: int = 2) -> str:
     if value is None or pd.isna(value):
         return "-"
@@ -4243,6 +4274,7 @@ def _workbench_latest_reference_price(
 
 
 def _load_live_prediction_row(
+    settings: Settings,
     connection,
     *,
     feature_row: pd.DataFrame,
@@ -4256,12 +4288,17 @@ def _load_live_prediction_row(
     )
     if training_run is None or not training_run.get("artifact_uri"):
         return pd.DataFrame()
+    resolved_artifact_path = resolve_ui_artifact_path(settings, training_run.get("artifact_uri"))
+    if resolved_artifact_path is None:
+        return pd.DataFrame()
+    resolved_training_run = dict(training_run)
+    resolved_training_run["artifact_uri"] = str(resolved_artifact_path)
     result_frame, _ = build_prediction_frame_from_training_run(
         run_id="stock-workbench-live",
         as_of_date=as_of_date,
         horizon=int(horizon),
         feature_frame=feature_row,
-        training_run=training_run,
+        training_run=resolved_training_run,
         training_run_source=training_run_source,
         active_alpha_model_id=(
             active_alpha_model.get("active_alpha_model_id")
@@ -4332,6 +4369,7 @@ def stock_workbench_live_recommendation_frame(
                 [as_of_date, horizon, ALPHA_PREDICTION_VERSION, SELECTION_ENGINE_V2_VERSION],
             ).fetchdf()
             live_prediction_row = _load_live_prediction_row(
+                settings,
                 connection,
                 feature_row=live_feature_row,
                 as_of_date=as_of_date,
@@ -6542,13 +6580,13 @@ def _intraday_meta_diagnostic_payload(
     if training_row is None:
         return None, {}, None
     diagnostics_payload: dict[str, object] = {}
-    diagnostic_uri = training_row.get("diagnostic_artifact_uri")
-    if pd.notna(diagnostic_uri) and Path(str(diagnostic_uri)).exists():
-        diagnostics_payload = json.loads(Path(str(diagnostic_uri)).read_text(encoding="utf-8"))
+    diagnostic_path = resolve_ui_artifact_path(settings, training_row.get("diagnostic_artifact_uri"))
+    if diagnostic_path is not None:
+        diagnostics_payload = json.loads(diagnostic_path.read_text(encoding="utf-8"))
     model_payload = None
-    artifact_uri = training_row.get("artifact_uri")
-    if pd.notna(artifact_uri) and Path(str(artifact_uri)).exists():
-        model_payload = load_model_artifact(Path(str(artifact_uri)))
+    artifact_path = resolve_ui_artifact_path(settings, training_row.get("artifact_uri"))
+    if artifact_path is not None:
+        model_payload = load_model_artifact(artifact_path)
     return training_row, diagnostics_payload, model_payload
 
 
