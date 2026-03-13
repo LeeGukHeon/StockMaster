@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from app.ops.bundles import (
     run_daily_close_bundle,
+    run_daily_evaluation_bundle,
     run_docker_build_cache_cleanup_bundle,
     run_evaluation_bundle,
     run_news_sync_bundle,
@@ -352,6 +353,8 @@ def test_evaluation_bundle_passes_requested_date_to_evaluation_job(tmp_path, mon
     monkeypatch.setattr("app.ops.bundles.evaluate_portfolio_policies", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.render_evaluation_report", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.check_pipeline_dependencies", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._block_if_required_snapshot_missing", lambda *a, **k: None)
     monkeypatch.setattr("app.ops.bundles._refresh_release_views", lambda *a, **k: None)
 
     result = run_evaluation_bundle(
@@ -362,3 +365,63 @@ def test_evaluation_bundle_passes_requested_date_to_evaluation_job(tmp_path, mon
 
     assert result.status == JobStatus.SUCCESS
     assert captured["selection_end_date"] == date(2026, 3, 10)
+
+
+def test_daily_evaluation_bundle_uses_requested_date_not_latest_selection_date(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    captured: dict[str, date | None] = {}
+    noop_result = SimpleNamespace(artifact_paths=[])
+
+    def fake_evaluation_job(_settings, *, selection_end_date=None, **_kwargs):
+        captured["selection_end_date"] = selection_end_date
+        return noop_result
+
+    monkeypatch.setattr("app.ops.bundles.run_evaluation_job", fake_evaluation_job)
+    monkeypatch.setattr("app.ops.bundles.evaluate_portfolio_policies", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.check_pipeline_dependencies", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._block_if_required_snapshot_missing", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.ops.bundles._resolve_latest_selection_date",
+        lambda *_args, **_kwargs: date(2026, 3, 12),
+    )
+
+    result = run_daily_evaluation_bundle(
+        settings,
+        as_of_date=date(2026, 3, 13),
+        dry_run=False,
+    )
+
+    assert result.status == JobStatus.SUCCESS
+    assert captured["selection_end_date"] == date(2026, 3, 13)
+
+
+def test_evaluation_bundle_blocks_when_daily_close_outputs_are_stale(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+
+    monkeypatch.setattr(
+        "app.ops.bundles.expected_job_reference_date",
+        lambda *_args, **_kwargs: date(2026, 3, 13),
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles._latest_table_date",
+        lambda *_args, **_kwargs: date(2026, 3, 12),
+    )
+
+    result = run_evaluation_bundle(
+        settings,
+        as_of_date=date(2026, 3, 13),
+        force=True,
+        dry_run=False,
+    )
+
+    assert result.status == JobStatus.BLOCKED
+    assert "required snapshot 'selection_engine_v2' is stale" in result.notes

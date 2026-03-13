@@ -8,6 +8,7 @@ from app.common.disk import DiskWatermark, measure_disk_usage
 from app.common.time import now_local, utc_now
 from app.ops.common import AlertSeverity, JobStatus, OpsJobResult
 from app.ops.policy import load_active_or_default_ops_policy
+from app.ops.scheduler import expected_job_reference_date
 from app.ops.repository import (
     insert_alert_event,
     insert_health_snapshot_rows,
@@ -27,6 +28,39 @@ def _scalar(
     if row is None:
         return None
     return row[0]
+
+
+def _date_dependency_status(
+    *,
+    latest_date: date | None,
+    required_date: date | None,
+    optional: bool = False,
+) -> tuple[str, bool, str, dict[str, object]]:
+    ready = latest_date is not None and (required_date is None or latest_date >= required_date)
+    lag_days = 0
+    if latest_date is not None and required_date is not None and latest_date < required_date:
+        lag_days = (required_date - latest_date).days
+    if latest_date is None:
+        observed_state = (
+            "missing"
+            if required_date is None
+            else f"missing (required>={required_date.isoformat()})"
+        )
+    elif required_date is None:
+        observed_state = str(latest_date)
+    else:
+        observed_state = (
+            f"latest={latest_date.isoformat()} required={required_date.isoformat()} lag_days={lag_days}"
+        )
+    status = JobStatus.SUCCESS if ready else (
+        JobStatus.DEGRADED_SUCCESS if optional else JobStatus.BLOCKED
+    )
+    details = {
+        "latest_date": str(latest_date) if latest_date is not None else None,
+        "required_date": str(required_date) if required_date is not None else None,
+        "lag_days": lag_days,
+    }
+    return status, ready, observed_state, details
 
 
 def check_pipeline_dependencies(
@@ -50,6 +84,20 @@ def check_pipeline_dependencies(
         warning_ratio=resolved.policy.warn_ratio,
         prune_ratio=resolved.policy.cleanup_ratio,
         limit_ratio=resolved.policy.emergency_ratio,
+    )
+    expected_daily_close_date = expected_job_reference_date(
+        settings,
+        job_key="daily_close",
+        as_of_date=as_of_date,
+        now_ts=checked_at,
+        connection=connection,
+    )
+    expected_evaluation_date = expected_job_reference_date(
+        settings,
+        job_key="evaluation",
+        as_of_date=as_of_date,
+        now_ts=checked_at,
+        connection=connection,
     )
     latest_universe = _scalar(connection, "SELECT MAX(as_of_date) FROM dim_symbol")
     latest_calendar = _scalar(
@@ -84,6 +132,31 @@ def check_pipeline_dependencies(
         connection,
         "SELECT MAX(summary_date) FROM fact_evaluation_summary",
     )
+    calendar_status, calendar_ready, calendar_observed_state, calendar_details = _date_dependency_status(
+        latest_date=latest_calendar,
+        required_date=expected_daily_close_date,
+    )
+    selection_status, selection_ready, selection_observed_state, selection_details = _date_dependency_status(
+        latest_date=latest_selection,
+        required_date=expected_daily_close_date,
+    )
+    prediction_status, prediction_ready, prediction_observed_state, prediction_details = _date_dependency_status(
+        latest_date=latest_prediction,
+        required_date=expected_daily_close_date,
+    )
+    evaluation_status, evaluation_ready, evaluation_observed_state, evaluation_details = _date_dependency_status(
+        latest_date=latest_evaluation,
+        required_date=expected_evaluation_date,
+    )
+    nav_status, nav_ready, nav_observed_state, nav_details = _date_dependency_status(
+        latest_date=latest_nav,
+        required_date=expected_evaluation_date,
+    )
+    target_status, target_ready, target_observed_state, target_details = _date_dependency_status(
+        latest_date=latest_portfolio_target,
+        required_date=expected_daily_close_date,
+        optional=True,
+    )
     rows = [
         {
             "checked_at": checked_at,
@@ -102,12 +175,22 @@ def check_pipeline_dependencies(
             "checked_at": checked_at,
             "pipeline_name": "daily_research_pipeline",
             "dependency_name": "calendar_ready",
-            "status": JobStatus.SUCCESS if latest_calendar is not None else JobStatus.BLOCKED,
-            "ready_flag": latest_calendar is not None,
-            "required_state": "dim_trading_calendar available",
-            "observed_state": str(latest_calendar) if latest_calendar is not None else "missing",
+            "status": calendar_status,
+            "ready_flag": calendar_ready,
+            "required_state": (
+                "dim_trading_calendar available and current through "
+                f"{expected_daily_close_date}"
+                if expected_daily_close_date is not None
+                else "dim_trading_calendar available"
+            ),
+            "observed_state": calendar_observed_state,
             "as_of_date": as_of_date,
-            "details_json": json_text({"latest_calendar_date": latest_calendar}),
+            "details_json": json_text(
+                {
+                    "expected_job_key": "daily_close",
+                    **calendar_details,
+                }
+            ),
             "job_run_id": job_run_id,
             "created_at": checked_at,
         },
@@ -130,12 +213,22 @@ def check_pipeline_dependencies(
             "checked_at": checked_at,
             "pipeline_name": "daily_post_close_bundle",
             "dependency_name": "selection_v2_ready",
-            "status": JobStatus.SUCCESS if latest_selection is not None else JobStatus.BLOCKED,
-            "ready_flag": latest_selection is not None,
-            "required_state": "selection_engine_v2 ranking available",
-            "observed_state": str(latest_selection) if latest_selection is not None else "missing",
+            "status": selection_status,
+            "ready_flag": selection_ready,
+            "required_state": (
+                "selection_engine_v2 ranking available through "
+                f"{expected_daily_close_date}"
+                if expected_daily_close_date is not None
+                else "selection_engine_v2 ranking available"
+            ),
+            "observed_state": selection_observed_state,
             "as_of_date": as_of_date,
-            "details_json": json_text({"latest_selection_date": latest_selection}),
+            "details_json": json_text(
+                {
+                    "expected_job_key": "daily_close",
+                    **selection_details,
+                }
+            ),
             "job_run_id": job_run_id,
             "created_at": checked_at,
         },
@@ -156,14 +249,22 @@ def check_pipeline_dependencies(
             "checked_at": checked_at,
             "pipeline_name": "daily_evaluation_bundle",
             "dependency_name": "prediction_ready",
-            "status": JobStatus.SUCCESS if latest_prediction is not None else JobStatus.BLOCKED,
-            "ready_flag": latest_prediction is not None,
-            "required_state": "prediction snapshot available",
-            "observed_state": (
-                str(latest_prediction) if latest_prediction is not None else "missing"
+            "status": prediction_status,
+            "ready_flag": prediction_ready,
+            "required_state": (
+                "prediction snapshot available through "
+                f"{expected_daily_close_date}"
+                if expected_daily_close_date is not None
+                else "prediction snapshot available"
             ),
+            "observed_state": prediction_observed_state,
             "as_of_date": as_of_date,
-            "details_json": json_text({"latest_prediction_date": latest_prediction}),
+            "details_json": json_text(
+                {
+                    "expected_job_key": "daily_close",
+                    **prediction_details,
+                }
+            ),
             "job_run_id": job_run_id,
             "created_at": checked_at,
         },
@@ -171,14 +272,22 @@ def check_pipeline_dependencies(
             "checked_at": checked_at,
             "pipeline_name": "daily_evaluation_bundle",
             "dependency_name": "evaluation_ready",
-            "status": JobStatus.SUCCESS if latest_evaluation is not None else JobStatus.BLOCKED,
-            "ready_flag": latest_evaluation is not None,
-            "required_state": "evaluation summary available",
-            "observed_state": (
-                str(latest_evaluation) if latest_evaluation is not None else "missing"
+            "status": evaluation_status,
+            "ready_flag": evaluation_ready,
+            "required_state": (
+                "evaluation summary available through "
+                f"{expected_evaluation_date}"
+                if expected_evaluation_date is not None
+                else "evaluation summary available"
             ),
+            "observed_state": evaluation_observed_state,
             "as_of_date": as_of_date,
-            "details_json": json_text({"latest_evaluation_date": latest_evaluation}),
+            "details_json": json_text(
+                {
+                    "expected_job_key": "evaluation",
+                    **evaluation_details,
+                }
+            ),
             "job_run_id": job_run_id,
             "created_at": checked_at,
         },
@@ -186,12 +295,22 @@ def check_pipeline_dependencies(
             "checked_at": checked_at,
             "pipeline_name": "daily_evaluation_bundle",
             "dependency_name": "portfolio_nav_ready",
-            "status": JobStatus.SUCCESS if latest_nav is not None else JobStatus.BLOCKED,
-            "ready_flag": latest_nav is not None,
-            "required_state": "portfolio nav available",
-            "observed_state": str(latest_nav) if latest_nav is not None else "missing",
+            "status": nav_status,
+            "ready_flag": nav_ready,
+            "required_state": (
+                "portfolio nav available through "
+                f"{expected_evaluation_date}"
+                if expected_evaluation_date is not None
+                else "portfolio nav available"
+            ),
+            "observed_state": nav_observed_state,
             "as_of_date": as_of_date,
-            "details_json": json_text({"latest_nav_date": latest_nav}),
+            "details_json": json_text(
+                {
+                    "expected_job_key": "evaluation",
+                    **nav_details,
+                }
+            ),
             "job_run_id": job_run_id,
             "created_at": checked_at,
         },
@@ -199,31 +318,43 @@ def check_pipeline_dependencies(
             "checked_at": checked_at,
             "pipeline_name": "ops_maintenance_bundle",
             "dependency_name": "portfolio_target_ready",
-            "status": (
-                JobStatus.SUCCESS
-                if latest_portfolio_target is not None
-                else JobStatus.DEGRADED_SUCCESS
+            "status": target_status,
+            "ready_flag": target_ready,
+            "required_state": (
+                "portfolio target book optional, current through "
+                f"{expected_daily_close_date}"
+                if expected_daily_close_date is not None
+                else "portfolio target book optional"
             ),
-            "ready_flag": latest_portfolio_target is not None,
-            "required_state": "portfolio target book optional",
-            "observed_state": (
-                str(latest_portfolio_target)
-                if latest_portfolio_target is not None
-                else "missing"
-            ),
+            "observed_state": target_observed_state,
             "as_of_date": as_of_date,
-            "details_json": json_text({"latest_target_date": latest_portfolio_target}),
+            "details_json": json_text(
+                {
+                    "expected_job_key": "daily_close",
+                    **target_details,
+                }
+            ),
             "job_run_id": job_run_id,
             "created_at": checked_at,
         },
     ]
     insert_pipeline_dependency_rows(connection, rows)
     ready_count = sum(1 for row in rows if bool(row["ready_flag"]))
-    notes = f"Dependency readiness materialized. rows={len(rows)} ready={ready_count}"
+    blocked_count = sum(1 for row in rows if row["status"] == JobStatus.BLOCKED)
+    degraded_count = sum(1 for row in rows if row["status"] == JobStatus.DEGRADED_SUCCESS)
+    status = JobStatus.SUCCESS
+    if blocked_count > 0:
+        status = JobStatus.BLOCKED
+    elif degraded_count > 0:
+        status = JobStatus.DEGRADED_SUCCESS
+    notes = (
+        f"Dependency readiness materialized. rows={len(rows)} ready={ready_count} "
+        f"blocked={blocked_count} degraded={degraded_count}"
+    )
     return OpsJobResult(
         run_id=job_run_id or "embedded",
         job_name="check_pipeline_dependencies",
-        status=JobStatus.SUCCESS,
+        status=status,
         notes=notes,
         row_count=len(rows),
     )
@@ -301,6 +432,28 @@ def materialize_health_snapshots(
         )
         or 0
     )
+    blocked_dependency_count = int(
+        _scalar(
+            connection,
+            """
+            SELECT COUNT(*)
+            FROM vw_latest_pipeline_dependency_state
+            WHERE status = 'BLOCKED'
+            """,
+        )
+        or 0
+    )
+    degraded_dependency_count = int(
+        _scalar(
+            connection,
+            """
+            SELECT COUNT(*)
+            FROM vw_latest_pipeline_dependency_state
+            WHERE status = 'DEGRADED_SUCCESS'
+            """,
+        )
+        or 0
+    )
     latest_report_date = _scalar(
         connection,
         """
@@ -323,7 +476,13 @@ def materialize_health_snapshots(
     )
     if disk_report.status == DiskWatermark.LIMIT or stale_lock_count > 0:
         overall_status = JobStatus.FAILED
-    elif failed_24h > 0 or open_alert_count > 0 or disk_report.status != DiskWatermark.NORMAL:
+    elif (
+        failed_24h > 0
+        or open_alert_count > 0
+        or blocked_dependency_count > 0
+        or degraded_dependency_count > 0
+        or disk_report.status != DiskWatermark.NORMAL
+    ):
         overall_status = JobStatus.DEGRADED_SUCCESS
     else:
         overall_status = JobStatus.SUCCESS
@@ -351,6 +510,8 @@ def materialize_health_snapshots(
             "active_lock_count": active_lock_count,
             "stale_lock_count": stale_lock_count,
             "open_alert_count": open_alert_count,
+            "blocked_dependency_count": blocked_dependency_count,
+            "degraded_dependency_count": degraded_dependency_count,
             "disk_usage_ratio": round(disk_report.usage_ratio, 6),
             "latest_daily_report_date": latest_report_date,
             "latest_evaluation_date": latest_evaluation_date,

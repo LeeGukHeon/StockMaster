@@ -65,6 +65,7 @@ from app.ops.runtime import JobRunContext, job_result_from_context
 from app.ops.scheduler import (
     DEFAULT_INTRADAY_CHECKPOINTS,
     bundle_already_completed,
+    expected_job_reference_date,
     is_trading_day,
     resolve_due_intraday_checkpoint,
     resolve_news_collection_dates,
@@ -192,6 +193,49 @@ def _resolve_recent_start_date(
             trading_days=trading_days,
             connection=read_connection,
         )
+
+
+def _latest_table_date(
+    connection,
+    *,
+    table_name: str,
+    column_name: str,
+    where_clause: str | None = None,
+    params: list[object] | None = None,
+):
+    query = f"SELECT MAX({column_name}) FROM {table_name}"
+    if where_clause:
+        query += f" WHERE {where_clause}"
+    row = connection.execute(query, params or []).fetchone()
+    return row[0] if row and row[0] is not None else None
+
+
+def _block_if_required_snapshot_missing(
+    job: JobRunContext,
+    *,
+    target_date: date,
+    table_name: str,
+    column_name: str,
+    where_clause: str | None,
+    params: list[object] | None,
+    label: str,
+) -> OpsJobResult | None:
+    latest_date = _latest_table_date(
+        job.connection,
+        table_name=table_name,
+        column_name=column_name,
+        where_clause=where_clause,
+        params=params,
+    )
+    if latest_date is not None and latest_date >= target_date:
+        return None
+    latest_label = str(latest_date) if latest_date is not None else "missing"
+    note = (
+        f"{job.job_name}: required snapshot '{label}' is stale. "
+        f"required_date={target_date.isoformat()} latest_date={latest_label}."
+    )
+    job.block(note)
+    return job_result_from_context(job, notes=note, row_count=0)
 
 
 def _skip_if_non_trading_day(
@@ -361,11 +405,12 @@ def run_daily_post_close_bundle(
     policy_config_path: str | None = None,
 ) -> OpsJobResult:
     ensure_storage_layout(settings)
+    requested_date = as_of_date or today_local(settings.app.timezone)
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
-        target_date = _resolve_latest_selection_date(
+        target_date = _scheduler_target_date(
             settings,
-            fallback=as_of_date,
+            requested_date=requested_date,
             connection=connection,
         )
         with JobRunContext(
@@ -381,6 +426,17 @@ def run_daily_post_close_bundle(
             policy_config_path=policy_config_path,
             notes=f"Daily post-close bundle for {target_date.isoformat()}",
         ) as job:
+            blocked = _block_if_required_snapshot_missing(
+                job,
+                target_date=target_date,
+                table_name="fact_ranking",
+                column_name="as_of_date",
+                where_clause="ranking_version = ?",
+                params=[SELECTION_ENGINE_V2_VERSION],
+                label="selection_engine_v2",
+            )
+            if blocked is not None:
+                return blocked
             if dry_run:
                 job.skip("Dry-run: portfolio materialization steps skipped.")
             else:
@@ -445,6 +501,16 @@ def run_daily_post_close_bundle(
                     critical=False,
                 )
             job.run_step(
+                "check_pipeline_dependencies",
+                check_pipeline_dependencies,
+                settings,
+                connection=connection,
+                as_of_date=target_date,
+                job_run_id=job.run_id,
+                policy_config_path=policy_config_path,
+                critical=False,
+            )
+            job.run_step(
                 "materialize_health_snapshots",
                 materialize_health_snapshots,
                 settings,
@@ -472,11 +538,12 @@ def run_daily_evaluation_bundle(
     policy_config_path: str | None = None,
 ) -> OpsJobResult:
     ensure_storage_layout(settings)
+    requested_date = as_of_date or today_local(settings.app.timezone)
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
-        target_date = _resolve_latest_selection_date(
+        target_date = _scheduler_target_date(
             settings,
-            fallback=as_of_date,
+            requested_date=requested_date,
             connection=connection,
         )
         start_date = _resolve_recent_start_date(
@@ -498,6 +565,28 @@ def run_daily_evaluation_bundle(
             policy_config_path=policy_config_path,
             notes=f"Daily evaluation bundle through {target_date.isoformat()}",
         ) as job:
+            blocked = _block_if_required_snapshot_missing(
+                job,
+                target_date=target_date,
+                table_name="fact_ranking",
+                column_name="as_of_date",
+                where_clause="ranking_version = ?",
+                params=[SELECTION_ENGINE_V2_VERSION],
+                label="selection_engine_v2",
+            )
+            if blocked is not None:
+                return blocked
+            blocked = _block_if_required_snapshot_missing(
+                job,
+                target_date=target_date,
+                table_name="fact_prediction",
+                column_name="as_of_date",
+                where_clause="ranking_version = ?",
+                params=[SELECTION_ENGINE_V2_VERSION],
+                label="prediction_snapshot",
+            )
+            if blocked is not None:
+                return blocked
             if dry_run:
                 job.skip("Dry-run: evaluation bundle steps skipped.")
             else:
@@ -516,6 +605,16 @@ def run_daily_evaluation_bundle(
                     policy_config_path=policy_config_path,
                     critical=False,
                 )
+            job.run_step(
+                "check_pipeline_dependencies",
+                check_pipeline_dependencies,
+                settings,
+                connection=connection,
+                as_of_date=target_date,
+                job_run_id=job.run_id,
+                policy_config_path=policy_config_path,
+                critical=False,
+            )
             job.run_step(
                 "materialize_health_snapshots",
                 materialize_health_snapshots,
@@ -1006,6 +1105,16 @@ def run_daily_close_bundle(
                     as_of_date=target_date,
                 )
                 job.run_step(
+                    "check_pipeline_dependencies",
+                    check_pipeline_dependencies,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    policy_config_path=policy_config_path,
+                    critical=False,
+                )
+                job.run_step(
                     "materialize_health_snapshots",
                     materialize_health_snapshots,
                     settings,
@@ -1054,6 +1163,15 @@ def run_evaluation_bundle(
             requested_date=requested_date,
             connection=connection,
         )
+        source_snapshot_date = (
+            expected_job_reference_date(
+                settings,
+                job_key="daily_close",
+                as_of_date=requested_date,
+                connection=connection,
+            )
+            or target_date
+        )
         start_date = _resolve_recent_start_date(
             settings,
             end_date=target_date,
@@ -1085,6 +1203,28 @@ def run_evaluation_bundle(
             completed = _skip_if_already_completed(job, bundle_phase="evaluation")
             if completed is not None and not force:
                 return completed
+            blocked = _block_if_required_snapshot_missing(
+                job,
+                target_date=source_snapshot_date,
+                table_name="fact_ranking",
+                column_name="as_of_date",
+                where_clause="ranking_version = ?",
+                params=[SELECTION_ENGINE_V2_VERSION],
+                label="selection_engine_v2",
+            )
+            if blocked is not None:
+                return blocked
+            blocked = _block_if_required_snapshot_missing(
+                job,
+                target_date=source_snapshot_date,
+                table_name="fact_prediction",
+                column_name="as_of_date",
+                where_clause="ranking_version = ?",
+                params=[SELECTION_ENGINE_V2_VERSION],
+                label="prediction_snapshot",
+            )
+            if blocked is not None:
+                return blocked
             if dry_run:
                 job.skip("Dry-run: evaluation bundle skipped.")
             else:
@@ -1150,6 +1290,16 @@ def run_evaluation_bundle(
                     settings=settings,
                     connection=connection,
                     as_of_date=target_date,
+                )
+                job.run_step(
+                    "check_pipeline_dependencies",
+                    check_pipeline_dependencies,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    policy_config_path=policy_config_path,
+                    critical=False,
                 )
                 job.run_step(
                     "materialize_health_snapshots",

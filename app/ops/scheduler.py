@@ -541,6 +541,72 @@ def _iter_daily_times(job: ScheduledJobDefinition) -> list[time]:
     return []
 
 
+def _effective_schedule_reference_time(
+    settings: Settings,
+    *,
+    as_of_date: date | None,
+    now_ts: datetime | None = None,
+) -> datetime:
+    timezone = ZoneInfo(settings.app.timezone)
+    effective_now = (now_ts or now_local(settings.app.timezone)).astimezone(timezone)
+    if as_of_date is None or as_of_date == effective_now.date():
+        return effective_now
+    return datetime.combine(as_of_date, time(23, 59, 59), tzinfo=timezone)
+
+
+def latest_scheduled_run_at(
+    job: ScheduledJobDefinition,
+    *,
+    settings: Settings,
+    as_of_date: date | None = None,
+    now_ts: datetime | None = None,
+) -> datetime | None:
+    effective_now = _effective_schedule_reference_time(
+        settings,
+        as_of_date=as_of_date,
+        now_ts=now_ts,
+    )
+    daily_times = sorted(_iter_daily_times(job))
+    if not daily_times:
+        return None
+    for day_offset in range(0, 35):
+        candidate_day = effective_now.date() - timedelta(days=day_offset)
+        if candidate_day.weekday() not in job.weekdays:
+            continue
+        for candidate_time in reversed(daily_times):
+            candidate_dt = datetime.combine(candidate_day, candidate_time, tzinfo=effective_now.tzinfo)
+            if candidate_dt <= effective_now:
+                return candidate_dt
+    return None
+
+
+def expected_job_reference_date(
+    settings: Settings,
+    *,
+    job_key: str,
+    as_of_date: date | None = None,
+    now_ts: datetime | None = None,
+    connection: duckdb.DuckDBPyConnection | None = None,
+) -> date | None:
+    job = get_scheduled_job(job_key)
+    latest_run_at = latest_scheduled_run_at(
+        job,
+        settings=settings,
+        as_of_date=as_of_date,
+        now_ts=now_ts,
+    )
+    if latest_run_at is None:
+        return None
+    reference_date = latest_run_at.date()
+    if job.date_semantics == DATE_SEMANTICS_CALENDAR:
+        return reference_date
+    return resolve_reference_trading_date(
+        settings,
+        target_date=reference_date,
+        connection=connection,
+    )
+
+
 def _next_run_at(
     job: ScheduledJobDefinition,
     *,
