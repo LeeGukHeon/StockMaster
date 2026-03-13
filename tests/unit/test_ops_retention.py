@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -58,6 +59,72 @@ def test_retention_prunes_intraday_bar_but_keeps_core_curated(tmp_path) -> None:
     assert result.row_count == 1
     assert not old_bar.exists()
     assert old_feature.exists()
+
+
+def test_retention_keeps_latest_report_artifacts_but_prunes_unreferenced_artifacts(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    settings.paths.project_root = tmp_path
+
+    preview_artifact = settings.paths.artifacts_dir / "reports" / "latest_report_preview.md"
+    payload_artifact = settings.paths.artifacts_dir / "reports" / "latest_report_payload.json"
+    orphaned_artifact = settings.paths.artifacts_dir / "reports" / "orphaned_report.md"
+    for artifact_path in (preview_artifact, payload_artifact, orphaned_artifact):
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text("artifact", encoding="utf-8")
+
+    stale_at = datetime.now(tz=timezone.utc) - timedelta(days=90)
+    timestamp = stale_at.timestamp()
+    for artifact_path in (preview_artifact, payload_artifact, orphaned_artifact):
+        os.utime(artifact_path, (timestamp, timestamp))
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        connection.execute(
+            """
+            INSERT INTO fact_latest_report_index (
+                report_index_id,
+                report_type,
+                report_key,
+                as_of_date,
+                generated_ts,
+                status,
+                run_id,
+                artifact_path,
+                artifact_format,
+                published_flag,
+                dry_run_flag,
+                summary_json,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                "report-index-1",
+                "ops_report",
+                "ops_report:2026-03-12",
+                datetime(2026, 3, 12, tzinfo=timezone.utc).date(),
+                datetime.now(tz=timezone.utc),
+                "SUCCESS",
+                "run-1",
+                str(preview_artifact),
+                "markdown",
+                False,
+                False,
+                json.dumps({"payload_path": str(payload_artifact)}, ensure_ascii=False),
+                datetime.now(tz=timezone.utc),
+            ],
+        )
+        result = enforce_retention_policies(
+            settings,
+            connection=connection,
+            dry_run=False,
+            policy_config_path=project_root() / "config" / "ops" / "default_ops_policy.yaml",
+        )
+
+    assert result.row_count == 1
+    assert preview_artifact.exists()
+    assert payload_artifact.exists()
+    assert not orphaned_artifact.exists()
 
 
 def test_parse_reclaimed_bytes_supports_human_units() -> None:

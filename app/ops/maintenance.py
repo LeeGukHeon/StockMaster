@@ -59,6 +59,20 @@ def _safe_relative(path: Path, root: Path) -> str:
         return path.resolve().as_posix()
 
 
+def _normalize_relative_path(value: str) -> str:
+    return value.strip("/").replace("\\", "/")
+
+
+def _path_is_within_scope(path_value: str, scope_value: str) -> bool:
+    normalized_path = _normalize_relative_path(path_value)
+    normalized_scope = _normalize_relative_path(scope_value)
+    if not normalized_scope:
+        return False
+    return normalized_path == normalized_scope or normalized_path.startswith(
+        f"{normalized_scope}/"
+    )
+
+
 def _cleanup_targets(settings: Settings) -> list[tuple[str, Path, int]]:
     intraday_dir = settings.paths.curated_dir / "intraday"
     return [
@@ -522,26 +536,37 @@ def enforce_retention_policies(
         as_of_at=utc_now(),
         policy_config_path=policy_config_path,
     )
-    allowlist = {item.strip("/").replace("\\", "/") for item in resolved.policy.cleanup_allowlist}
-    protected = {item.strip("/").replace("\\", "/") for item in resolved.policy.protected_prefixes}
-    protected |= _latest_referenced_artifact_paths(connection, settings)
+    allowlist = {_normalize_relative_path(item) for item in resolved.policy.cleanup_allowlist}
+    protected_prefixes = {
+        _normalize_relative_path(item) for item in resolved.policy.protected_prefixes
+    }
+    protected_paths = {
+        _normalize_relative_path(item)
+        for item in _latest_referenced_artifact_paths(connection, settings)
+    }
     now = datetime.now(tz=timezone.utc)
     stats = _CleanupStats()
     touched_paths: list[str] = []
     for _scope_name, base_path, max_age_days in _cleanup_targets(settings):
         if not base_path.exists():
             continue
-        relative_base = _safe_relative(base_path, settings.paths.project_root)
+        relative_base = _normalize_relative_path(
+            _safe_relative(base_path, settings.paths.project_root)
+        )
         if allowlist and relative_base not in allowlist:
             continue
         for candidate in base_path.rglob("*"):
             if not candidate.is_file():
                 continue
-            relative_candidate = _safe_relative(candidate, settings.paths.project_root)
+            relative_candidate = _normalize_relative_path(
+                _safe_relative(candidate, settings.paths.project_root)
+            )
+            if relative_candidate in protected_paths:
+                continue
             if any(
-                relative_candidate.startswith(prefix)
-                and not relative_candidate.startswith(relative_base)
-                for prefix in protected
+                _path_is_within_scope(relative_candidate, prefix)
+                and not _path_is_within_scope(relative_base, prefix)
+                for prefix in protected_prefixes
             ):
                 continue
             modified_at = datetime.fromtimestamp(candidate.stat().st_mtime, tz=timezone.utc)
@@ -569,7 +594,8 @@ def enforce_retention_policies(
         job_run_id=job_run_id,
         details={
             "allowlist": sorted(allowlist),
-            "protected_prefixes": sorted(protected),
+            "protected_prefixes": sorted(protected_prefixes),
+            "protected_paths": sorted(protected_paths),
         },
     )
     return OpsJobResult(
