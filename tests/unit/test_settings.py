@@ -19,6 +19,9 @@ def test_load_settings_applies_env_overrides(tmp_path):
                 "STORAGE_WARNING_RATIO=0.55",
                 "MODEL_DEFAULT_HORIZONS=D1,D5,D10",
                 "DISCORD_REPORT_ENABLED=true",
+                "DASHBOARD_ACCESS_ENABLED=true",
+                "DASHBOARD_ACCESS_USERNAME=mobile",
+                "DASHBOARD_ACCESS_PASSWORD=secret-pass",
             ]
         ),
         encoding="utf-8",
@@ -35,6 +38,9 @@ def test_load_settings_applies_env_overrides(tmp_path):
     assert settings.storage.warning_ratio == 0.55
     assert settings.model.default_horizons == ["D1", "D5", "D10"]
     assert settings.discord.enabled is True
+    assert settings.dashboard_access.enabled is True
+    assert settings.dashboard_access.username == "mobile"
+    assert settings.dashboard_access.password == "secret-pass"
 
 
 def test_load_settings_raises_for_missing_explicit_env_file():
@@ -136,3 +142,19 @@ def test_load_settings_accepts_postgres_metadata_store(tmp_path):
     assert settings.metadata.backend == "postgres"
     assert settings.metadata.db_schema == "stockmaster_meta"
     assert settings.metadata.db_url.startswith("postgresql://stockmaster:")
+
+
+def test_load_settings_requires_dashboard_password_when_access_enabled(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "DASHBOARD_ACCESS_ENABLED=true",
+                "DASHBOARD_ACCESS_USERNAME=stockmaster",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="DASHBOARD_ACCESS_PASSWORD"):
+        load_settings(project_root=project_root(), env_file=env_file)

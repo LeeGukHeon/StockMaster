@@ -175,6 +175,20 @@ class DiscordConfig(BaseModel):
     username: str = "KR Stock Research Bot"
 
 
+class DashboardAccessConfig(BaseModel):
+    enabled: bool = False
+    username: str = "stockmaster"
+    password: str | None = None
+
+    @model_validator(mode="after")
+    def validate_access(self) -> "DashboardAccessConfig":
+        if self.enabled and not self.password:
+            raise ValueError(
+                "DASHBOARD_ACCESS_PASSWORD is required when dashboard access is enabled."
+            )
+        return self
+
+
 class MetadataStoreConfig(BaseModel):
     enabled: bool = False
     backend: Literal["duckdb", "postgres"] = "duckdb"
@@ -223,6 +237,7 @@ class Settings(BaseModel):
     retention: RetentionConfig
     providers: ProviderConfig
     discord: DiscordConfig
+    dashboard_access: DashboardAccessConfig = Field(default_factory=DashboardAccessConfig)
     metadata: MetadataStoreConfig
     model: ModelConfig
     intraday_research: IntradayResearchConfig
@@ -277,6 +292,7 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
     storage = config.setdefault("storage", {})
     providers = config.setdefault("providers", {})
     discord = config.setdefault("discord", {})
+    dashboard_access = config.setdefault("dashboard_access", {})
     metadata = config.setdefault("metadata", {})
     model = config.setdefault("model", {})
     retention = config.setdefault("retention", {})
@@ -377,6 +393,19 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
     )
     discord["webhook_url"] = env_values.get("DISCORD_WEBHOOK_URL")
     discord["username"] = env_values.get("DISCORD_USERNAME", discord.get("username"))
+
+    dashboard_access["enabled"] = _parse_bool(
+        env_values.get("DASHBOARD_ACCESS_ENABLED"),
+        dashboard_access.get("enabled", False),
+    )
+    dashboard_access["username"] = env_values.get(
+        "DASHBOARD_ACCESS_USERNAME",
+        dashboard_access.get("username", "stockmaster"),
+    )
+    dashboard_access["password"] = env_values.get(
+        "DASHBOARD_ACCESS_PASSWORD",
+        dashboard_access.get("password"),
+    )
 
     metadata["enabled"] = _parse_bool(
         env_values.get("METADATA_DB_ENABLED"),

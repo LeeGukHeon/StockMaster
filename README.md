@@ -117,6 +117,7 @@ Local vs server:
 - local uses `.env`, direct Streamlit access, and optional source bind mounts
 - server uses `deploy/env/.env.server`, nginx reverse proxy, persistent runtime volumes, restart policies, and explicit smoke/backup scripts
 - local can expose `8501`; server should expose only `80` through nginx and keep `8501` internal
+- if you need direct phone access, keep nginx on `80` and enable dashboard login with `DASHBOARD_ACCESS_ENABLED=true`
 
 Server quick start:
 

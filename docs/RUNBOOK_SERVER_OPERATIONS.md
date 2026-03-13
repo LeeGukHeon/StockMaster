@@ -547,3 +547,17 @@ docker system df
 - 백업/복구 별도 문서
 - scheduler server runbook
 - metadata/host worker update 메모
+## Dashboard Access Control
+
+If you need direct access from your phone, keep the dashboard publicly reachable on port `80` and protect it with dashboard credentials instead of loopback-only binding.
+
+```bash
+# in deploy/env/.env.server
+PUBLIC_BIND_HOST=0.0.0.0
+PUBLIC_PORT=80
+DASHBOARD_ACCESS_ENABLED=true
+DASHBOARD_ACCESS_USERNAME=stockmaster
+DASHBOARD_ACCESS_PASSWORD=change_this_dashboard_password
+```
+
+Change `DASHBOARD_ACCESS_PASSWORD` before starting the stack.

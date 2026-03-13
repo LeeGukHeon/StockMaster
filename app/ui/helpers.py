@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import numbers
 import re
+import secrets
+from hashlib import sha256
 from dataclasses import asdict
 from datetime import date, datetime, time
 from pathlib import Path
 
 import pandas as pd
+import streamlit as st
 
 from app.common.artifacts import resolve_artifact_path
 from app.common.time import today_local
@@ -77,6 +80,11 @@ from app.storage.metadata_postgres import (
     metadata_postgres_enabled,
 )
 from app.storage.manifests import fetch_recent_runs
+
+try:
+    from streamlit.runtime.scriptrunner import get_script_run_ctx
+except Exception:  # pragma: no cover - streamlit runtime import can vary outside app runs
+    get_script_run_ctx = None
 
 
 def _metadata_frame(
@@ -739,11 +747,50 @@ def latest_release_candidate_preview(settings: Settings) -> str | None:
 
 def load_ui_settings(project_root: Path) -> Settings:
     settings = load_settings(project_root=project_root)
+    _require_dashboard_access(settings)
     ensure_storage_layout(settings)
     read_only = settings.paths.duckdb_path.exists()
     with duckdb_connection(settings.paths.duckdb_path, read_only=read_only) as connection:
         bootstrap_core_tables(connection)
     return settings
+
+
+def _streamlit_runtime_active() -> bool:
+    if get_script_run_ctx is None:
+        return False
+    return get_script_run_ctx() is not None
+
+
+def _dashboard_access_fingerprint(settings: Settings) -> str:
+    access = settings.dashboard_access
+    raw = f"{access.username}\0{access.password or ''}"
+    return sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _require_dashboard_access(settings: Settings) -> None:
+    access = settings.dashboard_access
+    if not access.enabled or not _streamlit_runtime_active():
+        return
+
+    session_key = "_dashboard_access_fingerprint"
+    auth_fingerprint = _dashboard_access_fingerprint(settings)
+    if st.session_state.get(session_key) == auth_fingerprint:
+        return
+
+    st.title("Dashboard Sign In")
+    st.caption("This dashboard is protected. Sign in to continue.")
+    with st.form("dashboard_access_form", clear_on_submit=False):
+        username = st.text_input("Username", value="")
+        password = st.text_input("Password", type="password", value="")
+        submitted = st.form_submit_button("Sign in", use_container_width=True)
+        if submitted:
+            username_ok = secrets.compare_digest(username.strip(), access.username)
+            password_ok = secrets.compare_digest(password, access.password or "")
+            if username_ok and password_ok:
+                st.session_state[session_key] = auth_fingerprint
+                st.rerun()
+            st.error("Invalid dashboard credentials.")
+    st.stop()
 
 
 UI_COLUMN_LABELS: dict[str, str] = {

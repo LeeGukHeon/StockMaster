@@ -89,7 +89,7 @@ services:
       app:
         condition: service_healthy
     ports:
-      - "${PUBLIC_PORT:-80}:80"
+      - "${PUBLIC_BIND_HOST:-0.0.0.0}:${PUBLIC_PORT:-80}:80"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ${STOCKMASTER_RUNTIME_ROOT:-/opt/stockmaster/runtime}/logs/nginx:/var/log/nginx
