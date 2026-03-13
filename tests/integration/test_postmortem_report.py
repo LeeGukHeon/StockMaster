@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from datetime import date
 
+import pandas as pd
+
 from app.evaluation.calibration_diagnostics import materialize_calibration_diagnostics
 from app.evaluation.summary import materialize_prediction_evaluation
 from app.reports.postmortem import (
+    _build_report_content,
+    _format_percent_text,
     publish_discord_postmortem_report,
     render_postmortem_report,
 )
@@ -55,3 +59,35 @@ def test_postmortem_report_render_and_publish_dry_run(tmp_path):
     assert any(path.endswith(".md") for path in render_result.artifact_paths)
     assert "StockMaster 사후 점검" in render_result.payload["content"]
     assert publish_result.published is False
+
+
+def test_postmortem_percent_text_uses_threshold_for_near_zero_values():
+    assert _format_percent_text(2.833816789587776e-17, decimals=2, signed=True) == "+<0.01%"
+    assert _format_percent_text(-2.833816789587776e-17, decimals=2, signed=True) == "-<0.01%"
+    assert _format_percent_text(4.658876868337108e-05, decimals=2, signed=True) == "+<0.01%"
+    assert _format_percent_text(None, decimals=1) == "n/a"
+
+
+def test_postmortem_build_content_skips_zero_sample_rolling_rows():
+    content = _build_report_content(
+        evaluation_date=date(2026, 3, 12),
+        summary=pd.DataFrame(),
+        comparison=pd.DataFrame(),
+        rolling_summary=pd.DataFrame(
+            [
+                {
+                    "window_type": "rolling_20d",
+                    "horizon": 5,
+                    "ranking_version": "selection_engine_v1",
+                    "count_evaluated": 0,
+                    "mean_realized_excess_return": float("nan"),
+                    "hit_rate": float("nan"),
+                }
+            ]
+        ),
+        calibration_summary=pd.DataFrame(),
+        top_by_horizon={5: pd.DataFrame()},
+    )
+
+    assert "nan%" not in content
+    assert "최근 구간 요약이 아직 없습니다." in content

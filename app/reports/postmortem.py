@@ -70,6 +70,27 @@ def _ranking_label(ranking_version: str) -> str:
     return str(ranking_version)
 
 
+def _format_percent_text(
+    value: object,
+    *,
+    decimals: int,
+    signed: bool = False,
+    na_text: str = "n/a",
+) -> str:
+    if value is None or pd.isna(value):
+        return na_text
+    numeric_value = float(value)
+    threshold = 0.5 * (10 ** (-(decimals + 2)))
+    if 0 < abs(numeric_value) < threshold:
+        sign = ""
+        if signed:
+            sign = "+" if numeric_value > 0 else "-"
+        minimum_percent = f"{10 ** (-decimals):.{decimals}f}%"
+        return f"{sign}<{minimum_percent}"
+    format_spec = f"+.{decimals}%" if signed else f".{decimals}%"
+    return format(numeric_value, format_spec)
+
+
 def _load_evaluation_summary(
     connection, *, evaluation_date: date, horizons: list[int]
 ) -> pd.DataFrame:
@@ -197,6 +218,7 @@ def _load_rolling_summary(connection, *, horizons: list[int]) -> pd.DataFrame:
           AND window_type IN ('rolling_20d', 'rolling_60d')
           AND segment_type = 'coverage'
           AND segment_value = 'all'
+          AND count_evaluated > 0
           AND ranking_version IN (?, ?)
         ORDER BY window_type, horizon, ranking_version
         """,
@@ -226,15 +248,23 @@ def _load_calibration_summary(connection, *, horizons: list[int]) -> pd.DataFram
 def _format_summary_line(row: pd.Series) -> str:
     band_text = ""
     if pd.notna(row.get("band_coverage_rate")):
-        band_text = f" | 범위 적중률={float(row['band_coverage_rate']):.1%}"
+        band_text = (
+            " | 범위 적중률="
+            f"{_format_percent_text(row['band_coverage_rate'], decimals=1)}"
+        )
     expected_text = ""
     if pd.notna(row.get("avg_expected_excess_return")):
-        expected_text = f" | 평균 참고 기대수익={float(row['avg_expected_excess_return']):+.2%}"
+        expected_text = (
+            " | 평균 참고 기대수익="
+            f"{_format_percent_text(row['avg_expected_excess_return'], decimals=2, signed=True)}"
+        )
     return (
         f"- {_horizon_label(int(row['horizon']))} | {_ranking_label(str(row['ranking_version']))} "
         f"| 평가 수 {int(row['row_count'])} "
-        f"| 평균 초과수익률 {float(row['avg_realized_excess_return']):+.2%} "
-        f"| 수익 플러스 비율 {float(row['hit_rate']):.1%}{expected_text}{band_text}"
+        f"| 평균 초과수익률 "
+        f"{_format_percent_text(row['avg_realized_excess_return'], decimals=2, signed=True)} "
+        f"| 수익 플러스 비율 "
+        f"{_format_percent_text(row['hit_rate'], decimals=1)}{expected_text}{band_text}"
     )
 
 
@@ -246,10 +276,14 @@ def _format_top_line(row: pd.Series) -> str:
     reasons = ", ".join(REASON_LABELS.get(str(item), str(item)) for item in raw_reasons[:2])
     proxy = ""
     if pd.notna(row.get("expected_excess_return_at_selection")):
-        proxy = f" | 당시 참고 기대수익={float(row['expected_excess_return_at_selection']):+.2%}"
+        proxy = (
+            " | 당시 참고 기대수익="
+            f"{_format_percent_text(row['expected_excess_return_at_selection'], decimals=2, signed=True)}"
+        )
     return (
         f"- `{row['symbol']}` {row['company_name']} ({row['market']}) "
-        f"| 선정일 {row['selection_date']} | 실제 초과수익률 {float(row['realized_excess_return']):+.2%}"
+        f"| 선정일 {row['selection_date']} | 실제 초과수익률 "
+        f"{_format_percent_text(row['realized_excess_return'], decimals=2, signed=True)}"
         f"{proxy} | 예상 범위 판정 {BAND_LABELS.get(str(row['band_status']), str(row['band_status']))} | 주요 근거 {reasons or '-'}"
     )
 
@@ -283,21 +317,28 @@ def _build_report_content(
     else:
         for _, row in comparison.iterrows():
             lines.append(
-                f"- {_horizon_label(int(row['horizon']))} 평균 초과수익률 차이={float(row['avg_excess_gap']):+.2%} "
-                f"| 수익 플러스 비율 차이={float(row['hit_rate_gap']):+.1%}"
+                f"- {_horizon_label(int(row['horizon']))} 평균 초과수익률 차이="
+                f"{_format_percent_text(row['avg_excess_gap'], decimals=2, signed=True)} "
+                f"| 수익 플러스 비율 차이="
+                f"{_format_percent_text(row['hit_rate_gap'], decimals=1, signed=True)}"
             )
 
     lines.append("")
     lines.append("**최근 구간 흐름**")
-    if rolling_summary.empty:
+    valid_rolling_summary = rolling_summary.loc[
+        pd.to_numeric(rolling_summary["count_evaluated"], errors="coerce").fillna(0).gt(0)
+    ].copy()
+    if valid_rolling_summary.empty:
         lines.append("- 최근 구간 요약이 아직 없습니다.")
     else:
-        for _, row in rolling_summary.iterrows():
+        for _, row in valid_rolling_summary.iterrows():
             lines.append(
                 f"- {_window_label(str(row['window_type']))} | {_horizon_label(int(row['horizon']))} | {_ranking_label(str(row['ranking_version']))} "
                 f"| 평가 수 {int(row['count_evaluated'])} "
-                f"| 평균 초과수익률 {float(row['mean_realized_excess_return']):+.2%} "
-                f"| 수익 플러스 비율 {float(row['hit_rate']):.1%}"
+                f"| 평균 초과수익률 "
+                f"{_format_percent_text(row['mean_realized_excess_return'], decimals=2, signed=True)} "
+                f"| 수익 플러스 비율 "
+                f"{_format_percent_text(row['hit_rate'], decimals=1)}"
             )
 
     lines.append("")
@@ -307,8 +348,11 @@ def _build_report_content(
     else:
         for _, row in calibration_summary.iterrows():
             lines.append(
-                f"- {_horizon_label(int(row['horizon']))} | 예상 범위 적중률 {float(row['coverage_rate']):.1%} "
-                f"| 치우침 {float(row['median_bias']):+.2%} | 품질 {row['quality_flag']}"
+                f"- {_horizon_label(int(row['horizon']))} | 예상 범위 적중률 "
+                f"{_format_percent_text(row['coverage_rate'], decimals=1)} "
+                f"| 치우침 "
+                f"{_format_percent_text(row['median_bias'], decimals=2, signed=True)} "
+                f"| 품질 {row['quality_flag']}"
             )
 
     for horizon, top_frame in sorted(top_by_horizon.items()):
