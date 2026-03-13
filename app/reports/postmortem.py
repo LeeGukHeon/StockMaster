@@ -6,7 +6,11 @@ from datetime import date
 
 import pandas as pd
 
-from app.common.discord import publish_discord_messages
+from app.common.discord import (
+    DiscordPublishDecision,
+    publish_discord_messages,
+    resolve_discord_publish_decision,
+)
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ranking.explanatory_score import RANKING_VERSION as EXPLANATORY_RANKING_VERSION
@@ -520,29 +524,43 @@ def publish_discord_postmortem_report(
                 ranking_version=f"{SELECTION_ENGINE_VERSION},{EXPLANATORY_RANKING_VERSION}",
             )
 
-        render_result = render_postmortem_report(
-            settings,
-            evaluation_date=evaluation_date,
-            horizons=horizons,
-            dry_run=dry_run,
-        )
-        artifact_paths = list(render_result.artifact_paths)
-        notes = f"Postmortem publish dry-run completed for {evaluation_date.isoformat()}."
+        artifact_paths: list[str] = []
+        notes = f"Postmortem publish skipped for {evaluation_date.isoformat()}."
         published = False
+        manifest_status = "failed"
+        error_message: str | None = None
         try:
+            render_result = render_postmortem_report(
+                settings,
+                evaluation_date=evaluation_date,
+                horizons=horizons,
+                dry_run=dry_run,
+            )
+            artifact_paths = list(render_result.artifact_paths)
             webhook_url = settings.discord.webhook_url
             messages = render_result.payload.get("messages") or []
-            if not settings.discord.enabled:
+            decision = resolve_discord_publish_decision(
+                enabled=settings.discord.enabled,
+                webhook_url=webhook_url,
+                dry_run=dry_run,
+            )
+            if decision == DiscordPublishDecision.SKIP_DISABLED:
                 notes = (
                     f"Postmortem publish skipped for {evaluation_date.isoformat()}. "
                     "DISCORD_REPORT_ENABLED=false."
                 )
-            elif dry_run or not webhook_url:
-                if not webhook_url:
-                    notes = (
-                        f"Postmortem publish skipped for {evaluation_date.isoformat()}. "
-                        "Webhook URL is not configured."
-                    )
+                manifest_status = "skipped"
+            elif decision == DiscordPublishDecision.SKIP_DRY_RUN:
+                notes = (
+                    f"Postmortem publish dry-run completed for {evaluation_date.isoformat()}."
+                )
+                manifest_status = "skipped"
+            elif decision == DiscordPublishDecision.SKIP_MISSING_WEBHOOK:
+                notes = (
+                    f"Postmortem publish skipped for {evaluation_date.isoformat()}. "
+                    "Webhook URL is not configured."
+                )
+                manifest_status = "skipped"
             else:
                 response_payloads = publish_discord_messages(
                     webhook_url,
@@ -550,6 +568,7 @@ def publish_discord_postmortem_report(
                     timeout=10.0,
                 )
                 published = True
+                manifest_status = "success"
                 publish_path = (
                     settings.paths.artifacts_dir
                     / "postmortem"
@@ -568,10 +587,10 @@ def publish_discord_postmortem_report(
                     f"message_count={len(messages)}"
                 )
         except Exception as exc:
-            notes = (
-                f"Postmortem publish warning for {evaluation_date.isoformat()}: {exc}. "
-                "The report was rendered but publish did not complete."
-            )
+            notes = f"Postmortem publish failed for {evaluation_date.isoformat()}."
+            error_message = str(exc)
+            manifest_status = "failed"
+            raise
         finally:
             with duckdb_connection(settings.paths.duckdb_path) as connection:
                 bootstrap_core_tables(connection)
@@ -579,9 +598,10 @@ def publish_discord_postmortem_report(
                     connection,
                     run_id=run_context.run_id,
                     finished_at=now_local(settings.app.timezone),
-                    status="success",
+                    status=manifest_status,
                     output_artifacts=artifact_paths,
                     notes=notes,
+                    error_message=error_message,
                     ranking_version=f"{SELECTION_ENGINE_VERSION},{EXPLANATORY_RANKING_VERSION}",
                 )
 

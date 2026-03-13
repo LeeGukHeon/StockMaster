@@ -8,7 +8,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from app.common.discord import publish_discord_messages
+from app.common.discord import (
+    DiscordPublishDecision,
+    publish_discord_messages,
+    resolve_discord_publish_decision,
+)
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
@@ -240,21 +244,30 @@ def publish_discord_intraday_meta_summary(
     )
     payload = json.loads(payload_path.read_text(encoding="utf-8")) if payload_path else {"messages": []}
     published = False
-    if not dry_run and settings.discord.enabled and settings.discord.webhook_url:
+    decision = resolve_discord_publish_decision(
+        enabled=settings.discord.enabled,
+        webhook_url=settings.discord.webhook_url,
+        dry_run=dry_run,
+    )
+    if decision == DiscordPublishDecision.PUBLISH:
         publish_discord_messages(
             settings.discord.webhook_url,
             list(payload["messages"]),
             timeout=15.0,
         )
         published = True
+        notes = "Intraday meta-model Discord summary published."
+    elif decision == DiscordPublishDecision.SKIP_DISABLED:
+        notes = "Intraday meta-model Discord summary skipped. DISCORD_REPORT_ENABLED=false."
+    elif decision == DiscordPublishDecision.SKIP_MISSING_WEBHOOK:
+        notes = "Intraday meta-model Discord summary skipped. Webhook URL is not configured."
+    else:
+        notes = "Intraday meta-model Discord summary dry-run completed."
     return IntradayMetaSummaryPublishResult(
         run_id=render_result.run_id,
         as_of_date=as_of_date,
         dry_run=dry_run,
         published=published,
         artifact_paths=render_result.artifact_paths,
-        notes=(
-            "Intraday meta-model Discord summary "
-            f"{'published' if published else 'prepared'}."
-        ),
+        notes=notes,
     )

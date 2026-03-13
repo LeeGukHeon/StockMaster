@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from app.common.discord import publish_discord_messages
+from app.common.discord import (
+    DiscordPublishDecision,
+    publish_discord_messages,
+    resolve_discord_publish_decision,
+)
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
@@ -272,43 +276,78 @@ def publish_discord_intraday_policy_summary(
                 notes=f"Publish intraday policy summary for {as_of_date.isoformat()}",
                 ranking_version=SELECTION_ENGINE_VERSION,
             )
-        render_result = render_intraday_policy_research_report(
-            settings,
-            as_of_date=as_of_date,
-            horizons=horizons,
-            dry_run=dry_run,
-        )
-        payload_path = next(
-            path for path in render_result.artifact_paths if path.endswith("_payload.json")
-        )
-        payload = json.loads(Path(payload_path).read_text(encoding="utf-8"))
         webhook_url = settings.discord.webhook_url
         published = False
-        notes = "Dry run only."
-        if not dry_run and webhook_url:
-            publish_discord_messages(
-                webhook_url,
-                list(payload.get("messages", [])),
-                timeout=15.0,
+        notes = f"Intraday policy summary publish skipped for {as_of_date.isoformat()}."
+        manifest_status = "failed"
+        error_message: str | None = None
+        artifact_paths: list[str] = []
+        try:
+            render_result = render_intraday_policy_research_report(
+                settings,
+                as_of_date=as_of_date,
+                horizons=horizons,
+                dry_run=dry_run,
             )
-            published = True
-            notes = "Intraday policy summary published."
-        with duckdb_connection(settings.paths.duckdb_path) as connection:
-            bootstrap_core_tables(connection)
-            record_run_finish(
-                connection,
-                run_id=run_context.run_id,
-                finished_at=now_local(settings.app.timezone),
-                status="success",
-                output_artifacts=render_result.artifact_paths,
-                notes=notes,
-                ranking_version=SELECTION_ENGINE_VERSION,
+            artifact_paths = list(render_result.artifact_paths)
+            payload_path = next(
+                path for path in render_result.artifact_paths if path.endswith("_payload.json")
             )
+            payload = json.loads(Path(payload_path).read_text(encoding="utf-8"))
+            decision = resolve_discord_publish_decision(
+                enabled=settings.discord.enabled,
+                webhook_url=webhook_url,
+                dry_run=dry_run,
+            )
+            if decision == DiscordPublishDecision.SKIP_DISABLED:
+                notes = (
+                    f"Intraday policy summary publish skipped for {as_of_date.isoformat()}. "
+                    "DISCORD_REPORT_ENABLED=false."
+                )
+                manifest_status = "skipped"
+            elif decision == DiscordPublishDecision.SKIP_DRY_RUN:
+                notes = (
+                    f"Intraday policy summary publish dry-run completed for {as_of_date.isoformat()}."
+                )
+                manifest_status = "skipped"
+            elif decision == DiscordPublishDecision.SKIP_MISSING_WEBHOOK:
+                notes = (
+                    f"Intraday policy summary publish skipped for {as_of_date.isoformat()}. "
+                    "Webhook URL is not configured."
+                )
+                manifest_status = "skipped"
+            else:
+                publish_discord_messages(
+                    webhook_url,
+                    list(payload.get("messages", [])),
+                    timeout=15.0,
+                )
+                published = True
+                manifest_status = "success"
+                notes = f"Intraday policy summary published for {as_of_date.isoformat()}."
+        except Exception as exc:
+            notes = f"Intraday policy summary publish failed for {as_of_date.isoformat()}."
+            error_message = str(exc)
+            manifest_status = "failed"
+            raise
+        finally:
+            with duckdb_connection(settings.paths.duckdb_path) as connection:
+                bootstrap_core_tables(connection)
+                record_run_finish(
+                    connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status=manifest_status,
+                    output_artifacts=artifact_paths,
+                    notes=notes,
+                    error_message=error_message,
+                    ranking_version=SELECTION_ENGINE_VERSION,
+                )
         return IntradayPolicySummaryPublishResult(
             run_id=run_context.run_id,
             as_of_date=as_of_date,
             dry_run=dry_run,
             published=published,
-            artifact_paths=render_result.artifact_paths,
+            artifact_paths=artifact_paths,
             notes=notes,
         )

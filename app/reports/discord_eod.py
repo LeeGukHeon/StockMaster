@@ -6,7 +6,11 @@ from datetime import date
 
 import pandas as pd
 
-from app.common.discord import publish_discord_messages
+from app.common.discord import (
+    DiscordPublishDecision,
+    publish_discord_messages,
+    resolve_discord_publish_decision,
+)
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.promotion import load_alpha_promotion_summary
@@ -759,7 +763,7 @@ def publish_discord_eod_report(
                     connection,
                     run_id=run_context.run_id,
                     finished_at=now_local(settings.app.timezone),
-                    status="success",
+                    status="skipped",
                     output_artifacts=[],
                     notes=notes,
                     ranking_version=SELECTION_ENGINE_V2_VERSION,
@@ -773,25 +777,40 @@ def publish_discord_eod_report(
                     notes=notes,
                 )
 
-        render_result = render_discord_eod_report(settings, as_of_date=as_of_date, dry_run=dry_run)
-        artifact_paths = list(render_result.artifact_paths)
-        notes = f"Discord publish dry-run completed for {as_of_date.isoformat()}."
+        artifact_paths: list[str] = []
+        notes = f"Discord publish skipped for {as_of_date.isoformat()}."
         published = False
-
+        manifest_status = "failed"
+        error_message: str | None = None
         try:
+            render_result = render_discord_eod_report(
+                settings,
+                as_of_date=as_of_date,
+                dry_run=dry_run,
+            )
+            artifact_paths = list(render_result.artifact_paths)
             webhook_url = settings.discord.webhook_url
             messages = render_result.payload.get("messages") or []
-            if not settings.discord.enabled:
+            decision = resolve_discord_publish_decision(
+                enabled=settings.discord.enabled,
+                webhook_url=webhook_url,
+                dry_run=dry_run,
+            )
+            if decision == DiscordPublishDecision.SKIP_DISABLED:
                 notes = (
                     f"Discord publish skipped for {as_of_date.isoformat()}. "
                     "DISCORD_REPORT_ENABLED=false."
                 )
-            elif dry_run or not webhook_url:
-                if not webhook_url:
-                    notes = (
-                        f"Discord publish skipped for {as_of_date.isoformat()}. "
-                        "Webhook URL is not configured."
-                    )
+                manifest_status = "skipped"
+            elif decision == DiscordPublishDecision.SKIP_DRY_RUN:
+                notes = f"Discord publish dry-run completed for {as_of_date.isoformat()}."
+                manifest_status = "skipped"
+            elif decision == DiscordPublishDecision.SKIP_MISSING_WEBHOOK:
+                notes = (
+                    f"Discord publish skipped for {as_of_date.isoformat()}. "
+                    "Webhook URL is not configured."
+                )
+                manifest_status = "skipped"
             else:
                 response_payloads = publish_discord_messages(
                     webhook_url,
@@ -799,6 +818,7 @@ def publish_discord_eod_report(
                     timeout=10.0,
                 )
                 published = True
+                manifest_status = "success"
                 publish_path = (
                     settings.paths.artifacts_dir
                     / "discord"
@@ -817,10 +837,10 @@ def publish_discord_eod_report(
                     f"message_count={len(messages)}"
                 )
         except Exception as exc:
-            notes = (
-                f"Discord publish warning for {as_of_date.isoformat()}: {exc}. "
-                "The report was rendered but publish did not complete."
-            )
+            notes = f"Discord publish failed for {as_of_date.isoformat()}."
+            error_message = str(exc)
+            manifest_status = "failed"
+            raise
         finally:
             with duckdb_connection(settings.paths.duckdb_path) as connection:
                 bootstrap_core_tables(connection)
@@ -828,9 +848,10 @@ def publish_discord_eod_report(
                     connection,
                     run_id=run_context.run_id,
                     finished_at=now_local(settings.app.timezone),
-                    status="success",
+                    status=manifest_status,
                     output_artifacts=artifact_paths,
                     notes=notes,
+                    error_message=error_message,
                     ranking_version=SELECTION_ENGINE_V2_VERSION,
                 )
 

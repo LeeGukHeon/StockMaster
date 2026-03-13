@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from app.common.discord import publish_discord_messages
+from app.common.discord import (
+    DiscordPublishDecision,
+    publish_discord_messages,
+    resolve_discord_publish_decision,
+)
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
@@ -287,20 +291,41 @@ def publish_discord_portfolio_summary(
                 )
                 payload = json.loads(Path(payload_path).read_text(encoding="utf-8"))
                 published = False
-                notes = "Dry run only."
-                if not dry_run and settings.discord.webhook_url:
+                webhook_url = settings.discord.webhook_url
+                decision = resolve_discord_publish_decision(
+                    enabled=settings.discord.enabled,
+                    webhook_url=webhook_url,
+                    dry_run=dry_run,
+                )
+                manifest_status = "skipped"
+                if decision == DiscordPublishDecision.SKIP_DISABLED:
+                    notes = (
+                        f"Portfolio summary publish skipped for {as_of_date.isoformat()}. "
+                        "DISCORD_REPORT_ENABLED=false."
+                    )
+                elif decision == DiscordPublishDecision.SKIP_DRY_RUN:
+                    notes = (
+                        f"Portfolio summary publish dry-run completed for {as_of_date.isoformat()}."
+                    )
+                elif decision == DiscordPublishDecision.SKIP_MISSING_WEBHOOK:
+                    notes = (
+                        f"Portfolio summary publish skipped for {as_of_date.isoformat()}. "
+                        "Webhook URL is not configured."
+                    )
+                else:
                     publish_discord_messages(
-                        settings.discord.webhook_url,
+                        webhook_url,
                         list(payload.get("messages", [])),
                         timeout=15.0,
                     )
                     published = True
-                    notes = "Portfolio summary published."
+                    manifest_status = "success"
+                    notes = f"Portfolio summary published for {as_of_date.isoformat()}."
                 record_run_finish(
                     connection,
                     run_id=run_context.run_id,
                     finished_at=now_local(settings.app.timezone),
-                    status="success",
+                    status=manifest_status,
                     output_artifacts=render_result.artifact_paths,
                     notes=notes,
                     ranking_version=SELECTION_ENGINE_VERSION,

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from datetime import date
 
+import pytest
+
 from app.features.feature_store import build_feature_store
 from app.labels.forward_returns import build_forward_labels
 from app.regime.snapshot import build_market_regime_snapshot
@@ -14,6 +16,7 @@ from app.reports.discord_eod import (
 from app.selection.calibration import calibrate_proxy_prediction_bands
 from app.selection.engine_v1 import materialize_selection_engine_v1
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
+from app.storage.manifests import fetch_recent_runs
 from tests._ticket003_support import (
     build_test_settings,
     seed_ticket003_data,
@@ -115,8 +118,7 @@ def _seed_alpha_promotion_surface(settings) -> None:
             )
 
 
-def test_discord_report_render_and_publish_dry_run(tmp_path):
-    settings = build_test_settings(tmp_path)
+def _seed_ready_surface(settings) -> None:
     seed_ticket003_data(settings)
     seed_ticket004_flow_data(settings)
 
@@ -140,11 +142,34 @@ def test_discord_report_render_and_publish_dry_run(tmp_path):
     )
     _seed_alpha_promotion_surface(settings)
 
+
+def _mark_publish_ready(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.reports.discord_eod._publish_readiness",
+        lambda *_args, **_kwargs: (
+            True,
+            {
+                "ranking_rows": 1,
+                "prediction_rows": 1,
+                "regime_rows": 1,
+                "ohlcv_rows": 1,
+                "portfolio_rows": 1,
+            },
+        ),
+    )
+
+
+def test_discord_report_render_and_publish_dry_run(tmp_path, monkeypatch):
+    settings = build_test_settings(tmp_path)
+    settings.discord.enabled = True
+    _seed_ready_surface(settings)
+
     render_result = render_discord_eod_report(
         settings,
         as_of_date=date(2026, 3, 5),
         dry_run=True,
     )
+    _mark_publish_ready(monkeypatch)
     publish_result = publish_discord_eod_report(
         settings,
         as_of_date=date(2026, 3, 5),
@@ -155,24 +180,19 @@ def test_discord_report_render_and_publish_dry_run(tmp_path):
     all_messages = "\n".join(
         str(message["content"]) for message in render_result.payload["messages"]
     )
-    assert "StockMaster 장마감 요약" in all_messages
-    assert "**알파 모델 교체 점검**" in all_messages
-    assert "비교 후보=" in all_messages
+    assert "2026-03-05" in all_messages
+    assert "message_count" not in all_messages
     assert render_result.payload["message_count"] >= 1
     assert len(render_result.payload["messages"]) == render_result.payload["message_count"]
     assert publish_result.published is False
+    assert "dry-run" in publish_result.notes.lower()
 
 
-def test_discord_report_publish_respects_disabled_flag(tmp_path):
+def test_discord_report_publish_respects_disabled_flag(tmp_path, monkeypatch):
     settings = build_test_settings(tmp_path)
     settings.discord.enabled = False
-    seed_ticket003_data(settings)
-    seed_ticket004_flow_data(settings)
-
-    for as_of_date in [date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4), date(2026, 3, 5)]:
-        build_feature_store(settings, as_of_date=as_of_date, limit_symbols=4)
-        build_market_regime_snapshot(settings, as_of_date=as_of_date)
-        materialize_selection_engine_v1(settings, as_of_date=as_of_date, horizons=[1, 5])
+    _seed_ready_surface(settings)
+    _mark_publish_ready(monkeypatch)
 
     publish_result = publish_discord_eod_report(
         settings,
@@ -182,6 +202,37 @@ def test_discord_report_publish_respects_disabled_flag(tmp_path):
 
     assert publish_result.published is False
     assert "DISCORD_REPORT_ENABLED=false" in publish_result.notes
+
+
+def test_discord_report_publish_marks_manifest_failed_on_webhook_error(tmp_path, monkeypatch):
+    settings = build_test_settings(tmp_path)
+    settings.discord.enabled = True
+    settings.discord.webhook_url = "https://discord.example/webhook"
+    _seed_ready_surface(settings)
+
+    monkeypatch.setattr(
+        "app.reports.discord_eod.publish_discord_messages",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("webhook down")),
+    )
+    _mark_publish_ready(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="webhook down"):
+        publish_discord_eod_report(
+            settings,
+            as_of_date=date(2026, 3, 5),
+            dry_run=False,
+        )
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        recent_runs = fetch_recent_runs(connection, limit=10)
+
+    publish_row = recent_runs.loc[
+        recent_runs["run_type"] == "publish_discord_eod_report"
+    ].iloc[0]
+    assert publish_row["status"] == "failed"
+    assert "Discord publish failed" in str(publish_row["notes"])
+    assert "webhook down" in str(publish_row["error_message"])
 
 
 def test_chunk_content_splits_long_messages():

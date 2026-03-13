@@ -1,14 +1,37 @@
 from __future__ import annotations
 
 import json
+from enum import StrEnum
 
 import httpx
 
 DISCORD_JSON_HEADERS = {"Content-Type": "application/json; charset=utf-8"}
 
 
+class DiscordPublishDecision(StrEnum):
+    PUBLISH = "publish"
+    SKIP_DRY_RUN = "skip_dry_run"
+    SKIP_DISABLED = "skip_disabled"
+    SKIP_MISSING_WEBHOOK = "skip_missing_webhook"
+
+
 def encode_discord_payload(message: dict[str, object]) -> bytes:
     return json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def resolve_discord_publish_decision(
+    *,
+    enabled: bool,
+    webhook_url: str | None,
+    dry_run: bool,
+) -> DiscordPublishDecision:
+    if not enabled:
+        return DiscordPublishDecision.SKIP_DISABLED
+    if dry_run:
+        return DiscordPublishDecision.SKIP_DRY_RUN
+    if not webhook_url:
+        return DiscordPublishDecision.SKIP_MISSING_WEBHOOK
+    return DiscordPublishDecision.PUBLISH
 
 
 def publish_discord_messages(

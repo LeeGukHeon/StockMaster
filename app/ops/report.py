@@ -6,7 +6,11 @@ from pathlib import Path
 
 import duckdb
 
-from app.common.discord import publish_discord_messages
+from app.common.discord import (
+    DiscordPublishDecision,
+    publish_discord_messages,
+    resolve_discord_publish_decision,
+)
 from app.ops.common import JobStatus, OpsJobResult
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables
@@ -305,18 +309,35 @@ def publish_discord_ops_alerts(
     }
     summary_payload_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     published = False
-    if not dry_run and settings.discord.webhook_url:
+    decision = resolve_discord_publish_decision(
+        enabled=settings.discord.enabled,
+        webhook_url=settings.discord.webhook_url,
+        dry_run=dry_run,
+    )
+    status = JobStatus.SKIPPED
+    if decision == DiscordPublishDecision.PUBLISH:
         publish_discord_messages(
             settings.discord.webhook_url,
             list(payload.get("messages", [])),
             timeout=15.0,
         )
         published = True
-    notes = f"Ops alerts {'published' if published else 'prepared'}."
+        status = JobStatus.SUCCESS
+        notes = f"Ops alerts published for {as_of_date.isoformat()}."
+    elif decision == DiscordPublishDecision.SKIP_DISABLED:
+        notes = (
+            f"Ops alerts skipped for {as_of_date.isoformat()}. DISCORD_REPORT_ENABLED=false."
+        )
+    elif decision == DiscordPublishDecision.SKIP_MISSING_WEBHOOK:
+        notes = (
+            f"Ops alerts skipped for {as_of_date.isoformat()}. Webhook URL is not configured."
+        )
+    else:
+        notes = f"Ops alerts dry-run completed for {as_of_date.isoformat()}."
     return OpsJobResult(
         run_id=job_run_id or "embedded",
         job_name="publish_discord_ops_alerts",
-        status=JobStatus.SUCCESS,
+        status=status,
         notes=notes,
         artifact_paths=[*rendered.artifact_paths, str(summary_payload_path)],
     )

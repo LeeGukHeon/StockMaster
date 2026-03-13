@@ -6,7 +6,11 @@ from datetime import date
 
 import pandas as pd
 
-from app.common.discord import publish_discord_messages
+from app.common.discord import (
+    DiscordPublishDecision,
+    publish_discord_messages,
+    resolve_discord_publish_decision,
+)
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
@@ -420,29 +424,43 @@ def publish_discord_intraday_postmortem(
                 ranking_version=SELECTION_ENGINE_VERSION,
             )
 
-        render_result = render_intraday_postmortem_report(
-            settings,
-            session_date=session_date,
-            horizons=horizons,
-            dry_run=dry_run,
-        )
-        artifact_paths = list(render_result.artifact_paths)
+        artifact_paths: list[str] = []
         published = False
-        notes = f"Intraday postmortem publish dry-run completed for {session_date.isoformat()}."
+        notes = f"Intraday postmortem publish skipped for {session_date.isoformat()}."
+        manifest_status = "failed"
+        error_message: str | None = None
         try:
+            render_result = render_intraday_postmortem_report(
+                settings,
+                session_date=session_date,
+                horizons=horizons,
+                dry_run=dry_run,
+            )
+            artifact_paths = list(render_result.artifact_paths)
             webhook_url = settings.discord.webhook_url
             messages = render_result.payload.get("messages") or []
-            if not settings.discord.enabled:
+            decision = resolve_discord_publish_decision(
+                enabled=settings.discord.enabled,
+                webhook_url=webhook_url,
+                dry_run=dry_run,
+            )
+            if decision == DiscordPublishDecision.SKIP_DISABLED:
                 notes = (
                     f"Intraday postmortem publish skipped for {session_date.isoformat()}. "
                     "DISCORD_REPORT_ENABLED=false."
                 )
-            elif dry_run or not webhook_url:
-                if not webhook_url:
-                    notes = (
-                        f"Intraday postmortem publish skipped for {session_date.isoformat()}. "
-                        "Webhook URL is not configured."
-                    )
+                manifest_status = "skipped"
+            elif decision == DiscordPublishDecision.SKIP_DRY_RUN:
+                notes = (
+                    f"Intraday postmortem publish dry-run completed for {session_date.isoformat()}."
+                )
+                manifest_status = "skipped"
+            elif decision == DiscordPublishDecision.SKIP_MISSING_WEBHOOK:
+                notes = (
+                    f"Intraday postmortem publish skipped for {session_date.isoformat()}. "
+                    "Webhook URL is not configured."
+                )
+                manifest_status = "skipped"
             else:
                 response_payloads = publish_discord_messages(
                     webhook_url,
@@ -463,15 +481,16 @@ def publish_discord_intraday_postmortem(
                 )
                 artifact_paths.append(str(publish_path))
                 published = True
+                manifest_status = "success"
                 notes = (
                     f"Intraday postmortem publish completed for {session_date.isoformat()}. "
                     f"message_count={len(messages)}"
                 )
         except Exception as exc:
-            notes = (
-                f"Intraday postmortem publish warning for {session_date.isoformat()}: {exc}. "
-                "The report was rendered but publish did not complete."
-            )
+            notes = f"Intraday postmortem publish failed for {session_date.isoformat()}."
+            error_message = str(exc)
+            manifest_status = "failed"
+            raise
         finally:
             with duckdb_connection(settings.paths.duckdb_path) as connection:
                 bootstrap_core_tables(connection)
@@ -479,9 +498,10 @@ def publish_discord_intraday_postmortem(
                     connection,
                     run_id=run_context.run_id,
                     finished_at=now_local(settings.app.timezone),
-                    status="success",
+                    status=manifest_status,
                     output_artifacts=artifact_paths,
                     notes=notes,
+                    error_message=error_message,
                     ranking_version=SELECTION_ENGINE_VERSION,
                 )
         return IntradayPostmortemPublishResult(

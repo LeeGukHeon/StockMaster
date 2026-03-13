@@ -32,7 +32,7 @@ def main() -> int:
             as_of_date=target_date,
             job_run_id=job.run_id,
             dry_run=args.dry_run,
-            critical=False,
+            critical=True,
         )
 
     result = run_standalone_job(
