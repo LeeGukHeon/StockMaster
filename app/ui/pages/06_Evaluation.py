@@ -87,12 +87,12 @@ render_screen_guide(
     bullets=[
         "처음에는 최신 평가 요약과 평가 결과 샘플만 읽어도 충분합니다.",
         "비교표는 우리 추천 모델이 기준선보다 나았는지 확인하는 참고 자료로 보면 됩니다.",
-        "장중 비교와 메타 오버레이는 연구용 참고이며 자동 주문과는 연결되지 않습니다.",
+        "장중 비교와 메타 보정은 연구용 참고이며 자동 주문과는 연결되지 않습니다.",
     ],
 )
 render_warning_banner(
     "INFO",
-    "장중 비교와 메타 오버레이는 연구용 비매매 평가입니다. 자동 주문이나 자동 승격은 없습니다.",
+    "장중 비교와 메타 보정은 연구용 비매매 평가입니다. 자동 주문이나 자동 반영은 없습니다.",
 )
 render_narrative_card(
     "사후 평가 요약",
@@ -236,27 +236,27 @@ render_record_cards(
 )
 render_record_cards(
     policy_walkforward,
-    title="정책 워크포워드",
+    title="정책 기간별 재검증",
     primary_column="policy_template",
     secondary_columns=["scope_type", "horizon"],
     detail_columns=["objective_score", "test_session_count", "manual_review_required_flag"],
     limit=8,
-    empty_message="정책 워크포워드 데이터가 없습니다.",
-    table_expander_label="정책 워크포워드 원본 표 보기",
+    empty_message="정책 기간별 재검증 데이터가 없습니다.",
+    table_expander_label="정책 기간별 재검증 원본 표 보기",
 )
 render_record_cards(
     meta_overlay,
-    title="정책 대비 메타 오버레이",
+    title="정책 대비 메타 보정",
     primary_column="metric_name",
     secondary_columns=["horizon"],
     detail_columns=["policy_only_value", "meta_overlay_value"],
     limit=8,
-    empty_message="메타 오버레이 비교 데이터가 없습니다.",
-    table_expander_label="메타 오버레이 원본 표 보기",
+    empty_message="메타 보정 비교 데이터가 없습니다.",
+    table_expander_label="메타 보정 원본 표 보기",
 )
 render_record_cards(
     meta_regime_breakdown,
-    title="메타 오버레이 구간별 결과",
+    title="메타 보정 구간별 결과",
     primary_column="metric_name",
     secondary_columns=["comparison_value"],
     detail_columns=["policy_only_value", "meta_overlay_value"],
@@ -266,13 +266,13 @@ render_record_cards(
 )
 render_record_cards(
     meta_checkpoint_breakdown,
-    title="메타 오버레이 체크포인트별 결과",
+    title="메타 보정 중간 시각별 결과",
     primary_column="metric_name",
     secondary_columns=["comparison_value"],
     detail_columns=["policy_only_value", "meta_overlay_value"],
     limit=8,
-    empty_message="체크포인트별 메타 비교 데이터가 없습니다.",
-    table_expander_label="체크포인트별 메타 비교 원본 표 보기",
+    empty_message="중간 시각별 메타 비교 데이터가 없습니다.",
+    table_expander_label="중간 시각별 메타 비교 원본 표 보기",
 )
 render_record_cards(
     policy_ablation,

@@ -136,7 +136,7 @@ else:
 
     render_record_cards(
         evaluation_comparison,
-        title="선정 엔진과 설명형 비교",
+        title="현재 추천 모델과 설명형 비교",
         primary_column="metric_name",
         secondary_columns=["horizon"],
         detail_columns=[
@@ -144,7 +144,7 @@ else:
             "explanatory_avg_excess",
         ],
         limit=8,
-        empty_message="비교 평가 데이터가 없습니다.",
+        empty_message="추천 방식 비교 데이터가 없습니다.",
         table_expander_label="비교 평가 원본 표 보기",
     )
 

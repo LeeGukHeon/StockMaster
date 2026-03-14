@@ -154,7 +154,7 @@ def _render_overview(payload: dict[str, object]) -> None:
     metric_a.metric("후보 종목", _safe_int(row.get("candidate_symbols")))
     metric_b.metric("신호 계산", _safe_int(row.get("signal_symbols")))
     metric_c.metric("최종 액션", _safe_int(row.get("final_action_symbols")))
-    metric_d.metric("최근 체크포인트", _latest_checkpoint_text(payload))
+    metric_d.metric("최근 확인 시각", _latest_checkpoint_text(payload))
     bar_latency = _safe_float(row.get("avg_bar_latency_ms"))
     quote_latency = _safe_float(row.get("avg_quote_latency_ms"))
     metric_e.metric(
@@ -170,7 +170,7 @@ def _render_overview(payload: dict[str, object]) -> None:
     with left:
         render_record_cards(
             checkpoint_health,
-            title="저장 세션 체크포인트 처리 현황",
+            title="저장 세션 시각별 처리 현황",
             primary_column="checkpoint_time",
             secondary_columns=["status"],
             detail_columns=[
@@ -180,8 +180,8 @@ def _render_overview(payload: dict[str, object]) -> None:
                 "final_action_symbols",
             ],
             limit=5,
-            empty_message="체크포인트별 현황이 없습니다.",
-            table_expander_label="체크포인트 상세 보기",
+            empty_message="시각별 현황이 없습니다.",
+            table_expander_label="시각별 상세 보기",
         )
     with right:
         render_record_cards(
@@ -279,7 +279,7 @@ def _render_flow(payload: dict[str, object]) -> None:
         )
         render_record_cards(
             signal_frame,
-            title="최근 체크포인트 신호",
+            title="최근 확인 시각 신호",
             primary_column="symbol",
             secondary_columns=["checkpoint_time", "horizon"],
             detail_columns=[
@@ -383,14 +383,14 @@ def _render_results(payload: dict[str, object]) -> None:
 
     sub = st.segmented_control(
         "결과 비교 종류",
-        options=["시점 결과", "전략 추적", "비교 요약", "라인리지"],
+        options=["시점 결과", "전략 추적", "비교 요약", "판단 흐름"],
         default="시점 결과",
     )
 
     if sub == "시점 결과":
         render_record_cards(
             timing_frame,
-            title="체크포인트별 결과",
+            title="확인 시각별 결과",
             primary_column="symbol",
             secondary_columns=["session_date", "selected_checkpoint_time"],
             detail_columns=[
@@ -434,7 +434,7 @@ def _render_results(payload: dict[str, object]) -> None:
     else:
         render_record_cards(
             lineage_frame,
-            title="판단 라인리지",
+            title="판단 흐름",
             primary_column="symbol",
             secondary_columns=["company_name", "selection_date"],
             detail_columns=[
@@ -446,8 +446,8 @@ def _render_results(payload: dict[str, object]) -> None:
                 "gate_status",
             ],
             limit=8,
-            empty_message="라인리지 이력이 없습니다.",
-            table_expander_label="라인리지 원본 보기",
+            empty_message="판단 흐름 이력이 없습니다.",
+            table_expander_label="판단 흐름 원본 보기",
         )
 
 

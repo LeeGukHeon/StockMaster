@@ -67,12 +67,12 @@ render_screen_guide(
     summary="한 종목만 깊게 보고 싶을 때 쓰는 화면입니다. 왜 추천됐는지, 왜 빠졌는지, 이후 결과가 어땠는지를 종목 단위로 확인합니다.",
     bullets=[
         "처음에는 종목 핵심 요약과 가격/밴드, 수급 추이만 봐도 충분합니다.",
-        "장중 판단과 메타 오버레이는 연구용 참고 정보라서 실제 주문 내역이 아니라는 점을 함께 보세요.",
+        "장중 판단과 메타 보정은 연구용 참고 정보라서 실제 주문 내역이 아니라는 점을 함께 보세요.",
     ],
 )
 render_warning_banner(
     "INFO",
-    "장중 판단과 메타 오버레이는 연구용 비매매 출력입니다. 실제 주문은 연결되지 않습니다.",
+    "장중 판단과 메타 보정은 연구용 비매매 출력입니다. 실제 주문은 연결되지 않습니다.",
 )
 
 if not symbol_lookup:
@@ -164,7 +164,7 @@ else:
             render_narrative_card(
                 "최근 장중 판단 기준",
                 (
-                    f"{format_ui_date(session_date)} {format_ui_time(intraday_row.get('checkpoint_time'))} 체크포인트 기준입니다. "
+                    f"{format_ui_date(session_date)} {format_ui_time(intraday_row.get('checkpoint_time'))} 중간 확인 시각 기준입니다. "
                     f"{historical_suffix}"
                 ),
             )
@@ -294,13 +294,13 @@ else:
 
     render_record_cards(
         lineage,
-        title="장중 라인리지 | 저장된 장중 세션 기준",
+        title="장중 판단 흐름 | 저장된 장중 세션 기준",
         primary_column="selection_date",
         secondary_columns=["checkpoint_time", "portfolio_execution_mode"],
         detail_columns=["raw_action", "adjusted_action", "final_action", "gate_status"],
         limit=8,
-        empty_message="라인리지 기록이 없습니다.",
-        table_expander_label="라인리지 원본 표 보기",
+        empty_message="판단 흐름 기록이 없습니다.",
+        table_expander_label="판단 흐름 원본 표 보기",
     )
 
     render_record_cards(
