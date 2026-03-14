@@ -1760,10 +1760,6 @@ def run_weekly_calibration_bundle(
                     objective_version="ip_obj_v1",
                     split_version="wf_40_10_10_step5",
                     search_space_version="pcal_v1",
-                    train_sessions=40,
-                    validation_sessions=10,
-                    test_sessions=10,
-                    step_sessions=5,
                     critical=False,
                 )
                 job.run_step(

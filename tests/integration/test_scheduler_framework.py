@@ -10,6 +10,7 @@ from app.ops.bundles import (
     run_evaluation_bundle,
     run_news_sync_bundle,
     run_ops_maintenance_bundle,
+    run_weekly_calibration_bundle,
 )
 from app.ops.common import JobStatus, TriggerType
 from app.ops.scheduler import get_scheduled_job, read_scheduler_state
@@ -425,3 +426,47 @@ def test_evaluation_bundle_blocks_when_daily_close_outputs_are_stale(
 
     assert result.status == JobStatus.BLOCKED
     assert "required snapshot 'selection_engine_v2' is stale" in result.notes
+
+
+def test_weekly_calibration_bundle_does_not_pass_split_counts_to_calibration(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    noop_result = SimpleNamespace(
+        artifact_paths=[],
+        status=JobStatus.SUCCESS,
+        notes="ok",
+        row_count=0,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_calibration(_settings, **kwargs):
+        captured.update(kwargs)
+        return noop_result
+
+    monkeypatch.setattr("app.ops.bundles.materialize_intraday_policy_candidates", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.run_intraday_policy_calibration", fake_calibration)
+    monkeypatch.setattr("app.ops.bundles.run_intraday_policy_walkforward", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.evaluate_intraday_policy_ablation", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_intraday_policy_recommendations", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.calibrate_intraday_meta_thresholds", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.render_intraday_policy_research_report", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_intraday_research_capability", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._skip_if_intraday_feature_disabled", lambda *a, **k: None)
+
+    result = run_weekly_calibration_bundle(
+        settings,
+        as_of_date=date(2026, 3, 13),
+        force=True,
+        dry_run=False,
+    )
+
+    assert result.status == JobStatus.DEGRADED_SUCCESS
+    assert captured["split_version"] == "wf_40_10_10_step5"
+    assert "train_sessions" not in captured
+    assert "validation_sessions" not in captured
+    assert "test_sessions" not in captured
+    assert "step_sessions" not in captured
