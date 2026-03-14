@@ -28,6 +28,7 @@ from app.ui.helpers import (
     intraday_meta_calibration_frame,
     intraday_meta_confusion_matrix_frame,
     intraday_meta_feature_importance_frame,
+    latest_job_runs_frame,
     latest_intraday_active_policy_frame,
     latest_intraday_meta_active_model_frame,
     latest_intraday_meta_apply_compare_frame,
@@ -47,6 +48,18 @@ from app.ui.helpers import (
 )
 
 settings = load_ui_settings(PROJECT_ROOT)
+
+recent_runs = latest_job_runs_frame(settings, limit=60)
+weekly_calibration_runs = (
+    recent_runs.loc[recent_runs["job_name"].astype(str).eq("run_weekly_calibration_bundle")].copy()
+    if not recent_runs.empty
+    else recent_runs
+)
+weekly_training_runs = (
+    recent_runs.loc[recent_runs["job_name"].astype(str).eq("run_weekly_training_bundle")].copy()
+    if not recent_runs.empty
+    else recent_runs
+)
 
 alpha_training_summary = latest_model_training_summary_frame(settings)
 meta_training_summary = latest_intraday_meta_training_frame(settings, limit=20)
@@ -102,6 +115,26 @@ with action_tab:
 
     with policy_action_tab:
         render_data_sheet(
+            weekly_calibration_runs,
+            title="최근 주말 보정 실행 결과",
+            primary_column="started_at",
+            secondary_columns=["status", "as_of_date"],
+            detail_columns=["notes", "run_id"],
+            limit=2,
+            empty_message="최근 주말 보정 실행 기록이 없습니다.",
+            show_table_expander=False,
+        )
+        render_data_sheet(
+            policy_recommendation,
+            title="주말 보정에서 나온 추천 정책",
+            primary_column="policy_candidate_id",
+            secondary_columns=["recommendation_date", "recommendation_rank"],
+            detail_columns=["horizon", "objective_score", "manual_review_required_flag"],
+            limit=4,
+            empty_message="주말 보정 추천 결과가 아직 화면에 연결되지 않았습니다.",
+            show_table_expander=False,
+        )
+        render_data_sheet(
             active_policy,
             title="현재 운영 정책",
             primary_column="policy_id",
@@ -112,7 +145,7 @@ with action_tab:
         )
         render_data_sheet(
             policy_apply_compare,
-            title="다음 후보 정책",
+            title="주말 보정 결과로 올라온 다음 정책",
             primary_column="policy_id",
             secondary_columns=["recommendation_label", "recommendation_date"],
             detail_columns=["status", "recommended_action", "score"],
@@ -156,6 +189,26 @@ with action_tab:
 
     with meta_action_tab:
         render_data_sheet(
+            weekly_training_runs,
+            title="최근 주말 학습 실행 결과",
+            primary_column="started_at",
+            secondary_columns=["status", "as_of_date"],
+            detail_columns=["notes", "run_id"],
+            limit=2,
+            empty_message="최근 주말 학습 실행 기록이 없습니다.",
+            show_table_expander=False,
+        )
+        render_data_sheet(
+            meta_training_summary,
+            title="주말 학습에서 나온 메타 후보",
+            primary_column="model_id",
+            secondary_columns=["status", "horizon"],
+            detail_columns=["train_end_date", "created_at", "row_count"],
+            limit=4,
+            empty_message="주말 학습 메타 후보가 아직 화면에 연결되지 않았습니다.",
+            show_table_expander=False,
+        )
+        render_data_sheet(
             active_meta_models,
             title="현재 운영 메타 모델",
             primary_column="model_id",
@@ -166,7 +219,7 @@ with action_tab:
         )
         render_data_sheet(
             meta_apply_compare,
-            title="다음 후보 메타 모델",
+            title="주말 학습 결과로 올라온 다음 메타 모델",
             primary_column="model_id",
             secondary_columns=["status", "horizon"],
             detail_columns=["train_end_date", "score", "recommended_action"],
