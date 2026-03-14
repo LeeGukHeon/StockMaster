@@ -2059,6 +2059,25 @@ def _evaluation_recommendation_seed_rows(
     return pd.DataFrame(seed_rows).reset_index(drop=True)
 
 
+def _dedupe_ablation_base_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    working = frame.copy()
+    order_columns = [
+        column
+        for column in ["horizon", "policy_candidate_id", "scope_type", "scope_key"]
+        if column in working.columns
+    ]
+    if order_columns:
+        working = working.sort_values(order_columns, kind="stable").reset_index(drop=True)
+    dedupe_columns = [
+        column for column in ["horizon", "policy_candidate_id"] if column in working.columns
+    ]
+    if not dedupe_columns:
+        return working.reset_index(drop=True)
+    return working.drop_duplicates(subset=dedupe_columns, keep="first").reset_index(drop=True)
+
+
 def _fallback_scope_candidates(
     scope_type: str, scope_key: str, horizon: int
 ) -> list[tuple[str, str]]:
@@ -2389,6 +2408,7 @@ def evaluate_intraday_policy_ablation(
                         as_of_date=end_session_date,
                         horizons=horizons,
                     )
+                base_rows = _dedupe_ablation_base_rows(base_rows)
                 if base_rows.empty:
                     notes = "No latest recommendation rows were available for ablation."
                     record_run_finish(
