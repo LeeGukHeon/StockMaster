@@ -42,30 +42,32 @@ def inject_app_styles() -> None:
         """
         <style>
         :root {
-            --sm-ink: #14231f;
-            --sm-muted: #53625d;
+            --sm-ink: #182126;
+            --sm-muted: #5f6b74;
             --sm-accent: #0f766e;
-            --sm-accent-soft: rgba(15, 118, 110, 0.14);
-            --sm-highlight: #b45309;
-            --sm-paper: rgba(255, 252, 247, 0.88);
-            --sm-panel: rgba(255, 255, 255, 0.72);
-            --sm-border: rgba(20, 35, 31, 0.11);
-            --sm-shadow: 0 18px 40px rgba(61, 42, 24, 0.08);
+            --sm-accent-soft: rgba(15, 118, 110, 0.12);
+            --sm-highlight: #9a3412;
+            --sm-paper: #f7f2ea;
+            --sm-panel: rgba(255, 255, 255, 0.82);
+            --sm-panel-strong: rgba(255, 255, 255, 0.94);
+            --sm-border: rgba(24, 33, 38, 0.12);
+            --sm-rule: rgba(24, 33, 38, 0.07);
+            --sm-shadow: 0 16px 36px rgba(38, 33, 25, 0.07);
         }
         .stApp {
             background:
-                radial-gradient(circle at 12% 10%, rgba(15, 118, 110, 0.16), transparent 28%),
-                radial-gradient(circle at 88% 8%, rgba(180, 83, 9, 0.14), transparent 24%),
-                linear-gradient(180deg, #f6f1e8 0%, #f1eadf 42%, #ece3d7 100%);
+                radial-gradient(circle at 12% 10%, rgba(15, 118, 110, 0.13), transparent 24%),
+                radial-gradient(circle at 90% 4%, rgba(154, 52, 18, 0.10), transparent 20%),
+                linear-gradient(180deg, #f8f3eb 0%, #f1e8dd 46%, #ebdfd2 100%);
             color: var(--sm-ink);
         }
         html, body, [class*="css"]  {
             font-family: "SUIT Variable", "Pretendard Variable", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
         }
         .block-container {
-            max-width: 1220px;
-            padding-top: 1.2rem;
-            padding-bottom: 1.4rem;
+            max-width: 1180px;
+            padding-top: 1rem;
+            padding-bottom: 1.3rem;
         }
         h1, h2, h3 {
             color: var(--sm-ink);
@@ -78,13 +80,13 @@ def inject_app_styles() -> None:
         .sm-badge {
             display:inline-flex; align-items:center; gap:0.4rem;
             padding:0.34rem 0.78rem; border-radius:999px; color:white;
-            font-size:0.82rem; font-weight:700; box-shadow:0 10px 24px rgba(20,35,31,0.12);
+            font-size:0.79rem; font-weight:700; box-shadow:0 8px 18px rgba(20,35,31,0.10);
         }
         .sm-banner {
-            border-radius:18px; padding:0.95rem 1.05rem; margin:0.45rem 0 1rem 0;
+            border-radius:20px; padding:1rem 1.05rem; margin:0.45rem 0 1rem 0;
             border:1px solid rgba(20,35,31,0.08);
-            border-left:6px solid transparent;
-            background:linear-gradient(135deg, rgba(255,255,255,0.84), rgba(255,249,240,0.72));
+            border-left:5px solid transparent;
+            background:linear-gradient(145deg, rgba(255,255,255,0.86), rgba(251,247,241,0.74));
             box-shadow: var(--sm-shadow);
         }
         .sm-footer {
@@ -92,17 +94,20 @@ def inject_app_styles() -> None:
             color:var(--sm-muted); font-size:0.85rem;
         }
         .sm-card {
-            border:1px solid var(--sm-border); border-radius:22px; padding:1rem 1.08rem;
-            background:linear-gradient(160deg, rgba(255,255,255,0.9), rgba(251,247,240,0.82));
-            box-shadow: var(--sm-shadow); backdrop-filter: blur(12px); margin-bottom:1rem;
+            border:1px solid var(--sm-border);
+            border-radius:20px;
+            padding:1rem 1.05rem;
+            background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(247,242,235,0.88));
+            box-shadow: var(--sm-shadow);
+            margin-bottom:0.9rem;
         }
-        .sm-card h4 {margin:0 0 0.28rem 0; font-size:1.02rem; color:var(--sm-ink);}
-        .sm-card p {margin:0; color:var(--sm-muted); line-height:1.68;}
+        .sm-card h4 {margin:0 0 0.34rem 0; font-size:1.01rem; color:var(--sm-ink);}
+        .sm-card p {margin:0; color:var(--sm-muted); line-height:1.66;}
         .sm-guide {
             border:1px solid rgba(15,118,110,0.16);
-            border-radius:22px;
-            padding:1.05rem 1.1rem 0.9rem 1.1rem;
-            background:linear-gradient(145deg, rgba(235,247,245,0.9), rgba(255,251,245,0.9));
+            border-radius:20px;
+            padding:1rem 1.05rem 0.9rem 1.05rem;
+            background:linear-gradient(145deg, rgba(236,248,246,0.94), rgba(255,251,246,0.92));
             box-shadow: var(--sm-shadow);
             margin:0.25rem 0 1rem 0;
         }
@@ -112,66 +117,88 @@ def inject_app_styles() -> None:
         .sm-guide li {margin:0.18rem 0;}
         .sm-report-preview {
             border:1px solid var(--sm-border);
-            border-radius:22px;
+            border-radius:20px;
             padding:1rem 1.05rem;
-            background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(248,244,237,0.92));
+            background:linear-gradient(180deg, rgba(255,255,255,0.94), rgba(249,244,236,0.92));
             box-shadow: var(--sm-shadow);
         }
         .sm-report-preview p,
         .sm-report-preview li {
             line-height:1.7;
         }
-        .sm-record-card {
+        .sm-sheet {
+            display:flex;
+            flex-direction:column;
+            gap:0.68rem;
+            margin:0.55rem 0 1rem 0;
+        }
+        .sm-sheet-row {
             border:1px solid var(--sm-border);
-            border-radius:22px;
-            padding:1rem 1.05rem;
-            margin-bottom:0.78rem;
-            background:linear-gradient(160deg, rgba(255,255,255,0.94), rgba(249,245,238,0.84));
+            border-radius:18px;
+            padding:0.92rem 0.98rem;
+            background:linear-gradient(180deg, var(--sm-panel-strong), rgba(249,244,238,0.92));
             box-shadow: var(--sm-shadow);
         }
-        .sm-record-primary {
-            font-size:1.02rem;
+        .sm-sheet-head {
+            display:flex;
+            align-items:flex-start;
+            justify-content:space-between;
+            gap:0.7rem;
+        }
+        .sm-sheet-kicker {
+            margin:0 0 0.18rem 0;
+            color:#6a7a75;
+            font-size:0.72rem;
+            letter-spacing:0.08em;
+            font-weight:800;
+            text-transform:uppercase;
+        }
+        .sm-sheet-title {
+            margin:0;
+            font-size:1rem;
             font-weight:800;
             color:var(--sm-ink);
             letter-spacing:-0.02em;
         }
-        .sm-record-secondary {
-            margin-top:0.2rem;
+        .sm-sheet-secondary {
+            margin-top:0.25rem;
             color:var(--sm-muted);
             font-size:0.86rem;
+            line-height:1.58;
         }
-        .sm-record-grid {
+        .sm-sheet-grid {
             display:grid;
-            grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
-            gap:0.62rem 0.8rem;
-            margin-top:0.82rem;
+            grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+            gap:0.55rem 0.7rem;
+            margin-top:0.78rem;
         }
-        .sm-record-item {
-            padding:0.66rem 0.72rem;
-            border-radius:16px;
-            background:rgba(255,255,255,0.62);
-            border:1px solid rgba(20,35,31,0.08);
+        .sm-sheet-item {
+            padding:0.02rem 0;
+            border-top:1px solid var(--sm-rule);
         }
-        .sm-record-label {
-            font-size:0.74rem;
+        .sm-sheet-item:first-child {
+            border-top:none;
+        }
+        .sm-sheet-label {
+            font-size:0.73rem;
             font-weight:700;
-            letter-spacing:0.02em;
+            letter-spacing:0.04em;
             text-transform:uppercase;
             color:#6a7a75;
         }
-        .sm-record-value {
-            margin-top:0.18rem;
+        .sm-sheet-value {
+            margin-top:0.16rem;
             color:var(--sm-ink);
-            font-size:0.96rem;
+            font-size:0.92rem;
             font-weight:700;
             line-height:1.42;
             word-break:break-word;
         }
         div[data-testid="stMetric"] {
-            background:linear-gradient(160deg, rgba(255,255,255,0.92), rgba(248,243,235,0.86));
+            background:linear-gradient(180deg, rgba(255,255,255,0.94), rgba(248,243,235,0.90));
             border:1px solid var(--sm-border);
-            border-radius:22px;
-            padding:0.8rem 0.95rem;
+            border-radius:18px;
+            padding:0.78rem 0.92rem;
             box-shadow: var(--sm-shadow);
         }
         div[data-testid="stMetricLabel"] {
@@ -194,15 +221,15 @@ def inject_app_styles() -> None:
         }
         div[data-testid="stDataFrame"] {
             border:1px solid var(--sm-border);
-            border-radius:22px;
+            border-radius:18px;
             overflow:hidden;
-            background:rgba(255,255,255,0.74);
+            background:rgba(255,255,255,0.78);
             box-shadow: var(--sm-shadow);
         }
         div[data-testid="stExpander"] {
             border:1px solid var(--sm-border);
-            border-radius:20px;
-            background:rgba(255,255,255,0.56);
+            border-radius:18px;
+            background:rgba(255,255,255,0.62);
             box-shadow: var(--sm-shadow);
         }
         .stTabs [role="tablist"] {
@@ -233,8 +260,8 @@ def inject_app_styles() -> None:
         }
         @media (max-width: 900px) {
             .block-container {
-                padding-left: 0.8rem;
-                padding-right: 0.8rem;
+                padding-left: 0.7rem;
+                padding-right: 0.7rem;
             }
             [data-testid="column"] {
                 min-width: 100% !important;
@@ -247,17 +274,19 @@ def inject_app_styles() -> None:
             .sm-card,
             .sm-guide,
             .sm-report-preview,
-            .sm-record-card,
+            .sm-sheet-row,
             div[data-testid="stMetric"],
             div[data-testid="stDataFrame"] {
-                border-radius:16px;
-                padding:0.85rem 0.9rem;
+                border-radius:15px;
             }
             h1 {
-                font-size: 1.8rem !important;
+                font-size: 1.7rem !important;
             }
-            [data-testid="stDataFrame"] {
-                font-size: 0.82rem;
+            .sm-sheet-head {
+                flex-direction:column;
+            }
+            .sm-sheet-grid {
+                grid-template-columns:1fr;
             }
             [data-testid="stTabs"] button {
                 padding-left: 0.5rem !important;
@@ -274,7 +303,7 @@ def _status_badge_html(status: str, *, label: str | None = None) -> str:
     normalized = str(status).upper()
     default_label, color = STATUS_BADGE_META.get(normalized, (normalized, "#334155"))
     display = label or default_label
-    return f'<span class="sm-badge" style="background:{color};">{display}</span>'
+    return f'<span class="sm-badge" style="background:{color};">{escape(str(display))}</span>'
 
 
 def render_status_badges(items: Iterable[tuple[str, str]]) -> None:
@@ -335,6 +364,114 @@ def _display_value(value: object) -> str:
     return text if text and text not in {"nan", "NaN", "NaT", "None"} else "-"
 
 
+def _existing_columns(frame, columns: Iterable[str]) -> list[str]:
+    return [column for column in columns if column in frame.columns]
+
+
+def _localized_display(frame, columns: list[str] | None = None):
+    display = frame.copy() if not columns else frame[columns].copy()
+    localized = localize_frame(display)
+    label_map = dict(zip(display.columns, localized.columns, strict=False))
+    return localized, label_map
+
+
+def _row_badge_html(row: dict[str, object], label_map: dict[str, str], columns: Iterable[str]) -> str:
+    for column in columns:
+        if column not in label_map:
+            continue
+        value = _display_value(row.get(label_map[column]))
+        normalized = value.upper()
+        if normalized not in STATUS_BADGE_META:
+            continue
+        if not any(token in column.lower() for token in ("status", "severity", "warning_level", "decision")):
+            continue
+        return _status_badge_html(normalized, label=value)
+    return ""
+
+
+def render_data_sheet(
+    frame,
+    *,
+    title: str,
+    primary_column: str | None = None,
+    secondary_columns: list[str] | None = None,
+    detail_columns: list[str] | None = None,
+    limit: int = 5,
+    empty_message: str = "표시할 데이터가 없습니다.",
+    show_table_expander: bool = True,
+    table_expander_label: str = "원본 표 보기",
+    caption: str | None = None,
+) -> None:
+    st.subheader(title)
+    if caption:
+        st.caption(caption)
+    if frame.empty:
+        st.info(empty_message)
+        return
+
+    secondary_columns = secondary_columns or []
+    if primary_column is None:
+        primary_column = str(frame.columns[0]) if len(frame.columns) > 0 else None
+
+    if detail_columns is None:
+        excluded = {primary_column, *secondary_columns}
+        detail_columns = [column for column in frame.columns if column not in excluded]
+
+    selected_columns = _existing_columns(
+        frame,
+        [column for column in [primary_column, *secondary_columns, *detail_columns] if column is not None],
+    )
+    localized, label_map = _localized_display(frame, selected_columns or None)
+    primary_label = label_map.get(primary_column) if primary_column else None
+
+    if not primary_label:
+        st.caption("모바일 요약용 기준 열을 찾지 못해 전체 표만 표시합니다.")
+        st.dataframe(localized, width="stretch", hide_index=True)
+        return
+
+    st.caption("모바일에서는 핵심 필드만 우선 보여주고, 전체 표는 아래 접기 영역에 유지합니다.")
+    rows = localized.head(limit).to_dict(orient="records")
+    row_markup: list[str] = []
+    for row in rows:
+        title_value = _display_value(row.get(primary_label))
+        secondary_values = [
+            _display_value(row.get(label_map[column]))
+            for column in secondary_columns
+            if column in label_map
+        ]
+        secondary_values = [value for value in secondary_values if value != "-"]
+        secondary_html = (
+            f'<div class="sm-sheet-secondary">{escape(" · ".join(secondary_values))}</div>'
+            if secondary_values
+            else ""
+        )
+
+        detail_parts: list[str] = []
+        for column in detail_columns:
+            if column not in label_map:
+                continue
+            label = label_map[column]
+            value = _display_value(row.get(label))
+            detail_parts.append(
+                f'<div class="sm-sheet-item"><div class="sm-sheet-label">{escape(str(label))}</div>'
+                f'<div class="sm-sheet-value">{escape(str(value))}</div></div>'
+            )
+        detail_html = f'<div class="sm-sheet-grid">{"".join(detail_parts)}</div>' if detail_parts else ""
+        badge_html = _row_badge_html(row, label_map, [*secondary_columns, *detail_columns])
+        row_markup.append(
+            '<section class="sm-sheet-row">'
+            '<div class="sm-sheet-head">'
+            f'<div><p class="sm-sheet-kicker">{escape(str(primary_label))}</p>'
+            f'<h4 class="sm-sheet-title">{escape(str(title_value))}</h4>{secondary_html}</div>'
+            f"{badge_html}</div>{detail_html}</section>"
+        )
+    st.markdown(f'<div class="sm-sheet">{"".join(row_markup)}</div>', unsafe_allow_html=True)
+
+    if show_table_expander:
+        with st.expander(table_expander_label, expanded=False):
+            st.dataframe(localized, width="stretch", hide_index=True)
+
+
 def render_record_cards(
     frame,
     *,
@@ -347,62 +484,17 @@ def render_record_cards(
     show_table_expander: bool = True,
     table_expander_label: str = "원본 표 보기",
 ) -> None:
-    st.subheader(title)
-    if frame.empty:
-        st.info(empty_message)
-        return
-
-    secondary_columns = secondary_columns or []
-    detail_columns = detail_columns or []
-    selected_columns = [
-        column
-        for column in [primary_column, *secondary_columns, *detail_columns]
-        if column in frame.columns
-    ]
-    display = frame[selected_columns].copy()
-    localized = localize_frame(display)
-    localized_columns = list(localized.columns)
-    label_map = dict(zip(selected_columns, localized_columns, strict=False))
-
-    if primary_column not in label_map:
-        st.dataframe(localized, width="stretch", hide_index=True)
-        return
-
-    rows = localized.head(limit).to_dict(orient="records")
-    for row in rows:
-        primary_value = _display_value(row.get(label_map[primary_column]))
-        secondary_text = " · ".join(
-            _display_value(row.get(label_map[column]))
-            for column in secondary_columns
-            if column in label_map
-        )
-        detail_parts: list[str] = []
-        for column in detail_columns:
-            if column not in label_map:
-                continue
-            label = label_map[column]
-            value = _display_value(row.get(label))
-            detail_parts.append(
-                f'<div class="sm-record-item"><div class="sm-record-label">{escape(str(label))}</div>'
-                f'<div class="sm-record-value">{escape(str(value))}</div></div>'
-            )
-        secondary_html = (
-            f'<div class="sm-record-secondary">{escape(str(secondary_text))}</div>'
-            if secondary_text
-            else ""
-        )
-        detail_html = f'<div class="sm-record-grid">{"".join(detail_parts)}</div>' if detail_parts else ""
-        st.markdown(
-            (
-                f'<div class="sm-record-card"><div class="sm-record-primary">{escape(str(primary_value))}</div>'
-                f"{secondary_html}{detail_html}</div>"
-            ),
-            unsafe_allow_html=True,
-        )
-
-    if show_table_expander:
-        with st.expander(table_expander_label, expanded=False):
-            st.dataframe(localized, width="stretch", hide_index=True)
+    render_data_sheet(
+        frame,
+        title=title,
+        primary_column=primary_column,
+        secondary_columns=secondary_columns,
+        detail_columns=detail_columns,
+        limit=limit,
+        empty_message=empty_message,
+        show_table_expander=show_table_expander,
+        table_expander_label=table_expander_label,
+    )
 
 
 def _latest_snapshot_row(settings: Settings) -> dict[str, object] | None:
@@ -516,17 +608,18 @@ def render_report_center(settings: Settings, *, limit: int = 12) -> None:
         st.info("리포트 목록이 없습니다. `build_report_index.py`를 먼저 실행하세요.")
         return
 
-    display = reports[
-        [
-            "report_type",
-            "as_of_date",
-            "generated_ts",
-            "status",
-            "published_flag",
-            "dry_run_flag",
-        ]
-    ].copy()
-    st.dataframe(localize_frame(display), width="stretch", hide_index=True)
+    render_data_sheet(
+        reports,
+        title="리포트 센터",
+        primary_column="report_type",
+        secondary_columns=["status", "as_of_date"],
+        detail_columns=["generated_ts", "published_flag", "dry_run_flag"],
+        limit=limit,
+        empty_message="리포트 목록이 없습니다. `build_report_index.py`를 먼저 실행하세요.",
+        show_table_expander=True,
+        table_expander_label="리포트 전체 표 보기",
+        caption="모바일에서는 리포트 상태와 발행 여부를 먼저 읽고, 원본 표는 필요할 때만 펼칩니다.",
+    )
 
 
 def render_release_candidate_summary(settings: Settings, *, limit: int = 12) -> None:
@@ -535,10 +628,17 @@ def render_release_candidate_summary(settings: Settings, *, limit: int = 12) -> 
         st.info("릴리스 점검 결과가 없습니다. `validate_release_candidate.py`를 실행하세요.")
         return
 
-    display = checks[
-        ["check_ts", "check_name", "status", "severity", "recommended_action"]
-    ].copy()
-    st.dataframe(localize_frame(display), width="stretch", hide_index=True)
+    render_data_sheet(
+        checks,
+        title="릴리스 후보 점검",
+        primary_column="check_name",
+        secondary_columns=["status", "severity"],
+        detail_columns=["check_ts", "recommended_action"],
+        limit=limit,
+        empty_message="릴리스 점검 결과가 없습니다. `validate_release_candidate.py`를 실행하세요.",
+        show_table_expander=True,
+        table_expander_label="릴리스 점검 전체 표 보기",
+    )
 
 
 def render_glossary_hint(term: str) -> None:

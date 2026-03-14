@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.ui.components import (
+    render_data_sheet,
     render_narrative_card,
     render_page_footer,
     render_page_header,
@@ -40,7 +41,6 @@ from app.ui.helpers import (
     latest_step_failure_frame,
     latest_successful_pipeline_output_frame,
     load_ui_settings,
-    localize_frame,
     scheduler_job_catalog_frame,
 )
 
@@ -71,18 +71,20 @@ render_page_header(
     settings,
     page_name="헬스 대시보드",
     title="헬스 대시보드",
-    description="운영 상태, 스케줄러 상태, 장중 리서치 기능 준비도, 복구 대기열을 한 화면에서 확인합니다.",
+    description="운영 상태, 스케줄러, 장중 리서치, KRX 상태를 표 대신 모바일용 시트로 확인하는 화면입니다.",
 )
 render_screen_guide(
-    summary="서버와 배치가 건강한지 보는 화면입니다. 투자 판단용 화면이 아니라, 시스템이 정상적으로 돌아가는지 확인하는 운영 점검판입니다.",
+    summary="한 화면에 모든 표를 밀어넣지 않고, 섹션을 나눠 필요한 운영 상태만 선택해 볼 수 있게 재구성했습니다.",
     bullets=[
-        "먼저 전체 헬스 요약과 스케줄러 상태를 보세요.",
-        "문제가 있으면 활성 락, 복구 대기열, 경고 순서로 내려가며 원인을 확인하면 됩니다.",
+        "개요에서는 전체 헬스와 최신 정상 산출물을 먼저 확인합니다.",
+        "스케줄에서는 의존성, 스케줄러 카탈로그, 실행 이력을 봅니다.",
+        "장중·KRX에서는 리서치 기능 상태와 KRX 호출 상태를 확인합니다.",
+        "운영에서는 디스크, 정리 이력, 복구 대기열, 경고를 봅니다.",
     ],
 )
 render_warning_banner(
     "INFO",
-    "장중 리서치 기능은 리서치 전용 / 비매매 기준으로 켜져 있습니다. 자동 주문과 자동 승격은 수행하지 않습니다.",
+    "장중 리서치 기능은 리서치 전용 / 비매매 기준으로만 체크됩니다. 자동 주문과 자동 배포는 여기에 포함되지 않습니다.",
 )
 
 if health.empty:
@@ -100,102 +102,170 @@ else:
         ),
     )
 
-summary_left, summary_right = st.columns(2)
-with summary_left:
-    st.subheader("전체 헬스 요약")
-    st.dataframe(localize_frame(health), width="stretch", hide_index=True)
-with summary_right:
-    st.subheader("최신 정상 산출물")
-    st.dataframe(localize_frame(latest_outputs), width="stretch", hide_index=True)
+view = st.segmented_control(
+    "헬스 보기",
+    options=["개요", "스케줄", "장중·KRX", "운영"],
+    default="개요",
+)
 
-st.subheader("의존성 준비 상태")
-st.dataframe(localize_frame(dependencies), width="stretch", hide_index=True)
-
-scheduler_left, scheduler_right = st.columns(2)
-with scheduler_left:
-    st.subheader("스케줄러 카탈로그")
-    st.dataframe(localize_frame(scheduler_catalog), width="stretch", hide_index=True)
-with scheduler_right:
-    st.subheader("스케줄러 상태")
-    if scheduler_state.empty:
-        st.info("최근 scheduler 상태가 없습니다.")
-    else:
-        st.dataframe(localize_frame(scheduler_state), width="stretch", hide_index=True)
-
-with st.expander("최근 스케줄러 실행 이력", expanded=False):
-    if scheduler_runs.empty:
-        st.info("최근 scheduler bundle 결과가 없습니다.")
-    else:
-        st.dataframe(localize_frame(scheduler_runs), width="stretch", hide_index=True)
-
-intraday_left, intraday_right = st.columns(2)
-with intraday_left:
-    st.subheader("장중 리서치 기능 상태")
-    st.dataframe(localize_frame(intraday_capability), width="stretch", hide_index=True)
-    st.subheader("장중 동일 종료 비교")
-    st.dataframe(localize_frame(intraday_strategy), width="stretch", hide_index=True)
-with intraday_right:
-    st.subheader("장중 타이밍 보정")
-    st.dataframe(localize_frame(intraday_calibration), width="stretch", hide_index=True)
-
-krx_left, krx_right = st.columns(2)
-with krx_left:
-    st.subheader("KRX Live 서비스 상태")
-    if krx_status.empty:
-        st.info("아직 KRX live 상태 스냅샷이 없습니다.")
-    else:
-        st.dataframe(localize_frame(krx_status), width="stretch", hide_index=True)
-    st.subheader("KRX 요청 예산")
-    if krx_budget.empty:
-        st.info("아직 KRX 요청 예산 스냅샷이 없습니다.")
-    else:
-        st.dataframe(localize_frame(krx_budget), width="stretch", hide_index=True)
-with krx_right:
-    st.subheader("KRX 서비스 레지스트리")
-    st.dataframe(localize_frame(krx_registry), width="stretch", hide_index=True)
+if view == "개요":
+    render_data_sheet(
+        health,
+        title="전체 헬스 요약",
+        primary_column="component_name",
+        secondary_columns=["status", "health_scope"],
+        detail_columns=["snapshot_ts", "status_reason", "action_hint"],
+        limit=12,
+        empty_message="헬스 요약이 없습니다.",
+    )
+    render_data_sheet(
+        latest_outputs,
+        title="최신 정상 산출물",
+        limit=10,
+        empty_message="최신 정상 산출물이 없습니다.",
+    )
+    render_data_sheet(
+        alerts,
+        title="열린 경고",
+        primary_column="message",
+        secondary_columns=["severity", "component_name"],
+        detail_columns=["created_at", "alert_type", "status"],
+        limit=8,
+        empty_message="열린 경고가 없습니다.",
+        table_expander_label="경고 전체 표 보기",
+    )
+elif view == "스케줄":
+    render_data_sheet(
+        dependencies,
+        title="의존성 준비 상태",
+        primary_column="dependency_name",
+        secondary_columns=["status", "required_date"],
+        detail_columns=["latest_available_date", "lag_days", "status_reason"],
+        limit=12,
+        empty_message="의존성 상태가 없습니다.",
+    )
+    render_data_sheet(
+        scheduler_catalog,
+        title="스케줄러 카탈로그",
+        limit=10,
+        empty_message="스케줄러 카탈로그가 없습니다.",
+    )
+    render_data_sheet(
+        scheduler_state,
+        title="스케줄러 상태",
+        limit=10,
+        empty_message="최근 스케줄러 상태가 없습니다.",
+    )
+    render_data_sheet(
+        scheduler_runs,
+        title="최근 스케줄러 실행 이력",
+        primary_column="job_name",
+        secondary_columns=["status", "as_of_date"],
+        detail_columns=["started_at", "finished_at", "run_id"],
+        limit=10,
+        empty_message="최근 scheduler bundle 결과가 없습니다.",
+        table_expander_label="스케줄러 실행 전체 표 보기",
+    )
+elif view == "장중·KRX":
+    render_data_sheet(
+        intraday_capability,
+        title="장중 리서치 기능 상태",
+        limit=8,
+        empty_message="장중 리서치 기능 상태가 없습니다.",
+    )
+    render_data_sheet(
+        intraday_strategy,
+        title="장중 동일 종료 비교",
+        limit=8,
+        empty_message="장중 전략 비교 결과가 없습니다.",
+    )
+    render_data_sheet(
+        intraday_calibration,
+        title="장중 타이밍 보정",
+        limit=8,
+        empty_message="장중 타이밍 보정 결과가 없습니다.",
+    )
+    render_data_sheet(
+        krx_status,
+        title="KRX Live 서비스 상태",
+        limit=8,
+        empty_message="아직 KRX live 상태 스냅샷이 없습니다.",
+    )
+    render_data_sheet(
+        krx_budget,
+        title="KRX 요청 예산",
+        limit=8,
+        empty_message="아직 KRX 요청 예산 스냅샷이 없습니다.",
+    )
+    render_data_sheet(
+        krx_registry,
+        title="KRX 서비스 레지스트리",
+        limit=8,
+        empty_message="KRX 서비스 레지스트리가 없습니다.",
+    )
     with st.expander("KRX 요청 로그 / 출처 표기", expanded=False):
-        if krx_logs.empty:
-            st.info("아직 KRX 요청 로그가 없습니다.")
-        else:
-            st.dataframe(localize_frame(krx_logs), width="stretch", hide_index=True)
-        if krx_attribution.empty:
-            st.info("아직 KRX 출처 표기 스냅샷이 없습니다.")
-        else:
-            st.dataframe(localize_frame(krx_attribution), width="stretch", hide_index=True)
-
-run_left, run_right = st.columns(2)
-with run_left:
-    st.subheader("최근 실행 이력")
-    st.dataframe(localize_frame(runs), width="stretch", hide_index=True)
-with run_right:
-    st.subheader("단계 실패 탐색기")
+        render_data_sheet(
+            krx_logs,
+            title="KRX 요청 로그",
+            limit=10,
+            empty_message="아직 KRX 요청 로그가 없습니다.",
+            show_table_expander=False,
+        )
+        render_data_sheet(
+            krx_attribution,
+            title="KRX 출처 표기",
+            limit=10,
+            empty_message="아직 KRX 출처 표기 스냅샷이 없습니다.",
+            show_table_expander=False,
+        )
+else:
+    render_data_sheet(
+        runs,
+        title="최근 실행 이력",
+        primary_column="job_name",
+        secondary_columns=["status", "as_of_date"],
+        detail_columns=["started_at", "finished_at", "run_id"],
+        limit=12,
+        empty_message="최근 실행 이력이 없습니다.",
+    )
     if step_failures.empty:
         st.success("최근 단계 실패가 없습니다.")
     else:
-        st.dataframe(localize_frame(step_failures), width="stretch", hide_index=True)
-
-ops_left, ops_right = st.columns(2)
-with ops_left:
-    st.subheader("디스크 사용량 / 워터마크")
-    st.dataframe(localize_frame(disk_events), width="stretch", hide_index=True)
-    st.subheader("보관 / 정리 이력")
-    st.dataframe(localize_frame(cleanup_history), width="stretch", hide_index=True)
-with ops_right:
-    st.subheader("활성 락")
+        render_data_sheet(
+            step_failures,
+            title="단계 실패 탐색기",
+            primary_column="step_name",
+            secondary_columns=["job_name", "status"],
+            detail_columns=["failed_at", "error_message"],
+            limit=10,
+            empty_message="최근 단계 실패가 없습니다.",
+        )
+    render_data_sheet(
+        disk_events,
+        title="디스크 사용량 / 워터마크",
+        limit=10,
+        empty_message="디스크 워터마크 이력이 없습니다.",
+    )
+    render_data_sheet(
+        cleanup_history,
+        title="보관 / 정리 이력",
+        limit=10,
+        empty_message="보관 정책 정리 이력이 없습니다.",
+    )
     if locks.empty:
         st.success("활성 락이 없습니다.")
     else:
-        st.dataframe(localize_frame(locks), width="stretch", hide_index=True)
-    st.subheader("복구 대기열")
-    if recovery.empty:
-        st.info("현재 복구 대기열은 비어 있습니다.")
-    else:
-        st.dataframe(localize_frame(recovery), width="stretch", hide_index=True)
-
-st.subheader("경고")
-if alerts.empty:
-    st.success("열린 경고가 없습니다.")
-else:
-    st.dataframe(localize_frame(alerts), width="stretch", hide_index=True)
+        render_data_sheet(
+            locks,
+            title="활성 락",
+            limit=8,
+            empty_message="활성 락이 없습니다.",
+        )
+    render_data_sheet(
+        recovery,
+        title="복구 대기열",
+        limit=10,
+        empty_message="현재 복구 대기열은 비어 있습니다.",
+    )
 
 render_page_footer(settings, page_name="헬스 대시보드")

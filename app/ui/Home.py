@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ui.components import (
     inject_app_styles,
+    render_data_sheet,
     render_narrative_card,
     render_page_footer,
     render_report_preview,
@@ -44,7 +45,6 @@ from app.ui.helpers import (
     latest_ui_freshness_frame,
     leaderboard_frame,
     load_ui_settings,
-    localize_frame,
 )
 from app.ui.navigation import build_navigation_registry
 
@@ -349,7 +349,6 @@ def render_today_page() -> None:
     else:
         report_left, report_right = st.columns((2, 1))
         with report_left:
-            st.subheader("통합 리포트 센터")
             render_report_center(settings, limit=12)
         with report_right:
             render_record_cards(
@@ -396,11 +395,16 @@ def render_today_page() -> None:
                     )
 
         if not latest_reports.empty:
-            st.subheader("최신 리포트")
-            display = latest_reports[
-                ["report_type", "as_of_date", "generated_ts", "status", "published_flag"]
-            ].copy()
-            st.dataframe(localize_frame(display), width="stretch", hide_index=True)
+            render_data_sheet(
+                latest_reports,
+                title="최신 리포트",
+                primary_column="report_type",
+                secondary_columns=["status", "as_of_date"],
+                detail_columns=["generated_ts", "published_flag"],
+                limit=8,
+                empty_message="최신 리포트가 없습니다.",
+                table_expander_label="최신 리포트 전체 표 보기",
+            )
 
     render_page_footer(settings, page_name="오늘")
 
