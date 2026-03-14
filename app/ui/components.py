@@ -87,7 +87,7 @@ def inject_app_styles() -> None:
             border:1px solid rgba(20,35,31,0.08);
             border-left:5px solid transparent;
             background:linear-gradient(145deg, rgba(255,255,255,0.86), rgba(251,247,241,0.74));
-            box-shadow: var(--sm-shadow);
+            box-shadow:none;
         }
         .sm-footer {
             margin-top:1.35rem; padding-top:0.95rem; border-top:1px solid rgba(20,35,31,0.12);
@@ -95,24 +95,25 @@ def inject_app_styles() -> None:
         }
         .sm-card {
             border:1px solid var(--sm-border);
-            border-radius:20px;
-            padding:1rem 1.05rem;
-            background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(247,242,235,0.88));
-            box-shadow: var(--sm-shadow);
-            margin-bottom:0.9rem;
+            border-left:4px solid var(--sm-accent);
+            border-radius:14px;
+            padding:0.75rem 0.9rem;
+            background:rgba(255,255,255,0.72);
+            box-shadow:none;
+            margin-bottom:0.75rem;
         }
-        .sm-card h4 {margin:0 0 0.34rem 0; font-size:1.01rem; color:var(--sm-ink);}
-        .sm-card p {margin:0; color:var(--sm-muted); line-height:1.66;}
+        .sm-card h4 {margin:0 0 0.2rem 0; font-size:0.92rem; color:var(--sm-ink);}
+        .sm-card p {margin:0; color:var(--sm-muted); line-height:1.55; font-size:0.9rem;}
         .sm-guide {
             border:1px solid rgba(15,118,110,0.16);
-            border-radius:20px;
-            padding:1rem 1.05rem 0.9rem 1.05rem;
-            background:linear-gradient(145deg, rgba(236,248,246,0.94), rgba(255,251,246,0.92));
-            box-shadow: var(--sm-shadow);
-            margin:0.25rem 0 1rem 0;
+            border-radius:16px;
+            padding:0.85rem 0.95rem;
+            background:rgba(242,249,247,0.86);
+            box-shadow:none;
+            margin:0.2rem 0 0.8rem 0;
         }
-        .sm-guide h4 {margin:0 0 0.35rem 0; font-size:1.02rem; color:var(--sm-ink);}
-        .sm-guide p {margin:0 0 0.45rem 0; color:var(--sm-muted); line-height:1.62;}
+        .sm-guide h4 {margin:0 0 0.25rem 0; font-size:0.94rem; color:var(--sm-ink);}
+        .sm-guide p {margin:0 0 0.35rem 0; color:var(--sm-muted); line-height:1.54; font-size:0.9rem;}
         .sm-guide ul {margin:0.24rem 0 0 1.1rem; color:var(--sm-muted);}
         .sm-guide li {margin:0.18rem 0;}
         .sm-report-preview {
@@ -120,7 +121,7 @@ def inject_app_styles() -> None:
             border-radius:20px;
             padding:1rem 1.05rem;
             background:linear-gradient(180deg, rgba(255,255,255,0.94), rgba(249,244,236,0.92));
-            box-shadow: var(--sm-shadow);
+            box-shadow:none;
         }
         .sm-report-preview p,
         .sm-report-preview li {
@@ -134,16 +135,16 @@ def inject_app_styles() -> None:
         }
         .sm-sheet-row {
             border:1px solid var(--sm-border);
-            border-radius:18px;
-            padding:0.92rem 0.98rem;
-            background:linear-gradient(180deg, var(--sm-panel-strong), rgba(249,244,238,0.92));
-            box-shadow: var(--sm-shadow);
+            border-radius:14px;
+            padding:0.74rem 0.82rem;
+            background:rgba(255,255,255,0.88);
+            box-shadow:none;
         }
         .sm-sheet-head {
             display:flex;
             align-items:flex-start;
             justify-content:space-between;
-            gap:0.7rem;
+            gap:0.45rem;
         }
         .sm-sheet-kicker {
             margin:0 0 0.18rem 0;
@@ -155,25 +156,25 @@ def inject_app_styles() -> None:
         }
         .sm-sheet-title {
             margin:0;
-            font-size:1rem;
+            font-size:0.98rem;
             font-weight:800;
             color:var(--sm-ink);
             letter-spacing:-0.02em;
         }
         .sm-sheet-secondary {
-            margin-top:0.25rem;
+            margin-top:0.16rem;
             color:var(--sm-muted);
-            font-size:0.86rem;
-            line-height:1.58;
+            font-size:0.84rem;
+            line-height:1.48;
         }
         .sm-sheet-grid {
             display:grid;
             grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
-            gap:0.55rem 0.7rem;
-            margin-top:0.78rem;
+            gap:0.35rem 0.65rem;
+            margin-top:0.5rem;
         }
         .sm-sheet-item {
-            padding:0.02rem 0;
+            padding:0.34rem 0;
             border-top:1px solid var(--sm-rule);
         }
         .sm-sheet-item:first-child {
@@ -189,7 +190,7 @@ def inject_app_styles() -> None:
         .sm-sheet-value {
             margin-top:0.16rem;
             color:var(--sm-ink);
-            font-size:0.92rem;
+            font-size:0.9rem;
             font-weight:700;
             line-height:1.42;
             word-break:break-word;
@@ -197,9 +198,9 @@ def inject_app_styles() -> None:
         div[data-testid="stMetric"] {
             background:linear-gradient(180deg, rgba(255,255,255,0.94), rgba(248,243,235,0.90));
             border:1px solid var(--sm-border);
-            border-radius:18px;
+            border-radius:14px;
             padding:0.78rem 0.92rem;
-            box-shadow: var(--sm-shadow);
+            box-shadow:none;
         }
         div[data-testid="stMetricLabel"] {
             color:#61706b;
@@ -224,13 +225,13 @@ def inject_app_styles() -> None:
             border-radius:18px;
             overflow:hidden;
             background:rgba(255,255,255,0.78);
-            box-shadow: var(--sm-shadow);
+            box-shadow:none;
         }
         div[data-testid="stExpander"] {
             border:1px solid var(--sm-border);
             border-radius:18px;
             background:rgba(255,255,255,0.62);
-            box-shadow: var(--sm-shadow);
+            box-shadow:none;
         }
         .stTabs [role="tablist"] {
             gap:0.38rem;
@@ -334,13 +335,11 @@ def render_screen_guide(
     bullets: list[str] | None = None,
     title: str = "이 화면은 이렇게 보세요",
 ) -> None:
-    bullet_html = ""
-    if bullets:
-        bullet_html = "<ul>" + "".join(f"<li>{item}</li>" for item in bullets) + "</ul>"
-    st.markdown(
-        f'<div class="sm-guide"><h4>{title}</h4><p>{summary}</p>{bullet_html}</div>',
-        unsafe_allow_html=True,
-    )
+    with st.expander(title, expanded=False):
+        st.caption(summary)
+        if bullets:
+            for item in bullets:
+                st.markdown(f"- {item}")
 
 
 def render_report_preview(
@@ -429,7 +428,6 @@ def render_data_sheet(
         st.dataframe(localized, width="stretch", hide_index=True)
         return
 
-    st.caption("모바일에서는 핵심 필드만 우선 보여주고, 전체 표는 아래 접기 영역에 유지합니다.")
     rows = localized.head(limit).to_dict(orient="records")
     row_markup: list[str] = []
     for row in rows:
@@ -461,8 +459,7 @@ def render_data_sheet(
         row_markup.append(
             '<section class="sm-sheet-row">'
             '<div class="sm-sheet-head">'
-            f'<div><p class="sm-sheet-kicker">{escape(str(primary_label))}</p>'
-            f'<h4 class="sm-sheet-title">{escape(str(title_value))}</h4>{secondary_html}</div>'
+            f'<div><h4 class="sm-sheet-title">{escape(str(title_value))}</h4>{secondary_html}</div>'
             f"{badge_html}</div>{detail_html}</section>"
         )
     st.markdown(f'<div class="sm-sheet">{"".join(row_markup)}</div>', unsafe_allow_html=True)
