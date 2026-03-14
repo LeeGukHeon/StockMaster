@@ -125,3 +125,31 @@ def test_localize_frame_translates_case_insensitive_enum_values() -> None:
 def test_format_ui_value_translates_scalar_outside_tables() -> None:
     assert format_ui_value("regime_state", "risk_on") == "상승 우위 장"
     assert format_ui_value("health_status", "WARNING") == "주의"
+
+
+def test_localize_frame_formats_json_columns_into_readable_korean() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "policy_reason_codes_json": '["momentum_confirmed", "data_weak_guard"]',
+                "detail_json": '{"status":"FAILED","recommended_action":"재실행 필요","sample_count":3}',
+                "blocked_reason": '["thin_liquidity", "large_recent_drawdown"]',
+                "top_actionable_symbol_list_json": '[{"symbol":"005930","grade":"A"},{"symbol":"000660","grade":"B"}]',
+                "active_meta_model_ids_json": '["meta_enter_v1","meta_wait_v1"]',
+            }
+        ]
+    )
+
+    localized = localize_frame(frame)
+    row = localized.iloc[0].tolist()
+
+    assert "모멘텀 확인" in row[0]
+    assert "데이터 약함 방어" in row[0]
+    assert "상태" in row[1]
+    assert "실패" in row[1]
+    assert "{" not in row[1]
+    assert "유동성 부족" in row[2]
+    assert "최근 낙폭 큼" in row[2]
+    assert "005930" in row[3]
+    assert "000660" in row[3]
+    assert row[4] == "사용 중 2개"

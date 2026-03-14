@@ -92,13 +92,13 @@ render_page_header(
     settings,
     page_name="리서치",
     title="리서치",
-    description="장중 정책, 메타 모델, 보정 결과, 실험, 수동 반영 후보를 모바일용 비교 시트로 정리한 화면입니다.",
+    description="장중 추천 기준, 메타 보정 결과, 검증 기록, 수동 반영 후보를 모바일에서 읽기 쉬운 시트로 정리한 화면입니다.",
 )
 render_screen_guide(
-    summary="리서치 지표와 운영 반영 제어를 한 화면에 두되, 모바일에서는 개요·정책·메타·수동 반영으로 나눠 읽기 쉽게 재구성했습니다.",
+    summary="연구용 지표와 운영 반영 제어를 한 화면에 두되, 모바일에서는 개요·정책·메타·수동 반영으로 나눠 읽기 쉽게 재구성했습니다.",
     bullets=[
-        "개요에서는 학습 상태와 오버레이를 먼저 봅니다.",
-        "정책에서는 실험, 워크포워드, 추천, 발행/롤백 상태를 확인합니다.",
+        "개요에서는 학습 상태와 메타 보정 결과를 먼저 봅니다.",
+        "정책에서는 실험, 기간별 재검증, 추천, 발행/되돌리기 상태를 확인합니다.",
         "메타에서는 메타 모델 학습, 국면별 분해, 필요 시 고급 진단을 확인합니다.",
         "수동 반영에서는 현재 활성값과 다음 후보를 비교한 뒤 직접 반영합니다.",
     ],
@@ -141,9 +141,9 @@ if view == "개요":
     )
     render_data_sheet(
         meta_overlay,
-        title="정책 대비 메타 오버레이",
+        title="정책 대비 메타 보정 결과",
         limit=8,
-        empty_message="메타 오버레이 비교 결과가 없습니다.",
+        empty_message="메타 보정 비교 결과가 없습니다.",
     )
     render_data_sheet(
         meta_regime_breakdown,
@@ -163,12 +163,12 @@ elif view == "정책":
     )
     render_data_sheet(
         policy_walkforward,
-        title="워크포워드",
+        title="기간별 재검증",
         primary_column="policy_id",
         secondary_columns=["status", "split_name"],
         detail_columns=["as_of_date", "metric_name", "metric_value"],
         limit=10,
-        empty_message="워크포워드 결과가 없습니다.",
+        empty_message="기간별 재검증 결과가 없습니다.",
     )
     render_data_sheet(
         policy_recommendation,
@@ -228,9 +228,9 @@ elif view == "메타":
     )
     render_data_sheet(
         meta_overlay,
-        title="메타 오버레이",
+        title="메타 보정 결과",
         limit=8,
-        empty_message="메타 오버레이 비교 결과가 없습니다.",
+        empty_message="메타 보정 비교 결과가 없습니다.",
     )
     render_data_sheet(
         meta_regime_breakdown,

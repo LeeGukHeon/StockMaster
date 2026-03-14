@@ -811,7 +811,7 @@ UI_COLUMN_LABELS: dict[str, str] = {
     "artifact_format": "파일 형식",
     "published_flag": "발행 여부",
     "dry_run_flag": "시험 실행 여부",
-    "summary_json": "요약 정보",
+    "summary_json": "한눈 요약",
     "snapshot_ts": "스냅샷 시각",
     "latest_daily_bundle_run_id": "최근 일일 배치 실행 ID",
     "latest_daily_bundle_status": "최근 일일 배치 상태",
@@ -821,12 +821,12 @@ UI_COLUMN_LABELS: dict[str, str] = {
     "latest_portfolio_as_of_date": "최근 포트폴리오 기준일",
     "latest_portfolio_run_id": "최근 포트폴리오 실행 ID",
     "active_intraday_policy_id": "활성 장중 정책",
-    "active_meta_model_ids_json": "활성 메타 모델",
+    "active_meta_model_ids_json": "사용 중인 메타 모델",
     "active_portfolio_policy_id": "활성 포트폴리오 정책",
     "active_ops_policy_id": "활성 운영 정책",
     "health_status": "헬스 상태",
     "market_regime_family": "시장 흐름",
-    "top_actionable_symbol_list_json": "상단 주목 종목",
+    "top_actionable_symbol_list_json": "지금 볼 종목",
     "latest_report_bundle_id": "최근 리포트 묶음",
     "critical_alert_count": "치명 알림 수",
     "warning_alert_count": "경고 알림 수",
@@ -857,7 +857,12 @@ UI_COLUMN_LABELS: dict[str, str] = {
     "finished_at": "종료 시각",
     "notes": "메모",
     "error_message": "오류 메시지",
-    "latest_ohlcv_date": "최신 OHLCV 날짜",
+    "latest_ohlcv_date": "최신 시세 날짜",
+    "detail_json": "세부 내용",
+    "explanatory_score_json": "점수 근거",
+    "ensemble_weight_json": "모델별 반영 비중",
+    "source_notes_json": "참고 메모",
+    "blocked_reason": "제외 사유",
     "latest_ohlcv_rows": "최신 OHLCV 행수",
     "latest_fundamentals_date": "최신 재무 날짜",
     "latest_fundamentals_rows": "최신 재무 행수",
@@ -896,7 +901,7 @@ UI_COLUMN_LABELS: dict[str, str] = {
     "turnover_burst_z": "거래대금 급증 Z",
     "latest_feature_version": "최신 피처 버전",
     "latest_ranking_version": "최신 설명형 순위 버전",
-    "latest_selection_version": "최신 Selection 버전",
+        "latest_selection_version": "최신 추천 모델 버전",
     "latest_prediction_version": "최신 예측 밴드 버전",
     "trading_date": "거래일",
     "signal_date": "신호일",
@@ -948,7 +953,7 @@ UI_COLUMN_LABELS: dict[str, str] = {
     "window_type": "집계 창",
     "segment_value": "세그먼트",
     "count_evaluated": "평가 완료 수",
-    "selection_avg_excess": "Selection 평균 초과수익률",
+    "selection_avg_excess": "추천 모델 평균 초과수익률",
     "explanatory_avg_excess": "설명형 평균 초과수익률",
     "avg_excess_gap": "평균 초과수익률 차이",
     "hit_rate_gap": "적중률 차이",
@@ -1074,7 +1079,7 @@ UI_VALUE_LABELS: dict[str, dict[str, str]] = {
         SELECTION_ENGINE_VERSION: "선정 엔진 v1",
     },
     "prediction_version": {
-        PREDICTION_VERSION: "프록시 예측 밴드 v1",
+        PREDICTION_VERSION: "예상 범위 모델 v1",
     },
     "run_type": {
         "bootstrap": "초기화",
@@ -1090,18 +1095,18 @@ UI_VALUE_LABELS: dict[str, dict[str, str]] = {
         "build_market_regime_snapshot": "시장 상태 스냅샷 생성",
         "materialize_explanatory_ranking": "설명형 순위 생성",
         "validate_explanatory_ranking": "설명형 순위 검증",
-        "materialize_selection_engine_v1": "기존 추천 모델 생성",
+        "materialize_selection_engine_v1": "이전 추천 모델 계산",
         "calibrate_proxy_prediction_bands": "참고 범위 보정",
         "validate_selection_engine_v1": "기존 추천 모델 검증",
-        "render_discord_eod_report": "디스코드 장마감 요약 생성",
-        "publish_discord_eod_report": "디스코드 장마감 요약 발행",
-        "render_discord_close_brief": "디스코드 장마감 직후 브리핑 생성",
-        "publish_discord_close_brief": "디스코드 장마감 직후 브리핑 발행",
+        "render_discord_eod_report": "디스코드 장마감 요약 만들기",
+        "publish_discord_eod_report": "디스코드 장마감 요약 보내기",
+        "render_discord_close_brief": "디스코드 마감 직후 브리핑 만들기",
+        "publish_discord_close_brief": "디스코드 마감 직후 브리핑 보내기",
         "materialize_selection_outcomes": "추천 결과 사후 기록 생성",
         "materialize_prediction_evaluation": "예측 사후 평가 요약 생성",
         "materialize_calibration_diagnostics": "예측 범위 진단 생성",
-        "render_postmortem_report": "사후 점검 리포트 생성",
-        "publish_discord_postmortem_report": "디스코드 사후 점검 발행",
+        "render_postmortem_report": "사후 점검 리포트 만들기",
+        "publish_discord_postmortem_report": "디스코드 사후 점검 보내기",
         "validate_evaluation_pipeline": "평가 파이프라인 검증",
         "run_daily_pipeline": "일일 파이프라인 실행",
         "run_evaluation": "평가 실행",
@@ -1215,7 +1220,7 @@ UI_COLUMN_LABELS.update(
         "timer_name": "systemd 타이머",
         "service_name": "systemd 서비스",
         "on_calendar": "OnCalendar",
-        "identity_json": "실행 식별자",
+        "identity_json": "실행 대상",
         "active_policy_candidate_id": "현재 활성 정책 후보 ID",
         "active_template_id": "현재 활성 템플릿",
         "source_recommendation_date": "현재 반영 추천일",
@@ -1236,12 +1241,12 @@ UI_COLUMN_LABELS.update(
         "execution_rate_delta": "실행률 변화",
         "active_training_run_id": "현재 활성 학습 실행 ID",
         "candidate_training_run_id": "새 학습 후보 실행 ID",
-        "before_macro_f1": "현재 Macro F1",
-        "after_macro_f1": "후보 Macro F1",
-        "macro_f1_delta": "Macro F1 변화",
-        "before_log_loss": "현재 Log Loss",
-        "after_log_loss": "후보 Log Loss",
-        "log_loss_delta": "Log Loss 변화",
+        "before_macro_f1": "현재 종합 분류 점수",
+        "after_macro_f1": "후보 종합 분류 점수",
+        "macro_f1_delta": "종합 분류 점수 변화",
+        "before_log_loss": "현재 확률 오차",
+        "after_log_loss": "후보 확률 오차",
+        "log_loss_delta": "확률 오차 변화",
         "validation_session_count": "검증 세션 수",
     }
 )
@@ -1254,15 +1259,15 @@ UI_VALUE_LABELS.setdefault("run_type", {}).update(
         "materialize_selection_engine_v2": "선정 엔진 v2 생성",
         "validate_alpha_model_v1": "알파 모델 검증",
         "compare_selection_engines": "선정 엔진 비교",
-        "render_model_diagnostic_report": "모델 진단 리포트 렌더",
+        "render_model_diagnostic_report": "모델 진단 리포트 만들기",
         "materialize_intraday_market_context_snapshots": "장중 시장 컨텍스트 생성",
         "materialize_intraday_regime_adjustments": "장중 레짐 조정 생성",
         "materialize_intraday_adjusted_entry_decisions": "장중 조정 진입 판단 생성",
         "materialize_intraday_decision_outcomes": "장중 판단 성과 생성",
         "evaluate_intraday_strategy_comparison": "장중 전략 비교 평가",
         "materialize_intraday_timing_calibration": "장중 타이밍 보정 진단 생성",
-        "render_intraday_postmortem_report": "장중 사후 분석 리포트 렌더",
-        "publish_discord_intraday_postmortem": "장중 사후 분석 Discord 발행",
+        "render_intraday_postmortem_report": "장중 사후 분석 리포트 만들기",
+        "publish_discord_intraday_postmortem": "장중 사후 분석 디스코드 보내기",
         "validate_intraday_strategy_pipeline": "장중 전략 파이프라인 검증",
     }
 )
@@ -1746,31 +1751,31 @@ UI_VALUE_LABELS.setdefault("member_name", {}).update(
 )
 UI_COLUMN_LABELS.update(
     {
-        "latest_selection_v2_ranking_version": "최신 Selection v2 버전",
+        "latest_selection_v2_ranking_version": "최신 추천 모델 버전",
         "latest_alpha_model_version": "최신 알파 모델 버전",
         "latest_alpha_prediction_version": "최신 알파 예측 버전",
         "uncertainty_score": "불확실성 점수",
         "disagreement_score": "불일치 점수",
-        "fallback_flag": "Fallback 여부",
-        "fallback_reason": "Fallback 사유",
+        "fallback_flag": "대체 계산 사용 여부",
+        "fallback_reason": "대체 계산 사유",
         "latest_model_train_date": "최신 모델 학습일",
         "latest_model_train_rows": "최신 모델 학습 행수",
         "latest_model_prediction_date": "최신 알파 예측일",
         "latest_model_prediction_rows": "최신 알파 예측 행수",
-        "latest_selection_v2_date": "최신 Selection v2 일자",
-        "latest_selection_v2_rows": "최신 Selection v2 행수",
-        "d1_selection_v2_value": "1거래일 기준 Selection v2 점수",
-        "d1_selection_v2_grade": "1거래일 기준 Selection v2 등급",
-        "d5_selection_v2_value": "5거래일 기준 Selection v2 점수",
-        "d5_selection_v2_grade": "5거래일 기준 Selection v2 등급",
+        "latest_selection_v2_date": "최신 추천 모델 기준일",
+        "latest_selection_v2_rows": "최신 추천 모델 행 수",
+        "d1_selection_v2_value": "1거래일 기준 추천 점수",
+        "d1_selection_v2_grade": "1거래일 기준 추천 등급",
+        "d5_selection_v2_value": "5거래일 기준 추천 점수",
+        "d5_selection_v2_grade": "5거래일 기준 추천 등급",
         "d5_alpha_expected_excess_return": "5거래일 기준 알파 예상 초과수익률",
         "d5_alpha_lower_band": "5거래일 기준 알파 하단 범위",
         "d5_alpha_upper_band": "5거래일 기준 알파 상단 범위",
         "d5_alpha_uncertainty_score": "5거래일 기준 알파 불확실성",
         "d5_alpha_disagreement_score": "5거래일 기준 알파 불일치",
         "d5_alpha_fallback_flag": "5거래일 기준 알파 fallback 여부",
-        "d5_selection_v2_realized_excess_return": "5거래일 뒤 Selection v2 실현 초과수익률",
-        "d5_selection_v2_band_status": "5거래일 기준 Selection v2 범위 판정",
+        "d5_selection_v2_realized_excess_return": "5거래일 뒤 추천 모델 실현 초과수익률",
+        "d5_selection_v2_band_status": "5거래일 기준 추천 모델 범위 판정",
         "train_row_count": "학습 행수",
         "validation_row_count": "검증 행수",
         "member_name": "모델 구성원",
@@ -1778,8 +1783,8 @@ UI_COLUMN_LABELS.update(
         "metric_name": "지표명",
         "metric_value": "지표값",
         "sample_count": "표본 수",
-        "selection_v2_avg_excess": "Selection v2 평균 초과수익률",
-        "selection_v1_avg_excess": "Selection v1 평균 초과수익률",
+        "selection_v2_avg_excess": "현재 추천 모델 평균 초과수익률",
+        "selection_v1_avg_excess": "이전 추천 모델 평균 초과수익률",
         "explanatory_v0_avg_excess": "설명형 v0 평균 초과수익률",
         "v2_vs_v1_gap": "v2-v1 차이",
         "v2_vs_explanatory_gap": "v2-설명형 차이",
@@ -1806,9 +1811,9 @@ UI_COLUMN_LABELS.update(
         "candidate_mean_orderbook_imbalance": "후보 평균 호가 불균형",
         "candidate_mean_gap_score": "후보 평균 갭 점수",
         "candidate_mean_signal_quality": "후보 평균 신호 품질",
-        "market_shock_proxy": "시장 충격 프록시",
-        "intraday_volatility_proxy": "장중 변동성 프록시",
-        "dispersion_proxy": "분산도 프록시",
+        "market_shock_proxy": "시장 충격 지표",
+        "intraday_volatility_proxy": "장중 변동성 지표",
+        "dispersion_proxy": "흩어짐 지표",
         "bar_coverage_ratio": "1분봉 커버리지",
         "trade_coverage_ratio": "체결 요약 커버리지",
         "quote_coverage_ratio": "호가 요약 커버리지",
@@ -1980,7 +1985,7 @@ UI_RISK_TAG_LABELS: dict[str, str] = {
     "thin_liquidity": "유동성 부족",
     "news_link_low_confidence": "뉴스 연결 신뢰 낮음",
     "data_missingness_high": "데이터 결손 높음",
-    "uncertainty_proxy_high": "불확실성 프록시 높음",
+    "uncertainty_proxy_high": "불확실성 지표 높음",
     "implementation_friction_high": "실행 마찰 높음",
     "flow_coverage_missing": "수급 커버리지 부족",
 }
@@ -2019,7 +2024,7 @@ UI_NOTE_TAG_LABELS.update(
         "friction_penalty": "마찰 패널티",
         "quote_unavailable": "호가 미가용",
         "trade_unavailable": "체결 미가용",
-        "selection_fallback_penalty": "Selection fallback 패널티",
+        "selection_fallback_penalty": "추천 모델 대체 계산 패널티",
         "uncertainty_high": "불확실성 높음",
         "disagreement_high": "불일치 높음",
         "raw_data_insufficient_locked": "원판 데이터 부족 유지",
@@ -2068,16 +2073,215 @@ def _translate_scalar(column: str, value: object) -> object:
 
 
 def _translate_json_list(value: object, mapping: dict[str, str]) -> object:
-    if pd.isna(value):
-        return value
-    try:
-        parsed = json.loads(str(value))
-    except (TypeError, ValueError, json.JSONDecodeError):
+    parsed = _try_parse_json_value(value)
+    if parsed is None:
         return value
     if not isinstance(parsed, list):
         return value
     translated = [mapping.get(str(item), str(item)) for item in parsed]
     return ", ".join(translated) if translated else "-"
+
+
+def _try_parse_json_value(value: object) -> object | None:
+    if value is None:
+        return None
+    if isinstance(value, (list, dict)):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text in {"", "-", "None", "nan", "NaN", "NaT"}:
+            return None
+        if not text.startswith(("{", "[")):
+            return None
+        try:
+            return json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+    return None
+
+
+def _translate_generic_token(value: object) -> object:
+    if value is None:
+        return value
+    if isinstance(value, bool):
+        return "예" if value else "아니오"
+
+    text = str(value).strip()
+    if not text:
+        return value
+
+    for mapping in (UI_NOTE_TAG_LABELS, UI_REASON_TAG_LABELS, UI_RISK_TAG_LABELS):
+        if text in mapping:
+            return mapping[text]
+
+    fallback_columns = (
+        "status",
+        "severity",
+        "warning_level",
+        "health_status",
+        "trigger_type",
+        "promotion_type",
+        "action",
+        "raw_action",
+        "adjusted_action",
+        "selected_action",
+        "final_action",
+        "report_type",
+        "run_type",
+        "job_name",
+        "job_key",
+        "quality_flag",
+        "skip_reason_code",
+        "market_regime_family",
+        "regime_state",
+        "comparison_key",
+        "execution_mode",
+        "portfolio_execution_mode",
+        "split_name",
+        "metric_scope",
+        "panel_name",
+        "candidate_state",
+        "gate_status",
+        "timing_gate_status",
+        "fallback_mode",
+        "service_slug",
+        "provider",
+        "provider_name",
+    )
+    for column in fallback_columns:
+        translated = _translate_scalar(column, text)
+        if translated != text:
+            return translated
+    return value
+
+
+def _friendly_json_key_label(key: str) -> str:
+    label = UI_COLUMN_LABELS.get(key)
+    if label:
+        return label
+
+    normalized = key.removesuffix("_json")
+    simple_labels = {
+        "symbol": "종목",
+        "grade": "등급",
+        "label": "이름",
+        "name": "이름",
+        "score": "점수",
+        "value": "값",
+        "weight": "비중",
+        "count": "개수",
+        "date": "날짜",
+        "time": "시각",
+        "reason": "사유",
+        "reasons": "사유",
+        "note": "메모",
+        "notes": "메모",
+        "status": "상태",
+        "probability": "확률",
+        "message": "메시지",
+        "model": "모델",
+        "policy": "정책",
+        "candidate": "후보",
+        "source": "출처",
+        "target": "대상",
+    }
+    if normalized in simple_labels:
+        return simple_labels[normalized]
+
+    token_labels = {
+        "active": "현재",
+        "latest": "최근",
+        "symbol": "종목",
+        "grade": "등급",
+        "score": "점수",
+        "weight": "비중",
+        "count": "개수",
+        "date": "날짜",
+        "time": "시각",
+        "reason": "사유",
+        "notes": "메모",
+        "status": "상태",
+        "model": "모델",
+        "policy": "정책",
+        "candidate": "후보",
+        "source": "출처",
+        "target": "대상",
+        "run": "실행",
+        "report": "리포트",
+        "detail": "세부 내용",
+        "summary": "요약",
+    }
+    return " ".join(token_labels.get(part, part) for part in normalized.split("_"))
+
+
+def _format_json_scalar(column: str, value: object) -> str:
+    translated = _format_scalar_for_display(column, value)
+    if translated == value:
+        translated = _translate_generic_token(value)
+    text = str(translated).strip()
+    return text if text else "-"
+
+
+def _format_json_record(record: dict[str, object]) -> str:
+    parts: list[str] = []
+    for key, item in record.items():
+        label = _friendly_json_key_label(str(key))
+        parsed = _try_parse_json_value(item)
+        if parsed is not None:
+            value = _format_json_for_display(str(key), item)
+        else:
+            value = _format_json_scalar(str(key), item)
+        if value in {"", "-", "None"}:
+            continue
+        separator = " " if len(label) <= 4 else ": "
+        parts.append(f"{label}{separator}{value}")
+    return " / ".join(parts) if parts else "-"
+
+
+def _format_json_for_display(column: str, value: object) -> str:
+    parsed = _try_parse_json_value(value)
+    if parsed is None:
+        return _format_json_scalar(column, value)
+
+    if column == "active_meta_model_ids_json" and isinstance(parsed, list):
+        if not parsed:
+            return "-"
+        return f"사용 중 {len(parsed)}개"
+
+    if column == "top_actionable_symbol_list_json" and isinstance(parsed, list):
+        items: list[str] = []
+        for entry in parsed[:4]:
+            if isinstance(entry, dict):
+                symbol = str(entry.get("symbol") or "").strip()
+                grade = _translate_generic_token(entry.get("grade"))
+                if symbol and grade:
+                    items.append(f"{symbol} {grade}")
+                elif symbol:
+                    items.append(symbol)
+        if not items:
+            return f"{len(parsed)}개 종목" if parsed else "-"
+        suffix = f" 외 {len(parsed) - len(items)}개" if len(parsed) > len(items) else ""
+        return ", ".join(items) + suffix
+
+    if isinstance(parsed, list):
+        if not parsed:
+            return "-"
+        parts: list[str] = []
+        for item in parsed[:4]:
+            if isinstance(item, dict):
+                parts.append(_format_json_record(item))
+            else:
+                parts.append(_format_json_scalar(column, item))
+        parts = [part for part in parts if part not in {"", "-", "None"}]
+        if not parts:
+            return "-"
+        suffix = f" 외 {len(parsed) - len(parts)}건" if len(parsed) > len(parts) else ""
+        return ", ".join(parts) + suffix
+
+    if isinstance(parsed, dict):
+        return _format_json_record(parsed)
+
+    return _format_json_scalar(column, parsed)
 
 
 PERCENT_COLUMN_TOKENS: tuple[str, ...] = (
@@ -2330,6 +2534,8 @@ def _format_scalar_for_display(column: str, value: object) -> object:
     if _is_datetime_display_column(column):
         return format_ui_datetime(value)
     translated = _translate_scalar(column, value)
+    if translated == value:
+        translated = _translate_generic_token(value)
     if isinstance(translated, str) and translated.strip() in {"", "nan", "NaN", "NaT", "None"}:
         return "-"
     if _is_percent_display_column(column):
@@ -2367,6 +2573,14 @@ def localize_frame(frame: pd.DataFrame) -> pd.DataFrame:
         if column == "eligibility_notes_json":
             localized[column] = localized[column].map(
                 lambda value: _translate_json_list(value, UI_NOTE_TAG_LABELS)
+            )
+            continue
+        if column.endswith("_json") or column in {"blocked_reason"}:
+            localized[column] = localized[column].map(
+                lambda value, current_column=column: _format_json_for_display(
+                    current_column,
+                    value,
+                )
             )
             continue
         localized[column] = localized[column].map(
@@ -3817,9 +4031,9 @@ def latest_alpha_rollback_frame(
 
 UI_VALUE_LABELS.setdefault("run_type", {}).update(
     {
-        "freeze_alpha_active_model": "Alpha active freeze",
-        "rollback_alpha_active_model": "Alpha active rollback",
-        "run_alpha_auto_promotion": "Alpha auto-promotion",
+        "freeze_alpha_active_model": "알파 모델 수동 반영",
+        "rollback_alpha_active_model": "알파 모델 되돌리기",
+        "run_alpha_auto_promotion": "알파 모델 자동 반영 점검",
     }
 )
 UI_VALUE_LABELS.setdefault("model_spec_id", {}).update(
@@ -3850,13 +4064,13 @@ UI_VALUE_LABELS.setdefault("estimation_scheme", {}).update(
 )
 UI_VALUE_LABELS.setdefault("promotion_type", {}).update(
     {
-        "MANUAL_FREEZE": "Manual freeze",
+        "MANUAL_FREEZE": "수동 반영",
     }
 )
 UI_VALUE_LABELS.setdefault("promotion_type", {}).update(
     {
         "AUTO_PROMOTION": "자동 반영",
-        "ROLLBACK": "되돌리기 복원",
+        "ROLLBACK": "이전 값으로 되돌림",
     }
 )
 UI_COLUMN_LABELS.update(
@@ -5732,14 +5946,14 @@ UI_VALUE_LABELS.setdefault("run_type", {}).update(
     {
         "materialize_intraday_policy_candidates": "?μ쨷 ?뺤콉??후보 생성",
         "run_intraday_policy_calibration": "?μ쨷 ?뺤콉??보정 실행",
-        "run_intraday_policy_walkforward": "?μ쨷 ?뺤콉??walk-forward 실행",
-        "evaluate_intraday_policy_ablation": "?μ쨷 ?뺤콉??ablation 평가",
+        "run_intraday_policy_walkforward": "장중 정책 기간별 재검증",
+        "evaluate_intraday_policy_ablation": "장중 정책 항목 제거 평가",
         "materialize_intraday_policy_recommendations": "?μ쨷 ?뺤콉??추천 생성",
-        "freeze_intraday_active_policy": "?μ쨷 ?뺤콉??freeze",
-        "rollback_intraday_active_policy": "?μ쨷 ?뺤콉??rollback",
-        "render_intraday_policy_research_report": "?μ쨷 ?뺤콉??연구 리포트 렌더",
-        "publish_discord_intraday_policy_summary": "?μ쨷 ?뺤콉??Discord 요약 발행",
-        "validate_intraday_policy_framework": "?μ쨷 ?뺤콉??프레임 검증",
+        "freeze_intraday_active_policy": "장중 정책 수동 반영",
+        "rollback_intraday_active_policy": "장중 정책 되돌리기",
+        "render_intraday_policy_research_report": "장중 정책 연구 리포트 만들기",
+        "publish_discord_intraday_policy_summary": "장중 정책 디스코드 요약 보내기",
+        "validate_intraday_policy_framework": "장중 정책 동작 점검",
     }
 )
 UI_VALUE_LABELS.setdefault("scope_type", {}).update(
@@ -5832,12 +6046,12 @@ UI_COLUMN_LABELS.update(
         "positive_timing_edge_rate": "양수 timing edge 비율",
         "skip_saved_loss_rate": "손실 회피 비율",
         "missed_winner_rate": "상승 놓침 비율",
-        "left_tail_proxy": "좌측 꼬리 프록시",
+        "left_tail_proxy": "하방 위험 지표",
         "stability_score": "안정성 점수",
         "objective_score": "목표 점수",
         "manual_review_required_flag": "수동 검토 필요",
-        "fallback_scope_type": "Fallback 범위",
-        "fallback_scope_key": "Fallback 범위 키",
+        "fallback_scope_type": "대체 범위",
+        "fallback_scope_key": "대체 범위 키",
         "recommendation_date": "추천일",
         "recommendation_rank": "추천 순위",
         "source_experiment_run_id": "원본 실험 실행 ID",
@@ -5847,7 +6061,7 @@ UI_COLUMN_LABELS.update(
         "effective_from_date": "효력 시작일",
         "effective_to_date": "효력 종료일",
         "active_flag": "활성 여부",
-        "rollback_of_active_policy_id": "Rollback 대상 정책 ID",
+        "rollback_of_active_policy_id": "되돌릴 정책 ID",
         "active_policy_id": "활성 정책 ID",
         "active_policy_candidate_id": "활성 정책 후보 ID",
         "active_policy_template_id": "활성 정책 템플릿",
@@ -5856,9 +6070,9 @@ UI_COLUMN_LABELS.update(
         "tuned_action": "튜닝 액션",
         "tuned_score": "튜닝 점수",
         "policy_trace": "정책 추적",
-        "policy_reason_codes_json": "정책 사유 코드",
-        "fallback_used_flag": "Fallback 사용",
-        "ablation_name": "Ablation 항목",
+        "policy_reason_codes_json": "정책 판단 사유",
+        "fallback_used_flag": "대체 계산 사용",
+        "ablation_name": "항목 제거 실험",
         "base_policy_source": "기준 정책 소스",
         "base_policy_candidate_id": "기준 정책 후보 ID",
         "mean_realized_excess_return_delta": "평균 초과수익률 변화",
@@ -6937,7 +7151,7 @@ UI_COLUMN_LABELS.update(
         "applied_value": "적용 값",
         "limit_value": "한도 값",
         "active_flag": "활성 여부",
-        "rollback_of_active_portfolio_policy_id": "롤백 대상 정책 ID",
+        "rollback_of_active_portfolio_policy_id": "되돌릴 정책 ID",
         "snapshot_date": "스냅샷 일자",
         "average_cost": "평균 단가",
         "close_price": "종가",
@@ -7072,7 +7286,7 @@ UI_VALUE_LABELS.setdefault("run_type", {}).update(
         "materialize_portfolio_rebalance_plan": "포트폴리오 리밸런스 계획",
         "materialize_portfolio_position_snapshots": "포트폴리오 포지션 스냅샷",
         "materialize_portfolio_nav": "포트폴리오 NAV 생성",
-        "run_portfolio_walkforward": "포트폴리오 워크포워드",
+        "run_portfolio_walkforward": "포트폴리오 기간별 재검증",
         "evaluate_portfolio_policies": "포트폴리오 정책 평가",
         "render_portfolio_report": "포트폴리오 리포트 생성",
         "publish_discord_portfolio_summary": "포트폴리오 디스코드 발행",
@@ -7094,7 +7308,7 @@ UI_VALUE_LABELS.setdefault("run_type", {}).update(
     {
         "materialize_intraday_policy_candidates": "장중 정책 후보 생성",
         "run_intraday_policy_calibration": "장중 정책 보정 실행",
-        "run_intraday_policy_walkforward": "장중 정책 워크포워드 실행",
+        "run_intraday_policy_walkforward": "장중 정책 기간별 재검증",
         "evaluate_intraday_policy_ablation": "장중 정책 제거 실험 평가",
         "materialize_intraday_policy_recommendations": "장중 정책 추천 생성",
         "freeze_intraday_active_policy": "장중 정책 수동 반영",
@@ -7127,22 +7341,22 @@ UI_VALUE_LABELS.setdefault("reason_tag", {}).update(
 )
 UI_COLUMN_LABELS.update(
     {
-        "latest_selection_v2_ranking_version": "최신 선정 엔진 v2 버전",
-        "latest_selection_v2_date": "최신 선정 엔진 v2 기준일",
-        "latest_selection_v2_rows": "최신 선정 엔진 v2 행 수",
-        "d1_selection_v2_value": "1거래일 기준 선정 엔진 v2 점수",
-        "d1_selection_v2_grade": "1거래일 기준 선정 엔진 v2 등급",
-        "d5_selection_v2_value": "5거래일 기준 선정 엔진 v2 점수",
-        "d5_selection_v2_grade": "5거래일 기준 선정 엔진 v2 등급",
-        "d5_selection_v2_realized_excess_return": "5거래일 뒤 선정 엔진 v2 실현 초과수익률",
-        "d5_selection_v2_band_status": "5거래일 기준 선정 엔진 v2 범위 판정",
-        "selection_v2_avg_excess": "선정 엔진 v2 평균 초과수익률",
+        "latest_selection_v2_ranking_version": "최신 추천 모델 버전",
+        "latest_selection_v2_date": "최신 추천 모델 기준일",
+        "latest_selection_v2_rows": "최신 추천 모델 행 수",
+        "d1_selection_v2_value": "1거래일 기준 추천 점수",
+        "d1_selection_v2_grade": "1거래일 기준 추천 등급",
+        "d5_selection_v2_value": "5거래일 기준 추천 점수",
+        "d5_selection_v2_grade": "5거래일 기준 추천 등급",
+        "d5_selection_v2_realized_excess_return": "5거래일 뒤 추천 모델 실현 초과수익률",
+        "d5_selection_v2_band_status": "5거래일 기준 추천 모델 범위 판정",
+        "selection_v2_avg_excess": "추천 모델 평균 초과수익률",
         "nav_value": "순자산 가치",
-        "active_meta_model_id": "활성 메타 모형 ID",
-        "rollback_of_active_meta_model_id": "롤백 대상 메타 모형 ID",
-        "active_meta_model_ids_json": "활성 메타 모형",
-        "rollback_of_active_policy_id": "롤백 대상 정책 ID",
-        "ablation_name": "제거 실험 항목",
+        "active_meta_model_id": "사용 중인 메타 모델 ID",
+        "rollback_of_active_meta_model_id": "되돌릴 메타 모델 ID",
+        "active_meta_model_ids_json": "사용 중인 메타 모델",
+        "rollback_of_active_policy_id": "되돌릴 정책 ID",
+        "ablation_name": "항목 제거 실험",
     }
 )
 UI_VALUE_LABELS.setdefault("prediction_version", {}).update(
@@ -7164,13 +7378,13 @@ UI_VALUE_LABELS.setdefault("run_type", {}).update(
         "publish_discord_eod_report": "디스코드 장마감 리포트 발행",
         "publish_discord_postmortem_report": "디스코드 사후 분석 리포트 발행",
         "publish_discord_intraday_postmortem": "디스코드 장중 사후 분석 리포트 발행",
-        "publish_discord_portfolio_summary": "디스코드 포트폴리오 요약 발행",
+        "publish_discord_portfolio_summary": "디스코드 포트폴리오 요약 보내기",
     }
 )
 UI_COLUMN_LABELS.update(
     {
         "provider_name": "제공처",
-        "service_slug": "서비스 슬러그",
+        "service_slug": "서비스 코드",
         "display_name_ko": "서비스명",
         "endpoint_url": "엔드포인트 URL",
         "request_date_field": "요청 일자 필드",
@@ -7183,7 +7397,7 @@ UI_COLUMN_LABELS.update(
         "last_success_ts": "최근 성공 시각",
         "last_http_status": "최근 HTTP 상태",
         "last_error_class": "최근 오류 분류",
-        "fallback_mode": "폴백 모드",
+        "fallback_mode": "대체 동작",
         "request_budget": "일 요청 예산",
         "requests_used": "사용 요청 수",
         "usage_ratio": "사용 비율",

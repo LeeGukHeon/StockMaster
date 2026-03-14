@@ -163,7 +163,7 @@ elif view == "스케줄":
         secondary_columns=["status", "as_of_date"],
         detail_columns=["started_at", "finished_at", "run_id"],
         limit=10,
-        empty_message="최근 scheduler bundle 결과가 없습니다.",
+        empty_message="최근 자동 실행 결과가 없습니다.",
         table_expander_label="스케줄러 실행 전체 표 보기",
     )
 elif view == "장중·KRX":

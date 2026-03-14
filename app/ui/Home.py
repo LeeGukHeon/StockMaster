@@ -70,7 +70,7 @@ def _policy_badges(snapshot_row) -> list[tuple[str, str]]:
     if snapshot_row is None:
         return []
 
-    badges: list[tuple[str, str]] = [("선정 엔진 v2", "INFO")]
+    badges: list[tuple[str, str]] = [("현재 추천 모델", "INFO")]
     if snapshot_row.get("latest_daily_bundle_status"):
         badges.append(
             (

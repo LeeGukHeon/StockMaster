@@ -248,7 +248,7 @@ elif view == "알파 모델":
 
     with st.expander("고급 모델 운영 도구", expanded=False):
         st.caption(
-            "알파 모델 고정(freeze)과 되돌리기(rollback)는 일반 점검용이 아닙니다. 비교표를 충분히 확인한 뒤 필요할 때만 사용하세요."
+            "알파 모델 고정과 되돌리기는 일반 점검용이 아닙니다. 비교표를 충분히 확인한 뒤 정말 필요할 때만 사용하세요."
         )
 
         alpha_control_left, alpha_control_right = st.columns(2)
