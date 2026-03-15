@@ -25,6 +25,9 @@ from app.ui.components import (
     render_warning_banner,
 )
 from app.ui.helpers import (
+    format_ui_date,
+    format_ui_number,
+    format_ui_value,
     intraday_meta_calibration_frame,
     intraday_meta_confusion_matrix_frame,
     intraday_meta_feature_importance_frame,
@@ -46,6 +49,184 @@ from app.ui.helpers import (
     latest_model_training_summary_frame,
     load_ui_settings,
 )
+
+
+POLICY_TEMPLATE_LABELS = {
+    "BASE_DEFAULT": "기본형",
+    "DEFENSIVE_LIGHT": "방어형(약)",
+    "DEFENSIVE_STRONG": "방어형(강)",
+    "RISK_ON_LIGHT": "상승장 적극형",
+    "GAP_GUARD_STRICT": "갭 추격 억제형",
+    "FRICTION_GUARD_STRICT": "체결 부담 억제형",
+}
+
+
+def _safe_text(value: object, fallback: str = "-") -> str:
+    if value is None:
+        return fallback
+    text = str(value).strip()
+    return text if text and text not in {"nan", "NaN", "NaT", "None"} else fallback
+
+
+def _template_label(template_id: object) -> str:
+    template = _safe_text(template_id)
+    return POLICY_TEMPLATE_LABELS.get(template, template)
+
+
+def _policy_scope_text(row) -> str:
+    horizon = _safe_text(row.get("horizon"))
+    scope_type = format_ui_value("scope_type", row.get("scope_type"))
+    scope_key = _safe_text(row.get("scope_key"))
+    checkpoint = _safe_text(row.get("checkpoint_time"))
+    if checkpoint != "-":
+        return f"{horizon}거래일 · {scope_type} · {scope_key} · {checkpoint}"
+    return f"{horizon}거래일 · {scope_type} · {scope_key}"
+
+
+def _panel_label(panel_name: object) -> str:
+    panel = _safe_text(panel_name)
+    if panel == ENTER_PANEL:
+        return "진입 판단"
+    if panel == WAIT_PANEL:
+        return "대기 판단"
+    return panel
+
+
+def _format_pct(value: object) -> str:
+    if value is None:
+        return "-"
+    try:
+        return f"{float(value) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return _safe_text(value)
+
+
+def _format_delta(value: object, *, percent: bool = False) -> str:
+    if value is None:
+        return "-"
+    try:
+        raw = float(value)
+    except (TypeError, ValueError):
+        return _safe_text(value)
+    if percent:
+        return f"{raw * 100:+.2f}%p"
+    return f"{raw:+.2f}"
+
+
+def _review_text(flag: object) -> str:
+    return "예, 한 번 더 확인 필요" if bool(flag) else "아니오, 바로 반영 가능"
+
+
+def _render_policy_change_summary() -> None:
+    st.markdown("### 정책 교체를 이렇게 보세요")
+    if weekly_calibration_runs.empty:
+        st.error("최근 주말 보정 실행 기록이 없습니다.")
+        return
+
+    latest_run = weekly_calibration_runs.iloc[0]
+    st.write(
+        f"- 최근 주말 보정 실행: {format_ui_date(latest_run.get('as_of_date'))} / 결과: "
+        f"{format_ui_value('status', latest_run.get('status'))}"
+    )
+    notes = _safe_text(latest_run.get("notes"))
+    if notes != "-":
+        st.caption(notes)
+
+    if policy_apply_compare.empty:
+        st.warning("주말 보정 결과는 있지만, 지금 화면에 비교할 다음 정책 후보가 없습니다.")
+        return
+
+    for index, row in enumerate(policy_apply_compare.head(2).itertuples(index=False), start=1):
+        row_dict = row._asdict()
+        st.markdown(f"#### 비교 {index}. {_policy_scope_text(row_dict)}")
+        left, right = st.columns(2)
+        with left:
+            st.write("지금 운영 중")
+            st.write(f"- 정책 기준: {_template_label(row_dict.get('active_template_id'))}")
+            st.write(f"- 반영 시작일: {format_ui_date(row_dict.get('effective_from_date'))}")
+            st.write(f"- 원본 추천일: {format_ui_date(row_dict.get('source_recommendation_date'))}")
+        with right:
+            st.write("이번 주 새 후보")
+            st.write(f"- 정책 기준: {_template_label(row_dict.get('recommended_template_id'))}")
+            st.write(f"- 추천일: {format_ui_date(row_dict.get('recommendation_date'))}")
+            st.write(f"- 사람 확인 필요: {_review_text(row_dict.get('manual_review_required_flag'))}")
+
+        metric_a, metric_b, metric_c, metric_d = st.columns(4)
+        metric_a.metric(
+            "목표 점수 변화",
+            _safe_text(format_ui_number(row_dict.get("after_objective_score"))),
+            _format_delta(row_dict.get("objective_score_delta")),
+        )
+        metric_b.metric(
+            "평균 초과수익률 변화",
+            _format_pct(row_dict.get("after_mean_excess_return")),
+            _format_delta(row_dict.get("mean_excess_return_delta"), percent=True),
+        )
+        metric_c.metric(
+            "적중률 변화",
+            _format_pct(row_dict.get("after_hit_rate")),
+            _format_delta(row_dict.get("hit_rate_delta"), percent=True),
+        )
+        metric_d.metric(
+            "실행률 변화",
+            _format_pct(row_dict.get("after_execution_rate")),
+            _format_delta(row_dict.get("execution_rate_delta"), percent=True),
+        )
+
+    st.success("바꿔도 괜찮다고 판단되면 바로 아래 `정책 바로 반영` 버튼을 누르시면 됩니다.")
+
+
+def _render_meta_change_summary() -> None:
+    st.markdown("### 메타 모델 교체를 이렇게 보세요")
+    if weekly_training_runs.empty:
+        st.error("최근 주말 학습 실행 기록이 없습니다.")
+        return
+
+    latest_run = weekly_training_runs.iloc[0]
+    st.write(
+        f"- 최근 주말 학습 실행: {format_ui_date(latest_run.get('as_of_date'))} / 결과: "
+        f"{format_ui_value('status', latest_run.get('status'))}"
+    )
+    notes = _safe_text(latest_run.get("notes"))
+    if notes != "-":
+        st.caption(notes)
+
+    if meta_apply_compare.empty:
+        st.warning("주말 학습 결과는 있지만, 지금 화면에 비교할 메타 모델 후보가 없습니다.")
+        return
+
+    for index, row in enumerate(meta_apply_compare.head(4).itertuples(index=False), start=1):
+        row_dict = row._asdict()
+        st.markdown(f"#### 비교 {index}. {_panel_label(row_dict.get('panel_name'))} / {row_dict.get('horizon')}거래일")
+        left, right = st.columns(2)
+        with left:
+            st.write("지금 운영 중")
+            st.write(f"- 운영 모델 ID: {_safe_text(row_dict.get('active_meta_model_id'))}")
+            st.write(f"- 반영 시작일: {format_ui_date(row_dict.get('effective_from_date'))}")
+            st.write(f"- 학습 실행 ID: {_safe_text(row_dict.get('active_training_run_id'))}")
+        with right:
+            st.write("이번 주 새 후보")
+            st.write(f"- 학습 종료일: {format_ui_date(row_dict.get('train_end_date'))}")
+            st.write(f"- 검증 세션 수: {_safe_text(format_ui_number(row_dict.get('validation_session_count')))}")
+            st.write(f"- 대체 계산 사용: {_review_text(row_dict.get('fallback_flag'))}")
+
+        metric_a, metric_b, metric_c = st.columns(3)
+        metric_a.metric(
+            "종합 분류 점수",
+            _safe_text(format_ui_number(row_dict.get("after_macro_f1"))),
+            _format_delta(row_dict.get("macro_f1_delta")),
+        )
+        metric_b.metric(
+            "확률 오차",
+            _safe_text(format_ui_number(row_dict.get("after_log_loss"))),
+            _format_delta(row_dict.get("log_loss_delta")),
+        )
+        metric_c.metric(
+            "학습에 쓴 특징 수",
+            _safe_text(format_ui_number(row_dict.get("feature_count"))),
+        )
+
+    st.success("바꿔도 괜찮다고 판단되면 바로 아래 `메타 모델 바로 반영` 버튼을 누르시면 됩니다.")
 
 settings = load_ui_settings(PROJECT_ROOT)
 
@@ -109,49 +290,74 @@ action_tab, policy_tab, meta_tab, summary_tab = st.tabs(
 
 with action_tab:
     st.subheader("이번 주 결과 반영")
-    st.caption("1. 현재 운영값과 다음 후보를 비교한 뒤 2. 확인 체크를 하고 3. 바로 반영하세요.")
+    st.caption("정책과 메타 모델 모두 `지금 운영 중인 값`과 `이번 주 새 후보`를 먼저 읽고, 괜찮으면 바로 아래 버튼으로 반영하세요.")
 
     policy_action_tab, meta_action_tab = st.tabs(["정책 교체", "메타 모델 교체"])
 
     with policy_action_tab:
-        render_data_sheet(
-            weekly_calibration_runs,
-            title="최근 주말 보정 실행 결과",
-            primary_column="started_at",
-            secondary_columns=["status", "as_of_date"],
-            detail_columns=["notes", "run_id"],
-            limit=2,
-            empty_message="최근 주말 보정 실행 기록이 없습니다.",
-            show_table_expander=False,
-        )
-        render_data_sheet(
-            policy_recommendation,
-            title="주말 보정에서 나온 추천 정책",
-            primary_column="policy_candidate_id",
-            secondary_columns=["recommendation_date", "recommendation_rank"],
-            detail_columns=["horizon", "objective_score", "manual_review_required_flag"],
-            limit=4,
-            empty_message="주말 보정 추천 결과가 아직 화면에 연결되지 않았습니다.",
-            show_table_expander=False,
-        )
-        render_data_sheet(
-            active_policy,
-            title="현재 운영 정책",
-            primary_column="policy_id",
-            secondary_columns=["status", "as_of_date"],
-            detail_columns=["source", "note"],
-            limit=3,
-            empty_message="현재 운영 정책 기록이 없습니다.",
-        )
-        render_data_sheet(
-            policy_apply_compare,
-            title="주말 보정 결과로 올라온 다음 정책",
-            primary_column="policy_id",
-            secondary_columns=["recommendation_label", "recommendation_date"],
-            detail_columns=["status", "recommended_action", "score"],
-            limit=3,
-            empty_message="이번 주에 반영할 정책 후보가 없습니다.",
-        )
+        _render_policy_change_summary()
+        with st.expander("정책 수치를 자세히 보기", expanded=False):
+            render_data_sheet(
+                weekly_calibration_runs,
+                title="최근 주말 보정 실행 결과",
+                primary_column="started_at",
+                secondary_columns=["status", "as_of_date"],
+                detail_columns=["notes", "run_id"],
+                limit=2,
+                empty_message="최근 주말 보정 실행 기록이 없습니다.",
+                show_table_expander=False,
+            )
+            render_data_sheet(
+                policy_recommendation,
+                title="주말 보정에서 나온 추천 정책",
+                primary_column="policy_candidate_id",
+                secondary_columns=["template_id", "recommendation_date"],
+                detail_columns=[
+                    "horizon",
+                    "scope_type",
+                    "scope_key",
+                    "objective_score",
+                    "mean_realized_excess_return",
+                    "hit_rate",
+                    "execution_rate",
+                    "manual_review_required_flag",
+                ],
+                limit=6,
+                empty_message="주말 보정 추천 결과가 없습니다.",
+                show_table_expander=False,
+            )
+            render_data_sheet(
+                active_policy,
+                title="현재 운영 정책",
+                primary_column="policy_candidate_id",
+                secondary_columns=["template_id", "effective_from_date"],
+                detail_columns=["horizon", "scope_type", "scope_key", "checkpoint_time", "note"],
+                limit=6,
+                empty_message="현재 운영 정책 기록이 없습니다.",
+                show_table_expander=False,
+            )
+            render_data_sheet(
+                policy_apply_compare,
+                title="현재 정책과 다음 후보 비교",
+                primary_column="recommended_policy_candidate_id",
+                secondary_columns=["recommended_template_id", "recommendation_date"],
+                detail_columns=[
+                    "horizon",
+                    "scope_type",
+                    "scope_key",
+                    "active_template_id",
+                    "before_objective_score",
+                    "after_objective_score",
+                    "objective_score_delta",
+                    "mean_excess_return_delta",
+                    "hit_rate_delta",
+                    "execution_rate_delta",
+                    "manual_review_required_flag",
+                ],
+                limit=6,
+                empty_message="이번 주에 반영할 정책 후보가 없습니다.",
+                show_table_expander=False,
+            )
 
         with st.form("apply_intraday_policy_form", clear_on_submit=False):
             policy_note = st.text_input(
@@ -188,44 +394,75 @@ with action_tab:
                     )
 
     with meta_action_tab:
-        render_data_sheet(
-            weekly_training_runs,
-            title="최근 주말 학습 실행 결과",
-            primary_column="started_at",
-            secondary_columns=["status", "as_of_date"],
-            detail_columns=["notes", "run_id"],
-            limit=2,
-            empty_message="최근 주말 학습 실행 기록이 없습니다.",
-            show_table_expander=False,
-        )
-        render_data_sheet(
-            meta_training_summary,
-            title="주말 학습에서 나온 메타 후보",
-            primary_column="model_id",
-            secondary_columns=["status", "horizon"],
-            detail_columns=["train_end_date", "created_at", "row_count"],
-            limit=4,
-            empty_message="주말 학습 메타 후보가 아직 화면에 연결되지 않았습니다.",
-            show_table_expander=False,
-        )
-        render_data_sheet(
-            active_meta_models,
-            title="현재 운영 메타 모델",
-            primary_column="model_id",
-            secondary_columns=["status", "horizon"],
-            detail_columns=["as_of_date", "train_end_date", "source"],
-            limit=3,
-            empty_message="현재 운영 메타 모델이 없습니다.",
-        )
-        render_data_sheet(
-            meta_apply_compare,
-            title="주말 학습 결과로 올라온 다음 메타 모델",
-            primary_column="model_id",
-            secondary_columns=["status", "horizon"],
-            detail_columns=["train_end_date", "score", "recommended_action"],
-            limit=3,
-            empty_message="이번 주에 반영할 메타 모델 후보가 없습니다.",
-        )
+        _render_meta_change_summary()
+        with st.expander("메타 모델 수치를 자세히 보기", expanded=False):
+            render_data_sheet(
+                weekly_training_runs,
+                title="최근 주말 학습 실행 결과",
+                primary_column="started_at",
+                secondary_columns=["status", "as_of_date"],
+                detail_columns=["notes", "run_id"],
+                limit=2,
+                empty_message="최근 주말 학습 실행 기록이 없습니다.",
+                show_table_expander=False,
+            )
+            render_data_sheet(
+                meta_training_summary,
+                title="주말 학습에서 나온 메타 후보",
+                primary_column="training_run_id",
+                secondary_columns=["panel_name", "horizon"],
+                detail_columns=[
+                    "train_end_date",
+                    "validation_row_count",
+                    "validation_session_count",
+                    "feature_count",
+                    "fallback_flag",
+                    "fallback_reason",
+                ],
+                limit=6,
+                empty_message="주말 학습 메타 후보가 없습니다.",
+                show_table_expander=False,
+            )
+            render_data_sheet(
+                active_meta_models,
+                title="현재 운영 메타 모델",
+                primary_column="active_meta_model_id",
+                secondary_columns=["panel_name", "horizon"],
+                detail_columns=[
+                    "training_run_id",
+                    "promotion_type",
+                    "effective_from_date",
+                    "fallback_flag",
+                    "fallback_reason",
+                ],
+                limit=6,
+                empty_message="현재 운영 메타 모델이 없습니다.",
+                show_table_expander=False,
+            )
+            render_data_sheet(
+                meta_apply_compare,
+                title="현재 메타 모델과 다음 후보 비교",
+                primary_column="candidate_training_run_id",
+                secondary_columns=["panel_name", "horizon"],
+                detail_columns=[
+                    "active_meta_model_id",
+                    "active_training_run_id",
+                    "train_end_date",
+                    "before_macro_f1",
+                    "after_macro_f1",
+                    "macro_f1_delta",
+                    "before_log_loss",
+                    "after_log_loss",
+                    "log_loss_delta",
+                    "validation_session_count",
+                    "feature_count",
+                    "fallback_flag",
+                    "fallback_reason",
+                ],
+                limit=6,
+                empty_message="이번 주에 반영할 메타 모델 후보가 없습니다.",
+                show_table_expander=False,
+            )
 
         with st.form("apply_intraday_meta_form", clear_on_submit=False):
             meta_note = st.text_input(
@@ -265,27 +502,50 @@ with policy_tab:
     render_data_sheet(
         policy_recommendation,
         title="이번 주 정책 추천",
-        primary_column="policy_id",
-        secondary_columns=["recommendation_label", "recommendation_date"],
-        detail_columns=["status", "score", "recommended_action"],
+        primary_column="policy_candidate_id",
+        secondary_columns=["template_id", "recommendation_date"],
+        detail_columns=[
+            "horizon",
+            "scope_type",
+            "scope_key",
+            "objective_score",
+            "mean_realized_excess_return",
+            "hit_rate",
+            "execution_rate",
+            "manual_review_required_flag",
+        ],
         limit=6,
         empty_message="정책 추천 결과가 없습니다.",
     )
     render_data_sheet(
         policy_experiments,
         title="정책 실험 기록",
-        primary_column="policy_id",
-        secondary_columns=["status", "split_name"],
-        detail_columns=["as_of_date", "metric_name", "metric_value"],
+        primary_column="experiment_name",
+        secondary_columns=["experiment_type", "created_at"],
+        detail_columns=[
+            "horizon",
+            "candidate_count",
+            "selected_policy_candidate_id",
+            "fallback_used_flag",
+            "status",
+        ],
         limit=6,
         empty_message="정책 실험 결과가 없습니다.",
     )
     render_data_sheet(
         policy_walkforward,
         title="기간별 재검증",
-        primary_column="policy_id",
-        secondary_columns=["status", "split_name"],
-        detail_columns=["as_of_date", "metric_name", "metric_value"],
+        primary_column="template_id",
+        secondary_columns=["split_name", "horizon"],
+        detail_columns=[
+            "scope_type",
+            "scope_key",
+            "objective_score",
+            "mean_realized_excess_return",
+            "hit_rate",
+            "execution_rate",
+            "manual_review_required_flag",
+        ],
         limit=6,
         empty_message="기간별 재검증 결과가 없습니다.",
     )
@@ -293,9 +553,9 @@ with policy_tab:
         render_data_sheet(
             policy_publish_status,
             title="정책 발행 상태",
-            primary_column="policy_id",
-            secondary_columns=["status", "published_at"],
-            detail_columns=["report_date", "run_id"],
+            primary_column="run_type",
+            secondary_columns=["status"],
+            detail_columns=["started_at", "finished_at", "notes"],
             limit=6,
             empty_message="정책 발행 상태가 없습니다.",
             show_table_expander=False,
@@ -303,9 +563,9 @@ with policy_tab:
         render_data_sheet(
             policy_rollbacks,
             title="정책 되돌리기 이력",
-            primary_column="policy_id",
-            secondary_columns=["status", "as_of_date"],
-            detail_columns=["created_at", "note"],
+            primary_column="policy_candidate_id",
+            secondary_columns=["promotion_type", "effective_from_date"],
+            detail_columns=["horizon", "scope_type", "scope_key", "rollback_of_active_policy_id", "note"],
             limit=6,
             empty_message="정책 되돌리기 이력이 없습니다.",
             show_table_expander=False,
@@ -313,9 +573,17 @@ with policy_tab:
         render_data_sheet(
             policy_calibration,
             title="검증용 세부 점수",
-            primary_column="policy_id",
-            secondary_columns=["status", "split_name"],
-            detail_columns=["as_of_date", "metric_name", "metric_value"],
+            primary_column="template_id",
+            secondary_columns=["split_name", "horizon"],
+            detail_columns=[
+                "scope_type",
+                "scope_key",
+                "objective_score",
+                "mean_realized_excess_return",
+                "hit_rate",
+                "execution_rate",
+                "manual_review_required_flag",
+            ],
             limit=6,
             empty_message="검증용 세부 점수가 없습니다.",
             show_table_expander=False,
@@ -323,9 +591,14 @@ with policy_tab:
         render_data_sheet(
             policy_ablation,
             title="항목 제거 실험",
-            primary_column="policy_id",
-            secondary_columns=["status", "metric_scope"],
-            detail_columns=["as_of_date", "metric_name", "metric_value"],
+            primary_column="ablation_name",
+            secondary_columns=["horizon", "ablation_date"],
+            detail_columns=[
+                "mean_realized_excess_return_delta",
+                "hit_rate_delta",
+                "execution_rate_delta",
+                "objective_score_delta",
+            ],
             limit=6,
             empty_message="항목 제거 실험 결과가 없습니다.",
             show_table_expander=False,
@@ -362,9 +635,16 @@ with meta_tab:
     render_data_sheet(
         meta_training_summary,
         title="메타 모델 학습 이력",
-        primary_column="model_id",
-        secondary_columns=["status", "horizon"],
-        detail_columns=["train_end_date", "created_at", "row_count"],
+        primary_column="training_run_id",
+        secondary_columns=["panel_name", "horizon"],
+        detail_columns=[
+            "train_end_date",
+            "validation_row_count",
+            "validation_session_count",
+            "feature_count",
+            "fallback_flag",
+            "fallback_reason",
+        ],
         limit=6,
         empty_message="메타 모델 학습 이력이 없습니다.",
     )
@@ -402,7 +682,7 @@ with summary_tab:
         alpha_training_summary,
         title="최근 알파 모델 학습",
         primary_column="model_spec_id",
-        secondary_columns=["status", "horizon"],
+        secondary_columns=["horizon", "train_end_date"],
         detail_columns=["train_end_date", "created_at", "row_count"],
         limit=6,
         empty_message="최근 알파 모델 학습 이력이 없습니다.",
@@ -410,9 +690,14 @@ with summary_tab:
     render_data_sheet(
         meta_training_summary,
         title="최근 메타 모델 학습",
-        primary_column="model_id",
-        secondary_columns=["status", "horizon"],
-        detail_columns=["train_end_date", "created_at", "row_count"],
+        primary_column="training_run_id",
+        secondary_columns=["panel_name", "horizon"],
+        detail_columns=[
+            "train_end_date",
+            "validation_row_count",
+            "validation_session_count",
+            "feature_count",
+        ],
         limit=6,
         empty_message="최근 메타 모델 학습 이력이 없습니다.",
     )
