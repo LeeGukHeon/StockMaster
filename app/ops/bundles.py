@@ -53,10 +53,10 @@ from app.ops.maintenance import (
     cleanup_disk_watermark,
     cleanup_docker_build_cache,
     cleanup_model_artifacts,
-    reset_open_recovery_actions,
     cleanup_stale_job_runs,
     reconcile_failed_runs,
     recover_incomplete_runs,
+    reset_open_recovery_actions,
     rotate_and_compress_logs,
     summarize_storage_usage,
 )
@@ -106,6 +106,7 @@ from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 
 DEFAULT_HORIZONS: tuple[int, ...] = (1, 5)
 SCHEDULER_GLOBAL_LOCK = "scheduler_global_write"
+WEEKLY_INTRADAY_REQUIRED_SESSIONS = 40 + 10 + 10 + max(DEFAULT_HORIZONS)
 
 
 def _resolve_pipeline_date(
@@ -191,6 +192,45 @@ def _resolve_recent_start_date(
             settings,
             end_date=end_date,
             trading_days=trading_days,
+            connection=read_connection,
+        )
+
+
+def _resolve_intraday_session_start_date(
+    settings: Settings,
+    *,
+    end_date: date,
+    required_sessions: int,
+    connection=None,
+) -> date:
+    if connection is not None:
+        row = connection.execute(
+            """
+            SELECT MIN(session_date)
+            FROM (
+                SELECT DISTINCT session_date
+                FROM fact_intraday_adjusted_entry_decision
+                WHERE session_date <= ?
+                ORDER BY session_date DESC
+                LIMIT ?
+            )
+            """,
+            [end_date, required_sessions],
+        ).fetchone()
+        if row and row[0] is not None:
+            return row[0]
+        return _resolve_recent_start_date(
+            settings,
+            end_date=end_date,
+            trading_days=required_sessions,
+            connection=connection,
+        )
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as read_connection:
+        bootstrap_core_tables(read_connection)
+        return _resolve_intraday_session_start_date(
+            settings,
+            end_date=end_date,
+            required_sessions=required_sessions,
             connection=read_connection,
         )
 
@@ -546,10 +586,10 @@ def run_daily_evaluation_bundle(
             requested_date=requested_date,
             connection=connection,
         )
-        start_date = _resolve_recent_start_date(
+        start_date = _resolve_intraday_session_start_date(
             settings,
             end_date=target_date,
-            trading_days=60,
+            required_sessions=WEEKLY_INTRADAY_REQUIRED_SESSIONS,
             connection=connection,
         )
         with JobRunContext(
@@ -1552,10 +1592,10 @@ def run_weekly_training_bundle(
             requested_date=requested_date,
             connection=connection,
         )
-        start_date = _resolve_recent_start_date(
+        start_date = _resolve_intraday_session_start_date(
             settings,
             end_date=target_date,
-            trading_days=60,
+            required_sessions=WEEKLY_INTRADAY_REQUIRED_SESSIONS,
             connection=connection,
         )
         with JobRunContext(

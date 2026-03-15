@@ -4,6 +4,7 @@ from datetime import date
 from types import SimpleNamespace
 
 from app.ops.bundles import (
+    _resolve_intraday_session_start_date,
     run_daily_close_bundle,
     run_daily_evaluation_bundle,
     run_docker_build_cache_cleanup_bundle,
@@ -470,3 +471,80 @@ def test_weekly_calibration_bundle_does_not_pass_split_counts_to_calibration(
     assert "validation_sessions" not in captured
     assert "test_sessions" not in captured
     assert "step_sessions" not in captured
+
+
+def test_resolve_intraday_session_start_date_uses_available_adjusted_sessions(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    session_dates = [
+        date(2026, 2, 26),
+        date(2026, 2, 27),
+        date(2026, 3, 2),
+        date(2026, 3, 4),
+        date(2026, 3, 6),
+        date(2026, 3, 9),
+    ]
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        rows = [
+            (
+                "adjusted-test",
+                session_date,
+                session_date,
+                "005930",
+                1,
+                "09:05",
+                "selection_engine_v2",
+                "RISK_ON",
+                "default",
+                "ENTER_NOW",
+                "ENTER_NOW",
+                65.0,
+                65.0,
+                None,
+                "strong",
+                True,
+                False,
+                None,
+                None,
+                None,
+            )
+            for session_date in session_dates
+        ]
+        connection.executemany(
+            """
+            INSERT INTO fact_intraday_adjusted_entry_decision (
+                run_id,
+                selection_date,
+                session_date,
+                symbol,
+                horizon,
+                checkpoint_time,
+                ranking_version,
+                market_regime_family,
+                adjustment_profile,
+                raw_action,
+                adjusted_action,
+                raw_timing_score,
+                adjusted_timing_score,
+                selection_confidence_bucket,
+                signal_quality_flag,
+                eligible_to_execute_flag,
+                fallback_flag,
+                adjustment_reason_codes_json,
+                risk_flags_json,
+                decision_notes_json,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+            """,
+            rows,
+        )
+        start_date = _resolve_intraday_session_start_date(
+            settings,
+            end_date=date(2026, 3, 9),
+            required_sessions=4,
+            connection=connection,
+        )
+
+    assert start_date == date(2026, 3, 2)
