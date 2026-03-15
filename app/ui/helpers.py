@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 import json
+import math
 import numbers
 import re
 import secrets
-from hashlib import sha256
 from dataclasses import asdict
 from datetime import date, datetime, time
+from hashlib import sha256
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from app.common.artifacts import resolve_artifact_path
-from app.common.time import today_local
 from app.common.disk import DiskUsageReport, measure_disk_usage
+from app.common.time import today_local
 from app.features.builders.flow_features import build_flow_feature_frame
 from app.features.builders.fundamentals_features import build_fundamentals_feature_frame
 from app.features.builders.liquidity_features import build_liquidity_feature_frame
@@ -38,14 +39,14 @@ from app.intraday.meta_common import (
     WAIT_PANEL,
 )
 from app.intraday.policy import apply_active_intraday_policy_frame
-from app.ml.inference import (
-    _resolve_training_run_for_inference,
-    build_prediction_frame_from_training_run,
-)
 from app.ml.constants import MODEL_DOMAIN as ALPHA_MODEL_DOMAIN
 from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
+from app.ml.inference import (
+    _resolve_training_run_for_inference,
+    build_prediction_frame_from_training_run,
+)
 from app.ml.promotion import load_alpha_promotion_summary
 from app.ml.registry import load_model_artifact
 from app.ops.scheduler import (
@@ -67,19 +68,19 @@ from app.ranking.explanatory_score import (
     RANKING_VERSION as EXPLANATORY_RANKING_VERSION,
 )
 from app.ranking.explanatory_score import _load_regime_map
-from app.selection.sector_outlook import sector_outlook_frame
 from app.selection.calibration import PREDICTION_VERSION
 from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.selection.engine_v2 import build_selection_engine_v2_rankings
+from app.selection.sector_outlook import sector_outlook_frame
 from app.settings import Settings, load_settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
+from app.storage.manifests import fetch_recent_runs
 from app.storage.metadata_postgres import (
     fetchdf_postgres_sql,
     fetchone_postgres_sql,
     metadata_postgres_enabled,
 )
-from app.storage.manifests import fetch_recent_runs
 
 try:
     from streamlit.runtime.scriptrunner import get_script_run_ctx
@@ -2439,10 +2440,72 @@ def format_ui_number(value: object, *, decimals: int = 2) -> str:
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return str(value)
     numeric = float(value)
+    if not math.isfinite(numeric):
+        return "-"
     if abs(numeric - round(numeric)) < 1e-9:
         return f"{int(round(numeric)):,}"
     text = f"{numeric:,.{decimals}f}"
     return text.rstrip("0").rstrip(".")
+
+
+def is_ui_missing_value(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() in {"", "-", "None", "nan", "NaN", "NaT"}
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        numeric = float(value)
+        return not math.isfinite(numeric)
+    try:
+        return bool(pd.isna(value))
+    except TypeError:
+        return False
+
+
+def format_ui_percent(
+    value: object,
+    *,
+    decimals: int = 2,
+    signed: bool = False,
+    percent_points: bool = False,
+    missing: str = "-",
+) -> str:
+    if is_ui_missing_value(value):
+        return missing
+    if isinstance(value, bool):
+        return str(value)
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return str(value)
+    scaled = float(numeric) * 100.0
+    if not math.isfinite(scaled):
+        return missing
+    sign = "+" if signed else ""
+    suffix = "%p" if percent_points else "%"
+    return f"{scaled:{sign}.{decimals}f}{suffix}"
+
+
+def format_ui_delta(
+    value: object,
+    *,
+    decimals: int = 2,
+    signed: bool = True,
+    percent_points: bool = False,
+    missing: str = "-",
+) -> str:
+    if is_ui_missing_value(value):
+        return missing
+    if isinstance(value, bool):
+        return str(value)
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return str(value)
+    delta = float(numeric)
+    if not math.isfinite(delta):
+        return missing
+    if percent_points:
+        return f"{delta * 100:{'+' if signed else ''}.{decimals}f}%p"
+    return f"{delta:{'+' if signed else ''}.{decimals}f}"
 
 
 def _coerce_float(value: object, default: float = 0.0) -> float:
@@ -2495,11 +2558,13 @@ def _is_score_display_column(column: str) -> bool:
 
 
 def _format_percent_value(value: object) -> object:
-    if pd.isna(value) or isinstance(value, bool):
-        return value
+    if is_ui_missing_value(value) or isinstance(value, bool):
+        return "-"
     if not isinstance(value, numbers.Real):
         return value
     scaled = float(value) * 100.0
+    if not math.isfinite(scaled):
+        return "-"
     if abs(scaled) < 0.005:
         scaled = 0.0
     return f"{scaled:.2f}%"
@@ -2514,8 +2579,8 @@ def _format_price_value(value: object) -> object:
 
 
 def _format_score_value(value: object) -> object:
-    if pd.isna(value) or isinstance(value, bool):
-        return value
+    if is_ui_missing_value(value) or isinstance(value, bool):
+        return "-"
     if not isinstance(value, numbers.Real):
         return value
     decimals = 1 if abs(float(value)) >= 10 else 2

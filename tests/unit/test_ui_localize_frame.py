@@ -5,9 +5,12 @@ import pandas as pd
 from app.ui.helpers import (
     format_ui_date,
     format_ui_datetime,
+    format_ui_delta,
     format_ui_number,
+    format_ui_percent,
     format_ui_run_id,
     format_ui_value,
+    is_ui_missing_value,
     localize_frame,
 )
 
@@ -125,6 +128,24 @@ def test_localize_frame_translates_case_insensitive_enum_values() -> None:
 def test_format_ui_value_translates_scalar_outside_tables() -> None:
     assert format_ui_value("regime_state", "risk_on") == "상승 우위 장"
     assert format_ui_value("health_status", "WARNING") == "주의"
+
+
+def test_ui_metric_formatters_treat_non_finite_values_as_missing() -> None:
+    assert format_ui_number(float("inf")) == "-"
+    assert format_ui_number(float("-inf")) == "-"
+    assert format_ui_percent(float("nan")) == "-"
+    assert format_ui_percent(0.0125) == "1.25%"
+    assert format_ui_percent(0.0125, signed=True, percent_points=True) == "+1.25%p"
+    assert format_ui_delta(float("nan")) == "-"
+    assert format_ui_delta(1.25) == "+1.25"
+
+
+def test_is_ui_missing_value_handles_tokens_and_finite_numbers() -> None:
+    assert is_ui_missing_value(None) is True
+    assert is_ui_missing_value("NaN") is True
+    assert is_ui_missing_value(float("inf")) is True
+    assert is_ui_missing_value(0.0) is False
+    assert is_ui_missing_value(False) is False
 
 
 def test_localize_frame_formats_json_columns_into_readable_korean() -> None:

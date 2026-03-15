@@ -26,12 +26,15 @@ from app.ui.components import (
 )
 from app.ui.helpers import (
     format_ui_date,
+    format_ui_delta,
     format_ui_number,
+    format_ui_percent,
     format_ui_value,
     intraday_meta_calibration_frame,
     intraday_meta_confusion_matrix_frame,
     intraday_meta_feature_importance_frame,
-    latest_job_runs_frame,
+    is_ui_missing_value,
+    latest_alpha_training_candidate_frame,
     latest_intraday_active_policy_frame,
     latest_intraday_meta_active_model_frame,
     latest_intraday_meta_apply_compare_frame,
@@ -46,10 +49,10 @@ from app.ui.helpers import (
     latest_intraday_policy_report_preview,
     latest_intraday_policy_rollback_frame,
     latest_intraday_research_capability_frame,
+    latest_job_runs_frame,
     latest_model_training_summary_frame,
     load_ui_settings,
 )
-
 
 POLICY_TEMPLATE_LABELS = {
     "BASE_DEFAULT": "기본형",
@@ -92,25 +95,73 @@ def _panel_label(panel_name: object) -> str:
     return panel
 
 
-def _format_pct(value: object) -> str:
-    if value is None:
-        return "-"
-    try:
-        return f"{float(value) * 100:.2f}%"
-    except (TypeError, ValueError):
-        return _safe_text(value)
+def _metric_delta(value: object, *, percent_points: bool = False) -> str | None:
+    formatted = (
+        format_ui_percent(value, signed=True, percent_points=True)
+        if percent_points
+        else format_ui_delta(value)
+    )
+    return None if formatted == "-" else formatted
 
 
-def _format_delta(value: object, *, percent: bool = False) -> str:
-    if value is None:
-        return "-"
-    try:
-        raw = float(value)
-    except (TypeError, ValueError):
-        return _safe_text(value)
-    if percent:
-        return f"{raw * 100:+.2f}%p"
-    return f"{raw:+.2f}"
+def _render_metric(
+    column,
+    label: str,
+    value: str,
+    *,
+    delta: str | None = None,
+    delta_color: str = "normal",
+) -> None:
+    kwargs = {"label": label, "value": value}
+    if delta is not None:
+        kwargs["delta"] = delta
+        kwargs["delta_color"] = delta_color
+    column.metric(**kwargs)
+
+
+def _policy_compare_notice(row_dict: dict[str, object]) -> tuple[str, str]:
+    has_active_policy = not is_ui_missing_value(row_dict.get("active_policy_candidate_id")) or not is_ui_missing_value(
+        row_dict.get("active_template_id")
+    )
+    has_candidate_metrics = any(
+        not is_ui_missing_value(row_dict.get(column))
+        for column in (
+            "after_objective_score",
+            "after_mean_excess_return",
+            "after_hit_rate",
+            "after_execution_rate",
+        )
+    )
+    if not has_active_policy:
+        return ("info", "현재 운영 중인 기준 정책이 없어 변화량 대신 새 후보 수치만 표시합니다.")
+    if not has_candidate_metrics:
+        return ("warning", "이번 주 후보의 검증 수치가 없어 정책 점수를 비교할 수 없습니다.")
+    if bool(row_dict.get("manual_review_required_flag")):
+        return ("warning", "이 후보는 자동 반영 대상이 아니며 수동 검토가 필요합니다.")
+    return ("success", "현재 운영 정책과 이번 주 후보를 같은 기준으로 비교할 수 있습니다.")
+
+
+def _meta_compare_notice(row_dict: dict[str, object]) -> tuple[str, str]:
+    has_active_model = not is_ui_missing_value(row_dict.get("active_meta_model_id")) or not is_ui_missing_value(
+        row_dict.get("active_training_run_id")
+    )
+    has_candidate_metrics = any(
+        not is_ui_missing_value(row_dict.get(column))
+        for column in ("after_macro_f1", "after_log_loss", "macro_f1_delta", "log_loss_delta")
+    )
+    fallback_reason = _safe_text(row_dict.get("fallback_reason"))
+    validation_sessions = row_dict.get("validation_session_count")
+    if bool(row_dict.get("fallback_flag")):
+        if fallback_reason != "-":
+            return ("warning", f"이 후보는 대체 경로로 생성되었습니다. 사유: {fallback_reason}")
+        return ("warning", "이 후보는 대체 경로로 생성되어 바로 반영하기 어렵습니다.")
+    if not has_active_model:
+        return ("info", "현재 운영 중인 메타 모델이 없어 변화량 대신 새 후보 수치만 표시합니다.")
+    if not has_candidate_metrics:
+        if not is_ui_missing_value(validation_sessions) and int(validation_sessions or 0) == 0:
+            return ("warning", "검증 세션이 없어 메타 모델 점수를 비교할 수 없습니다.")
+        return ("warning", "이번 주 후보의 검증 수치가 없어 메타 모델 점수를 비교할 수 없습니다.")
+    return ("success", "현재 운영 모델과 이번 주 후보를 같은 기준으로 비교할 수 있습니다.")
 
 
 def _review_text(flag: object) -> str:
@@ -151,26 +202,33 @@ def _render_policy_change_summary() -> None:
             st.write(f"- 추천일: {format_ui_date(row_dict.get('recommendation_date'))}")
             st.write(f"- 사람 확인 필요: {_review_text(row_dict.get('manual_review_required_flag'))}")
 
+        notice_level, notice_text = _policy_compare_notice(row_dict)
+        getattr(st, notice_level, st.info)(notice_text)
+
         metric_a, metric_b, metric_c, metric_d = st.columns(4)
-        metric_a.metric(
-            "목표 점수 변화",
-            _safe_text(format_ui_number(row_dict.get("after_objective_score"))),
-            _format_delta(row_dict.get("objective_score_delta")),
+        _render_metric(
+            metric_a,
+            "추천 목표 점수",
+            format_ui_number(row_dict.get("after_objective_score")),
+            delta=_metric_delta(row_dict.get("objective_score_delta")),
         )
-        metric_b.metric(
-            "평균 초과수익률 변화",
-            _format_pct(row_dict.get("after_mean_excess_return")),
-            _format_delta(row_dict.get("mean_excess_return_delta"), percent=True),
+        _render_metric(
+            metric_b,
+            "추천 평균 초과수익률",
+            format_ui_percent(row_dict.get("after_mean_excess_return")),
+            delta=_metric_delta(row_dict.get("mean_excess_return_delta"), percent_points=True),
         )
-        metric_c.metric(
-            "적중률 변화",
-            _format_pct(row_dict.get("after_hit_rate")),
-            _format_delta(row_dict.get("hit_rate_delta"), percent=True),
+        _render_metric(
+            metric_c,
+            "추천 적중률",
+            format_ui_percent(row_dict.get("after_hit_rate")),
+            delta=_metric_delta(row_dict.get("hit_rate_delta"), percent_points=True),
         )
-        metric_d.metric(
-            "실행률 변화",
-            _format_pct(row_dict.get("after_execution_rate")),
-            _format_delta(row_dict.get("execution_rate_delta"), percent=True),
+        _render_metric(
+            metric_d,
+            "추천 실행률",
+            format_ui_percent(row_dict.get("after_execution_rate")),
+            delta=_metric_delta(row_dict.get("execution_rate_delta"), percent_points=True),
         )
 
     st.success("바꿔도 괜찮다고 판단되면 바로 아래 `정책 바로 반영` 버튼을 누르시면 됩니다.")
@@ -210,20 +268,27 @@ def _render_meta_change_summary() -> None:
             st.write(f"- 검증 세션 수: {_safe_text(format_ui_number(row_dict.get('validation_session_count')))}")
             st.write(f"- 대체 계산 사용: {_review_text(row_dict.get('fallback_flag'))}")
 
+        notice_level, notice_text = _meta_compare_notice(row_dict)
+        getattr(st, notice_level, st.info)(notice_text)
+
         metric_a, metric_b, metric_c = st.columns(3)
-        metric_a.metric(
-            "종합 분류 점수",
-            _safe_text(format_ui_number(row_dict.get("after_macro_f1"))),
-            _format_delta(row_dict.get("macro_f1_delta")),
+        _render_metric(
+            metric_a,
+            "후보 종합 분류 점수",
+            format_ui_number(row_dict.get("after_macro_f1")),
+            delta=_metric_delta(row_dict.get("macro_f1_delta")),
         )
-        metric_b.metric(
-            "확률 오차",
-            _safe_text(format_ui_number(row_dict.get("after_log_loss"))),
-            _format_delta(row_dict.get("log_loss_delta")),
+        _render_metric(
+            metric_b,
+            "후보 로그 손실",
+            format_ui_number(row_dict.get("after_log_loss")),
+            delta=_metric_delta(row_dict.get("log_loss_delta")),
+            delta_color="inverse",
         )
-        metric_c.metric(
+        _render_metric(
+            metric_c,
             "학습에 쓴 특징 수",
-            _safe_text(format_ui_number(row_dict.get("feature_count"))),
+            format_ui_number(row_dict.get("feature_count")),
         )
 
     st.success("바꿔도 괜찮다고 판단되면 바로 아래 `메타 모델 바로 반영` 버튼을 누르시면 됩니다.")
@@ -243,6 +308,7 @@ weekly_training_runs = (
 )
 
 alpha_training_summary = latest_model_training_summary_frame(settings)
+alpha_training_candidates = latest_alpha_training_candidate_frame(settings, limit=20)
 meta_training_summary = latest_intraday_meta_training_frame(settings, limit=20)
 intraday_capability = latest_intraday_research_capability_frame(settings, limit=12)
 policy_experiments = latest_intraday_policy_experiment_frame(settings, limit=20)
@@ -680,12 +746,27 @@ with summary_tab:
     )
     render_data_sheet(
         alpha_training_summary,
-        title="최근 알파 모델 학습",
+        title="최근 알파 학습 상태 요약",
+        primary_column="horizon",
+        secondary_columns=["train_end_date"],
+        detail_columns=["train_row_count", "validation_row_count", "fallback_flag", "fallback_reason"],
+        limit=6,
+        empty_message="최근 알파 학습 상태가 없습니다.",
+    )
+    render_data_sheet(
+        alpha_training_candidates,
+        title="최근 알파 모델 학습 후보",
         primary_column="model_spec_id",
         secondary_columns=["horizon", "train_end_date"],
-        detail_columns=["train_end_date", "created_at", "row_count"],
+        detail_columns=[
+            "training_run_id",
+            "model_version",
+            "validation_row_count",
+            "fallback_flag",
+            "fallback_reason",
+        ],
         limit=6,
-        empty_message="최근 알파 모델 학습 이력이 없습니다.",
+        empty_message="최근 알파 모델 학습 후보가 없습니다.",
     )
     render_data_sheet(
         meta_training_summary,

@@ -69,6 +69,13 @@ def inject_app_styles() -> None:
             padding-top: 1rem;
             padding-bottom: 1.3rem;
         }
+        div[data-testid="stForm"] {
+            border:1px solid var(--sm-border);
+            border-radius:18px;
+            padding:0.85rem 0.9rem 0.35rem 0.9rem;
+            background:rgba(255,255,255,0.70);
+            box-shadow:none;
+        }
         h1, h2, h3 {
             color: var(--sm-ink);
             letter-spacing: -0.03em;
@@ -234,30 +241,48 @@ def inject_app_styles() -> None:
             box-shadow:none;
         }
         .stTabs [role="tablist"] {
+            display:flex;
+            flex-wrap:wrap;
             gap:0.38rem;
             padding:0.3rem;
             border-radius:999px;
             background:rgba(255,255,255,0.48);
             border:1px solid rgba(20,35,31,0.08);
-            width:fit-content;
+            width:100%;
         }
         .stTabs [role="tab"] {
+            flex:1 1 180px;
             border-radius:999px;
             padding:0.4rem 0.95rem;
             height:auto;
             background:transparent;
             color:#4f5d58;
+            justify-content:center;
         }
         .stTabs [aria-selected="true"] {
             background:linear-gradient(135deg, rgba(15,118,110,0.92), rgba(22,163,74,0.88));
             color:white;
         }
+        div[data-baseweb="button-group"] {
+            width:100%;
+        }
+        div[data-baseweb="button-group"] > div {
+            display:flex;
+            flex-wrap:wrap;
+            gap:0.38rem;
+            width:100%;
+        }
         div[data-baseweb="button-group"] button,
         button[kind="secondary"] {
+            flex:1 1 140px;
             border-radius:999px !important;
             border:1px solid rgba(20,35,31,0.1) !important;
             background:rgba(255,255,255,0.72) !important;
             color:var(--sm-ink) !important;
+        }
+        button[kind="primary"] {
+            border-radius:999px !important;
+            border:1px solid rgba(20,35,31,0.1) !important;
         }
         @media (max-width: 900px) {
             .block-container {
@@ -292,6 +317,15 @@ def inject_app_styles() -> None:
             [data-testid="stTabs"] button {
                 padding-left: 0.5rem !important;
                 padding-right: 0.5rem !important;
+            }
+            div[data-testid="stForm"] {
+                padding-left:0.75rem;
+                padding-right:0.75rem;
+            }
+            div[data-baseweb="button-group"] button,
+            button[kind="secondary"],
+            button[kind="primary"] {
+                width:100%;
             }
         }
         </style>
