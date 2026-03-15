@@ -1499,6 +1499,81 @@ def _walkforward_splits(
     return splits
 
 
+def _write_policy_split_debug_artifact(
+    settings: Settings,
+    *,
+    run_id: str,
+    artifact_name: str,
+    start_session_date: date,
+    end_session_date: date,
+    decision_frame: pd.DataFrame,
+    matured_dates: list[date],
+    splits: list[dict[str, object]],
+    horizons: list[int],
+    split_mode: str,
+    train_sessions: int,
+    validation_sessions: int,
+    test_sessions: int,
+    step_sessions: int,
+) -> str:
+    artifact_dir = settings.paths.artifacts_dir / "intraday_policy_debug" / run_id
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_dir / artifact_name
+    label_coverage_by_horizon: dict[str, dict[str, object]] = {}
+    if not decision_frame.empty:
+        for horizon in sorted({int(value) for value in horizons}):
+            horizon_frame = decision_frame.loc[decision_frame["horizon"] == horizon].copy()
+            labeled = horizon_frame.loc[horizon_frame["label_available_flag"] == True].copy()  # noqa: E712
+            label_coverage_by_horizon[str(horizon)] = {
+                "frame_rows": int(len(horizon_frame)),
+                "session_days": int(horizon_frame["session_date"].nunique()),
+                "labeled_rows": int(len(labeled)),
+                "labeled_session_days": int(labeled["session_date"].nunique()),
+                "min_labeled_session": None
+                if labeled.empty
+                else str(pd.Timestamp(labeled["session_date"].min()).date()),
+                "max_labeled_session": None
+                if labeled.empty
+                else str(pd.Timestamp(labeled["session_date"].max()).date()),
+            }
+    payload = {
+        "start_session_date": start_session_date.isoformat(),
+        "end_session_date": end_session_date.isoformat(),
+        "split_mode": split_mode,
+        "required_sessions": {
+            "train": train_sessions,
+            "validation": validation_sessions,
+            "test": test_sessions,
+            "step": step_sessions,
+        },
+        "decision_frame_rows": int(len(decision_frame)),
+        "decision_frame_session_days": 0
+        if decision_frame.empty
+        else int(decision_frame["session_date"].nunique()),
+        "matured_dates_len": int(len(matured_dates)),
+        "matured_dates_first": [value.isoformat() for value in matured_dates[:10]],
+        "matured_dates_last": [value.isoformat() for value in matured_dates[-10:]],
+        "split_count": int(len(splits)),
+        "splits_preview": [
+            {
+                "split_index": int(split["split_index"]),
+                "train_dates": [value.isoformat() for value in split["train_dates"][:3]]
+                + (
+                    []
+                    if len(split["train_dates"]) <= 3
+                    else [split["train_dates"][-1].isoformat()]
+                ),
+                "validation_dates": [value.isoformat() for value in split["validation_dates"]],
+                "test_dates": [value.isoformat() for value in split["test_dates"]],
+            }
+            for split in splits[:3]
+        ],
+        "label_coverage_by_horizon": label_coverage_by_horizon,
+    }
+    artifact_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(artifact_path)
+
+
 def _evaluate_candidate_set(
     *,
     candidates: pd.DataFrame,
@@ -1774,6 +1849,24 @@ def run_intraday_policy_calibration(
                     test_sessions=test_sessions,
                     step_sessions=step_sessions,
                 )
+                artifact_paths = [
+                    _write_policy_split_debug_artifact(
+                        settings,
+                        run_id=run_context.run_id,
+                        artifact_name="calibration_split_debug.json",
+                        start_session_date=start_session_date,
+                        end_session_date=end_session_date,
+                        decision_frame=decision_frame,
+                        matured_dates=matured_dates,
+                        splits=splits,
+                        horizons=horizons,
+                        split_mode="ANCHORED_WALKFORWARD",
+                        train_sessions=train_sessions,
+                        validation_sessions=validation_sessions,
+                        test_sessions=test_sessions,
+                        step_sessions=step_sessions,
+                    )
+                ]
                 experiment_frame, evaluation_frame = _evaluate_candidate_set(
                     candidates=candidates,
                     decision_frame=decision_frame,
@@ -1787,7 +1880,6 @@ def run_intraday_policy_calibration(
                 )
                 upsert_intraday_policy_experiment_run(connection, experiment_frame)
                 upsert_intraday_policy_evaluation(connection, evaluation_frame)
-                artifact_paths = []
                 if not evaluation_frame.empty:
                     artifact_paths.append(
                         str(
@@ -1806,7 +1898,8 @@ def run_intraday_policy_calibration(
                 notes = (
                     "Intraday policy calibration completed. "
                     f"experiments={len(experiment_frame)} evaluations={len(evaluation_frame)} "
-                    f"splits={len(splits)}"
+                    f"splits={len(splits)} matured_dates={len(matured_dates)} "
+                    f"start_session_date={start_session_date.isoformat()}"
                 )
                 record_run_finish(
                     connection,
@@ -1932,6 +2025,24 @@ def run_intraday_policy_walkforward(
                     test_sessions=test_sessions,
                     step_sessions=step_sessions,
                 )
+                artifact_paths = [
+                    _write_policy_split_debug_artifact(
+                        settings,
+                        run_id=run_context.run_id,
+                        artifact_name="walkforward_split_debug.json",
+                        start_session_date=start_session_date,
+                        end_session_date=end_session_date,
+                        decision_frame=decision_frame,
+                        matured_dates=matured_dates,
+                        splits=splits,
+                        horizons=horizons,
+                        split_mode=effective_mode,
+                        train_sessions=train_sessions,
+                        validation_sessions=validation_sessions,
+                        test_sessions=test_sessions,
+                        step_sessions=step_sessions,
+                    )
+                ]
                 experiment_frame, evaluation_frame = _evaluate_candidate_set(
                     candidates=candidates,
                     decision_frame=decision_frame,
@@ -1945,7 +2056,6 @@ def run_intraday_policy_walkforward(
                 )
                 upsert_intraday_policy_experiment_run(connection, experiment_frame)
                 upsert_intraday_policy_evaluation(connection, evaluation_frame)
-                artifact_paths = []
                 if not evaluation_frame.empty:
                     artifact_paths.append(
                         str(
@@ -1964,7 +2074,8 @@ def run_intraday_policy_walkforward(
                 notes = (
                     "Intraday policy walk-forward completed. "
                     f"experiments={len(experiment_frame)} evaluations={len(evaluation_frame)} "
-                    f"splits={len(splits)}"
+                    f"splits={len(splits)} matured_dates={len(matured_dates)} "
+                    f"start_session_date={start_session_date.isoformat()}"
                 )
                 record_run_finish(
                     connection,
