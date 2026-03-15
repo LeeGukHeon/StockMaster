@@ -2124,49 +2124,19 @@ def materialize_intraday_policy_recommendations(
                 evaluation_frame = connection.execute(
                     f"""
                     SELECT
+                        *
+                    FROM vw_latest_intraday_policy_evaluation
+                    WHERE horizon IN ({placeholders})
+                      AND window_end_date <= ?
+                    ORDER BY
                         horizon,
                         scope_type,
                         scope_key,
                         policy_candidate_id,
-                        template_id,
-                        MAX(experiment_run_id) AS source_experiment_run_id,
-                        MAX(search_space_version) AS search_space_version,
-                        MAX(objective_version) AS objective_version,
-                        MAX(split_version) AS split_version,
-                        SUM(window_session_count)
-                            FILTER (WHERE split_name = 'test') AS test_session_count,
-                        SUM(sample_count) FILTER (WHERE split_name = 'test') AS sample_count,
-                        SUM(executed_count) FILTER (WHERE split_name = 'test') AS executed_count,
-                        AVG(execution_rate) FILTER (WHERE split_name = 'test') AS execution_rate,
-                        AVG(mean_realized_excess_return)
-                            FILTER (WHERE split_name = 'test') AS mean_realized_excess_return,
-                        AVG(median_realized_excess_return)
-                            FILTER (WHERE split_name = 'test') AS median_realized_excess_return,
-                        AVG(hit_rate) FILTER (WHERE split_name = 'test') AS hit_rate,
-                        AVG(mean_timing_edge_vs_open_bps)
-                            FILTER (WHERE split_name = 'test') AS mean_timing_edge_vs_open_bps,
-                        AVG(positive_timing_edge_rate)
-                            FILTER (WHERE split_name = 'test') AS positive_timing_edge_rate,
-                        AVG(skip_saved_loss_rate)
-                            FILTER (WHERE split_name = 'test') AS skip_saved_loss_rate,
-                        AVG(missed_winner_rate)
-                            FILTER (WHERE split_name = 'test') AS missed_winner_rate,
-                        AVG(left_tail_proxy) FILTER (WHERE split_name = 'test') AS left_tail_proxy,
-                        AVG(stability_score) FILTER (WHERE split_name = 'test') AS stability_score,
-                        AVG(objective_score) FILTER (WHERE split_name = 'test') AS objective_score,
-                        BOOL_OR(manual_review_required_flag)
-                            FILTER (WHERE split_name = 'test') AS manual_review_required_flag,
-                        AVG(objective_score)
-                            FILTER (WHERE split_name IN ('validation', 'all'))
-                            AS fallback_objective_score,
-                        SUM(window_session_count)
-                            FILTER (WHERE split_name IN ('validation', 'all'))
-                            AS fallback_session_count
-                    FROM fact_intraday_policy_evaluation
-                    WHERE horizon IN ({placeholders})
-                      AND window_end_date <= ?
-                    GROUP BY horizon, scope_type, scope_key, policy_candidate_id, template_id
-                    ORDER BY horizon, scope_type, scope_key, objective_score DESC NULLS LAST
+                        split_name,
+                        split_index,
+                        window_end_date DESC,
+                        created_at DESC
                     """,
                     [*horizons, as_of_date],
                 ).fetchdf()
@@ -2188,14 +2158,194 @@ def materialize_intraday_policy_recommendations(
                         notes=notes,
                     )
 
+                metric_columns = [
+                    "sample_count",
+                    "executed_count",
+                    "execution_rate",
+                    "mean_realized_excess_return",
+                    "median_realized_excess_return",
+                    "hit_rate",
+                    "mean_timing_edge_vs_open_bps",
+                    "positive_timing_edge_rate",
+                    "skip_saved_loss_rate",
+                    "missed_winner_rate",
+                    "left_tail_proxy",
+                    "stability_score",
+                    "objective_score",
+                ]
+
+                def _aggregate_split_metrics(
+                    split_frame: pd.DataFrame,
+                ) -> dict[str, object]:
+                    if split_frame.empty:
+                        return {
+                            "source_experiment_run_id": None,
+                            "search_space_version": None,
+                            "objective_version": None,
+                            "split_version": None,
+                            "window_session_count": 0,
+                            "sample_count": 0,
+                            "executed_count": 0,
+                            "execution_rate": None,
+                            "mean_realized_excess_return": None,
+                            "median_realized_excess_return": None,
+                            "hit_rate": None,
+                            "mean_timing_edge_vs_open_bps": None,
+                            "positive_timing_edge_rate": None,
+                            "skip_saved_loss_rate": None,
+                            "missed_winner_rate": None,
+                            "left_tail_proxy": None,
+                            "stability_score": None,
+                            "objective_score": None,
+                            "manual_review_required_flag": False,
+                        }
+                    ordered = split_frame.sort_values(
+                        ["window_end_date", "created_at"],
+                        ascending=[False, False],
+                    ).reset_index(drop=True)
+                    latest_row = ordered.iloc[0]
+                    metrics: dict[str, object] = {
+                        "source_experiment_run_id": latest_row["experiment_run_id"],
+                        "search_space_version": latest_row["search_space_version"],
+                        "objective_version": latest_row["objective_version"],
+                        "split_version": latest_row["split_version"],
+                        "window_session_count": int(
+                            pd.to_numeric(
+                                ordered["window_session_count"],
+                                errors="coerce",
+                            ).fillna(0).sum()
+                        ),
+                        "manual_review_required_flag": bool(
+                            ordered["manual_review_required_flag"].fillna(False).any()
+                        ),
+                    }
+                    for column in metric_columns:
+                        numeric = pd.to_numeric(ordered[column], errors="coerce").dropna()
+                        if column in {"sample_count", "executed_count"}:
+                            metrics[column] = int(numeric.sum()) if not numeric.empty else 0
+                        else:
+                            metrics[column] = (
+                                float(numeric.mean()) if not numeric.empty else None
+                            )
+                    return metrics
+
+                candidate_rows: list[dict[str, object]] = []
+                candidate_group_columns = [
+                    "horizon",
+                    "scope_type",
+                    "scope_key",
+                    "policy_candidate_id",
+                    "template_id",
+                ]
+                for key, partition in evaluation_frame.groupby(
+                    candidate_group_columns,
+                    sort=False,
+                ):
+                    split_metrics = {
+                        split_name: _aggregate_split_metrics(
+                            partition.loc[partition["split_name"] == split_name].copy()
+                        )
+                        for split_name in ("test", "validation", "all")
+                    }
+                    score_source_split = next(
+                        (
+                            split_name
+                            for split_name in ("test", "validation", "all")
+                            if split_metrics[split_name]["objective_score"] is not None
+                        ),
+                        None,
+                    )
+                    if score_source_split is None:
+                        continue
+                    score_metrics = split_metrics[score_source_split]
+                    test_session_count = int(split_metrics["test"]["window_session_count"] or 0)
+                    effective_manual_review_required = (
+                        score_source_split != "test"
+                        or bool(score_metrics["manual_review_required_flag"])
+                        or test_session_count < minimum_test_sessions
+                    )
+                    candidate_rows.append(
+                        {
+                            "horizon": int(key[0]),
+                            "scope_type": str(key[1]),
+                            "scope_key": str(key[2]),
+                            "policy_candidate_id": str(key[3]),
+                            "template_id": str(key[4]),
+                            "source_experiment_run_id": score_metrics[
+                                "source_experiment_run_id"
+                            ],
+                            "search_space_version": score_metrics["search_space_version"],
+                            "objective_version": score_metrics["objective_version"],
+                            "split_version": score_metrics["split_version"],
+                            "sample_count": int(score_metrics["sample_count"] or 0),
+                            "test_session_count": test_session_count,
+                            "executed_count": int(score_metrics["executed_count"] or 0),
+                            "execution_rate": score_metrics["execution_rate"],
+                            "mean_realized_excess_return": score_metrics[
+                                "mean_realized_excess_return"
+                            ],
+                            "median_realized_excess_return": score_metrics[
+                                "median_realized_excess_return"
+                            ],
+                            "hit_rate": score_metrics["hit_rate"],
+                            "mean_timing_edge_vs_open_bps": score_metrics[
+                                "mean_timing_edge_vs_open_bps"
+                            ],
+                            "positive_timing_edge_rate": score_metrics[
+                                "positive_timing_edge_rate"
+                            ],
+                            "skip_saved_loss_rate": score_metrics[
+                                "skip_saved_loss_rate"
+                            ],
+                            "missed_winner_rate": score_metrics["missed_winner_rate"],
+                            "left_tail_proxy": score_metrics["left_tail_proxy"],
+                            "stability_score": score_metrics["stability_score"],
+                            "effective_objective_score": score_metrics["objective_score"],
+                            "display_objective_score": (
+                                score_metrics["objective_score"]
+                                if score_source_split == "test"
+                                and not effective_manual_review_required
+                                else None
+                            ),
+                            "manual_review_required_flag": effective_manual_review_required,
+                            "score_source_split": score_source_split,
+                        }
+                    )
+
+                if not candidate_rows:
+                    connection.execute(
+                        """
+                        DELETE FROM fact_intraday_policy_selection_recommendation
+                        WHERE recommendation_date = ?
+                        """,
+                        [as_of_date],
+                    )
+                    notes = (
+                        "No intraday policy recommendation candidates had usable evaluation "
+                        f"metrics for {as_of_date.isoformat()}."
+                    )
+                    record_run_finish(
+                        connection,
+                        run_id=run_context.run_id,
+                        finished_at=now_local(settings.app.timezone),
+                        status="success",
+                        output_artifacts=[],
+                        notes=notes,
+                        ranking_version=SELECTION_ENGINE_VERSION,
+                    )
+                    return IntradayPolicyRecommendationResult(
+                        run_id=run_context.run_id,
+                        row_count=0,
+                        artifact_paths=[],
+                        notes=notes,
+                    )
+
+                evaluation_frame = pd.DataFrame(candidate_rows)
                 grouped_best: dict[tuple[int, str, str], pd.DataFrame] = {}
                 for key, partition in evaluation_frame.groupby(
                     ["horizon", "scope_type", "scope_key"], sort=False
                 ):
                     ordered = partition.copy()
-                    ordered["effective_objective_score"] = ordered["objective_score"].fillna(
-                        ordered["fallback_objective_score"]
-                    )
                     ordered = ordered.sort_values(
                         [
                             "manual_review_required_flag",
@@ -2216,12 +2366,13 @@ def materialize_intraday_policy_recommendations(
                     recommendation_rows: list[pd.Series] = []
                     fallback_scope_type = None
                     fallback_scope_key = None
-                    lead_test_session_count = (
-                        int(ordered.iloc[0]["test_session_count"])
-                        if not ordered.empty and pd.notna(ordered.iloc[0]["test_session_count"])
-                        else 0
+                    lead_candidate_ready = (
+                        not ordered.empty
+                        and not bool(ordered.iloc[0]["manual_review_required_flag"])
+                        and int(ordered.iloc[0]["test_session_count"] or 0)
+                        >= minimum_test_sessions
                     )
-                    if not ordered.empty and lead_test_session_count >= minimum_test_sessions:
+                    if lead_candidate_ready:
                         recommendation_rows = [
                             ordered.iloc[index] for index in range(min(3, len(ordered)))
                         ]
@@ -2234,6 +2385,13 @@ def materialize_intraday_policy_recommendations(
                             )
                             if fallback is None or fallback.empty:
                                 continue
+                            lead_fallback_ready = (
+                                not bool(fallback.iloc[0]["manual_review_required_flag"])
+                                and int(fallback.iloc[0]["test_session_count"] or 0)
+                                >= minimum_test_sessions
+                            )
+                            if not lead_fallback_ready:
+                                continue
                             recommendation_rows = [
                                 fallback.iloc[index] for index in range(min(3, len(fallback)))
                             ]
@@ -2244,19 +2402,6 @@ def materialize_intraday_policy_recommendations(
                             recommendation_rows = [ordered.iloc[0]]
 
                     for rank, row in enumerate(recommendation_rows, start=1):
-                        test_session_count = (
-                            int(row["test_session_count"])
-                            if pd.notna(row["test_session_count"])
-                            else (
-                                int(row["fallback_session_count"])
-                                if pd.notna(row["fallback_session_count"])
-                                else 0
-                            )
-                        )
-                        manual_review_required = (
-                            pd.notna(row.get("manual_review_required_flag"))
-                            and bool(row.get("manual_review_required_flag"))
-                        ) or (test_session_count < minimum_test_sessions)
                         rows.append(
                             {
                                 "recommendation_date": as_of_date,
@@ -2270,16 +2415,8 @@ def materialize_intraday_policy_recommendations(
                                 "search_space_version": row["search_space_version"],
                                 "objective_version": row["objective_version"],
                                 "split_version": row["split_version"],
-                                "sample_count": int(
-                                    row["sample_count"]
-                                    if pd.notna(row["sample_count"])
-                                    else (
-                                        row["fallback_session_count"]
-                                        if pd.notna(row["fallback_session_count"])
-                                        else 0
-                                    )
-                                ),
-                                "test_session_count": test_session_count,
+                                "sample_count": int(row["sample_count"] or 0),
+                                "test_session_count": int(row["test_session_count"] or 0),
                                 "executed_count": int(row["executed_count"])
                                 if pd.notna(row["executed_count"])
                                 else 0,
@@ -2295,8 +2432,10 @@ def materialize_intraday_policy_recommendations(
                                 "missed_winner_rate": row["missed_winner_rate"],
                                 "left_tail_proxy": row["left_tail_proxy"],
                                 "stability_score": row["stability_score"],
-                                "objective_score": row["effective_objective_score"],
-                                "manual_review_required_flag": manual_review_required,
+                                "objective_score": row["display_objective_score"],
+                                "manual_review_required_flag": bool(
+                                    row["manual_review_required_flag"]
+                                ),
                                 "fallback_scope_type": fallback_scope_type,
                                 "fallback_scope_key": fallback_scope_key,
                                 "recommendation_reason_json": json_text(
@@ -2304,13 +2443,22 @@ def materialize_intraday_policy_recommendations(
                                         "minimum_test_sessions": minimum_test_sessions,
                                         "fallback_scope_type": fallback_scope_type,
                                         "fallback_scope_key": fallback_scope_key,
+                                        "score_source_split": row["score_source_split"],
                                     }
                                 ),
                                 "created_at": now_ts,
                             }
                         )
                 output = pd.DataFrame(rows)
-                upsert_intraday_policy_selection_recommendation(connection, output)
+                connection.execute(
+                    """
+                    DELETE FROM fact_intraday_policy_selection_recommendation
+                    WHERE recommendation_date = ?
+                    """,
+                    [as_of_date],
+                )
+                if not output.empty:
+                    upsert_intraday_policy_selection_recommendation(connection, output)
                 artifact_paths = [
                     str(
                         write_parquet(

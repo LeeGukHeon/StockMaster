@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 from app.intraday.adjusted_decisions import materialize_intraday_adjusted_entry_decisions
 from app.intraday.context import materialize_intraday_market_context_snapshots
 from app.intraday.data import (
@@ -20,6 +22,7 @@ from app.intraday.policy import (
     rollback_intraday_active_policy,
     run_intraday_policy_calibration,
     run_intraday_policy_walkforward,
+    upsert_intraday_policy_evaluation,
 )
 from app.intraday.policy_report import (
     publish_discord_intraday_policy_summary,
@@ -306,3 +309,85 @@ def test_intraday_policy_framework_end_to_end(tmp_path):
     assert int(evaluation_count) > 0
     assert int(recommendation_count) > 0
     assert int(active_count) > 0
+
+
+def test_policy_recommendation_fallback_rows_remain_manual_review(tmp_path):
+    settings = build_test_settings(tmp_path)
+    created_at = pd.Timestamp("2026-03-15T00:00:00Z")
+    evaluation_rows = []
+    for split_index in range(3):
+        evaluation_rows.append(
+            {
+                "experiment_run_id": f"policy-eval-{split_index}",
+                "experiment_type": "WALKFORWARD",
+                "search_space_version": "pcal_v1",
+                "objective_version": "ip_obj_v1",
+                "split_version": "wf_40_10_10_step5",
+                "split_mode": "ROLLING",
+                "split_name": "all",
+                "split_index": split_index,
+                "window_start_date": date(2026, 3, 4),
+                "window_end_date": date(2026, 3, 13),
+                "horizon": 1,
+                "policy_candidate_id": "candidate-a",
+                "template_id": "BASE_DEFAULT",
+                "scope_type": "GLOBAL",
+                "scope_key": "H1|GLOBAL",
+                "checkpoint_time": None,
+                "regime_cluster": None,
+                "regime_family": None,
+                "window_session_count": 4,
+                "sample_count": 120,
+                "matured_count": 120,
+                "executed_count": 0,
+                "no_entry_count": 120,
+                "execution_rate": 0.0,
+                "mean_realized_excess_return": -0.006131,
+                "median_realized_excess_return": -0.005200,
+                "hit_rate": 0.25,
+                "mean_timing_edge_vs_open_bps": -88.558848,
+                "positive_timing_edge_rate": 0.0,
+                "skip_saved_loss_rate": 0.391667,
+                "missed_winner_rate": 0.591667,
+                "left_tail_proxy": -0.016167,
+                "stability_score": 57.4039,
+                "objective_score": -69.55994708928395,
+                "manual_review_required_flag": True,
+                "fallback_scope_type": None,
+                "fallback_scope_key": None,
+                "notes_json": "{}",
+                "created_at": created_at + pd.Timedelta(minutes=split_index),
+            }
+        )
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        upsert_intraday_policy_evaluation(connection, pd.DataFrame(evaluation_rows))
+
+    result = materialize_intraday_policy_recommendations(
+        settings,
+        as_of_date=date(2026, 3, 13),
+        horizons=[1],
+        minimum_test_sessions=10,
+    )
+
+    assert result.row_count == 1
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        recommendation_row = connection.execute(
+            """
+            SELECT
+                objective_score,
+                manual_review_required_flag,
+                test_session_count,
+                recommendation_reason_json
+            FROM fact_intraday_policy_selection_recommendation
+            WHERE recommendation_date = ?
+            """,
+            [date(2026, 3, 13)],
+        ).fetchone()
+
+    assert recommendation_row is not None
+    assert recommendation_row[0] is None
+    assert recommendation_row[1] is True
+    assert recommendation_row[2] == 0
+    assert '"score_source_split": "all"' in str(recommendation_row[3])

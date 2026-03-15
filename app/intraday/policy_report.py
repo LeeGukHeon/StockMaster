@@ -48,6 +48,11 @@ def _build_content(
     active_policy: pd.DataFrame,
     ablation: pd.DataFrame,
 ) -> str:
+    def _format_optional_score(value: object) -> str:
+        if value is None or pd.isna(value):
+            return "n/a"
+        return f"{float(value):+.2f}"
+
     lines = [f"**StockMaster Intraday Policy Research | {as_of_date.isoformat()}**", ""]
     lines.append(
         "This layer calibrates deterministic intraday timing policy parameters "
@@ -78,7 +83,8 @@ def _build_content(
             )
             lines.append(
                 f"- H{int(row.horizon)} {row.scope_type}/{row.scope_key}: "
-                f"{row.policy_candidate_id} objective={float(row.objective_score or 0.0):+.2f} "
+                f"{row.policy_candidate_id} "
+                f"objective={_format_optional_score(row.objective_score)} "
                 f"manual_review={manual_review} "
                 f"fallback={row.fallback_scope_type or '-'}"
             )
@@ -307,7 +313,8 @@ def publish_discord_intraday_policy_summary(
                 manifest_status = "skipped"
             elif decision == DiscordPublishDecision.SKIP_DRY_RUN:
                 notes = (
-                    f"Intraday policy summary publish dry-run completed for {as_of_date.isoformat()}."
+                    "Intraday policy summary publish dry-run completed for "
+                    f"{as_of_date.isoformat()}."
                 )
                 manifest_status = "skipped"
             elif decision == DiscordPublishDecision.SKIP_MISSING_WEBHOOK:
