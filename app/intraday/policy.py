@@ -2958,6 +2958,7 @@ def freeze_intraday_active_policy(
     source: str,
     note: str,
     allow_manual_review: bool = True,
+    horizons: list[int] | None = None,
 ) -> IntradayActivePolicyResult:
     ensure_storage_layout(settings)
     with activate_run_context(
@@ -2977,8 +2978,9 @@ def freeze_intraday_active_policy(
                 ranking_version=SELECTION_ENGINE_VERSION,
             )
             try:
+                target_horizons = list(dict.fromkeys(int(value) for value in (horizons or [1, 5])))
                 recommendation_rows = _latest_recommendation_rows(
-                    connection, as_of_date=as_of_date, horizons=[1, 5]
+                    connection, as_of_date=as_of_date, horizons=target_horizons
                 )
                 if recommendation_rows.empty:
                     notes = "No recommendation rows were available to freeze."
@@ -3227,39 +3229,56 @@ def run_intraday_policy_auto_promotion(
                     as_of_date=as_of_date,
                     horizons=horizons,
                 )
+                manual_review_horizons = sorted(
+                    {
+                        int(row.horizon)
+                        for row in recommendation_rows.itertuples(index=False)
+                        if bool(getattr(row, "manual_review_required_flag", False))
+                    }
+                )
+                eligible_horizons = [
+                    int(horizon)
+                    for horizon in horizons
+                    if int(horizon) not in alpha_status.blocked_horizons
+                    and int(horizon) not in manual_review_horizons
+                ]
+                eligible_recommendation_rows = (
+                    recommendation_rows.loc[
+                        recommendation_rows["horizon"].isin(eligible_horizons)
+                    ].copy()
+                    if eligible_horizons
+                    else recommendation_rows.head(0).copy()
+                )
                 current_active_rows = _current_active_policy_rows(
                     connection,
                     as_of_date=as_of_date,
-                    horizons=horizons,
+                    horizons=eligible_horizons or horizons,
                 )
-                manual_review_required = bool(
-                    "manual_review_required_flag" in recommendation_rows
-                    and recommendation_rows["manual_review_required_flag"].fillna(False).any()
+                already_active = bool(
+                    eligible_horizons
+                    and _policy_activation_signature_rows(current_active_rows)
+                    == _policy_activation_signature_rows(eligible_recommendation_rows)
                 )
-                already_active = (
-                    _policy_activation_signature_rows(current_active_rows)
-                    == _policy_activation_signature_rows(recommendation_rows)
-                )
-                decision = "PROMOTE"
+                decision = "PROMOTE_ELIGIBLE"
                 row_count = 0
-                if manual_review_required:
-                    decision = "NO_PROMOTION_MANUAL_REVIEW"
+                if not eligible_horizons:
+                    blocked_targets = ", ".join(f"H{int(h)}" for h in alpha_status.blocked_horizons)
+                    manual_targets = ", ".join(f"H{int(h)}" for h in manual_review_horizons)
+                    decision = "NO_PROMOTION_NO_ELIGIBLE_HORIZONS"
                     notes = (
                         "Intraday policy auto-promotion was a no-op. "
-                        "Latest recommendations still require manual review."
+                        "No eligible horizons remained after alpha-stabilization and "
+                        "manual-review guards."
                     )
-                elif alpha_status.blocked_horizons:
-                    decision = "NO_PROMOTION_ALPHA_STABILIZING"
-                    blocked = ", ".join(f"H{int(h)}" for h in alpha_status.blocked_horizons)
-                    notes = (
-                        "Intraday policy auto-promotion was a no-op. "
-                        f"Alpha stabilization window is still open for {blocked}."
-                    )
+                    if blocked_targets:
+                        notes += f" blocked={blocked_targets}."
+                    if manual_targets:
+                        notes += f" manual_review={manual_targets}."
                 elif already_active:
                     decision = "NO_PROMOTION_ALREADY_ACTIVE"
                     notes = (
                         "Intraday policy auto-promotion was a no-op. "
-                        "Latest recommendations are already active."
+                        "Eligible recommendations are already active."
                     )
                 else:
                     freeze_result = freeze_intraday_active_policy(
@@ -3269,6 +3288,7 @@ def run_intraday_policy_auto_promotion(
                         source=source,
                         note=note,
                         allow_manual_review=False,
+                        horizons=eligible_horizons,
                     )
                     row_count = int(freeze_result.row_count)
                     notes = freeze_result.notes
@@ -3277,7 +3297,8 @@ def run_intraday_policy_auto_promotion(
                     "as_of_date": as_of_date.isoformat(),
                     "recommendation_horizons": horizons,
                     "recommendation_count": int(len(recommendation_rows)),
-                    "manual_review_required": manual_review_required,
+                    "manual_review_horizons": manual_review_horizons,
+                    "eligible_horizons": eligible_horizons,
                     "already_active": already_active,
                     "alpha_lineage": alpha_status.detail_by_horizon,
                 }

@@ -801,3 +801,157 @@ def test_run_intraday_policy_auto_promotion_freezes_when_alpha_is_stable(tmp_pat
         ).fetchone()[0]
 
     assert active_count == 1
+
+
+def test_run_intraday_policy_auto_promotion_promotes_only_eligible_horizons(
+    tmp_path,
+    monkeypatch,
+):
+    settings = build_test_settings(tmp_path)
+    created_at = pd.Timestamp("2026-03-15T00:00:00Z")
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        upsert_intraday_policy_candidate(
+            connection,
+            pd.DataFrame(
+                [
+                    {
+                        "policy_candidate_id": "candidate-h1",
+                        "search_space_version": "pcal_v1",
+                        "template_id": "BASE_DEFAULT",
+                        "scope_type": "GLOBAL",
+                        "scope_key": "H1|GLOBAL",
+                        "horizon": 1,
+                        "checkpoint_time": None,
+                        "regime_cluster": None,
+                        "regime_family": None,
+                        "candidate_label": "candidate-h1",
+                        "parameter_hash": "hash-h1",
+                        "enter_threshold_delta": 0.0,
+                        "wait_threshold_delta": 0.0,
+                        "avoid_threshold_delta": 0.0,
+                        "min_selection_confidence_gate": 55.0,
+                        "min_signal_quality_gate": 50.0,
+                        "uncertainty_penalty_weight": 0.55,
+                        "spread_penalty_weight": 0.40,
+                        "friction_penalty_weight": 0.50,
+                        "gap_chase_penalty_weight": 0.45,
+                        "cohort_weakness_penalty_weight": 0.45,
+                        "market_shock_penalty_weight": 0.55,
+                        "data_weak_guard_strength": 0.70,
+                        "max_gap_up_allowance_pct": 4.5,
+                        "min_execution_strength_gate": 48.0,
+                        "min_orderbook_imbalance_gate": 0.47,
+                        "allow_enter_under_data_weak": False,
+                        "allow_wait_override": False,
+                        "selection_rank_cap": 30,
+                        "created_at": created_at,
+                    },
+                    {
+                        "policy_candidate_id": "candidate-h5",
+                        "search_space_version": "pcal_v1",
+                        "template_id": "BASE_DEFAULT",
+                        "scope_type": "GLOBAL",
+                        "scope_key": "H5|GLOBAL",
+                        "horizon": 5,
+                        "checkpoint_time": None,
+                        "regime_cluster": None,
+                        "regime_family": None,
+                        "candidate_label": "candidate-h5",
+                        "parameter_hash": "hash-h5",
+                        "enter_threshold_delta": 0.0,
+                        "wait_threshold_delta": 0.0,
+                        "avoid_threshold_delta": 0.0,
+                        "min_selection_confidence_gate": 55.0,
+                        "min_signal_quality_gate": 50.0,
+                        "uncertainty_penalty_weight": 0.55,
+                        "spread_penalty_weight": 0.40,
+                        "friction_penalty_weight": 0.50,
+                        "gap_chase_penalty_weight": 0.45,
+                        "cohort_weakness_penalty_weight": 0.45,
+                        "market_shock_penalty_weight": 0.55,
+                        "data_weak_guard_strength": 0.70,
+                        "max_gap_up_allowance_pct": 4.5,
+                        "min_execution_strength_gate": 48.0,
+                        "min_orderbook_imbalance_gate": 0.47,
+                        "allow_enter_under_data_weak": False,
+                        "allow_wait_override": False,
+                        "selection_rank_cap": 30,
+                        "created_at": created_at,
+                    },
+                ]
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_intraday_policy_selection_recommendation (
+                recommendation_date,
+                horizon,
+                scope_type,
+                scope_key,
+                recommendation_rank,
+                policy_candidate_id,
+                template_id,
+                source_experiment_run_id,
+                search_space_version,
+                objective_version,
+                split_version,
+                sample_count,
+                executed_count,
+                test_session_count,
+                execution_rate,
+                mean_realized_excess_return,
+                median_realized_excess_return,
+                hit_rate,
+                mean_timing_edge_vs_open_bps,
+                positive_timing_edge_rate,
+                skip_saved_loss_rate,
+                missed_winner_rate,
+                left_tail_proxy,
+                stability_score,
+                objective_score,
+                manual_review_required_flag,
+                fallback_scope_type,
+                fallback_scope_key,
+                recommendation_reason_json,
+                created_at
+            )
+            VALUES
+            (?, 1, 'GLOBAL', 'H1|GLOBAL', 1, 'candidate-h1', 'BASE_DEFAULT', 'experiment-h1', 'pcal_v1', 'ip_obj_v1', 'wf_40_10_10_step5', 120, 20, 12, 0.65, 0.01, 0.01, 0.55, 15.0, 0.60, 0.35, 0.25, -0.01, 57.0, 12.5, FALSE, NULL, NULL, '{}', ?),
+            (?, 5, 'GLOBAL', 'H5|GLOBAL', 1, 'candidate-h5', 'BASE_DEFAULT', 'experiment-h5', 'pcal_v1', 'ip_obj_v1', 'wf_40_10_10_step5', 120, 20, 12, 0.65, 0.01, 0.01, 0.55, 15.0, 0.60, 0.35, 0.25, -0.01, 57.0, 12.5, FALSE, NULL, NULL, '{}', ?)
+            """,
+            [date(2026, 3, 13), created_at, date(2026, 3, 13), created_at],
+        )
+
+    monkeypatch.setattr(
+        "app.intraday.policy.resolve_alpha_lineage_status",
+        lambda *a, **k: SimpleNamespace(
+            lineage_by_horizon={1: "alpha-active-h1"},
+            blocked_horizons=[5],
+            detail_by_horizon={
+                1: {"blocked": False},
+                5: {"blocked": True},
+            },
+        ),
+    )
+
+    result = run_intraday_policy_auto_promotion(
+        settings,
+        as_of_date=date(2026, 3, 13),
+        source="daily_overlay_auto_promotion",
+        note="auto promotion",
+    )
+
+    assert result.row_count == 1
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        active_horizons = connection.execute(
+            """
+            SELECT horizon
+            FROM fact_intraday_active_policy
+            WHERE active_flag = TRUE
+            ORDER BY horizon
+            """
+        ).fetchall()
+
+    assert active_horizons == [(1,)]
