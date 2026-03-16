@@ -190,7 +190,7 @@ Automation rules:
   - `trading_day`: intraday assist, evaluation bundle, daily close bundle, daily overlay refresh
   - `hybrid`: weekly training candidate, weekly calibration, and weekly policy research run on calendar schedule but resolve the latest trading-day inputs internally
 - current follow-up chains:
-  - `daily_close -> daily_overlay_refresh`
+  - `daily_close -> daily_overlay_refresh -> daily_audit_lite(next-day identity)`
   - `weekly_training_candidate -> weekly_calibration -> weekly_policy_research`
 - daily alpha remains the primary auto-promotion loop
 - daily overlay refresh is the live policy/meta auto-promotion path with manual-review and alpha-stabilization guards

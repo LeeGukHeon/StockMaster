@@ -243,10 +243,11 @@ SCHEDULED_SERVICE_SLUG_MAP: dict[str, ScheduledJobDefinition] = {
     item.service_slug: item for item in SCHEDULED_JOBS
 }
 
-SCHEDULED_FOLLOW_UP_JOB_MAP: dict[str, tuple[str, ...]] = {
-    "daily_close": ("daily_overlay_refresh",),
-    "weekly_training_candidate": ("weekly_calibration",),
-    "weekly_calibration": ("weekly_policy_research",),
+SCHEDULED_FOLLOW_UP_JOB_MAP: dict[str, tuple[tuple[str, int], ...]] = {
+    "daily_close": (("daily_overlay_refresh", 0),),
+    "daily_overlay_refresh": (("daily_audit_lite", 1),),
+    "weekly_training_candidate": (("weekly_calibration", 0),),
+    "weekly_calibration": (("weekly_policy_research", 0),),
 }
 
 
@@ -288,7 +289,7 @@ def get_scheduled_job_by_service_slug(service_slug: str) -> ScheduledJobDefiniti
         raise KeyError(f"Unknown scheduled service slug: {service_slug}") from exc
 
 
-def get_scheduled_follow_up_jobs(job_key: str) -> tuple[str, ...]:
+def get_scheduled_follow_up_jobs(job_key: str) -> tuple[tuple[str, int], ...]:
     return SCHEDULED_FOLLOW_UP_JOB_MAP.get(job_key, ())
 
 

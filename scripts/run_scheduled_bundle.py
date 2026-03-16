@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -252,20 +252,21 @@ def _run_follow_up_chain(
     visited: set[str],
 ) -> int:
     exit_code = 0
-    for next_job_key in get_scheduled_follow_up_jobs(job_key):
+    for next_job_key, day_offset in get_scheduled_follow_up_jobs(job_key):
         if next_job_key in visited:
             continue
         visited.add(next_job_key)
+        next_target_date = target_date + timedelta(days=int(day_offset))
         log_and_print(
             f"Scheduler chaining follow-up job: {job_key} -> {next_job_key} "
-            f"as_of_date={target_date.isoformat()}"
+            f"as_of_date={next_target_date.isoformat()}"
         )
         exit_code = max(
             exit_code,
             _execute_job(
                 settings,
                 job_key=next_job_key,
-                target_date=target_date,
+                target_date=next_target_date,
                 checkpoint_time=None,
                 dry_run=False,
                 force=force,
@@ -282,7 +283,7 @@ def _run_follow_up_chain(
                 _run_follow_up_chain(
                     settings,
                     job_key=next_job_key,
-                    target_date=target_date,
+                    target_date=next_target_date,
                     force=force,
                     skip_discord=skip_discord,
                     policy_config_path=policy_config_path,

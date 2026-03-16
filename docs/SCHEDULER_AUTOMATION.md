@@ -43,6 +43,7 @@
 Follow-up chaining:
 
 - `daily_close` succeeds => immediately chain `daily_overlay_refresh`
+- `daily_overlay_refresh` succeeds => immediately chain `daily_audit_lite` using next-day scheduler identity
 - `weekly_training_candidate` succeeds => immediately chain `weekly_calibration`
 - `weekly_calibration` succeeds => immediately chain `weekly_policy_research`
 - timers remain enabled as backstops if an upstream chain never starts

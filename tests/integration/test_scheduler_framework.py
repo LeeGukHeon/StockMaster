@@ -102,10 +102,13 @@ def test_run_scheduled_bundle_skips_when_serial_lock_is_occupied(tmp_path, monke
     assert state["status"] == JobStatus.SKIPPED_LOCKED
 
 
-def test_scheduler_main_chains_daily_close_to_overlay_refresh(tmp_path, monkeypatch) -> None:
+def test_scheduler_main_chains_daily_close_to_overlay_refresh_and_next_day_audit(
+    tmp_path,
+    monkeypatch,
+) -> None:
     settings = build_test_settings(tmp_path)
     seed_ticket003_data(settings)
-    executed: list[str] = []
+    executed: list[tuple[str, date]] = []
 
     monkeypatch.setattr(scheduled_bundle_script, "load_cli_settings", lambda: settings)
 
@@ -121,7 +124,7 @@ def test_scheduler_main_chains_daily_close_to_overlay_refresh(tmp_path, monkeypa
         scheduler_run,
         policy_config_path,
     ):
-        executed.append(str(job_key))
+        executed.append((str(job_key), target_date))
         write_scheduler_state(
             settings,
             str(job_key),
@@ -156,7 +159,11 @@ def test_scheduler_main_chains_daily_close_to_overlay_refresh(tmp_path, monkeypa
     exit_code = scheduled_bundle_script.main()
 
     assert exit_code == 0
-    assert executed == ["daily_close", "daily_overlay_refresh"]
+    assert executed == [
+        ("daily_close", date(2026, 3, 17)),
+        ("daily_overlay_refresh", date(2026, 3, 17)),
+        ("daily_audit_lite", date(2026, 3, 18)),
+    ]
 
 
 def test_scheduler_main_chains_weekly_jobs_in_sequence(tmp_path, monkeypatch) -> None:
