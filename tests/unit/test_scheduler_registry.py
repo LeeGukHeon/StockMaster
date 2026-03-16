@@ -33,7 +33,7 @@ def test_scheduler_registry_contains_expected_jobs() -> None:
     assert SCHEDULED_JOB_MAP["news_morning"].trading_day_required is False
     assert SCHEDULED_JOB_MAP["news_after_close"].run_times == ("16:10",)
     assert SCHEDULED_JOB_MAP["news_after_close"].date_semantics == "calendar_day"
-    assert SCHEDULED_JOB_MAP["daily_close"].run_times == ("18:40",)
+    assert SCHEDULED_JOB_MAP["daily_close"].run_times == ("17:00",)
     assert SCHEDULED_JOB_MAP["daily_close"].date_semantics == "trading_day"
     assert SCHEDULED_JOB_MAP["intraday_assist"].intraday_interval_minutes == 5
     assert SCHEDULED_JOB_MAP["daily_audit_lite"].date_semantics == "calendar_day"

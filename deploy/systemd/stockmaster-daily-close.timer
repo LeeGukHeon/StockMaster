@@ -3,7 +3,7 @@ Description=StockMaster Daily Close Timer
 
 [Timer]
 Unit=stockmaster-scheduler@daily-close.service
-OnCalendar=Mon..Fri *-*-* 18:40:00
+OnCalendar=Mon..Fri *-*-* 17:00:00
 Persistent=true
 AccuracySec=1m
 

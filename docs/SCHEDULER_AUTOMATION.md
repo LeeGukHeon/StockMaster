@@ -32,7 +32,7 @@
 | intraday assist | `intraday-assist` | Mon-Fri 08:55-15:15 every 5 min | 장중 후보군/요약/보조 시그널 갱신 |
 | after-close news | `news-after-close` | Mon-Fri 16:10 | 장중/장후 뉴스 메타데이터 재수집 + 장마감 직후 브리핑 |
 | evaluation | `evaluation` | Mon-Fri 16:20 | matured outcome 평가, 사후 평가 집계 |
-| daily close | `daily-close` | Mon-Fri 18:40 | 추천/리포트/latest snapshot 갱신 |
+| daily close | `daily-close` | Mon-Fri 17:00 | 추천/리포트/latest snapshot 갱신 |
 | daily audit lite | `daily-audit-lite` | Tue-Sat 05:30 | latest consistency / artifact integrity 점검 |
 | daily overlay refresh | `daily-overlay-refresh` | Mon-Fri 21:30 | light overlay refresh + guarded auto-promotion |
 | docker build cache cleanup | `docker-build-cache-cleanup` | daily 04:30 | Docker builder cache 정리 |
@@ -62,7 +62,7 @@ Follow-up chaining:
 ## 장마감 메시지 구분
 
 - `16:10` 장마감 직후: 추천 없는 `장마감 직후 브리핑`
-- `18:40` 일일 추천 배치 완료 후: 최종 추천이 포함된 `장마감 요약`
+- `17:00` 일일 추천 배치 완료 후: 최종 추천이 포함된 `장마감 요약`
 
 즉 장마감 직후 브리핑은 뉴스와 준비 상태를 알려주는 메시지이고,
 최종 추천 종목은 `daily-close` 완료 이후 메시지에서만 다룹니다.

@@ -350,7 +350,7 @@ sudo systemctl start stockmaster-scheduler@evaluation.service
 - `08:55-15:15` intraday assist, 5분 간격
 - `16:10` after-close news / close brief
 - `16:20` evaluation
-- `18:40` daily close
+- `17:00` daily close
 - `21:30` daily overlay refresh
 - `05:30` daily audit lite
 - `04:30` docker build cache cleanup

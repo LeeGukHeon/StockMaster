@@ -170,7 +170,7 @@ Initial schedule:
 - intraday assist: Mon-Fri `08:55-15:15`, every 5 minutes
 - after-close news sync: Mon-Fri `16:10`
 - evaluation bundle: Mon-Fri `16:20`
-- daily close bundle: Mon-Fri `18:40`
+- daily close bundle: Mon-Fri `17:00`
 - daily overlay refresh: Mon-Fri `21:30`
 - daily audit lite: Tue-Sat `05:30`
 - docker build cache cleanup: daily `04:30`
