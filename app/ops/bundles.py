@@ -46,6 +46,7 @@ from app.intraday.research_mode import (
 )
 from app.intraday.session import materialize_intraday_candidate_session
 from app.intraday.signals import materialize_intraday_signal_snapshots
+from app.intraday.strategy import materialize_intraday_decision_outcomes
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ops.common import OpsJobResult, TriggerType
 from app.ops.health import check_pipeline_dependencies, materialize_health_snapshots
@@ -107,6 +108,7 @@ from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 DEFAULT_HORIZONS: tuple[int, ...] = (1, 5)
 SCHEDULER_GLOBAL_LOCK = "scheduler_global_write"
 WEEKLY_INTRADAY_REQUIRED_SESSIONS = 40 + 10 + 10 + max(DEFAULT_HORIZONS)
+WEEKLY_INTRADAY_OUTCOME_CHUNK_DAYS = 7
 
 
 def _resolve_pipeline_date(
@@ -232,6 +234,60 @@ def _resolve_intraday_session_start_date(
             end_date=end_date,
             required_sessions=required_sessions,
             connection=read_connection,
+        )
+
+
+def _session_date_chunks(
+    connection,
+    *,
+    start_date: date,
+    end_date: date,
+    chunk_size: int,
+) -> list[tuple[date, date]]:
+    rows = connection.execute(
+        """
+        SELECT DISTINCT session_date
+        FROM fact_intraday_candidate_session
+        WHERE session_date BETWEEN ? AND ?
+        ORDER BY session_date
+        """,
+        [start_date, end_date],
+    ).fetchall()
+    session_dates = [row[0] for row in rows if row and row[0] is not None]
+    if not session_dates:
+        return [(start_date, end_date)]
+    effective_chunk_size = max(1, int(chunk_size))
+    return [
+        (session_dates[index], session_dates[min(index + effective_chunk_size - 1, len(session_dates) - 1)])
+        for index in range(0, len(session_dates), effective_chunk_size)
+    ]
+
+
+def _materialize_intraday_decision_outcome_chunks(
+    job: JobRunContext,
+    *,
+    settings: Settings,
+    start_session_date: date,
+    end_session_date: date,
+    horizons: list[int],
+    chunk_size: int = WEEKLY_INTRADAY_OUTCOME_CHUNK_DAYS,
+) -> None:
+    chunks = _session_date_chunks(
+        job.connection,
+        start_date=start_session_date,
+        end_date=end_session_date,
+        chunk_size=chunk_size,
+    )
+    horizon_label = "x".join(str(value) for value in horizons)
+    for index, (chunk_start, chunk_end) in enumerate(chunks, start=1):
+        job.run_step(
+            f"materialize_intraday_decision_outcomes_h{horizon_label}_chunk{index:02d}",
+            materialize_intraday_decision_outcomes,
+            settings,
+            start_session_date=chunk_start,
+            end_session_date=chunk_end,
+            horizons=horizons,
+            critical=False,
         )
 
 
@@ -1630,39 +1686,42 @@ def run_weekly_training_bundle(
             if dry_run:
                 job.skip("Dry-run: weekly training candidate bundle skipped.")
             else:
-                job.run_step(
-                    "train_intraday_meta_models",
-                    train_intraday_meta_models,
-                    settings,
-                    train_end_date=target_date,
-                    horizons=list(DEFAULT_HORIZONS),
-                    start_session_date=start_date,
-                    validation_sessions=10,
-                    critical=False,
-                )
-                job.run_step(
-                    "run_intraday_meta_walkforward",
-                    run_intraday_meta_walkforward,
-                    settings,
-                    start_session_date=start_date,
-                    end_session_date=target_date,
-                    mode="rolling",
-                    train_sessions=40,
-                    validation_sessions=10,
-                    test_sessions=10,
-                    step_sessions=5,
-                    horizons=list(DEFAULT_HORIZONS),
-                    critical=False,
-                )
-                job.run_step(
-                    "evaluate_intraday_meta_models",
-                    evaluate_intraday_meta_models,
-                    settings,
-                    start_session_date=start_date,
-                    end_session_date=target_date,
-                    horizons=list(DEFAULT_HORIZONS),
-                    critical=False,
-                )
+                for horizon in DEFAULT_HORIZONS:
+                    horizon_list = [int(horizon)]
+                    horizon_label = f"h{horizon}"
+                    job.run_step(
+                        f"train_intraday_meta_models_{horizon_label}",
+                        train_intraday_meta_models,
+                        settings,
+                        train_end_date=target_date,
+                        horizons=horizon_list,
+                        start_session_date=start_date,
+                        validation_sessions=10,
+                        critical=False,
+                    )
+                    job.run_step(
+                        f"run_intraday_meta_walkforward_{horizon_label}",
+                        run_intraday_meta_walkforward,
+                        settings,
+                        start_session_date=start_date,
+                        end_session_date=target_date,
+                        mode="rolling",
+                        train_sessions=40,
+                        validation_sessions=10,
+                        test_sessions=10,
+                        step_sessions=5,
+                        horizons=horizon_list,
+                        critical=False,
+                    )
+                    job.run_step(
+                        f"evaluate_intraday_meta_models_{horizon_label}",
+                        evaluate_intraday_meta_models,
+                        settings,
+                        start_session_date=start_date,
+                        end_session_date=target_date,
+                        horizons=horizon_list,
+                        critical=False,
+                    )
                 if settings.intraday_research.research_reports_enabled:
                     job.run_step(
                         "render_intraday_meta_model_report",
@@ -1789,47 +1848,59 @@ def run_weekly_calibration_bundle(
                     scopes=scopes,
                     critical=False,
                 )
-                job.run_step(
-                    "run_intraday_policy_calibration",
-                    run_intraday_policy_calibration,
-                    settings,
-                    start_session_date=start_date,
-                    end_session_date=target_date,
-                    horizons=list(DEFAULT_HORIZONS),
-                    checkpoints=checkpoints,
-                    objective_version="ip_obj_v1",
-                    split_version="wf_40_10_10_step5",
-                    search_space_version="pcal_v1",
-                    critical=False,
-                )
-                job.run_step(
-                    "run_intraday_policy_walkforward",
-                    run_intraday_policy_walkforward,
-                    settings,
-                    start_session_date=start_date,
-                    end_session_date=target_date,
-                    mode="rolling",
-                    train_sessions=40,
-                    validation_sessions=10,
-                    test_sessions=10,
-                    step_sessions=5,
-                    horizons=list(DEFAULT_HORIZONS),
-                    checkpoints=checkpoints,
-                    objective_version="ip_obj_v1",
-                    split_version="wf_40_10_10_step5",
-                    search_space_version="pcal_v1",
-                    critical=False,
-                )
-                job.run_step(
-                    "evaluate_intraday_policy_ablation",
-                    evaluate_intraday_policy_ablation,
-                    settings,
-                    start_session_date=start_date,
-                    end_session_date=target_date,
-                    horizons=list(DEFAULT_HORIZONS),
-                    base_policy_source="latest_recommendation",
-                    critical=False,
-                )
+                for horizon in DEFAULT_HORIZONS:
+                    horizon_list = [int(horizon)]
+                    horizon_label = f"h{horizon}"
+                    _materialize_intraday_decision_outcome_chunks(
+                        job,
+                        settings=settings,
+                        start_session_date=start_date,
+                        end_session_date=target_date,
+                        horizons=horizon_list,
+                    )
+                    job.run_step(
+                        f"run_intraday_policy_calibration_{horizon_label}",
+                        run_intraday_policy_calibration,
+                        settings,
+                        start_session_date=start_date,
+                        end_session_date=target_date,
+                        horizons=horizon_list,
+                        checkpoints=checkpoints,
+                        objective_version="ip_obj_v1",
+                        split_version="wf_40_10_10_step5",
+                        search_space_version="pcal_v1",
+                        refresh_decision_outcomes=False,
+                        critical=False,
+                    )
+                    job.run_step(
+                        f"run_intraday_policy_walkforward_{horizon_label}",
+                        run_intraday_policy_walkforward,
+                        settings,
+                        start_session_date=start_date,
+                        end_session_date=target_date,
+                        mode="rolling",
+                        train_sessions=40,
+                        validation_sessions=10,
+                        test_sessions=10,
+                        step_sessions=5,
+                        horizons=horizon_list,
+                        checkpoints=checkpoints,
+                        objective_version="ip_obj_v1",
+                        split_version="wf_40_10_10_step5",
+                        search_space_version="pcal_v1",
+                        refresh_decision_outcomes=False,
+                        critical=False,
+                    )
+                    job.run_step(
+                        f"evaluate_intraday_policy_ablation_{horizon_label}",
+                        evaluate_intraday_policy_ablation,
+                        settings,
+                        start_session_date=start_date,
+                        end_session_date=target_date,
+                        horizons=horizon_list,
+                        base_policy_source="latest_recommendation",
+                        critical=False,
+                    )
                 job.run_step(
                     "materialize_intraday_policy_recommendations",
                     materialize_intraday_policy_recommendations,

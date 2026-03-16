@@ -24,4 +24,15 @@ if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:
 fi
 
 log "running host scheduler job ${SERVICE_SLUG}"
-"${WORKER_VENV}/bin/python" "${PROJECT_ROOT}/scripts/run_scheduled_bundle.py" --service-slug "${SERVICE_SLUG}" --scheduler-run "$@"
+COMMAND=("${WORKER_VENV}/bin/python" "${PROJECT_ROOT}/scripts/run_scheduled_bundle.py" --service-slug "${SERVICE_SLUG}" --scheduler-run "$@")
+
+if [[ "${SERVICE_SLUG}" == "weekly-training" || "${SERVICE_SLUG}" == "weekly-calibration" ]]; then
+  if command -v ionice >/dev/null 2>&1; then
+    COMMAND=(ionice -c3 "${COMMAND[@]}")
+  fi
+  if command -v nice >/dev/null 2>&1; then
+    COMMAND=(nice -n 10 "${COMMAND[@]}")
+  fi
+fi
+
+"${COMMAND[@]}"

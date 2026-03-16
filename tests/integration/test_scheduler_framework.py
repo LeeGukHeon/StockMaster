@@ -12,6 +12,7 @@ from app.ops.bundles import (
     run_news_sync_bundle,
     run_ops_maintenance_bundle,
     run_weekly_calibration_bundle,
+    run_weekly_training_bundle,
 )
 from app.ops.common import JobStatus, TriggerType
 from app.ops.scheduler import get_scheduled_job, read_scheduler_state
@@ -442,24 +443,41 @@ def test_weekly_calibration_bundle_does_not_pass_split_counts_to_calibration(
         notes="ok",
         row_count=0,
     )
-    captured: dict[str, object] = {}
+    captured_calls: list[dict[str, object]] = []
+    outcome_calls: list[dict[str, object]] = []
 
     def fake_calibration(_settings, **kwargs):
-        captured.update(kwargs)
+        captured_calls.append(dict(kwargs))
         return noop_result
 
     monkeypatch.setattr(
         "app.ops.bundles._resolve_intraday_session_start_date",
         lambda *a, **k: expected_start,
     )
-    monkeypatch.setattr("app.ops.bundles.materialize_intraday_policy_candidates", lambda *a, **k: noop_result)
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_policy_candidates",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_decision_outcomes",
+        lambda *a, **k: outcome_calls.append(dict(k)) or noop_result,
+    )
     monkeypatch.setattr("app.ops.bundles.run_intraday_policy_calibration", fake_calibration)
     monkeypatch.setattr("app.ops.bundles.run_intraday_policy_walkforward", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.evaluate_intraday_policy_ablation", lambda *a, **k: noop_result)
-    monkeypatch.setattr("app.ops.bundles.materialize_intraday_policy_recommendations", lambda *a, **k: noop_result)
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_policy_recommendations",
+        lambda *a, **k: noop_result,
+    )
     monkeypatch.setattr("app.ops.bundles.calibrate_intraday_meta_thresholds", lambda *a, **k: noop_result)
-    monkeypatch.setattr("app.ops.bundles.render_intraday_policy_research_report", lambda *a, **k: noop_result)
-    monkeypatch.setattr("app.ops.bundles.materialize_intraday_research_capability", lambda *a, **k: noop_result)
+    monkeypatch.setattr(
+        "app.ops.bundles.render_intraday_policy_research_report",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_research_capability",
+        lambda *a, **k: noop_result,
+    )
     monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles._skip_if_intraday_feature_disabled", lambda *a, **k: None)
 
@@ -471,12 +489,73 @@ def test_weekly_calibration_bundle_does_not_pass_split_counts_to_calibration(
     )
 
     assert result.status == JobStatus.DEGRADED_SUCCESS
-    assert captured["start_session_date"] == expected_start
-    assert captured["split_version"] == "wf_40_10_10_step5"
-    assert "train_sessions" not in captured
-    assert "validation_sessions" not in captured
-    assert "test_sessions" not in captured
-    assert "step_sessions" not in captured
+    assert len(outcome_calls) == 2
+    assert [call["horizons"] for call in outcome_calls] == [[1], [5]]
+    assert len(captured_calls) == 2
+    assert [call["horizons"] for call in captured_calls] == [[1], [5]]
+    assert all(call["start_session_date"] == expected_start for call in captured_calls)
+    assert all(call["split_version"] == "wf_40_10_10_step5" for call in captured_calls)
+    assert all(call["refresh_decision_outcomes"] is False for call in captured_calls)
+    assert all("train_sessions" not in call for call in captured_calls)
+    assert all("validation_sessions" not in call for call in captured_calls)
+    assert all("test_sessions" not in call for call in captured_calls)
+    assert all("step_sessions" not in call for call in captured_calls)
+
+
+def test_weekly_training_bundle_splits_heavy_steps_by_horizon(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    expected_start = date(2026, 3, 2)
+    noop_result = SimpleNamespace(
+        artifact_paths=[],
+        status=JobStatus.SUCCESS,
+        notes="ok",
+        row_count=0,
+    )
+    training_calls: list[dict[str, object]] = []
+    walkforward_calls: list[dict[str, object]] = []
+    evaluation_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        "app.ops.bundles._resolve_intraday_session_start_date",
+        lambda *a, **k: expected_start,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.train_intraday_meta_models",
+        lambda *a, **k: training_calls.append(dict(k)) or noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.run_intraday_meta_walkforward",
+        lambda *a, **k: walkforward_calls.append(dict(k)) or noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.evaluate_intraday_meta_models",
+        lambda *a, **k: evaluation_calls.append(dict(k)) or noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.render_intraday_meta_model_report",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_research_capability",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._skip_if_intraday_feature_disabled", lambda *a, **k: None)
+
+    result = run_weekly_training_bundle(
+        settings,
+        as_of_date=date(2026, 3, 13),
+        force=True,
+        dry_run=False,
+    )
+
+    assert result.status == JobStatus.DEGRADED_SUCCESS
+    assert [call["horizons"] for call in training_calls] == [[1], [5]]
+    assert [call["horizons"] for call in walkforward_calls] == [[1], [5]]
+    assert [call["horizons"] for call in evaluation_calls] == [[1], [5]]
+    assert all(call["start_session_date"] == expected_start for call in walkforward_calls)
+    assert all(call["start_session_date"] == expected_start for call in evaluation_calls)
 
 
 def test_resolve_intraday_session_start_date_uses_available_adjusted_sessions(tmp_path) -> None:

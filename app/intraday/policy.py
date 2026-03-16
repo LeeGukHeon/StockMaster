@@ -1773,6 +1773,7 @@ def run_intraday_policy_calibration(
     objective_version: str,
     split_version: str,
     search_space_version: str,
+    refresh_decision_outcomes: bool = True,
 ) -> IntradayPolicyCalibrationResult:
     ensure_storage_layout(settings)
     effective_checkpoints = _normalize_checkpoint_list(checkpoints)
@@ -1784,12 +1785,13 @@ def run_intraday_policy_calibration(
         checkpoints=effective_checkpoints,
         scopes=scopes,
     )
-    materialize_intraday_decision_outcomes(
-        settings,
-        start_session_date=start_session_date,
-        end_session_date=end_session_date,
-        horizons=horizons,
-    )
+    if refresh_decision_outcomes:
+        materialize_intraday_decision_outcomes(
+            settings,
+            start_session_date=start_session_date,
+            end_session_date=end_session_date,
+            horizons=horizons,
+        )
     train_sessions, validation_sessions, test_sessions, step_sessions = _parse_split_version(
         split_version
     )
@@ -1946,6 +1948,7 @@ def run_intraday_policy_walkforward(
     objective_version: str = DEFAULT_OBJECTIVE_VERSION,
     split_version: str | None = None,
     search_space_version: str = DEFAULT_SEARCH_SPACE_VERSION,
+    refresh_decision_outcomes: bool = True,
 ) -> IntradayPolicyWalkforwardResult:
     ensure_storage_layout(settings)
     effective_mode = mode.upper()
@@ -1958,12 +1961,13 @@ def run_intraday_policy_walkforward(
         checkpoints=effective_checkpoints,
         scopes=scopes,
     )
-    materialize_intraday_decision_outcomes(
-        settings,
-        start_session_date=start_session_date,
-        end_session_date=end_session_date,
-        horizons=horizons,
-    )
+    if refresh_decision_outcomes:
+        materialize_intraday_decision_outcomes(
+            settings,
+            start_session_date=start_session_date,
+            end_session_date=end_session_date,
+            horizons=horizons,
+        )
     effective_split_version = (
         split_version
         or f"wf_{train_sessions}_{validation_sessions}_{test_sessions}_step{step_sessions}"
