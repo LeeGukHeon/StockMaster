@@ -171,11 +171,12 @@ Initial schedule:
 - after-close news sync: Mon-Fri `16:10`
 - evaluation bundle: Mon-Fri `16:20`
 - daily close bundle: Mon-Fri `18:40`
-- daily audit lite: Mon-Fri `19:05`
-- daily overlay refresh: Mon-Fri `20:10`
+- daily overlay refresh: Mon-Fri `23:30`
+- daily audit lite: Tue-Sat `01:30`
+- docker build cache cleanup: daily `04:30`
 - weekly training candidate: Sat `03:30`
-- weekly calibration: Sat `06:30`
-- weekly policy research: Sat `07:45`
+- weekly calibration: Sat `10:00`
+- weekly policy research: Sat `14:00`
 
 Automation rules:
 

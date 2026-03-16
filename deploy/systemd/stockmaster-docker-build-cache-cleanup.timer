@@ -3,7 +3,7 @@ Description=StockMaster Docker Build Cache Cleanup Timer
 
 [Timer]
 Unit=stockmaster-scheduler@docker-build-cache-cleanup.service
-OnCalendar=*-*-* 23:40:00
+OnCalendar=*-*-* 04:30:00
 Persistent=true
 AccuracySec=1m
 

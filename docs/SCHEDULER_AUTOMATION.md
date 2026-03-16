@@ -33,9 +33,12 @@
 | after-close news | `news-after-close` | Mon-Fri 16:10 | 장중/장후 뉴스 메타데이터 재수집 + 장마감 직후 브리핑 |
 | evaluation | `evaluation` | Mon-Fri 16:20 | matured outcome 평가, 사후 평가 집계 |
 | daily close | `daily-close` | Mon-Fri 18:40 | 추천/리포트/latest snapshot 갱신 |
-| daily audit lite | `daily-audit-lite` | Mon-Fri 19:05 | latest consistency / artifact integrity 점검 |
+| daily audit lite | `daily-audit-lite` | Tue-Sat 01:30 | latest consistency / artifact integrity 점검 |
+| daily overlay refresh | `daily-overlay-refresh` | Mon-Fri 23:30 | light overlay refresh + guarded auto-promotion |
+| docker build cache cleanup | `docker-build-cache-cleanup` | daily 04:30 | Docker builder cache 정리 |
 | weekly training candidate | `weekly-training` | Sat 03:30 | 학습 후보 생성 |
-| weekly calibration | `weekly-calibration` | Sat 06:30 | 정책/보정 후보 생성 |
+| weekly calibration | `weekly-calibration` | Sat 10:00 | light policy/threshold refresh |
+| weekly policy research | `weekly-policy-research` | Sat 14:00 | heavy walk-forward / ablation research |
 
 ## 상태 해석
 

@@ -3,7 +3,7 @@ Description=StockMaster Weekly Calibration Timer
 
 [Timer]
 Unit=stockmaster-scheduler@weekly-calibration.service
-OnCalendar=Sat *-*-* 06:30:00
+OnCalendar=Sat *-*-* 10:00:00
 Persistent=true
 AccuracySec=1m
 
