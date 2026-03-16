@@ -17,10 +17,11 @@ from app.ops.bundles import (
     run_weekly_training_bundle,
 )
 from app.ops.common import JobStatus, TriggerType
-from app.ops.scheduler import get_scheduled_job, read_scheduler_state
+from app.ops.scheduler import get_scheduled_job, read_scheduler_state, write_scheduler_state
 from app.ops.serial import acquire_serial_lock, release_serial_lock
 from app.storage.duckdb import duckdb_connection
 from scripts import _scheduler_cli
+from scripts import run_scheduled_bundle as scheduled_bundle_script
 from tests._ticket003_support import build_test_settings, seed_ticket003_data
 
 
@@ -99,6 +100,124 @@ def test_run_scheduled_bundle_skips_when_serial_lock_is_occupied(tmp_path, monke
     assert exit_code == 0
     assert not calls
     assert state["status"] == JobStatus.SKIPPED_LOCKED
+
+
+def test_scheduler_main_chains_daily_close_to_overlay_refresh(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    executed: list[str] = []
+
+    monkeypatch.setattr(scheduled_bundle_script, "load_cli_settings", lambda: settings)
+
+    def fake_execute_job(
+        _settings,
+        *,
+        job_key,
+        target_date,
+        checkpoint_time,
+        dry_run,
+        force,
+        skip_discord,
+        scheduler_run,
+        policy_config_path,
+    ):
+        executed.append(str(job_key))
+        write_scheduler_state(
+            settings,
+            str(job_key),
+            {
+                "job_key": str(job_key),
+                "status": JobStatus.SUCCESS,
+                "notes": "ok",
+                "identity": {"as_of_date": target_date.isoformat()},
+                "run_ids": [f"run-{job_key}"],
+                "artifact_paths": [],
+                "details": {},
+                "finished_at": "2026-03-17T00:00:00+09:00",
+                "run_id": f"run-{job_key}",
+            },
+        )
+        return 0
+
+    monkeypatch.setattr(scheduled_bundle_script, "_execute_job", fake_execute_job)
+    monkeypatch.setattr(
+        scheduled_bundle_script.sys,
+        "argv",
+        [
+            "run_scheduled_bundle.py",
+            "--service-slug",
+            "daily-close",
+            "--scheduler-run",
+            "--as-of-date",
+            "2026-03-17",
+        ],
+    )
+
+    exit_code = scheduled_bundle_script.main()
+
+    assert exit_code == 0
+    assert executed == ["daily_close", "daily_overlay_refresh"]
+
+
+def test_scheduler_main_chains_weekly_jobs_in_sequence(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    executed: list[str] = []
+
+    monkeypatch.setattr(scheduled_bundle_script, "load_cli_settings", lambda: settings)
+
+    def fake_execute_job(
+        _settings,
+        *,
+        job_key,
+        target_date,
+        checkpoint_time,
+        dry_run,
+        force,
+        skip_discord,
+        scheduler_run,
+        policy_config_path,
+    ):
+        executed.append(str(job_key))
+        write_scheduler_state(
+            settings,
+            str(job_key),
+            {
+                "job_key": str(job_key),
+                "status": JobStatus.SUCCESS,
+                "notes": "ok",
+                "identity": {"as_of_date": target_date.isoformat()},
+                "run_ids": [f"run-{job_key}"],
+                "artifact_paths": [],
+                "details": {},
+                "finished_at": "2026-03-17T00:00:00+09:00",
+                "run_id": f"run-{job_key}",
+            },
+        )
+        return 0
+
+    monkeypatch.setattr(scheduled_bundle_script, "_execute_job", fake_execute_job)
+    monkeypatch.setattr(
+        scheduled_bundle_script.sys,
+        "argv",
+        [
+            "run_scheduled_bundle.py",
+            "--service-slug",
+            "weekly-training",
+            "--scheduler-run",
+            "--as-of-date",
+            "2026-03-21",
+        ],
+    )
+
+    exit_code = scheduled_bundle_script.main()
+
+    assert exit_code == 0
+    assert executed == [
+        "weekly_training_candidate",
+        "weekly_calibration",
+        "weekly_policy_research",
+    ]
 
 
 def test_news_sync_bundle_uses_calendar_day_identity_on_weekend(tmp_path) -> None:

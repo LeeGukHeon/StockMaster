@@ -243,6 +243,12 @@ SCHEDULED_SERVICE_SLUG_MAP: dict[str, ScheduledJobDefinition] = {
     item.service_slug: item for item in SCHEDULED_JOBS
 }
 
+SCHEDULED_FOLLOW_UP_JOB_MAP: dict[str, tuple[str, ...]] = {
+    "daily_close": ("daily_overlay_refresh",),
+    "weekly_training_candidate": ("weekly_calibration",),
+    "weekly_calibration": ("weekly_policy_research",),
+}
+
 
 def scheduler_state_dir(settings: Settings) -> Path:
     return ensure_directory(settings.paths.cache_dir / "scheduler_state")
@@ -280,6 +286,10 @@ def get_scheduled_job_by_service_slug(service_slug: str) -> ScheduledJobDefiniti
         return SCHEDULED_SERVICE_SLUG_MAP[service_slug]
     except KeyError as exc:
         raise KeyError(f"Unknown scheduled service slug: {service_slug}") from exc
+
+
+def get_scheduled_follow_up_jobs(job_key: str) -> tuple[str, ...]:
+    return SCHEDULED_FOLLOW_UP_JOB_MAP.get(job_key, ())
 
 
 def local_manual_command(job: ScheduledJobDefinition) -> str:

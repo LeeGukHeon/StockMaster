@@ -27,13 +27,22 @@ from app.ops.bundles import (
 )
 from app.ops.common import TriggerType
 from app.ops.scheduler import (
+    get_scheduled_follow_up_jobs,
     get_scheduled_job,
     get_scheduled_job_by_service_slug,
+    read_scheduler_state,
     resolve_due_intraday_checkpoint,
 )
-from scripts._ops_cli import load_cli_settings, parse_date
+from scripts._ops_cli import load_cli_settings, log_and_print, parse_date
 from scripts._scheduler_cli import bundle_result
 from scripts._scheduler_cli import run_scheduled_bundle as run_with_scheduler
+
+CHAINABLE_JOB_STATUSES = {
+    "SUCCESS",
+    "PARTIAL_SUCCESS",
+    "DEGRADED_SUCCESS",
+    "SKIPPED_ALREADY_DONE",
+}
 
 
 def _resolve_job(args) -> tuple[str, object]:
@@ -48,139 +57,168 @@ def _resolve_as_of_date(settings, explicit_date: date | None) -> date:
     return explicit_date or today_local(settings.app.timezone)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Run a scheduler job with serial lock discipline.")
-    target = parser.add_mutually_exclusive_group(required=True)
-    target.add_argument("--job-key")
-    target.add_argument("--service-slug")
-    parser.add_argument("--as-of-date", type=parse_date)
-    parser.add_argument("--checkpoint-time")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--force", action="store_true")
-    parser.add_argument("--skip-discord", action="store_true")
-    parser.add_argument("--scheduler-run", action="store_true")
-    parser.add_argument("--policy-config-path")
-    args = parser.parse_args()
-
-    settings = load_cli_settings()
-    job_key, job = _resolve_job(args)
-    target_date = _resolve_as_of_date(settings, args.as_of_date)
-    profile = None
+def _resolve_profile(job_key: str) -> str | None:
     if job_key == "news_morning":
-        profile = "morning"
-    elif job_key == "news_after_close":
-        profile = "after_close"
-    checkpoint_time = args.checkpoint_time
-    if job_key == "intraday_assist" and checkpoint_time is None:
-        checkpoint_time = resolve_due_intraday_checkpoint(settings) or "PREP"
+        return "morning"
+    if job_key == "news_after_close":
+        return "after_close"
+    return None
 
+
+def _resolve_checkpoint_time(
+    settings,
+    *,
+    job_key: str,
+    explicit_checkpoint_time: str | None,
+) -> str | None:
+    if job_key != "intraday_assist":
+        return explicit_checkpoint_time
+    if explicit_checkpoint_time is not None:
+        return explicit_checkpoint_time
+    return resolve_due_intraday_checkpoint(settings) or "PREP"
+
+
+def _identity_for_job(
+    *,
+    target_date: date,
+    profile: str | None,
+    checkpoint_time: str | None,
+) -> dict[str, str]:
     identity = {"as_of_date": target_date.isoformat()}
     if profile is not None:
         identity["profile"] = profile
     if checkpoint_time is not None:
         identity["checkpoint_time"] = checkpoint_time
+    return identity
+
+
+def _execute_job(
+    settings,
+    *,
+    job_key: str,
+    target_date: date,
+    checkpoint_time: str | None,
+    dry_run: bool,
+    force: bool,
+    skip_discord: bool,
+    scheduler_run: bool,
+    policy_config_path: str | None,
+) -> int:
+    profile = _resolve_profile(job_key)
+    resolved_checkpoint_time = _resolve_checkpoint_time(
+        settings,
+        job_key=job_key,
+        explicit_checkpoint_time=checkpoint_time,
+    )
+    identity = _identity_for_job(
+        target_date=target_date,
+        profile=profile,
+        checkpoint_time=resolved_checkpoint_time,
+    )
 
     def runner(runtime_settings):
-        trigger_type = TriggerType.SCHEDULED if args.scheduler_run else TriggerType.MANUAL
+        trigger_type = TriggerType.SCHEDULED if scheduler_run else TriggerType.MANUAL
         if job_key in {"news_morning", "news_after_close"}:
             result = run_news_sync_bundle(
                 runtime_settings,
                 as_of_date=target_date,
                 profile=profile or "after_close",
                 trigger_type=trigger_type,
-                dry_run=args.dry_run,
-                force=args.force,
-                policy_config_path=args.policy_config_path,
+                dry_run=dry_run,
+                force=force,
+                policy_config_path=policy_config_path,
             )
         elif job_key == "daily_close":
             result = run_daily_close_bundle(
                 runtime_settings,
                 as_of_date=target_date,
                 trigger_type=trigger_type,
-                dry_run=args.dry_run,
-                force=args.force,
-                publish_discord=not args.skip_discord,
-                policy_config_path=args.policy_config_path,
+                dry_run=dry_run,
+                force=force,
+                publish_discord=not skip_discord,
+                policy_config_path=policy_config_path,
             )
         elif job_key == "daily_overlay_refresh":
             result = run_daily_overlay_refresh_bundle(
                 runtime_settings,
                 as_of_date=target_date,
                 trigger_type=trigger_type,
-                dry_run=args.dry_run,
-                force=args.force,
-                policy_config_path=args.policy_config_path,
+                dry_run=dry_run,
+                force=force,
+                policy_config_path=policy_config_path,
             )
         elif job_key == "docker_build_cache_cleanup":
             result = run_docker_build_cache_cleanup_bundle(
                 runtime_settings,
                 as_of_date=target_date,
                 trigger_type=trigger_type,
-                dry_run=args.dry_run,
-                policy_config_path=args.policy_config_path,
+                dry_run=dry_run,
+                policy_config_path=policy_config_path,
             )
         elif job_key == "evaluation":
             result = run_evaluation_bundle(
                 runtime_settings,
                 as_of_date=target_date,
                 trigger_type=trigger_type,
-                dry_run=args.dry_run,
-                force=args.force,
-                policy_config_path=args.policy_config_path,
+                dry_run=dry_run,
+                force=force,
+                policy_config_path=policy_config_path,
             )
         elif job_key == "intraday_assist":
             result = run_intraday_assist_bundle(
                 runtime_settings,
                 as_of_date=target_date,
-                checkpoint_time=None if checkpoint_time == "PREP" else checkpoint_time,
+                checkpoint_time=(
+                    None if resolved_checkpoint_time == "PREP" else resolved_checkpoint_time
+                ),
                 trigger_type=trigger_type,
-                dry_run=args.dry_run,
-                force=args.force,
-                policy_config_path=args.policy_config_path,
+                dry_run=dry_run,
+                force=force,
+                policy_config_path=policy_config_path,
             )
         elif job_key == "weekly_training_candidate":
             result = run_weekly_training_bundle(
                 runtime_settings,
                 as_of_date=target_date,
                 trigger_type=trigger_type,
-                dry_run=args.dry_run,
-                force=args.force,
-                policy_config_path=args.policy_config_path,
+                dry_run=dry_run,
+                force=force,
+                policy_config_path=policy_config_path,
             )
         elif job_key == "weekly_calibration":
             result = run_weekly_calibration_bundle(
                 runtime_settings,
                 as_of_date=target_date,
                 trigger_type=trigger_type,
-                dry_run=args.dry_run,
-                force=args.force,
-                policy_config_path=args.policy_config_path,
+                dry_run=dry_run,
+                force=force,
+                policy_config_path=policy_config_path,
             )
         elif job_key == "weekly_policy_research":
             result = run_weekly_policy_research_bundle(
                 runtime_settings,
                 as_of_date=target_date,
                 trigger_type=trigger_type,
-                dry_run=args.dry_run,
-                force=args.force,
-                policy_config_path=args.policy_config_path,
+                dry_run=dry_run,
+                force=force,
+                policy_config_path=policy_config_path,
             )
         elif job_key == "ops_maintenance":
             result = run_ops_maintenance_bundle(
                 runtime_settings,
                 as_of_date=target_date,
                 trigger_type=trigger_type,
-                dry_run=args.dry_run,
-                policy_config_path=args.policy_config_path,
+                dry_run=dry_run,
+                policy_config_path=policy_config_path,
             )
         elif job_key == "daily_audit_lite":
             result = run_daily_audit_lite_bundle(
                 runtime_settings,
                 as_of_date=target_date,
                 trigger_type=trigger_type,
-                dry_run=args.dry_run,
-                force=args.force,
-                policy_config_path=args.policy_config_path,
+                dry_run=dry_run,
+                force=force,
+                policy_config_path=policy_config_path,
             )
         else:
             raise RuntimeError(f"Unsupported scheduler job: {job_key}")
@@ -199,8 +237,111 @@ def main() -> int:
         job_key=job_key,
         runner=runner,
         identity=identity,
-        force=args.force,
+        force=force,
     )
+
+
+def _run_follow_up_chain(
+    settings,
+    *,
+    job_key: str,
+    target_date: date,
+    force: bool,
+    skip_discord: bool,
+    policy_config_path: str | None,
+    visited: set[str],
+) -> int:
+    exit_code = 0
+    for next_job_key in get_scheduled_follow_up_jobs(job_key):
+        if next_job_key in visited:
+            continue
+        visited.add(next_job_key)
+        log_and_print(
+            f"Scheduler chaining follow-up job: {job_key} -> {next_job_key} "
+            f"as_of_date={target_date.isoformat()}"
+        )
+        exit_code = max(
+            exit_code,
+            _execute_job(
+                settings,
+                job_key=next_job_key,
+                target_date=target_date,
+                checkpoint_time=None,
+                dry_run=False,
+                force=force,
+                skip_discord=skip_discord,
+                scheduler_run=True,
+                policy_config_path=policy_config_path,
+            ),
+        )
+        state = read_scheduler_state(settings, next_job_key)
+        status = str(state.get("status") or "").upper()
+        if status in CHAINABLE_JOB_STATUSES:
+            exit_code = max(
+                exit_code,
+                _run_follow_up_chain(
+                    settings,
+                    job_key=next_job_key,
+                    target_date=target_date,
+                    force=force,
+                    skip_discord=skip_discord,
+                    policy_config_path=policy_config_path,
+                    visited=visited,
+                ),
+            )
+    return exit_code
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run a scheduler job with serial lock discipline.")
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--job-key")
+    target.add_argument("--service-slug")
+    parser.add_argument("--as-of-date", type=parse_date)
+    parser.add_argument("--checkpoint-time")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--skip-discord", action="store_true")
+    parser.add_argument("--scheduler-run", action="store_true")
+    parser.add_argument("--policy-config-path")
+    parser.add_argument("--skip-chain", action="store_true")
+    args = parser.parse_args()
+
+    settings = load_cli_settings()
+    job_key, _job = _resolve_job(args)
+    target_date = _resolve_as_of_date(settings, args.as_of_date)
+    exit_code = _execute_job(
+        settings,
+        job_key=job_key,
+        target_date=target_date,
+        checkpoint_time=args.checkpoint_time,
+        dry_run=args.dry_run,
+        force=args.force,
+        skip_discord=args.skip_discord,
+        scheduler_run=args.scheduler_run,
+        policy_config_path=args.policy_config_path,
+    )
+    state = read_scheduler_state(settings, job_key)
+    status = str(state.get("status") or "").upper()
+    if (
+        args.scheduler_run
+        and not args.dry_run
+        and not args.skip_chain
+        and status in CHAINABLE_JOB_STATUSES
+    ):
+        exit_code = max(
+            exit_code,
+            _run_follow_up_chain(
+                settings,
+                job_key=job_key,
+                target_date=target_date,
+                force=args.force,
+                skip_discord=args.skip_discord,
+                policy_config_path=args.policy_config_path,
+                visited={job_key},
+            ),
+        )
+    return exit_code
 
 
 if __name__ == "__main__":

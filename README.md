@@ -184,10 +184,14 @@ Automation rules:
 - already completed identity => idempotent skip
 - lock occupied => skip/defer
 - missing upstream readiness => blocked/degraded
+- scheduled timers remain as backstops, but successful upstream jobs can chain follow-up jobs immediately
 - date semantics are split explicitly:
   - `calendar_day`: morning news sync, after-close news sync, daily audit lite, ops maintenance
   - `trading_day`: intraday assist, evaluation bundle, daily close bundle, daily overlay refresh
   - `hybrid`: weekly training candidate, weekly calibration, and weekly policy research run on calendar schedule but resolve the latest trading-day inputs internally
+- current follow-up chains:
+  - `daily_close -> daily_overlay_refresh`
+  - `weekly_training_candidate -> weekly_calibration -> weekly_policy_research`
 - daily alpha remains the primary auto-promotion loop
 - daily overlay refresh is the live policy/meta auto-promotion path with manual-review and alpha-stabilization guards
 - weekly training and weekly policy research refresh heavy research artifacts only and never auto-activate them directly
