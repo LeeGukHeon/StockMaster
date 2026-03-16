@@ -2133,6 +2133,54 @@ def _latest_recommendation_rows(
     ).fetchdf()
 
 
+def _activation_signature_value(value: object) -> str:
+    return "" if value is None or pd.isna(value) else str(value)
+
+
+def _policy_activation_signature_rows(frame: pd.DataFrame) -> list[tuple[object, ...]]:
+    if frame.empty:
+        return []
+    signatures = [
+        (
+            int(row.horizon),
+            str(row.scope_type),
+            str(row.scope_key),
+            str(row.policy_candidate_id),
+            _activation_signature_value(getattr(row, "fallback_scope_type", None)),
+            _activation_signature_value(getattr(row, "fallback_scope_key", None)),
+        )
+        for row in frame.itertuples(index=False)
+    ]
+    return sorted(signatures)
+
+
+def _current_active_policy_rows(
+    connection,
+    *,
+    as_of_date: date,
+    horizons: list[int],
+) -> pd.DataFrame:
+    placeholders = ",".join("?" for _ in horizons)
+    return connection.execute(
+        f"""
+        SELECT
+            horizon,
+            scope_type,
+            scope_key,
+            policy_candidate_id,
+            fallback_scope_type,
+            fallback_scope_key
+        FROM fact_intraday_active_policy
+        WHERE active_flag = TRUE
+          AND effective_from_date <= ?
+          AND (effective_to_date IS NULL OR effective_to_date >= ?)
+          AND horizon IN ({placeholders})
+        ORDER BY horizon, scope_type, scope_key
+        """,
+        [as_of_date, as_of_date, *horizons],
+    ).fetchdf()
+
+
 def _evaluation_recommendation_seed_rows(
     connection,
     *,
@@ -2870,6 +2918,7 @@ def freeze_intraday_active_policy(
     promotion_type: str,
     source: str,
     note: str,
+    allow_manual_review: bool = True,
 ) -> IntradayActivePolicyResult:
     ensure_storage_layout(settings)
     with activate_run_context(
@@ -2905,6 +2954,60 @@ def freeze_intraday_active_policy(
                     )
                     return IntradayActivePolicyResult(
                         run_id=run_context.run_id, row_count=0, artifact_paths=[], notes=notes
+                    )
+                if (
+                    not allow_manual_review
+                    and "manual_review_required_flag" in recommendation_rows
+                    and recommendation_rows["manual_review_required_flag"].fillna(False).any()
+                ):
+                    notes = (
+                        "Intraday active policy freeze was a no-op. "
+                        "Latest recommendations still require manual review."
+                    )
+                    record_run_finish(
+                        connection,
+                        run_id=run_context.run_id,
+                        finished_at=now_local(settings.app.timezone),
+                        status="success",
+                        output_artifacts=[],
+                        notes=notes,
+                        ranking_version=SELECTION_ENGINE_VERSION,
+                    )
+                    return IntradayActivePolicyResult(
+                        run_id=run_context.run_id,
+                        row_count=0,
+                        artifact_paths=[],
+                        notes=notes,
+                    )
+                target_horizons = sorted(
+                    {int(value) for value in recommendation_rows["horizon"].dropna().tolist()}
+                )
+                current_active_rows = _current_active_policy_rows(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizons=target_horizons,
+                )
+                if _policy_activation_signature_rows(
+                    current_active_rows
+                ) == _policy_activation_signature_rows(recommendation_rows):
+                    notes = (
+                        "Intraday active policy freeze was a no-op. "
+                        "Latest recommendations are already active."
+                    )
+                    record_run_finish(
+                        connection,
+                        run_id=run_context.run_id,
+                        finished_at=now_local(settings.app.timezone),
+                        status="success",
+                        output_artifacts=[],
+                        notes=notes,
+                        ranking_version=SELECTION_ENGINE_VERSION,
+                    )
+                    return IntradayActivePolicyResult(
+                        run_id=run_context.run_id,
+                        row_count=0,
+                        artifact_paths=[],
+                        notes=notes,
                     )
                 candidate_frame = connection.execute(
                     """

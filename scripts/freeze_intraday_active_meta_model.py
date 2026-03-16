@@ -25,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Freeze active intraday meta-models.")
     parser.add_argument("--as-of-date", required=True, type=_parse_date)
     parser.add_argument("--source", default="latest_training")
+    parser.add_argument("--promotion-type", default="MANUAL_FREEZE")
     parser.add_argument("--note")
     parser.add_argument("--horizons", nargs="+", type=int)
     return parser
@@ -39,6 +40,7 @@ def main() -> int:
         settings,
         as_of_date=args.as_of_date,
         source=args.source,
+        promotion_type=args.promotion_type,
         note=args.note,
         horizons=args.horizons,
     )

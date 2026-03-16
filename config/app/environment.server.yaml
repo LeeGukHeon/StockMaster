@@ -13,6 +13,8 @@ intraday_research:
   postmortem_enabled: true
   policy_adjustment_enabled: true
   meta_model_enabled: true
+  policy_auto_activation_enabled: true
+  meta_model_auto_activation_enabled: true
   research_reports_enabled: true
   discord_summary_enabled: false
   writeback_enabled: true

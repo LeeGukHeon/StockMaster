@@ -223,6 +223,8 @@ class IntradayResearchConfig(BaseModel):
     postmortem_enabled: bool = False
     policy_adjustment_enabled: bool = False
     meta_model_enabled: bool = False
+    policy_auto_activation_enabled: bool = False
+    meta_model_auto_activation_enabled: bool = False
     research_reports_enabled: bool = False
     discord_summary_enabled: bool = False
     writeback_enabled: bool = False
@@ -453,6 +455,14 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
     intraday_research["meta_model_enabled"] = _parse_bool(
         env_values.get("ENABLE_INTRADAY_META_MODEL"),
         intraday_research.get("meta_model_enabled", intraday_default),
+    )
+    intraday_research["policy_auto_activation_enabled"] = _parse_bool(
+        env_values.get("ENABLE_INTRADAY_POLICY_AUTO_ACTIVATION"),
+        intraday_research.get("policy_auto_activation_enabled", False),
+    )
+    intraday_research["meta_model_auto_activation_enabled"] = _parse_bool(
+        env_values.get("ENABLE_INTRADAY_META_MODEL_AUTO_ACTIVATION"),
+        intraday_research.get("meta_model_auto_activation_enabled", False),
     )
     intraday_research["research_reports_enabled"] = _parse_bool(
         env_values.get("ENABLE_INTRADAY_RESEARCH_REPORTS"),

@@ -6033,6 +6033,7 @@ UI_VALUE_LABELS.setdefault("scope_type", {}).update(
 UI_VALUE_LABELS.setdefault("promotion_type", {}).update(
     {
         "MANUAL_FREEZE": "수동 반영",
+        "AUTO_PROMOTION": "자동 반영",
         "ROLLBACK_RESTORE": "되돌리기 복원",
     }
 )

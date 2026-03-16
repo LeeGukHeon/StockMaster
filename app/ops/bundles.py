@@ -22,11 +22,13 @@ from app.intraday.meta_report import (
 )
 from app.intraday.meta_training import (
     calibrate_intraday_meta_thresholds,
+    freeze_intraday_active_meta_model,
     run_intraday_meta_walkforward,
     train_intraday_meta_models,
 )
 from app.intraday.policy import (
     evaluate_intraday_policy_ablation,
+    freeze_intraday_active_policy,
     materialize_intraday_policy_candidates,
     materialize_intraday_policy_recommendations,
     run_intraday_policy_calibration,
@@ -1674,6 +1676,9 @@ def run_weekly_training_bundle(
                 "reference_trading_date": target_date.isoformat(),
             },
         ) as job:
+            auto_meta_activation = (
+                not dry_run and settings.intraday_research.meta_model_auto_activation_enabled
+            )
             capability_skip = _skip_if_intraday_feature_disabled(
                 job,
                 feature_slug="intraday_meta_model",
@@ -1722,6 +1727,18 @@ def run_weekly_training_bundle(
                         horizons=horizon_list,
                         critical=False,
                     )
+                if settings.intraday_research.meta_model_auto_activation_enabled:
+                    job.run_step(
+                        "auto_activate_intraday_active_meta_model",
+                        freeze_intraday_active_meta_model,
+                        settings,
+                        as_of_date=target_date,
+                        source="weekly_training_auto_activation",
+                        promotion_type="AUTO_PROMOTION",
+                        note="Automatically activated from weekly training bundle.",
+                        horizons=list(DEFAULT_HORIZONS),
+                        critical=False,
+                    )
                 if settings.intraday_research.research_reports_enabled:
                     job.run_step(
                         "render_intraday_meta_model_report",
@@ -1745,10 +1762,16 @@ def run_weekly_training_bundle(
                             dry_run=dry_run,
                             critical=False,
                         )
-                job.mark_degraded(
-                    "Automatic weekly training only creates retrain candidates. "
-                    "Active meta-model is never auto-promoted."
-                )
+                if auto_meta_activation:
+                    job.mark_degraded(
+                        "Automatic weekly training refreshed retrain candidates and "
+                        "auto-activated the latest meta-model registry."
+                    )
+                else:
+                    job.mark_degraded(
+                        "Automatic weekly training only creates retrain candidates. "
+                        "Active meta-model is never auto-promoted."
+                    )
                 job.run_step(
                     "materialize_intraday_research_capability",
                     materialize_intraday_research_capability,
@@ -1772,7 +1795,12 @@ def run_weekly_training_bundle(
                 job,
                 notes=(
                     "Weekly training candidate bundle completed. "
-                    "Candidates were generated without activating any model."
+                    + (
+                        "Candidates were generated and the latest meta-model registry "
+                        "was auto-activated."
+                        if auto_meta_activation
+                        else "Candidates were generated without activating any model."
+                    )
                 ),
             )
 
@@ -1826,6 +1854,12 @@ def run_weekly_calibration_bundle(
                 "reference_trading_date": target_date.isoformat(),
             },
         ) as job:
+            auto_policy_activation = (
+                not dry_run and settings.intraday_research.policy_auto_activation_enabled
+            )
+            auto_meta_activation = (
+                not dry_run and settings.intraday_research.meta_model_auto_activation_enabled
+            )
             capability_skip = _skip_if_intraday_feature_disabled(
                 job,
                 feature_slug="intraday_policy_adjustment",
@@ -1918,6 +1952,30 @@ def run_weekly_calibration_bundle(
                     horizons=list(DEFAULT_HORIZONS),
                     critical=False,
                 )
+                if settings.intraday_research.policy_auto_activation_enabled:
+                    job.run_step(
+                        "auto_activate_intraday_active_policy",
+                        freeze_intraday_active_policy,
+                        settings,
+                        as_of_date=target_date,
+                        promotion_type="AUTO_PROMOTION",
+                        source="weekly_calibration_auto_activation",
+                        note="Automatically activated from weekly calibration bundle.",
+                        allow_manual_review=False,
+                        critical=False,
+                    )
+                if settings.intraday_research.meta_model_auto_activation_enabled:
+                    job.run_step(
+                        "auto_activate_intraday_active_meta_model",
+                        freeze_intraday_active_meta_model,
+                        settings,
+                        as_of_date=target_date,
+                        source="weekly_calibration_auto_activation",
+                        promotion_type="AUTO_PROMOTION",
+                        note="Automatically activated from weekly calibration bundle.",
+                        horizons=list(DEFAULT_HORIZONS),
+                        critical=False,
+                    )
                 if settings.intraday_research.research_reports_enabled:
                     job.run_step(
                         "render_intraday_policy_research_report",
@@ -1941,10 +1999,21 @@ def run_weekly_calibration_bundle(
                             dry_run=dry_run,
                             critical=False,
                         )
-                job.mark_degraded(
-                    "Automatic weekly calibration updates recommendations and thresholds only. "
-                    "Active policy and active meta-model are never auto-activated."
-                )
+                if auto_policy_activation or auto_meta_activation:
+                    activation_targets: list[str] = []
+                    if auto_policy_activation:
+                        activation_targets.append("active policy")
+                    if auto_meta_activation:
+                        activation_targets.append("active meta-model")
+                    job.mark_degraded(
+                        "Automatic weekly calibration refreshed recommendations and thresholds "
+                        f"with auto-activation enabled for {', '.join(activation_targets)}."
+                    )
+                else:
+                    job.mark_degraded(
+                        "Automatic weekly calibration updates recommendations and thresholds only. "
+                        "Active policy and active meta-model are never auto-activated."
+                    )
                 job.run_step(
                     "materialize_intraday_research_capability",
                     materialize_intraday_research_capability,
@@ -1968,7 +2037,12 @@ def run_weekly_calibration_bundle(
                 job,
                 notes=(
                     "Weekly calibration bundle completed. "
-                    "Recommendations were refreshed without automatic activation."
+                    + (
+                        "Recommendations and thresholds were refreshed with automatic activation "
+                        "enabled."
+                        if auto_policy_activation or auto_meta_activation
+                        else "Recommendations were refreshed without automatic activation."
+                    )
                 ),
             )
 

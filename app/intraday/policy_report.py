@@ -56,8 +56,8 @@ def _build_content(
     lines = [f"**StockMaster Intraday Policy Research | {as_of_date.isoformat()}**", ""]
     lines.append(
         "This layer calibrates deterministic intraday timing policy parameters "
-        "on matured outcomes only. It is not an auto-promotion engine and "
-        "does not place orders."
+        "on matured outcomes only. Depending on ops settings, the latest "
+        "recommendation may be auto-activated, but it does not place orders."
     )
     lines.append("")
     lines.append("**Latest Experiment Runs**")

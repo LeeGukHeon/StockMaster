@@ -22,6 +22,7 @@ from app.intraday.policy import (
     rollback_intraday_active_policy,
     run_intraday_policy_calibration,
     run_intraday_policy_walkforward,
+    upsert_intraday_policy_candidate,
     upsert_intraday_policy_evaluation,
 )
 from app.intraday.policy_report import (
@@ -391,3 +392,117 @@ def test_policy_recommendation_fallback_rows_remain_manual_review(tmp_path):
     assert recommendation_row[1] is True
     assert recommendation_row[2] == 0
     assert '"score_source_split": "all"' in str(recommendation_row[3])
+
+
+def test_freeze_intraday_active_policy_skips_auto_activation_when_manual_review_is_required(
+    tmp_path,
+):
+    settings = build_test_settings(tmp_path)
+    created_at = pd.Timestamp("2026-03-15T00:00:00Z")
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        upsert_intraday_policy_candidate(
+            connection,
+            pd.DataFrame(
+                [
+                    {
+                        "policy_candidate_id": "candidate-a",
+                        "search_space_version": "pcal_v1",
+                        "template_id": "BASE_DEFAULT",
+                        "scope_type": "GLOBAL",
+                        "scope_key": "H1|GLOBAL",
+                        "horizon": 1,
+                        "checkpoint_time": None,
+                        "regime_cluster": None,
+                        "regime_family": None,
+                        "candidate_label": "candidate-a",
+                        "parameter_hash": "hash-a",
+                        "enter_threshold_delta": 0.0,
+                        "wait_threshold_delta": 0.0,
+                        "avoid_threshold_delta": 0.0,
+                        "min_selection_confidence_gate": 55.0,
+                        "min_signal_quality_gate": 50.0,
+                        "uncertainty_penalty_weight": 0.55,
+                        "spread_penalty_weight": 0.40,
+                        "friction_penalty_weight": 0.50,
+                        "gap_chase_penalty_weight": 0.45,
+                        "cohort_weakness_penalty_weight": 0.45,
+                        "market_shock_penalty_weight": 0.55,
+                        "data_weak_guard_strength": 0.70,
+                        "max_gap_up_allowance_pct": 4.5,
+                        "min_execution_strength_gate": 48.0,
+                        "min_orderbook_imbalance_gate": 0.47,
+                        "allow_enter_under_data_weak": False,
+                        "allow_wait_override": False,
+                        "selection_rank_cap": 30,
+                        "created_at": created_at,
+                    }
+                ]
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_intraday_policy_selection_recommendation (
+                recommendation_date,
+                horizon,
+                scope_type,
+                scope_key,
+                recommendation_rank,
+                policy_candidate_id,
+                template_id,
+                source_experiment_run_id,
+                search_space_version,
+                objective_version,
+                split_version,
+                sample_count,
+                executed_count,
+                test_session_count,
+                execution_rate,
+                mean_realized_excess_return,
+                median_realized_excess_return,
+                hit_rate,
+                mean_timing_edge_vs_open_bps,
+                positive_timing_edge_rate,
+                skip_saved_loss_rate,
+                missed_winner_rate,
+                left_tail_proxy,
+                stability_score,
+                objective_score,
+                manual_review_required_flag,
+                fallback_scope_type,
+                fallback_scope_key,
+                recommendation_reason_json,
+                created_at
+            )
+            VALUES (
+                ?, 1, 'GLOBAL', 'H1|GLOBAL', 1, 'candidate-a',
+                'BASE_DEFAULT', 'experiment-a', 'pcal_v1', 'ip_obj_v1', 'wf_40_10_10_step5',
+                120, 0, 0, 0.0,
+                NULL, NULL, 0.25, -88.0, 0.0, 0.39, 0.59, -0.01, 57.0, NULL,
+                TRUE, NULL, NULL, '{}', ?
+            )
+            """,
+            [
+                date(2026, 3, 13),
+                created_at,
+            ],
+        )
+
+    freeze_result = freeze_intraday_active_policy(
+        settings,
+        as_of_date=date(2026, 3, 13),
+        promotion_type="AUTO_PROMOTION",
+        source="weekly_calibration_auto_activation",
+        note="automatic activation",
+        allow_manual_review=False,
+    )
+
+    assert freeze_result.row_count == 0
+    assert "manual review" in freeze_result.notes.lower()
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        active_count = connection.execute(
+            "SELECT COUNT(*) FROM fact_intraday_active_policy"
+        ).fetchone()[0]
+
+    assert active_count == 0

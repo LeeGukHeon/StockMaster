@@ -74,6 +74,8 @@ def test_load_settings_accepts_server_environment_profile(tmp_path):
     assert settings.intraday_research.postmortem_enabled is True
     assert settings.intraday_research.policy_adjustment_enabled is True
     assert settings.intraday_research.meta_model_enabled is True
+    assert settings.intraday_research.policy_auto_activation_enabled is True
+    assert settings.intraday_research.meta_model_auto_activation_enabled is True
     assert settings.intraday_research.research_reports_enabled is True
     assert settings.intraday_research.rollout_mode == "RESEARCH_NON_TRADING"
 
@@ -97,6 +99,8 @@ def test_load_settings_keeps_intraday_research_disabled_in_local_profile(tmp_pat
     assert settings.intraday_research.enabled is False
     assert settings.intraday_research.assist_enabled is False
     assert settings.intraday_research.meta_model_enabled is False
+    assert settings.intraday_research.policy_auto_activation_enabled is False
+    assert settings.intraday_research.meta_model_auto_activation_enabled is False
 
 
 def test_load_settings_enables_krx_live_with_allowlist(tmp_path):

@@ -1127,6 +1127,55 @@ def _select_training_rows_for_freeze(
     ).fetchdf()
 
 
+def _meta_activation_signature_rows(frame: pd.DataFrame) -> list[tuple[object, ...]]:
+    if frame.empty:
+        return []
+    signatures = [
+        (
+            int(row.horizon),
+            str(row.panel_name),
+            str(row.training_run_id),
+            "" if pd.isna(getattr(row, "threshold_payload_json", None)) else str(row.threshold_payload_json),
+            ""
+            if pd.isna(getattr(row, "calibration_summary_json", None))
+            else str(row.calibration_summary_json),
+        )
+        for row in frame.itertuples(index=False)
+    ]
+    return sorted(signatures)
+
+
+def _current_active_meta_rows(
+    connection,
+    *,
+    as_of_date: date,
+    horizons: list[int] | None,
+) -> pd.DataFrame:
+    horizon_filter = ""
+    parameters: list[object] = [as_of_date, as_of_date]
+    if horizons:
+        placeholders = ",".join("?" for _ in horizons)
+        horizon_filter = f" AND horizon IN ({placeholders})"
+        parameters.extend(horizons)
+    return connection.execute(
+        f"""
+        SELECT
+            horizon,
+            panel_name,
+            training_run_id,
+            threshold_payload_json,
+            calibration_summary_json
+        FROM fact_intraday_active_meta_model
+        WHERE active_flag = TRUE
+          AND effective_from_date <= ?
+          AND (effective_to_date IS NULL OR effective_to_date >= ?)
+          {horizon_filter}
+        ORDER BY horizon, panel_name
+        """,
+        parameters,
+    ).fetchdf()
+
+
 def freeze_intraday_active_meta_model(
     settings: Settings,
     *,
@@ -1134,6 +1183,7 @@ def freeze_intraday_active_meta_model(
     source: str,
     note: str | None = None,
     horizons: list[int] | None = None,
+    promotion_type: str = "MANUAL_FREEZE",
 ) -> IntradayActiveMetaModelResult:
     ensure_storage_layout(settings)
     with activate_run_context(
@@ -1158,6 +1208,57 @@ def freeze_intraday_active_meta_model(
                     as_of_date=as_of_date,
                     horizons=horizons,
                 )
+                if training_rows.empty:
+                    notes = (
+                        "Intraday active meta-model freeze was a no-op. "
+                        "No latest training rows were available."
+                    )
+                    record_run_finish(
+                        connection,
+                        run_id=run_context.run_id,
+                        finished_at=now_local(settings.app.timezone),
+                        status="success",
+                        output_artifacts=[],
+                        notes=notes,
+                        ranking_version=SELECTION_ENGINE_VERSION,
+                    )
+                    return IntradayActiveMetaModelResult(
+                        run_id=run_context.run_id,
+                        row_count=0,
+                        artifact_paths=[],
+                        notes=notes,
+                    )
+                selected_signature_frame = training_rows.copy()
+                selected_signature_frame["calibration_summary_json"] = selected_signature_frame[
+                    "metadata_json"
+                ]
+                current_active_rows = _current_active_meta_rows(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizons=horizons,
+                )
+                if _meta_activation_signature_rows(
+                    current_active_rows
+                ) == _meta_activation_signature_rows(selected_signature_frame):
+                    notes = (
+                        "Intraday active meta-model freeze was a no-op. "
+                        "Latest trained meta-models are already active."
+                    )
+                    record_run_finish(
+                        connection,
+                        run_id=run_context.run_id,
+                        finished_at=now_local(settings.app.timezone),
+                        status="success",
+                        output_artifacts=[],
+                        notes=notes,
+                        ranking_version=SELECTION_ENGINE_VERSION,
+                    )
+                    return IntradayActiveMetaModelResult(
+                        run_id=run_context.run_id,
+                        row_count=0,
+                        artifact_paths=[],
+                        notes=notes,
+                    )
                 now_ts = now_local(settings.app.timezone)
                 frozen_rows: list[dict[str, object]] = []
                 for row in training_rows.itertuples(index=False):
@@ -1188,7 +1289,7 @@ def freeze_intraday_active_meta_model(
                             "training_run_id": str(row.training_run_id),
                             "model_version": str(row.model_version),
                             "source_type": source,
-                            "promotion_type": "MANUAL_FREEZE",
+                            "promotion_type": promotion_type,
                             "threshold_payload_json": row.threshold_payload_json,
                             "calibration_summary_json": row.metadata_json,
                             "effective_from_date": as_of_date,
