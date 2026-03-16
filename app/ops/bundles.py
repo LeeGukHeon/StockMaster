@@ -1739,10 +1739,10 @@ def run_weekly_calibration_bundle(
             requested_date=requested_date,
             connection=connection,
         )
-        start_date = _resolve_recent_start_date(
+        start_date = _resolve_intraday_session_start_date(
             settings,
             end_date=target_date,
-            trading_days=60,
+            required_sessions=WEEKLY_INTRADAY_REQUIRED_SESSIONS,
             connection=connection,
         )
         checkpoints = list(DEFAULT_INTRADAY_CHECKPOINTS)

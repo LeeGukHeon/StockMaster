@@ -435,6 +435,7 @@ def test_weekly_calibration_bundle_does_not_pass_split_counts_to_calibration(
 ) -> None:
     settings = build_test_settings(tmp_path)
     seed_ticket003_data(settings)
+    expected_start = date(2026, 3, 2)
     noop_result = SimpleNamespace(
         artifact_paths=[],
         status=JobStatus.SUCCESS,
@@ -447,6 +448,10 @@ def test_weekly_calibration_bundle_does_not_pass_split_counts_to_calibration(
         captured.update(kwargs)
         return noop_result
 
+    monkeypatch.setattr(
+        "app.ops.bundles._resolve_intraday_session_start_date",
+        lambda *a, **k: expected_start,
+    )
     monkeypatch.setattr("app.ops.bundles.materialize_intraday_policy_candidates", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.run_intraday_policy_calibration", fake_calibration)
     monkeypatch.setattr("app.ops.bundles.run_intraday_policy_walkforward", lambda *a, **k: noop_result)
@@ -466,6 +471,7 @@ def test_weekly_calibration_bundle_does_not_pass_split_counts_to_calibration(
     )
 
     assert result.status == JobStatus.DEGRADED_SUCCESS
+    assert captured["start_session_date"] == expected_start
     assert captured["split_version"] == "wf_40_10_10_step5"
     assert "train_sessions" not in captured
     assert "validation_sessions" not in captured
