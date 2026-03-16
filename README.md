@@ -185,6 +185,7 @@ Automation rules:
 - lock occupied => skip/defer
 - missing upstream readiness => blocked/degraded
 - scheduled timers remain as backstops, but successful upstream jobs can chain follow-up jobs immediately
+- smart backstop timers run only when the required upstream job for that identity has already completed successfully
 - date semantics are split explicitly:
   - `calendar_day`: morning news sync, after-close news sync, daily audit lite, ops maintenance
   - `trading_day`: intraday assist, evaluation bundle, daily close bundle, daily overlay refresh

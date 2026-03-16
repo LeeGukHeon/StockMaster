@@ -25,7 +25,7 @@ from app.ops.bundles import (
     run_weekly_policy_research_bundle,
     run_weekly_training_bundle,
 )
-from app.ops.common import TriggerType
+from app.ops.common import JobStatus, TriggerType
 from app.ops.scheduler import (
     get_scheduled_follow_up_jobs,
     get_scheduled_job,
@@ -34,7 +34,7 @@ from app.ops.scheduler import (
     resolve_due_intraday_checkpoint,
 )
 from scripts._ops_cli import load_cli_settings, log_and_print, parse_date
-from scripts._scheduler_cli import bundle_result
+from scripts._scheduler_cli import SchedulerSkip, bundle_result
 from scripts._scheduler_cli import run_scheduled_bundle as run_with_scheduler
 
 CHAINABLE_JOB_STATUSES = {
@@ -42,6 +42,12 @@ CHAINABLE_JOB_STATUSES = {
     "PARTIAL_SUCCESS",
     "DEGRADED_SUCCESS",
     "SKIPPED_ALREADY_DONE",
+}
+SMART_BACKSTOP_UPSTREAM_MAP: dict[str, tuple[str, int]] = {
+    "daily_overlay_refresh": ("daily_close", 0),
+    "daily_audit_lite": ("daily_overlay_refresh", -1),
+    "weekly_calibration": ("weekly_training_candidate", 0),
+    "weekly_policy_research": ("weekly_calibration", 0),
 }
 
 
@@ -92,6 +98,73 @@ def _identity_for_job(
     return identity
 
 
+def _status_for_scheduler_identity(
+    settings,
+    *,
+    job_key: str,
+    as_of_date: date,
+) -> str | None:
+    state = read_scheduler_state(settings, job_key)
+    identity = state.get("identity")
+    if not isinstance(identity, dict):
+        return None
+    if identity.get("as_of_date") != as_of_date.isoformat():
+        return None
+    status = state.get("status")
+    return str(status).upper() if status else None
+
+
+def _smart_backstop_skip(
+    settings,
+    *,
+    job_key: str,
+    target_date: date,
+    force: bool,
+    scheduler_run: bool,
+) -> SchedulerSkip | None:
+    if force or not scheduler_run:
+        return None
+    upstream = SMART_BACKSTOP_UPSTREAM_MAP.get(job_key)
+    if upstream is None:
+        return None
+    upstream_job_key, day_offset = upstream
+    upstream_date = target_date + timedelta(days=int(day_offset))
+    upstream_status = _status_for_scheduler_identity(
+        settings,
+        job_key=upstream_job_key,
+        as_of_date=upstream_date,
+    )
+    if upstream_status in CHAINABLE_JOB_STATUSES:
+        return None
+    if upstream_status is None:
+        return SchedulerSkip(
+            JobStatus.SKIPPED,
+            (
+                f"Smart backstop skipped: upstream {upstream_job_key} "
+                f"has no successful state for {upstream_date.isoformat()}."
+            ),
+            details={
+                "smart_backstop": True,
+                "upstream_job_key": upstream_job_key,
+                "upstream_as_of_date": upstream_date.isoformat(),
+                "upstream_status": None,
+            },
+        )
+    return SchedulerSkip(
+        JobStatus.SKIPPED,
+        (
+            f"Smart backstop skipped: upstream {upstream_job_key} "
+            f"status={upstream_status} for {upstream_date.isoformat()}."
+        ),
+        details={
+            "smart_backstop": True,
+            "upstream_job_key": upstream_job_key,
+            "upstream_as_of_date": upstream_date.isoformat(),
+            "upstream_status": upstream_status,
+        },
+    )
+
+
 def _execute_job(
     settings,
     *,
@@ -117,6 +190,15 @@ def _execute_job(
     )
 
     def runner(runtime_settings):
+        smart_skip = _smart_backstop_skip(
+            runtime_settings,
+            job_key=job_key,
+            target_date=target_date,
+            force=force,
+            scheduler_run=scheduler_run,
+        )
+        if smart_skip is not None:
+            raise smart_skip
         trigger_type = TriggerType.SCHEDULED if scheduler_run else TriggerType.MANUAL
         if job_key in {"news_morning", "news_after_close"}:
             result = run_news_sync_bundle(

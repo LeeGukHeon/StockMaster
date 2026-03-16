@@ -227,6 +227,72 @@ def test_scheduler_main_chains_weekly_jobs_in_sequence(tmp_path, monkeypatch) ->
     ]
 
 
+def test_smart_backstop_skips_overlay_when_daily_close_not_successful(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    write_scheduler_state(
+        settings,
+        "daily_close",
+        {
+            "job_key": "daily_close",
+            "status": JobStatus.FAILED,
+            "notes": "failed",
+            "identity": {"as_of_date": "2026-03-17"},
+            "run_ids": ["run-daily-close"],
+            "artifact_paths": [],
+            "details": {},
+            "finished_at": "2026-03-17T18:00:00+09:00",
+            "run_id": "run-daily-close",
+        },
+    )
+
+    result = scheduled_bundle_script._smart_backstop_skip(
+        settings,
+        job_key="daily_overlay_refresh",
+        target_date=date(2026, 3, 17),
+        force=False,
+        scheduler_run=True,
+    )
+
+    assert result is not None
+    assert result.status == JobStatus.SKIPPED
+    assert "daily_close" in result.notes
+    assert "FAILED" in result.notes
+
+
+def test_smart_backstop_skips_audit_until_previous_overlay_succeeds(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    write_scheduler_state(
+        settings,
+        "daily_overlay_refresh",
+        {
+            "job_key": "daily_overlay_refresh",
+            "status": JobStatus.FAILED,
+            "notes": "failed",
+            "identity": {"as_of_date": "2026-03-17"},
+            "run_ids": ["run-overlay"],
+            "artifact_paths": [],
+            "details": {},
+            "finished_at": "2026-03-17T23:00:00+09:00",
+            "run_id": "run-overlay",
+        },
+    )
+
+    result = scheduled_bundle_script._smart_backstop_skip(
+        settings,
+        job_key="daily_audit_lite",
+        target_date=date(2026, 3, 18),
+        force=False,
+        scheduler_run=True,
+    )
+
+    assert result is not None
+    assert result.status == JobStatus.SKIPPED
+    assert "daily_overlay_refresh" in result.notes
+    assert "2026-03-17" in result.notes
+
+
 def test_news_sync_bundle_uses_calendar_day_identity_on_weekend(tmp_path) -> None:
     settings = build_test_settings(tmp_path)
     seed_ticket003_data(settings)

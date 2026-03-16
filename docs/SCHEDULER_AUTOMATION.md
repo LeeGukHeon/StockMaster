@@ -47,6 +47,7 @@ Follow-up chaining:
 - `weekly_training_candidate` succeeds => immediately chain `weekly_calibration`
 - `weekly_calibration` succeeds => immediately chain `weekly_policy_research`
 - timers remain enabled as backstops if an upstream chain never starts
+- smart backstops skip when the required upstream identity is missing, failed, or otherwise not yet successful
 
 ## 상태 해석
 
