@@ -171,8 +171,8 @@ Initial schedule:
 - after-close news sync: Mon-Fri `16:10`
 - evaluation bundle: Mon-Fri `16:20`
 - daily close bundle: Mon-Fri `18:40`
-- daily overlay refresh: Mon-Fri `23:30`
-- daily audit lite: Tue-Sat `01:30`
+- daily overlay refresh: Mon-Fri `21:30`
+- daily audit lite: Tue-Sat `05:30`
 - docker build cache cleanup: daily `04:30`
 - weekly training candidate: Sat `03:30`
 - weekly calibration: Sat `10:00`

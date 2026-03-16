@@ -3,7 +3,7 @@ Description=StockMaster Daily Overlay Refresh Timer
 
 [Timer]
 Unit=stockmaster-scheduler@daily-overlay-refresh.service
-OnCalendar=Mon..Fri *-*-* 23:30:00
+OnCalendar=Mon..Fri *-*-* 21:30:00
 Persistent=true
 AccuracySec=1m
 
