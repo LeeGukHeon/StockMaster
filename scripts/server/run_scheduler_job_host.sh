@@ -26,7 +26,7 @@ fi
 log "running host scheduler job ${SERVICE_SLUG}"
 COMMAND=("${WORKER_VENV}/bin/python" "${PROJECT_ROOT}/scripts/run_scheduled_bundle.py" --service-slug "${SERVICE_SLUG}" --scheduler-run "$@")
 
-if [[ "${SERVICE_SLUG}" == "weekly-training" || "${SERVICE_SLUG}" == "weekly-calibration" ]]; then
+if [[ "${SERVICE_SLUG}" == "weekly-training" || "${SERVICE_SLUG}" == "weekly-calibration" || "${SERVICE_SLUG}" == "weekly-policy-research" ]]; then
   if command -v ionice >/dev/null 2>&1; then
     COMMAND=(ionice -c3 "${COMMAND[@]}")
   fi
