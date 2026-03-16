@@ -48,8 +48,17 @@ from .meta_dataset import (
     assemble_intraday_meta_dataset_frame,
     ensure_intraday_meta_label_inputs,
 )
+from .promotion_common import resolve_alpha_lineage_status, write_promotion_decision_artifact
 
 MIN_CLASS_COUNT_FOR_LIVE_MODEL = 2
+
+
+@dataclass(slots=True)
+class IntradayMetaPromotionResult:
+    run_id: str
+    row_count: int
+    artifact_paths: list[str]
+    notes: str
 
 
 @dataclass(slots=True)
@@ -1176,6 +1185,46 @@ def _current_active_meta_rows(
     ).fetchdf()
 
 
+def _load_meta_test_metric_map(
+    connection,
+    *,
+    training_run_ids: list[str],
+    metric_name: str = "macro_f1",
+) -> dict[tuple[str, str], float]:
+    if not training_run_ids:
+        return {}
+    placeholders = ",".join("?" for _ in training_run_ids)
+    frame = connection.execute(
+        f"""
+        SELECT
+            training_run_id,
+            panel_name,
+            AVG(metric_value) AS metric_value
+        FROM fact_model_metric_summary
+        WHERE training_run_id IN ({placeholders})
+          AND model_domain = ?
+          AND model_version = ?
+          AND member_name = 'ensemble'
+          AND split_name = 'test'
+          AND metric_name = ?
+        GROUP BY training_run_id, panel_name
+        """,
+        [
+            *training_run_ids,
+            INTRADAY_META_MODEL_DOMAIN,
+            INTRADAY_META_MODEL_VERSION,
+            metric_name,
+        ],
+    ).fetchdf()
+    if frame.empty:
+        return {}
+    return {
+        (str(row.training_run_id), str(row.panel_name)): float(row.metric_value)
+        for row in frame.itertuples(index=False)
+        if pd.notna(row.metric_value)
+    }
+
+
 def freeze_intraday_active_meta_model(
     settings: Settings,
     *,
@@ -1330,6 +1379,220 @@ def freeze_intraday_active_meta_model(
                     status="failed",
                     output_artifacts=[],
                     notes="Intraday active meta-model freeze failed.",
+                    error_message=str(exc),
+                    ranking_version=SELECTION_ENGINE_VERSION,
+                )
+                raise
+
+
+def run_intraday_meta_auto_promotion(
+    settings: Settings,
+    *,
+    as_of_date: date,
+    source: str,
+    note: str | None = None,
+    horizons: list[int] | None = None,
+) -> IntradayMetaPromotionResult:
+    ensure_storage_layout(settings)
+    target_horizons = sorted({int(value) for value in (horizons or [1, 5])})
+    with activate_run_context(
+        "run_intraday_meta_auto_promotion",
+        as_of_date=as_of_date,
+    ) as run_context:
+        with duckdb_connection(settings.paths.duckdb_path) as connection:
+            bootstrap_core_tables(connection)
+            record_run_start(
+                connection,
+                run_id=run_context.run_id,
+                run_type=run_context.run_type,
+                started_at=run_context.started_at,
+                as_of_date=as_of_date,
+                input_sources=[
+                    "fact_model_training_run",
+                    "fact_model_metric_summary",
+                    "fact_intraday_active_meta_model",
+                    "fact_alpha_active_model",
+                ],
+                notes=f"Run intraday meta auto-promotion for {as_of_date.isoformat()}",
+                ranking_version=SELECTION_ENGINE_VERSION,
+            )
+            try:
+                training_rows = _select_training_rows_for_freeze(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizons=target_horizons,
+                )
+                artifact_paths: list[str] = []
+                if training_rows.empty:
+                    notes = (
+                        "Intraday meta auto-promotion was a no-op. "
+                        "No latest training rows were available."
+                    )
+                    record_run_finish(
+                        connection,
+                        run_id=run_context.run_id,
+                        finished_at=now_local(settings.app.timezone),
+                        status="success",
+                        output_artifacts=[],
+                        notes=notes,
+                        ranking_version=SELECTION_ENGINE_VERSION,
+                    )
+                    return IntradayMetaPromotionResult(
+                        run_id=run_context.run_id,
+                        row_count=0,
+                        artifact_paths=[],
+                        notes=notes,
+                    )
+                alpha_status = resolve_alpha_lineage_status(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizons=target_horizons,
+                )
+                current_active_rows = _current_active_meta_rows(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizons=target_horizons,
+                )
+                candidate_metric_map = _load_meta_test_metric_map(
+                    connection,
+                    training_run_ids=training_rows["training_run_id"].astype(str).tolist(),
+                )
+                current_metric_map = _load_meta_test_metric_map(
+                    connection,
+                    training_run_ids=current_active_rows["training_run_id"].astype(str).tolist()
+                    if not current_active_rows.empty
+                    else [],
+                )
+                current_by_horizon_panel = {
+                    (int(row.horizon), str(row.panel_name)): row
+                    for row in current_active_rows.itertuples(index=False)
+                }
+                promote_horizons: list[int] = []
+                decision_by_horizon: dict[int, dict[str, object]] = {}
+                for horizon, horizon_rows in training_rows.groupby("horizon", sort=True):
+                    horizon_int = int(horizon)
+                    if horizon_int in alpha_status.blocked_horizons:
+                        decision_by_horizon[horizon_int] = {
+                            "decision": "BLOCKED_ALPHA_STABILIZING",
+                            "reason": "alpha_stabilization_window",
+                        }
+                        continue
+                    eligible = True
+                    strictly_better = False
+                    identical = True
+                    panel_payloads: list[dict[str, object]] = []
+                    for row in horizon_rows.itertuples(index=False):
+                        panel_key = (horizon_int, str(row.panel_name))
+                        current_row = current_by_horizon_panel.get(panel_key)
+                        candidate_metric = candidate_metric_map.get(
+                            (str(row.training_run_id), str(row.panel_name))
+                        )
+                        current_metric = (
+                            current_metric_map.get(
+                                (
+                                    str(current_row.training_run_id),
+                                    str(current_row.panel_name),
+                                )
+                            )
+                            if current_row is not None
+                            else None
+                        )
+                        same_training = bool(
+                            current_row is not None
+                            and str(current_row.training_run_id) == str(row.training_run_id)
+                        )
+                        identical = identical and same_training
+                        if candidate_metric is None:
+                            eligible = False
+                        elif current_metric is not None and candidate_metric < current_metric:
+                            eligible = False
+                        elif current_metric is None or candidate_metric > current_metric:
+                            strictly_better = True
+                        panel_payloads.append(
+                            {
+                                "panel_name": str(row.panel_name),
+                                "candidate_training_run_id": str(row.training_run_id),
+                                "candidate_macro_f1": candidate_metric,
+                                "current_training_run_id": (
+                                    None
+                                    if current_row is None
+                                    else str(current_row.training_run_id)
+                                ),
+                                "current_macro_f1": current_metric,
+                                "same_training_run": same_training,
+                            }
+                        )
+                    if identical:
+                        decision_by_horizon[horizon_int] = {
+                            "decision": "NO_PROMOTION_ALREADY_ACTIVE",
+                            "panels": panel_payloads,
+                        }
+                    elif eligible and strictly_better:
+                        promote_horizons.append(horizon_int)
+                        decision_by_horizon[horizon_int] = {
+                            "decision": "PROMOTE",
+                            "panels": panel_payloads,
+                        }
+                    else:
+                        decision_by_horizon[horizon_int] = {
+                            "decision": "NO_PROMOTION_OOS_GATE",
+                            "panels": panel_payloads,
+                        }
+                if not promote_horizons:
+                    notes = (
+                        "Intraday meta auto-promotion was a no-op. "
+                        "No horizon satisfied the OOS promotion gate."
+                    )
+                    row_count = 0
+                else:
+                    freeze_result = freeze_intraday_active_meta_model(
+                        settings,
+                        as_of_date=as_of_date,
+                        source=source,
+                        note=note,
+                        horizons=promote_horizons,
+                        promotion_type="AUTO_PROMOTION",
+                    )
+                    row_count = int(freeze_result.row_count)
+                    notes = freeze_result.notes
+                payload = {
+                    "as_of_date": as_of_date.isoformat(),
+                    "promote_horizons": promote_horizons,
+                    "alpha_lineage": alpha_status.detail_by_horizon,
+                    "decision_by_horizon": decision_by_horizon,
+                }
+                artifact_paths.append(
+                    write_promotion_decision_artifact(
+                        settings,
+                        dataset="intraday_meta_promotion",
+                        run_id=run_context.run_id,
+                        filename="meta_promotion_decision.json",
+                        payload=payload,
+                    )
+                )
+                record_run_finish(
+                    connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="success",
+                    output_artifacts=artifact_paths,
+                    notes=notes,
+                    ranking_version=SELECTION_ENGINE_VERSION,
+                )
+                return IntradayMetaPromotionResult(
+                    run_id=run_context.run_id,
+                    row_count=row_count,
+                    artifact_paths=artifact_paths,
+                    notes=notes,
+                )
+            except Exception as exc:
+                record_run_finish(
+                    connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="failed",
+                    output_artifacts=[],
+                    notes="Intraday meta auto-promotion failed.",
                     error_message=str(exc),
                     ranking_version=SELECTION_ENGINE_VERSION,
                 )

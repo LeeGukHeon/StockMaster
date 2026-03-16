@@ -22,15 +22,15 @@ from app.intraday.meta_report import (
 )
 from app.intraday.meta_training import (
     calibrate_intraday_meta_thresholds,
-    freeze_intraday_active_meta_model,
+    run_intraday_meta_auto_promotion,
     run_intraday_meta_walkforward,
     train_intraday_meta_models,
 )
 from app.intraday.policy import (
     evaluate_intraday_policy_ablation,
-    freeze_intraday_active_policy,
     materialize_intraday_policy_candidates,
     materialize_intraday_policy_recommendations,
+    run_intraday_policy_auto_promotion,
     run_intraday_policy_calibration,
     run_intraday_policy_walkforward,
 )
@@ -46,6 +46,7 @@ from app.intraday.research_mode import (
     intraday_research_feature_flags,
     materialize_intraday_research_capability,
 )
+from app.intraday.promotion_common import resolve_alpha_lineage_status
 from app.intraday.session import materialize_intraday_candidate_session
 from app.intraday.signals import materialize_intraday_signal_snapshots
 from app.intraday.strategy import materialize_intraday_decision_outcomes
@@ -291,6 +292,104 @@ def _materialize_intraday_decision_outcome_chunks(
             horizons=horizons,
             critical=False,
         )
+
+
+def _run_intraday_overlay_refresh_steps(
+    job: JobRunContext,
+    *,
+    settings: Settings,
+    start_session_date: date,
+    end_session_date: date,
+    auto_activate: bool,
+) -> dict[str, object]:
+    checkpoints = list(DEFAULT_INTRADAY_CHECKPOINTS)
+    scopes = ["GLOBAL", "HORIZON", "HORIZON_CHECKPOINT", "HORIZON_REGIME_CLUSTER"]
+    alpha_status = resolve_alpha_lineage_status(
+        job.connection,
+        as_of_date=end_session_date,
+        horizons=list(DEFAULT_HORIZONS),
+    )
+    job.run_step(
+        "materialize_intraday_policy_candidates",
+        materialize_intraday_policy_candidates,
+        settings,
+        search_space_version="pcal_v1",
+        horizons=list(DEFAULT_HORIZONS),
+        checkpoints=checkpoints,
+        scopes=scopes,
+        critical=False,
+    )
+    for horizon in DEFAULT_HORIZONS:
+        horizon_list = [int(horizon)]
+        horizon_label = f"h{horizon}"
+        _materialize_intraday_decision_outcome_chunks(
+            job,
+            settings=settings,
+            start_session_date=start_session_date,
+            end_session_date=end_session_date,
+            horizons=horizon_list,
+        )
+        job.run_step(
+            f"run_intraday_policy_calibration_{horizon_label}",
+            run_intraday_policy_calibration,
+            settings,
+            start_session_date=start_session_date,
+            end_session_date=end_session_date,
+            horizons=horizon_list,
+            checkpoints=checkpoints,
+            objective_version="ip_obj_v1",
+            split_version="wf_40_10_10_step5",
+            search_space_version="pcal_v1",
+            refresh_decision_outcomes=False,
+            alpha_lineage_by_horizon=alpha_status.lineage_by_horizon,
+            critical=False,
+        )
+    job.run_step(
+        "materialize_intraday_policy_recommendations",
+        materialize_intraday_policy_recommendations,
+        settings,
+        as_of_date=end_session_date,
+        horizons=list(DEFAULT_HORIZONS),
+        minimum_test_sessions=10,
+        critical=False,
+    )
+    if settings.intraday_research.meta_model_enabled:
+        job.run_step(
+            "calibrate_intraday_meta_thresholds",
+            calibrate_intraday_meta_thresholds,
+            settings,
+            as_of_date=end_session_date,
+            horizons=list(DEFAULT_HORIZONS),
+            critical=False,
+        )
+    policy_auto_enabled = auto_activate and settings.intraday_research.policy_auto_activation_enabled
+    meta_auto_enabled = auto_activate and settings.intraday_research.meta_model_auto_activation_enabled
+    if policy_auto_enabled:
+        job.run_step(
+            "run_intraday_policy_auto_promotion",
+            run_intraday_policy_auto_promotion,
+            settings,
+            as_of_date=end_session_date,
+            source="daily_overlay_auto_promotion",
+            note="Automatically promoted from daily overlay refresh.",
+            critical=False,
+        )
+    if meta_auto_enabled and settings.intraday_research.meta_model_enabled:
+        job.run_step(
+            "run_intraday_meta_auto_promotion",
+            run_intraday_meta_auto_promotion,
+            settings,
+            as_of_date=end_session_date,
+            source="daily_overlay_meta_auto_promotion",
+            note="Automatically promoted from daily overlay refresh.",
+            horizons=list(DEFAULT_HORIZONS),
+            critical=False,
+        )
+    return {
+        "alpha_status": alpha_status,
+        "policy_auto_enabled": policy_auto_enabled,
+        "meta_auto_enabled": meta_auto_enabled and settings.intraday_research.meta_model_enabled,
+    }
 
 
 def _latest_table_date(
@@ -1629,6 +1728,120 @@ def run_intraday_assist_bundle(
             )
 
 
+def run_daily_overlay_refresh_bundle(
+    settings: Settings,
+    *,
+    as_of_date: date | None = None,
+    trigger_type: str = TriggerType.MANUAL,
+    dry_run: bool = False,
+    force: bool = False,
+    parent_run_id: str | None = None,
+    root_run_id: str | None = None,
+    recovery_of_run_id: str | None = None,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    ensure_storage_layout(settings)
+    requested_date = as_of_date or today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        target_date = _scheduler_target_date(
+            settings,
+            requested_date=requested_date,
+            connection=connection,
+        )
+        start_date = _resolve_intraday_session_start_date(
+            settings,
+            end_date=target_date,
+            required_sessions=WEEKLY_INTRADAY_REQUIRED_SESSIONS,
+            connection=connection,
+        )
+        with JobRunContext(
+            settings,
+            connection,
+            job_name="run_daily_overlay_refresh_bundle",
+            as_of_date=target_date,
+            trigger_type=trigger_type,
+            dry_run=dry_run,
+            parent_run_id=parent_run_id,
+            root_run_id=root_run_id,
+            recovery_of_run_id=recovery_of_run_id,
+            policy_config_path=policy_config_path,
+            lock_name=SCHEDULER_GLOBAL_LOCK,
+            notes=f"Scheduler daily overlay refresh bundle through {target_date.isoformat()}",
+            details={
+                "bundle_phase": "daily_overlay_refresh",
+                "date_semantics": "trading_day",
+            },
+        ) as job:
+            capability_skip = _skip_if_intraday_feature_disabled(
+                job,
+                feature_slug="intraday_policy_adjustment",
+            )
+            if capability_skip is not None:
+                return capability_skip
+            skipped = _skip_if_non_trading_day(
+                job,
+                target_date=requested_date,
+                label="run_daily_overlay_refresh_bundle",
+            )
+            if skipped is not None:
+                return skipped
+            completed = _skip_if_already_completed(job, bundle_phase="daily_overlay_refresh")
+            if completed is not None and not force:
+                return completed
+            if dry_run:
+                job.skip("Dry-run: daily overlay refresh bundle skipped.")
+            else:
+                overlay_refresh = _run_intraday_overlay_refresh_steps(
+                    job,
+                    settings=settings,
+                    start_session_date=start_date,
+                    end_session_date=target_date,
+                    auto_activate=True,
+                )
+                activation_targets: list[str] = []
+                if overlay_refresh["policy_auto_enabled"]:
+                    activation_targets.append("active policy")
+                if overlay_refresh["meta_auto_enabled"]:
+                    activation_targets.append("active meta-model")
+                if activation_targets:
+                    job.mark_degraded(
+                        "Daily overlay refresh recalibrated light overlay controls and "
+                        f"ran auto-promotion for {', '.join(activation_targets)}."
+                    )
+                else:
+                    job.mark_degraded(
+                        "Daily overlay refresh recalibrated light overlay controls "
+                        "without auto-promotion."
+                    )
+                job.run_step(
+                    "materialize_intraday_research_capability",
+                    materialize_intraday_research_capability,
+                    settings,
+                    as_of_date=target_date,
+                    run_id=job.run_id,
+                    connection=connection,
+                    critical=False,
+                )
+                job.run_step(
+                    "materialize_health_snapshots",
+                    materialize_health_snapshots,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    policy_config_path=policy_config_path,
+                    critical=False,
+                )
+            return job_result_from_context(
+                job,
+                notes=(
+                    "Daily overlay refresh bundle completed. "
+                    "Light policy calibration and overlay auto-promotion were processed."
+                ),
+            )
+
+
 def run_weekly_training_bundle(
     settings: Settings,
     *,
@@ -1676,9 +1889,6 @@ def run_weekly_training_bundle(
                 "reference_trading_date": target_date.isoformat(),
             },
         ) as job:
-            auto_meta_activation = (
-                not dry_run and settings.intraday_research.meta_model_auto_activation_enabled
-            )
             capability_skip = _skip_if_intraday_feature_disabled(
                 job,
                 feature_slug="intraday_meta_model",
@@ -1727,18 +1937,6 @@ def run_weekly_training_bundle(
                         horizons=horizon_list,
                         critical=False,
                     )
-                if settings.intraday_research.meta_model_auto_activation_enabled:
-                    job.run_step(
-                        "auto_activate_intraday_active_meta_model",
-                        freeze_intraday_active_meta_model,
-                        settings,
-                        as_of_date=target_date,
-                        source="weekly_training_auto_activation",
-                        promotion_type="AUTO_PROMOTION",
-                        note="Automatically activated from weekly training bundle.",
-                        horizons=list(DEFAULT_HORIZONS),
-                        critical=False,
-                    )
                 if settings.intraday_research.research_reports_enabled:
                     job.run_step(
                         "render_intraday_meta_model_report",
@@ -1762,16 +1960,10 @@ def run_weekly_training_bundle(
                             dry_run=dry_run,
                             critical=False,
                         )
-                if auto_meta_activation:
-                    job.mark_degraded(
-                        "Automatic weekly training refreshed retrain candidates and "
-                        "auto-activated the latest meta-model registry."
-                    )
-                else:
-                    job.mark_degraded(
-                        "Automatic weekly training only creates retrain candidates. "
-                        "Active meta-model is never auto-promoted."
-                    )
+                job.mark_degraded(
+                    "Weekly training refreshed heavy meta-model research only. "
+                    "Active meta-model promotion is deferred to daily overlay refresh."
+                )
                 job.run_step(
                     "materialize_intraday_research_capability",
                     materialize_intraday_research_capability,
@@ -1795,12 +1987,7 @@ def run_weekly_training_bundle(
                 job,
                 notes=(
                     "Weekly training candidate bundle completed. "
-                    + (
-                        "Candidates were generated and the latest meta-model registry "
-                        "was auto-activated."
-                        if auto_meta_activation
-                        else "Candidates were generated without activating any model."
-                    )
+                    "Heavy meta-model research was refreshed without activating any model."
                 ),
             )
 
@@ -1832,8 +2019,6 @@ def run_weekly_calibration_bundle(
             required_sessions=WEEKLY_INTRADAY_REQUIRED_SESSIONS,
             connection=connection,
         )
-        checkpoints = list(DEFAULT_INTRADAY_CHECKPOINTS)
-        scopes = ["GLOBAL", "HORIZON", "HORIZON_CHECKPOINT", "HORIZON_REGIME_CLUSTER"]
         with JobRunContext(
             settings,
             connection,
@@ -1854,12 +2039,6 @@ def run_weekly_calibration_bundle(
                 "reference_trading_date": target_date.isoformat(),
             },
         ) as job:
-            auto_policy_activation = (
-                not dry_run and settings.intraday_research.policy_auto_activation_enabled
-            )
-            auto_meta_activation = (
-                not dry_run and settings.intraday_research.meta_model_auto_activation_enabled
-            )
             capability_skip = _skip_if_intraday_feature_disabled(
                 job,
                 feature_slug="intraday_policy_adjustment",
@@ -1871,6 +2050,106 @@ def run_weekly_calibration_bundle(
                 return completed
             if dry_run:
                 job.skip("Dry-run: weekly calibration bundle skipped.")
+            else:
+                _run_intraday_overlay_refresh_steps(
+                    job,
+                    settings=settings,
+                    start_session_date=start_date,
+                    end_session_date=target_date,
+                    auto_activate=False,
+                )
+                job.mark_degraded(
+                    "Weekly calibration refreshed the light overlay layer only. "
+                    "Heavy walk-forward and ablation research were moved to weekly policy research."
+                )
+                job.run_step(
+                    "materialize_intraday_research_capability",
+                    materialize_intraday_research_capability,
+                    settings,
+                    as_of_date=target_date,
+                    run_id=job.run_id,
+                    connection=connection,
+                    critical=False,
+                )
+                job.run_step(
+                    "materialize_health_snapshots",
+                    materialize_health_snapshots,
+                    settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                    job_run_id=job.run_id,
+                    policy_config_path=policy_config_path,
+                    critical=False,
+                )
+            return job_result_from_context(
+                job,
+                notes=(
+                    "Weekly calibration bundle completed. "
+                    "Light policy recommendations and thresholds were refreshed without activation."
+                ),
+            )
+
+
+def run_weekly_policy_research_bundle(
+    settings: Settings,
+    *,
+    as_of_date: date | None = None,
+    trigger_type: str = TriggerType.MANUAL,
+    dry_run: bool = False,
+    force: bool = False,
+    parent_run_id: str | None = None,
+    root_run_id: str | None = None,
+    recovery_of_run_id: str | None = None,
+    policy_config_path: str | None = None,
+) -> OpsJobResult:
+    ensure_storage_layout(settings)
+    requested_date = as_of_date or today_local(settings.app.timezone)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        target_date = _scheduler_target_date(
+            settings,
+            requested_date=requested_date,
+            connection=connection,
+        )
+        start_date = _resolve_intraday_session_start_date(
+            settings,
+            end_date=target_date,
+            required_sessions=WEEKLY_INTRADAY_REQUIRED_SESSIONS,
+            connection=connection,
+        )
+        checkpoints = list(DEFAULT_INTRADAY_CHECKPOINTS)
+        scopes = ["GLOBAL", "HORIZON", "HORIZON_CHECKPOINT", "HORIZON_REGIME_CLUSTER"]
+        with JobRunContext(
+            settings,
+            connection,
+            job_name="run_weekly_policy_research_bundle",
+            as_of_date=target_date,
+            trigger_type=trigger_type,
+            dry_run=dry_run,
+            parent_run_id=parent_run_id,
+            root_run_id=root_run_id,
+            recovery_of_run_id=recovery_of_run_id,
+            policy_config_path=policy_config_path,
+            lock_name=SCHEDULER_GLOBAL_LOCK,
+            notes=f"Scheduler weekly policy research bundle through {target_date.isoformat()}",
+            details={
+                "bundle_phase": "weekly_policy_research",
+                "date_semantics": "hybrid",
+                "scheduled_calendar_date": requested_date.isoformat(),
+                "reference_trading_date": target_date.isoformat(),
+            },
+        ) as job:
+            capability_skip = _skip_if_intraday_feature_disabled(
+                job,
+                feature_slug="intraday_policy_adjustment",
+            )
+            if capability_skip is not None:
+                return capability_skip
+            completed = _skip_if_already_completed(job, bundle_phase="weekly_policy_research")
+            if completed is not None and not force:
+                return completed
+            if dry_run:
+                job.skip("Dry-run: weekly policy research bundle skipped.")
             else:
                 job.run_step(
                     "materialize_intraday_policy_candidates",
@@ -1944,38 +2223,6 @@ def run_weekly_calibration_bundle(
                     minimum_test_sessions=10,
                     critical=False,
                 )
-                job.run_step(
-                    "calibrate_intraday_meta_thresholds",
-                    calibrate_intraday_meta_thresholds,
-                    settings,
-                    as_of_date=target_date,
-                    horizons=list(DEFAULT_HORIZONS),
-                    critical=False,
-                )
-                if settings.intraday_research.policy_auto_activation_enabled:
-                    job.run_step(
-                        "auto_activate_intraday_active_policy",
-                        freeze_intraday_active_policy,
-                        settings,
-                        as_of_date=target_date,
-                        promotion_type="AUTO_PROMOTION",
-                        source="weekly_calibration_auto_activation",
-                        note="Automatically activated from weekly calibration bundle.",
-                        allow_manual_review=False,
-                        critical=False,
-                    )
-                if settings.intraday_research.meta_model_auto_activation_enabled:
-                    job.run_step(
-                        "auto_activate_intraday_active_meta_model",
-                        freeze_intraday_active_meta_model,
-                        settings,
-                        as_of_date=target_date,
-                        source="weekly_calibration_auto_activation",
-                        promotion_type="AUTO_PROMOTION",
-                        note="Automatically activated from weekly calibration bundle.",
-                        horizons=list(DEFAULT_HORIZONS),
-                        critical=False,
-                    )
                 if settings.intraday_research.research_reports_enabled:
                     job.run_step(
                         "render_intraday_policy_research_report",
@@ -1999,21 +2246,10 @@ def run_weekly_calibration_bundle(
                             dry_run=dry_run,
                             critical=False,
                         )
-                if auto_policy_activation or auto_meta_activation:
-                    activation_targets: list[str] = []
-                    if auto_policy_activation:
-                        activation_targets.append("active policy")
-                    if auto_meta_activation:
-                        activation_targets.append("active meta-model")
-                    job.mark_degraded(
-                        "Automatic weekly calibration refreshed recommendations and thresholds "
-                        f"with auto-activation enabled for {', '.join(activation_targets)}."
-                    )
-                else:
-                    job.mark_degraded(
-                        "Automatic weekly calibration updates recommendations and thresholds only. "
-                        "Active policy and active meta-model are never auto-activated."
-                    )
+                job.mark_degraded(
+                    "Weekly policy research refreshed heavy walk-forward and ablation artifacts only. "
+                    "Any activation remains on the daily overlay refresh path."
+                )
                 job.run_step(
                     "materialize_intraday_research_capability",
                     materialize_intraday_research_capability,
@@ -2036,13 +2272,8 @@ def run_weekly_calibration_bundle(
             return job_result_from_context(
                 job,
                 notes=(
-                    "Weekly calibration bundle completed. "
-                    + (
-                        "Recommendations and thresholds were refreshed with automatic activation "
-                        "enabled."
-                        if auto_policy_activation or auto_meta_activation
-                        else "Recommendations were refreshed without automatic activation."
-                    )
+                    "Weekly policy research bundle completed. "
+                    "Heavy policy walk-forward and ablation research were refreshed."
                 ),
             )
 

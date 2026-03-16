@@ -99,6 +99,7 @@ Key assets:
 - `deploy/docker-compose.server.yml`
 - `deploy/nginx/default.conf`
 - `deploy/env/.env.server.example`
+- `docs/DEPLOY_OCI.md`
 - `deploy/systemd/stockmaster-compose.service`
 - `scripts/server/start_server.sh`
 - `scripts/server/stop_server.sh`
@@ -108,6 +109,8 @@ Key assets:
 - `scripts/server/check_public_access.sh`
 - `scripts/server/backup_server_data.sh`
 - `scripts/server/print_runtime_info.sh`
+- `docs/BACKUP_AND_RESTORE.md`
+- `docs/EXTERNAL_ACCESS_CHECKLIST.md`
 - `docs/RUNBOOK_SERVER_OPERATIONS.md`
 - `docs/SCHEDULER_AUTOMATION.md`
 - `docs/METADATA_HOST_WORKER_VALIDATION.md`
@@ -149,8 +152,10 @@ Key scheduler assets:
 - `deploy/systemd/stockmaster-evaluation.timer`
 - `deploy/systemd/stockmaster-daily-close.timer`
 - `deploy/systemd/stockmaster-daily-audit-lite.timer`
+- `deploy/systemd/stockmaster-daily-overlay-refresh.timer`
 - `deploy/systemd/stockmaster-weekly-training.timer`
 - `deploy/systemd/stockmaster-weekly-calibration.timer`
+- `deploy/systemd/stockmaster-weekly-policy-research.timer`
 - `scripts/server/install_scheduler_units.sh`
 - `scripts/server/uninstall_scheduler_units.sh`
 - `scripts/server/status_scheduler_units.sh`
@@ -167,8 +172,10 @@ Initial schedule:
 - evaluation bundle: Mon-Fri `16:20`
 - daily close bundle: Mon-Fri `18:40`
 - daily audit lite: Mon-Fri `19:05`
+- daily overlay refresh: Mon-Fri `20:10`
 - weekly training candidate: Sat `03:30`
 - weekly calibration: Sat `06:30`
+- weekly policy research: Sat `07:45`
 
 Automation rules:
 
@@ -178,10 +185,11 @@ Automation rules:
 - missing upstream readiness => blocked/degraded
 - date semantics are split explicitly:
   - `calendar_day`: morning news sync, after-close news sync, daily audit lite, ops maintenance
-  - `trading_day`: intraday assist, evaluation bundle, daily close bundle
-  - `hybrid`: weekly training candidate and weekly calibration run on calendar schedule but resolve the latest trading-day inputs internally
-- weekly retrain/calibration results are generated automatically but never auto-applied
-- active model/policy changes remain manual via UI compare-and-confirm or explicit freeze scripts
+  - `trading_day`: intraday assist, evaluation bundle, daily close bundle, daily overlay refresh
+  - `hybrid`: weekly training candidate, weekly calibration, and weekly policy research run on calendar schedule but resolve the latest trading-day inputs internally
+- daily alpha remains the primary auto-promotion loop
+- daily overlay refresh is the live policy/meta auto-promotion path with manual-review and alpha-stabilization guards
+- weekly training and weekly policy research refresh heavy research artifacts only and never auto-activate them directly
 
 ## Intraday research mode
 

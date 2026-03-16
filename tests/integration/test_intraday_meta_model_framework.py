@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
+
+import pandas as pd
 
 from app.intraday.adjusted_decisions import materialize_intraday_adjusted_entry_decisions
 from app.intraday.context import materialize_intraday_market_context_snapshots
@@ -28,6 +31,7 @@ from app.intraday.meta_training import (
     calibrate_intraday_meta_thresholds,
     freeze_intraday_active_meta_model,
     rollback_intraday_active_meta_model,
+    run_intraday_meta_auto_promotion,
     run_intraday_meta_walkforward,
     train_intraday_meta_models,
 )
@@ -314,3 +318,185 @@ def test_intraday_meta_model_framework_end_to_end(tmp_path):
     assert int(prediction_count) > 0
     assert int(decision_count) > 0
     assert int(active_count) > 0
+
+
+def test_run_intraday_meta_auto_promotion_promotes_latest_oos_candidate(tmp_path, monkeypatch):
+    settings = build_test_settings(tmp_path)
+    created_at = pd.Timestamp("2026-03-15T00:00:00Z")
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO fact_model_training_run (
+                training_run_id,
+                run_id,
+                model_domain,
+                model_version,
+                model_spec_id,
+                estimation_scheme,
+                rolling_window_days,
+                horizon,
+                panel_name,
+                train_end_date,
+                training_window_start,
+                training_window_end,
+                validation_window_start,
+                validation_window_end,
+                train_row_count,
+                validation_row_count,
+                train_session_count,
+                validation_session_count,
+                feature_count,
+                ensemble_weight_json,
+                model_family_json,
+                threshold_payload_json,
+                diagnostic_artifact_uri,
+                metadata_json,
+                fallback_flag,
+                fallback_reason,
+                artifact_uri,
+                notes,
+                status,
+                created_at
+            )
+            VALUES (
+                'meta-train-h1-enter',
+                'meta-run-1',
+                'intraday_meta',
+                'intraday_meta_v1',
+                NULL,
+                'meta_ensemble',
+                NULL,
+                1,
+                'ENTER_PANEL',
+                DATE '2026-03-13',
+                DATE '2026-03-01',
+                DATE '2026-03-13',
+                DATE '2026-03-10',
+                DATE '2026-03-13',
+                100,
+                20,
+                10,
+                4,
+                24,
+                '{}',
+                '{}',
+                '{}',
+                NULL,
+                '{}',
+                FALSE,
+                NULL,
+                NULL,
+                'latest candidate',
+                'success',
+                ?
+            )
+            """,
+            [created_at],
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_model_metric_summary (
+                training_run_id,
+                model_domain,
+                model_version,
+                horizon,
+                panel_name,
+                member_name,
+                split_name,
+                metric_scope,
+                class_label,
+                comparison_key,
+                metric_name,
+                metric_value,
+                sample_count,
+                created_at
+            )
+            VALUES (
+                'meta-train-h1-enter',
+                'intraday_meta',
+                'intraday_meta_v1',
+                1,
+                'ENTER_PANEL',
+                'ensemble',
+                'test',
+                'all',
+                'all',
+                'all',
+                'macro_f1',
+                0.71,
+                20,
+                ?
+            )
+            """,
+            [created_at],
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_alpha_active_model (
+                active_alpha_model_id,
+                horizon,
+                model_spec_id,
+                training_run_id,
+                model_version,
+                source_type,
+                promotion_type,
+                promotion_report_json,
+                effective_from_date,
+                effective_to_date,
+                active_flag,
+                rollback_of_active_alpha_model_id,
+                note,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                'alpha-active-h1',
+                1,
+                'alpha_recursive_expanding_v1',
+                'alpha-train-h1',
+                'alpha_model_v1',
+                'alpha_auto_promotion',
+                'AUTO_PROMOTION',
+                NULL,
+                DATE '2026-03-09',
+                NULL,
+                TRUE,
+                NULL,
+                'stable alpha',
+                ?,
+                ?
+            )
+            """,
+            [created_at, created_at],
+        )
+
+    monkeypatch.setattr(
+        "app.intraday.meta_training.resolve_alpha_lineage_status",
+        lambda *a, **k: SimpleNamespace(
+            lineage_by_horizon={1: "alpha-active-h1"},
+            blocked_horizons=[],
+            detail_by_horizon={1: {"blocked": False}},
+        ),
+    )
+
+    result = run_intraday_meta_auto_promotion(
+        settings,
+        as_of_date=date(2026, 3, 13),
+        source="daily_overlay_meta_auto_promotion",
+        note="auto promote meta",
+        horizons=[1],
+    )
+
+    assert result.row_count == 1
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        active_rows = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_intraday_active_meta_model
+            WHERE active_flag = TRUE
+            """
+        ).fetchone()[0]
+
+    assert active_rows == 1

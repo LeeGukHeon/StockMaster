@@ -6,12 +6,14 @@ from types import SimpleNamespace
 from app.ops.bundles import (
     _resolve_intraday_session_start_date,
     run_daily_close_bundle,
+    run_daily_overlay_refresh_bundle,
     run_daily_evaluation_bundle,
     run_docker_build_cache_cleanup_bundle,
     run_evaluation_bundle,
     run_news_sync_bundle,
     run_ops_maintenance_bundle,
     run_weekly_calibration_bundle,
+    run_weekly_policy_research_bundle,
     run_weekly_training_bundle,
 )
 from app.ops.common import JobStatus, TriggerType
@@ -496,6 +498,7 @@ def test_weekly_calibration_bundle_does_not_pass_split_counts_to_calibration(
     assert all(call["start_session_date"] == expected_start for call in captured_calls)
     assert all(call["split_version"] == "wf_40_10_10_step5" for call in captured_calls)
     assert all(call["refresh_decision_outcomes"] is False for call in captured_calls)
+    assert all("alpha_lineage_by_horizon" in call for call in captured_calls)
     assert all("train_sessions" not in call for call in captured_calls)
     assert all("validation_sessions" not in call for call in captured_calls)
     assert all("test_sessions" not in call for call in captured_calls)
@@ -558,7 +561,7 @@ def test_weekly_training_bundle_splits_heavy_steps_by_horizon(tmp_path, monkeypa
     assert all(call["start_session_date"] == expected_start for call in evaluation_calls)
 
 
-def test_weekly_training_bundle_auto_freezes_meta_when_enabled(tmp_path, monkeypatch) -> None:
+def test_weekly_training_bundle_does_not_auto_promote_meta(tmp_path, monkeypatch) -> None:
     settings = build_test_settings(tmp_path)
     settings.intraday_research.meta_model_auto_activation_enabled = True
     seed_ticket003_data(settings)
@@ -569,7 +572,7 @@ def test_weekly_training_bundle_auto_freezes_meta_when_enabled(tmp_path, monkeyp
         notes="ok",
         row_count=0,
     )
-    freeze_calls: list[dict[str, object]] = []
+    promotion_calls: list[dict[str, object]] = []
 
     monkeypatch.setattr(
         "app.ops.bundles._resolve_intraday_session_start_date",
@@ -579,8 +582,8 @@ def test_weekly_training_bundle_auto_freezes_meta_when_enabled(tmp_path, monkeyp
     monkeypatch.setattr("app.ops.bundles.run_intraday_meta_walkforward", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.evaluate_intraday_meta_models", lambda *a, **k: noop_result)
     monkeypatch.setattr(
-        "app.ops.bundles.freeze_intraday_active_meta_model",
-        lambda *a, **k: freeze_calls.append(dict(k)) or noop_result,
+        "app.ops.bundles.run_intraday_meta_auto_promotion",
+        lambda *a, **k: promotion_calls.append(dict(k)) or noop_result,
     )
     monkeypatch.setattr(
         "app.ops.bundles.render_intraday_meta_model_report",
@@ -601,13 +604,10 @@ def test_weekly_training_bundle_auto_freezes_meta_when_enabled(tmp_path, monkeyp
     )
 
     assert result.status == JobStatus.DEGRADED_SUCCESS
-    assert len(freeze_calls) == 1
-    assert freeze_calls[0]["promotion_type"] == "AUTO_PROMOTION"
-    assert freeze_calls[0]["source"] == "weekly_training_auto_activation"
-    assert freeze_calls[0]["horizons"] == [1, 5]
+    assert promotion_calls == []
 
 
-def test_weekly_calibration_bundle_auto_freezes_policy_and_meta_when_enabled(
+def test_weekly_calibration_bundle_does_not_auto_promote_even_when_enabled(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -622,8 +622,8 @@ def test_weekly_calibration_bundle_auto_freezes_policy_and_meta_when_enabled(
         notes="ok",
         row_count=0,
     )
-    policy_freeze_calls: list[dict[str, object]] = []
-    meta_freeze_calls: list[dict[str, object]] = []
+    policy_promotion_calls: list[dict[str, object]] = []
+    meta_promotion_calls: list[dict[str, object]] = []
 
     monkeypatch.setattr(
         "app.ops.bundles._resolve_intraday_session_start_date",
@@ -646,16 +646,12 @@ def test_weekly_calibration_bundle_auto_freezes_policy_and_meta_when_enabled(
     )
     monkeypatch.setattr("app.ops.bundles.calibrate_intraday_meta_thresholds", lambda *a, **k: noop_result)
     monkeypatch.setattr(
-        "app.ops.bundles.freeze_intraday_active_policy",
-        lambda *a, **k: policy_freeze_calls.append(dict(k)) or noop_result,
+        "app.ops.bundles.run_intraday_policy_auto_promotion",
+        lambda *a, **k: policy_promotion_calls.append(dict(k)) or noop_result,
     )
     monkeypatch.setattr(
-        "app.ops.bundles.freeze_intraday_active_meta_model",
-        lambda *a, **k: meta_freeze_calls.append(dict(k)) or noop_result,
-    )
-    monkeypatch.setattr(
-        "app.ops.bundles.render_intraday_policy_research_report",
-        lambda *a, **k: noop_result,
+        "app.ops.bundles.run_intraday_meta_auto_promotion",
+        lambda *a, **k: meta_promotion_calls.append(dict(k)) or noop_result,
     )
     monkeypatch.setattr(
         "app.ops.bundles.materialize_intraday_research_capability",
@@ -672,14 +668,147 @@ def test_weekly_calibration_bundle_auto_freezes_policy_and_meta_when_enabled(
     )
 
     assert result.status == JobStatus.DEGRADED_SUCCESS
-    assert len(policy_freeze_calls) == 1
-    assert policy_freeze_calls[0]["promotion_type"] == "AUTO_PROMOTION"
-    assert policy_freeze_calls[0]["source"] == "weekly_calibration_auto_activation"
-    assert policy_freeze_calls[0]["allow_manual_review"] is False
-    assert len(meta_freeze_calls) == 1
-    assert meta_freeze_calls[0]["promotion_type"] == "AUTO_PROMOTION"
-    assert meta_freeze_calls[0]["source"] == "weekly_calibration_auto_activation"
-    assert meta_freeze_calls[0]["horizons"] == [1, 5]
+    assert policy_promotion_calls == []
+    assert meta_promotion_calls == []
+
+
+def test_daily_overlay_refresh_bundle_runs_auto_promotions_when_enabled(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    settings = build_test_settings(tmp_path)
+    settings.intraday_research.policy_auto_activation_enabled = True
+    settings.intraday_research.meta_model_auto_activation_enabled = True
+    settings.intraday_research.meta_model_enabled = True
+    seed_ticket003_data(settings)
+    expected_start = date(2026, 3, 2)
+    noop_result = SimpleNamespace(
+        artifact_paths=[],
+        status=JobStatus.SUCCESS,
+        notes="ok",
+        row_count=0,
+    )
+    policy_promotion_calls: list[dict[str, object]] = []
+    meta_promotion_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        "app.ops.bundles._resolve_intraday_session_start_date",
+        lambda *a, **k: expected_start,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_policy_candidates",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_decision_outcomes",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr("app.ops.bundles.run_intraday_policy_calibration", lambda *a, **k: noop_result)
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_policy_recommendations",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr("app.ops.bundles.calibrate_intraday_meta_thresholds", lambda *a, **k: noop_result)
+    monkeypatch.setattr(
+        "app.ops.bundles.run_intraday_policy_auto_promotion",
+        lambda *a, **k: policy_promotion_calls.append(dict(k)) or noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.run_intraday_meta_auto_promotion",
+        lambda *a, **k: meta_promotion_calls.append(dict(k)) or noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_research_capability",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._skip_if_intraday_feature_disabled", lambda *a, **k: None)
+
+    result = run_daily_overlay_refresh_bundle(
+        settings,
+        as_of_date=date(2026, 3, 13),
+        force=True,
+        dry_run=False,
+    )
+
+    assert result.status == JobStatus.DEGRADED_SUCCESS
+    assert len(policy_promotion_calls) == 1
+    assert policy_promotion_calls[0]["source"] == "daily_overlay_auto_promotion"
+    assert len(meta_promotion_calls) == 1
+    assert meta_promotion_calls[0]["source"] == "daily_overlay_meta_auto_promotion"
+    assert meta_promotion_calls[0]["horizons"] == [1, 5]
+
+
+def test_weekly_policy_research_bundle_runs_heavy_policy_research_only(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    settings = build_test_settings(tmp_path)
+    settings.intraday_research.policy_auto_activation_enabled = True
+    settings.intraday_research.meta_model_auto_activation_enabled = True
+    seed_ticket003_data(settings)
+    expected_start = date(2026, 3, 2)
+    noop_result = SimpleNamespace(
+        artifact_paths=[],
+        status=JobStatus.SUCCESS,
+        notes="ok",
+        row_count=0,
+    )
+    walkforward_calls: list[dict[str, object]] = []
+    ablation_calls: list[dict[str, object]] = []
+    policy_promotion_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        "app.ops.bundles._resolve_intraday_session_start_date",
+        lambda *a, **k: expected_start,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_policy_candidates",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_decision_outcomes",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr("app.ops.bundles.run_intraday_policy_calibration", lambda *a, **k: noop_result)
+    monkeypatch.setattr(
+        "app.ops.bundles.run_intraday_policy_walkforward",
+        lambda *a, **k: walkforward_calls.append(dict(k)) or noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.evaluate_intraday_policy_ablation",
+        lambda *a, **k: ablation_calls.append(dict(k)) or noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_policy_recommendations",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.render_intraday_policy_research_report",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.run_intraday_policy_auto_promotion",
+        lambda *a, **k: policy_promotion_calls.append(dict(k)) or noop_result,
+    )
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_intraday_research_capability",
+        lambda *a, **k: noop_result,
+    )
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._skip_if_intraday_feature_disabled", lambda *a, **k: None)
+
+    result = run_weekly_policy_research_bundle(
+        settings,
+        as_of_date=date(2026, 3, 13),
+        force=True,
+        dry_run=False,
+    )
+
+    assert result.status == JobStatus.DEGRADED_SUCCESS
+    assert [call["horizons"] for call in walkforward_calls] == [[1], [5]]
+    assert [call["horizons"] for call in ablation_calls] == [[1], [5]]
+    assert policy_promotion_calls == []
 
 
 def test_resolve_intraday_session_start_date_uses_available_adjusted_sessions(tmp_path) -> None:

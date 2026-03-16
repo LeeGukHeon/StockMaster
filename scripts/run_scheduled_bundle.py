@@ -15,12 +15,14 @@ from app.common.time import today_local
 from app.ops.bundles import (
     run_daily_audit_lite_bundle,
     run_daily_close_bundle,
+    run_daily_overlay_refresh_bundle,
     run_docker_build_cache_cleanup_bundle,
     run_evaluation_bundle,
     run_intraday_assist_bundle,
     run_news_sync_bundle,
     run_ops_maintenance_bundle,
     run_weekly_calibration_bundle,
+    run_weekly_policy_research_bundle,
     run_weekly_training_bundle,
 )
 from app.ops.common import TriggerType
@@ -100,6 +102,15 @@ def main() -> int:
                 publish_discord=not args.skip_discord,
                 policy_config_path=args.policy_config_path,
             )
+        elif job_key == "daily_overlay_refresh":
+            result = run_daily_overlay_refresh_bundle(
+                runtime_settings,
+                as_of_date=target_date,
+                trigger_type=trigger_type,
+                dry_run=args.dry_run,
+                force=args.force,
+                policy_config_path=args.policy_config_path,
+            )
         elif job_key == "docker_build_cache_cleanup":
             result = run_docker_build_cache_cleanup_bundle(
                 runtime_settings,
@@ -138,6 +149,15 @@ def main() -> int:
             )
         elif job_key == "weekly_calibration":
             result = run_weekly_calibration_bundle(
+                runtime_settings,
+                as_of_date=target_date,
+                trigger_type=trigger_type,
+                dry_run=args.dry_run,
+                force=args.force,
+                policy_config_path=args.policy_config_path,
+            )
+        elif job_key == "weekly_policy_research":
+            result = run_weekly_policy_research_bundle(
                 runtime_settings,
                 as_of_date=target_date,
                 trigger_type=trigger_type,

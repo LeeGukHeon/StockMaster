@@ -158,6 +158,23 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         date_semantics=DATE_SEMANTICS_CALENDAR,
     ),
     ScheduledJobDefinition(
+        job_key="daily_overlay_refresh",
+        label="Daily Overlay Refresh",
+        description=(
+            "Light overlay refresh that recalibrates policy recommendations "
+            "and guarded auto-promotion against the current alpha lineage."
+        ),
+        service_slug="daily-overlay-refresh",
+        bundle_script="scripts/run_daily_overlay_refresh_bundle.py",
+        bundle_args=(),
+        schedule_label="Weekdays 20:10",
+        on_calendar=("Mon..Fri *-*-* 20:10:00",),
+        weekdays=(0, 1, 2, 3, 4),
+        run_times=("20:10",),
+        date_semantics=DATE_SEMANTICS_TRADING,
+        trading_day_required=True,
+    ),
+    ScheduledJobDefinition(
         job_key="docker_build_cache_cleanup",
         label="도커 빌드 캐시 정리",
         description="Docker builder cache만 안전하게 정리",
@@ -198,6 +215,22 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         on_calendar=("Sat *-*-* 06:30:00",),
         weekdays=(5,),
         run_times=("06:30",),
+        date_semantics=DATE_SEMANTICS_HYBRID,
+    ),
+    ScheduledJobDefinition(
+        job_key="weekly_policy_research",
+        label="Weekly Policy Research",
+        description=(
+            "Heavy weekly policy walk-forward and ablation research. "
+            "Artifacts refresh only and are never auto-activated."
+        ),
+        service_slug="weekly-policy-research",
+        bundle_script="scripts/run_weekly_policy_research_bundle.py",
+        bundle_args=(),
+        schedule_label="Sat 07:45",
+        on_calendar=("Sat *-*-* 07:45:00",),
+        weekdays=(5,),
+        run_times=("07:45",),
         date_semantics=DATE_SEMANTICS_HYBRID,
         heavy_job=True,
     ),
@@ -494,11 +527,13 @@ def bundle_already_completed(
 def bundle_last_result_frame(settings: Settings, *, limit: int = 50) -> pd.DataFrame:
     bundle_names = [
         "run_daily_close_bundle",
+        "run_daily_overlay_refresh_bundle",
         "run_evaluation_bundle",
         "run_docker_build_cache_cleanup_bundle",
         "run_intraday_assist_bundle",
         "run_weekly_training_bundle",
         "run_weekly_calibration_bundle",
+        "run_weekly_policy_research_bundle",
         "run_ops_maintenance_bundle",
         "run_daily_audit_lite_bundle",
         "run_news_sync_bundle",

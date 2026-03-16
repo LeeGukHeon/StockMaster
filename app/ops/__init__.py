@@ -18,6 +18,7 @@ _EXPORTS = {
     "rotate_and_compress_logs": ("app.ops.maintenance", "rotate_and_compress_logs"),
     "run_daily_audit_lite_bundle": ("app.ops.bundles", "run_daily_audit_lite_bundle"),
     "run_daily_close_bundle": ("app.ops.bundles", "run_daily_close_bundle"),
+    "run_daily_overlay_refresh_bundle": ("app.ops.bundles", "run_daily_overlay_refresh_bundle"),
     "run_docker_build_cache_cleanup_bundle": (
         "app.ops.bundles",
         "run_docker_build_cache_cleanup_bundle",
@@ -30,6 +31,10 @@ _EXPORTS = {
     "run_news_sync_bundle": ("app.ops.bundles", "run_news_sync_bundle"),
     "run_ops_maintenance_bundle": ("app.ops.bundles", "run_ops_maintenance_bundle"),
     "run_weekly_calibration_bundle": ("app.ops.bundles", "run_weekly_calibration_bundle"),
+    "run_weekly_policy_research_bundle": (
+        "app.ops.bundles",
+        "run_weekly_policy_research_bundle",
+    ),
     "run_weekly_training_bundle": ("app.ops.bundles", "run_weekly_training_bundle"),
     "summarize_storage_usage": ("app.ops.maintenance", "summarize_storage_usage"),
     "validate_health_framework": ("app.ops.validation", "validate_health_framework"),

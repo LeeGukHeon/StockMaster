@@ -583,6 +583,8 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         upper_band DOUBLE,
         uncertainty_score DOUBLE,
         disagreement_score DOUBLE,
+        model_spec_id VARCHAR,
+        active_alpha_model_id VARCHAR,
         fallback_flag BOOLEAN,
         top_reason_tags_json VARCHAR,
         risk_flags_json VARCHAR,
@@ -1995,6 +1997,14 @@ PREDICTION_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE fact_prediction ADD COLUMN IF NOT EXISTS ensemble_weight_json VARCHAR",
 )
 
+INTRADAY_CANDIDATE_SESSION_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE fact_intraday_candidate_session ADD COLUMN IF NOT EXISTS model_spec_id VARCHAR",
+    (
+        "ALTER TABLE fact_intraday_candidate_session "
+        "ADD COLUMN IF NOT EXISTS active_alpha_model_id VARCHAR"
+    ),
+)
+
 MODEL_TRAINING_RUN_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS model_domain VARCHAR",
     "ALTER TABLE fact_model_training_run ADD COLUMN IF NOT EXISTS model_spec_id VARCHAR",
@@ -3231,6 +3241,9 @@ def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
             connection.execute(ddl)
 
         for ddl in PREDICTION_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in INTRADAY_CANDIDATE_SESSION_COLUMN_MIGRATIONS:
             connection.execute(ddl)
 
         for ddl in MODEL_TRAINING_RUN_COLUMN_MIGRATIONS:

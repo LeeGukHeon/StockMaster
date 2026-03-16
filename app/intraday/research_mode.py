@@ -67,7 +67,11 @@ CAPABILITY_SPECS: tuple[IntradayResearchCapabilitySpec, ...] = (
             ("fact_intraday_adjusted_entry_decision", "SELECT COUNT(*) FROM fact_intraday_adjusted_entry_decision WHERE session_date <= ?"),
         ),
         report_types=("intraday_policy_research_report",),
-        job_names=("run_weekly_calibration_bundle",),
+        job_names=(
+            "run_daily_overlay_refresh_bundle",
+            "run_weekly_calibration_bundle",
+            "run_weekly_policy_research_bundle",
+        ),
     ),
     IntradayResearchCapabilitySpec(
         feature_slug="intraday_meta_model",
@@ -107,6 +111,7 @@ CAPABILITY_SPECS: tuple[IntradayResearchCapabilitySpec, ...] = (
             "run_evaluation_bundle",
             "run_weekly_training_bundle",
             "run_weekly_calibration_bundle",
+            "run_weekly_policy_research_bundle",
         ),
     ),
     IntradayResearchCapabilitySpec(

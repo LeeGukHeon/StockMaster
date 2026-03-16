@@ -15,9 +15,11 @@ TIMER_UNITS=(
   stockmaster-evaluation.timer
   stockmaster-daily-close.timer
   stockmaster-daily-audit-lite.timer
+  stockmaster-daily-overlay-refresh.timer
   stockmaster-docker-build-cache-cleanup.timer
   stockmaster-weekly-training.timer
   stockmaster-weekly-calibration.timer
+  stockmaster-weekly-policy-research.timer
 )
 
 for unit in "${TIMER_UNITS[@]}"; do

@@ -20,9 +20,11 @@ def test_scheduler_registry_contains_expected_jobs() -> None:
         "evaluation",
         "daily_close",
         "daily_audit_lite",
+        "daily_overlay_refresh",
         "docker_build_cache_cleanup",
         "weekly_training_candidate",
         "weekly_calibration",
+        "weekly_policy_research",
     }
 
     assert set(SCHEDULED_JOB_MAP) == expected_job_keys
@@ -35,12 +37,16 @@ def test_scheduler_registry_contains_expected_jobs() -> None:
     assert SCHEDULED_JOB_MAP["daily_close"].date_semantics == "trading_day"
     assert SCHEDULED_JOB_MAP["intraday_assist"].intraday_interval_minutes == 5
     assert SCHEDULED_JOB_MAP["daily_audit_lite"].date_semantics == "calendar_day"
+    assert SCHEDULED_JOB_MAP["daily_overlay_refresh"].run_times == ("20:10",)
+    assert SCHEDULED_JOB_MAP["daily_overlay_refresh"].date_semantics == "trading_day"
     assert SCHEDULED_JOB_MAP["docker_build_cache_cleanup"].run_times == ("23:40",)
     assert SCHEDULED_JOB_MAP["docker_build_cache_cleanup"].date_semantics == "calendar_day"
     assert SCHEDULED_JOB_MAP["weekly_training_candidate"].date_semantics == "hybrid"
     assert SCHEDULED_JOB_MAP["weekly_training_candidate"].heavy_job is True
     assert SCHEDULED_JOB_MAP["weekly_calibration"].date_semantics == "hybrid"
-    assert SCHEDULED_JOB_MAP["weekly_calibration"].heavy_job is True
+    assert SCHEDULED_JOB_MAP["weekly_calibration"].heavy_job is False
+    assert SCHEDULED_JOB_MAP["weekly_policy_research"].date_semantics == "hybrid"
+    assert SCHEDULED_JOB_MAP["weekly_policy_research"].heavy_job is True
 
 
 def test_resolve_news_collection_dates_includes_weekend_gap(tmp_path) -> None:

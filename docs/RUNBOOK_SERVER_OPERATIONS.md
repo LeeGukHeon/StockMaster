@@ -93,8 +93,10 @@ C:\Windows\System32\OpenSSH\ssh.exe `
   - `deploy/systemd/stockmaster-evaluation.timer`
   - `deploy/systemd/stockmaster-daily-close.timer`
   - `deploy/systemd/stockmaster-daily-audit-lite.timer`
+  - `deploy/systemd/stockmaster-daily-overlay-refresh.timer`
   - `deploy/systemd/stockmaster-weekly-training.timer`
   - `deploy/systemd/stockmaster-weekly-calibration.timer`
+  - `deploy/systemd/stockmaster-weekly-policy-research.timer`
 - scheduler helper:
   - `scripts/server/install_scheduler_units.sh`
   - `scripts/server/uninstall_scheduler_units.sh`

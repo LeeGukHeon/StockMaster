@@ -17,6 +17,7 @@ from app.storage.manifests import record_run_finish, record_run_start
 from app.storage.parquet_io import write_parquet
 
 from .common import DEFAULT_CHECKPOINTS, INTRADAY_REGIME_FAMILIES, json_text, rank_list
+from .promotion_common import resolve_alpha_lineage_status, write_promotion_decision_artifact
 from .strategy import materialize_intraday_decision_outcomes
 
 DEFAULT_SEARCH_SPACE_VERSION = "pcal_v1"
@@ -269,6 +270,14 @@ class IntradayPolicyRecommendationResult:
 
 @dataclass(slots=True)
 class IntradayActivePolicyResult:
+    run_id: str
+    row_count: int
+    artifact_paths: list[str]
+    notes: str
+
+
+@dataclass(slots=True)
+class IntradayPolicyPromotionResult:
     run_id: str
     row_count: int
     artifact_paths: list[str]
@@ -927,7 +936,7 @@ def _load_policy_candidates(
     horizons: list[int],
 ) -> pd.DataFrame:
     placeholders = ",".join("?" for _ in horizons)
-    return connection.execute(
+    frame = connection.execute(
         f"""
         SELECT *
         FROM fact_intraday_policy_candidate
@@ -946,6 +955,7 @@ def _load_policy_base_frame(
     end_session_date: date,
     horizons: list[int],
     checkpoints: list[str] | None = None,
+    alpha_lineage_by_horizon: dict[int, str] | None = None,
 ) -> pd.DataFrame:
     horizon_placeholders = ",".join("?" for _ in horizons)
     checkpoint_filter = ""
@@ -981,6 +991,8 @@ def _load_policy_base_frame(
             candidate.expected_excess_return,
             candidate.uncertainty_score,
             candidate.disagreement_score,
+            candidate.model_spec_id,
+            candidate.active_alpha_model_id,
             candidate.fallback_flag AS selection_fallback_flag,
             adjusted.checkpoint_time,
             adjusted.raw_action,
@@ -1069,6 +1081,18 @@ def _load_policy_base_frame(
         """,
         parameters,
     ).fetchdf()
+    if frame.empty or alpha_lineage_by_horizon is None:
+        return frame
+    lineage_frame = frame.copy()
+    lineage_frame["horizon"] = pd.to_numeric(lineage_frame["horizon"], errors="coerce").astype(int)
+    allowed_mask = lineage_frame.apply(
+        lambda row: (
+            row.get("active_alpha_model_id")
+            == alpha_lineage_by_horizon.get(int(row["horizon"]))
+        ),
+        axis=1,
+    )
+    return lineage_frame.loc[allowed_mask].reset_index(drop=True)
 
 
 def _regime_cluster(value: object) -> str:
@@ -1449,6 +1473,18 @@ def _evaluate_policy_candidate(
                 "unavailable_count": int(outcome_frame["outcome_status"].eq("unavailable").sum())
                 if not outcome_frame.empty
                 else 0,
+                "alpha_active_model_ids": sorted(
+                    {
+                        str(value)
+                        for value in scoped["active_alpha_model_id"].dropna().unique().tolist()
+                    }
+                ),
+                "alpha_model_spec_ids": sorted(
+                    {
+                        str(value)
+                        for value in scoped["model_spec_id"].dropna().unique().tolist()
+                    }
+                ),
             }
         ),
         "created_at": pd.Timestamp.now(tz="UTC"),
@@ -1774,6 +1810,7 @@ def run_intraday_policy_calibration(
     split_version: str,
     search_space_version: str,
     refresh_decision_outcomes: bool = True,
+    alpha_lineage_by_horizon: dict[int, str] | None = None,
 ) -> IntradayPolicyCalibrationResult:
     ensure_storage_layout(settings)
     effective_checkpoints = _normalize_checkpoint_list(checkpoints)
@@ -1830,6 +1867,7 @@ def run_intraday_policy_calibration(
                     end_session_date=end_session_date,
                     horizons=horizons,
                     checkpoints=effective_checkpoints,
+                    alpha_lineage_by_horizon=alpha_lineage_by_horizon,
                 )
                 decision_frame["regime_cluster"] = decision_frame["market_regime_family"].map(
                     _regime_cluster
@@ -1901,7 +1939,8 @@ def run_intraday_policy_calibration(
                     "Intraday policy calibration completed. "
                     f"experiments={len(experiment_frame)} evaluations={len(evaluation_frame)} "
                     f"splits={len(splits)} matured_dates={len(matured_dates)} "
-                    f"start_session_date={start_session_date.isoformat()}"
+                    f"start_session_date={start_session_date.isoformat()} "
+                    f"alpha_lineage_filtered={bool(alpha_lineage_by_horizon)}"
                 )
                 record_run_finish(
                     connection,
@@ -3122,6 +3161,158 @@ def freeze_intraday_active_policy(
                     status="failed",
                     output_artifacts=[],
                     notes="Freezing intraday active policy failed.",
+                    error_message=str(exc),
+                    ranking_version=SELECTION_ENGINE_VERSION,
+                )
+                raise
+
+
+def run_intraday_policy_auto_promotion(
+    settings: Settings,
+    *,
+    as_of_date: date,
+    source: str,
+    note: str,
+) -> IntradayPolicyPromotionResult:
+    ensure_storage_layout(settings)
+    with activate_run_context(
+        "run_intraday_policy_auto_promotion",
+        as_of_date=as_of_date,
+    ) as run_context:
+        with duckdb_connection(settings.paths.duckdb_path) as connection:
+            bootstrap_core_tables(connection)
+            record_run_start(
+                connection,
+                run_id=run_context.run_id,
+                run_type=run_context.run_type,
+                started_at=run_context.started_at,
+                as_of_date=as_of_date,
+                input_sources=[
+                    "fact_intraday_policy_selection_recommendation",
+                    "fact_intraday_active_policy",
+                    "fact_alpha_active_model",
+                ],
+                notes=f"Run intraday policy auto-promotion for {as_of_date.isoformat()}",
+                ranking_version=SELECTION_ENGINE_VERSION,
+            )
+            try:
+                recommendation_rows = _latest_recommendation_rows(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizons=[1, 5],
+                )
+                artifact_paths: list[str] = []
+                if recommendation_rows.empty:
+                    notes = "Intraday policy auto-promotion was a no-op. No recommendations exist."
+                    record_run_finish(
+                        connection,
+                        run_id=run_context.run_id,
+                        finished_at=now_local(settings.app.timezone),
+                        status="success",
+                        output_artifacts=[],
+                        notes=notes,
+                        ranking_version=SELECTION_ENGINE_VERSION,
+                    )
+                    return IntradayPolicyPromotionResult(
+                        run_id=run_context.run_id,
+                        row_count=0,
+                        artifact_paths=[],
+                        notes=notes,
+                    )
+                horizons = sorted(
+                    {int(value) for value in recommendation_rows["horizon"].dropna().tolist()}
+                )
+                alpha_status = resolve_alpha_lineage_status(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizons=horizons,
+                )
+                current_active_rows = _current_active_policy_rows(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizons=horizons,
+                )
+                manual_review_required = bool(
+                    "manual_review_required_flag" in recommendation_rows
+                    and recommendation_rows["manual_review_required_flag"].fillna(False).any()
+                )
+                already_active = (
+                    _policy_activation_signature_rows(current_active_rows)
+                    == _policy_activation_signature_rows(recommendation_rows)
+                )
+                decision = "PROMOTE"
+                row_count = 0
+                if manual_review_required:
+                    decision = "NO_PROMOTION_MANUAL_REVIEW"
+                    notes = (
+                        "Intraday policy auto-promotion was a no-op. "
+                        "Latest recommendations still require manual review."
+                    )
+                elif alpha_status.blocked_horizons:
+                    decision = "NO_PROMOTION_ALPHA_STABILIZING"
+                    blocked = ", ".join(f"H{int(h)}" for h in alpha_status.blocked_horizons)
+                    notes = (
+                        "Intraday policy auto-promotion was a no-op. "
+                        f"Alpha stabilization window is still open for {blocked}."
+                    )
+                elif already_active:
+                    decision = "NO_PROMOTION_ALREADY_ACTIVE"
+                    notes = (
+                        "Intraday policy auto-promotion was a no-op. "
+                        "Latest recommendations are already active."
+                    )
+                else:
+                    freeze_result = freeze_intraday_active_policy(
+                        settings,
+                        as_of_date=as_of_date,
+                        promotion_type="AUTO_PROMOTION",
+                        source=source,
+                        note=note,
+                        allow_manual_review=False,
+                    )
+                    row_count = int(freeze_result.row_count)
+                    notes = freeze_result.notes
+                payload = {
+                    "decision": decision,
+                    "as_of_date": as_of_date.isoformat(),
+                    "recommendation_horizons": horizons,
+                    "recommendation_count": int(len(recommendation_rows)),
+                    "manual_review_required": manual_review_required,
+                    "already_active": already_active,
+                    "alpha_lineage": alpha_status.detail_by_horizon,
+                }
+                artifact_paths.append(
+                    write_promotion_decision_artifact(
+                        settings,
+                        dataset="intraday_policy_promotion",
+                        run_id=run_context.run_id,
+                        filename="policy_promotion_decision.json",
+                        payload=payload,
+                    )
+                )
+                record_run_finish(
+                    connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="success",
+                    output_artifacts=artifact_paths,
+                    notes=notes,
+                    ranking_version=SELECTION_ENGINE_VERSION,
+                )
+                return IntradayPolicyPromotionResult(
+                    run_id=run_context.run_id,
+                    row_count=row_count,
+                    artifact_paths=artifact_paths,
+                    notes=notes,
+                )
+            except Exception as exc:
+                record_run_finish(
+                    connection,
+                    run_id=run_context.run_id,
+                    finished_at=now_local(settings.app.timezone),
+                    status="failed",
+                    output_artifacts=[],
+                    notes="Intraday policy auto-promotion failed.",
                     error_message=str(exc),
                     ranking_version=SELECTION_ENGINE_VERSION,
                 )

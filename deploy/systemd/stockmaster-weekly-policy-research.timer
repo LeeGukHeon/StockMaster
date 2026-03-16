@@ -1,0 +1,11 @@
+[Unit]
+Description=StockMaster Weekly Policy Research Timer
+
+[Timer]
+Unit=stockmaster-scheduler@weekly-policy-research.service
+OnCalendar=Sat *-*-* 07:45:00
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target
