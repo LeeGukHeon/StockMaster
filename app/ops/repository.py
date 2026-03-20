@@ -437,6 +437,129 @@ def insert_alert_event(
     _dual_execute(connection, query, params)
 
 
+def has_open_alert_event(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    alert_type: str,
+    component_name: str,
+    message: str | None = None,
+) -> bool:
+    query = """
+        SELECT COUNT(*)
+        FROM fact_alert_event
+        WHERE alert_type = ?
+          AND component_name = ?
+          AND status = 'OPEN'
+    """
+    params: list[Any] = [alert_type, component_name]
+    if message is not None:
+        query += " AND message = ?"
+        params.append(message)
+    row = connection.execute(query, params).fetchone()
+    return bool(row and int(row[0]) > 0)
+
+
+def resolve_open_alert_events(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    resolved_at: datetime,
+    alert_type: str,
+    component_name: str,
+    message: str | None = None,
+    exclude_message: str | None = None,
+    keep_latest: int = 0,
+) -> int:
+    query = """
+        SELECT alert_id
+        FROM fact_alert_event
+        WHERE alert_type = ?
+          AND component_name = ?
+          AND status = 'OPEN'
+    """
+    params: list[Any] = [alert_type, component_name]
+    if message is not None:
+        query += " AND message = ?"
+        params.append(message)
+    if exclude_message is not None:
+        query += " AND message <> ?"
+        params.append(exclude_message)
+    query += " ORDER BY created_at DESC, alert_id DESC"
+    alert_ids = [str(row[0]) for row in connection.execute(query, params).fetchall()]
+    if keep_latest > 0:
+        alert_ids = alert_ids[keep_latest:]
+    for alert_id in alert_ids:
+        _dual_execute(
+            connection,
+            """
+            UPDATE fact_alert_event
+            SET status = 'RESOLVED',
+                resolved_at = ?
+            WHERE alert_id = ?
+              AND status = 'OPEN'
+            """,
+            [resolved_at, alert_id],
+        )
+    return len(alert_ids)
+
+
+def sync_open_alert_event(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    alert_id: str,
+    created_at: datetime,
+    alert_type: str,
+    severity: str,
+    component_name: str,
+    message: str,
+    details: dict[str, Any] | None,
+    job_run_id: str | None,
+    active: bool,
+) -> bool:
+    if not active:
+        resolve_open_alert_events(
+            connection,
+            resolved_at=created_at,
+            alert_type=alert_type,
+            component_name=component_name,
+        )
+        return False
+    resolve_open_alert_events(
+        connection,
+        resolved_at=created_at,
+        alert_type=alert_type,
+        component_name=component_name,
+        exclude_message=message,
+    )
+    resolve_open_alert_events(
+        connection,
+        resolved_at=created_at,
+        alert_type=alert_type,
+        component_name=component_name,
+        message=message,
+        keep_latest=1,
+    )
+    if has_open_alert_event(
+        connection,
+        alert_type=alert_type,
+        component_name=component_name,
+        message=message,
+    ):
+        return False
+    insert_alert_event(
+        connection,
+        alert_id=alert_id,
+        created_at=created_at,
+        alert_type=alert_type,
+        severity=severity,
+        component_name=component_name,
+        status="OPEN",
+        message=message,
+        details=details,
+        job_run_id=job_run_id,
+    )
+    return True
+
+
 def insert_recovery_action(
     connection: duckdb.DuckDBPyConnection,
     *,

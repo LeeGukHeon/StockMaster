@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from app.common.disk import DiskWatermark
 from app.ops.common import JobStatus
-from app.ops.health import check_pipeline_dependencies
+from app.ops.health import check_pipeline_dependencies, materialize_health_snapshots
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from tests._ticket003_support import build_test_settings, seed_ticket003_data
 
@@ -131,3 +131,155 @@ def test_check_pipeline_dependencies_respects_scheduler_cutoff_times(tmp_path, m
     assert after_target["status"] == JobStatus.DEGRADED_SUCCESS
     assert "required=2026-03-13" in str(after_selection["observed_state"])
 
+
+def test_materialize_health_snapshots_deduplicates_and_resolves_open_alerts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    snapshot_ts = datetime.now(ZoneInfo("Asia/Seoul")).replace(microsecond=0)
+    now_values = iter(
+        [
+            snapshot_ts,
+            snapshot_ts + timedelta(minutes=1),
+            snapshot_ts + timedelta(minutes=2),
+        ]
+    )
+    monkeypatch.setattr(
+        "app.ops.health.measure_disk_usage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            status=DiskWatermark.NORMAL,
+            usage_ratio=0.10,
+        ),
+    )
+    monkeypatch.setattr("app.ops.health.now_local", lambda _tz: next(now_values))
+    as_of_date = snapshot_ts.date()
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        connection.execute(
+            """
+            INSERT INTO fact_job_run (
+                run_id,
+                job_name,
+                trigger_type,
+                status,
+                as_of_date,
+                started_at,
+                finished_at,
+                root_run_id,
+                parent_run_id,
+                recovery_of_run_id,
+                lock_name,
+                policy_id,
+                policy_version,
+                dry_run,
+                step_count,
+                failed_step_count,
+                artifact_count,
+                notes,
+                error_message,
+                details_json,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                "failed-job-1",
+                "unit_test_bundle",
+                "MANUAL",
+                "FAILED",
+                as_of_date,
+                snapshot_ts - timedelta(hours=1),
+                snapshot_ts - timedelta(minutes=30),
+                "failed-job-1",
+                None,
+                None,
+                None,
+                None,
+                None,
+                False,
+                1,
+                1,
+                0,
+                "unit test failure",
+                "boom",
+                None,
+                snapshot_ts - timedelta(hours=1),
+            ],
+        )
+
+        first = materialize_health_snapshots(
+            settings,
+            connection=connection,
+            as_of_date=as_of_date,
+            job_run_id="health-1",
+        )
+        second = materialize_health_snapshots(
+            settings,
+            connection=connection,
+            as_of_date=as_of_date,
+            job_run_id="health-2",
+        )
+        open_failed_alerts = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_alert_event
+            WHERE alert_type = 'FAILED_RUNS_24H'
+              AND status = 'OPEN'
+            """
+        ).fetchone()[0]
+        assert first.status == JobStatus.DEGRADED_SUCCESS
+        assert second.status == JobStatus.DEGRADED_SUCCESS
+        assert open_failed_alerts == 1
+
+        connection.execute(
+            """
+            UPDATE fact_job_run
+            SET status = 'SUCCESS',
+                started_at = ?,
+                finished_at = ?
+            WHERE run_id = 'failed-job-1'
+            """,
+            [
+                snapshot_ts - timedelta(days=2),
+                snapshot_ts - timedelta(days=2) + timedelta(minutes=5),
+            ],
+        )
+
+        third = materialize_health_snapshots(
+            settings,
+            connection=connection,
+            as_of_date=as_of_date,
+            job_run_id="health-3",
+        )
+        open_failed_alerts = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_alert_event
+            WHERE alert_type = 'FAILED_RUNS_24H'
+              AND status = 'OPEN'
+            """
+        ).fetchone()[0]
+        resolved_failed_alerts = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_alert_event
+            WHERE alert_type = 'FAILED_RUNS_24H'
+              AND status = 'RESOLVED'
+            """
+        ).fetchone()[0]
+        latest_open_alert_metric = connection.execute(
+            """
+            SELECT metric_value_double
+            FROM vw_latest_health_snapshot
+            WHERE health_scope = 'overall'
+              AND component_name = 'platform'
+              AND metric_name = 'open_alert_count'
+            """
+        ).fetchone()[0]
+        assert third.status == JobStatus.SUCCESS
+        assert open_failed_alerts == 0
+        assert resolved_failed_alerts == 1
+        assert float(latest_open_alert_metric or 0.0) == 0.0

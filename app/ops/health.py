@@ -10,10 +10,10 @@ from app.ops.common import AlertSeverity, JobStatus, OpsJobResult
 from app.ops.policy import load_active_or_default_ops_policy
 from app.ops.scheduler import expected_job_reference_date
 from app.ops.repository import (
-    insert_alert_event,
     insert_health_snapshot_rows,
     insert_pipeline_dependency_rows,
     json_text,
+    sync_open_alert_event,
 )
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables
@@ -425,13 +425,6 @@ def materialize_health_snapshots(
         )
         or 0
     )
-    open_alert_count = int(
-        _scalar(
-            connection,
-            "SELECT COUNT(*) FROM fact_alert_event WHERE status = 'OPEN'",
-        )
-        or 0
-    )
     blocked_dependency_count = int(
         _scalar(
             connection,
@@ -473,6 +466,56 @@ def materialize_health_snapshots(
     latest_nav_date = _scalar(
         connection,
         "SELECT MAX(snapshot_date) FROM fact_portfolio_nav_snapshot",
+    )
+    alert_specs = [
+        {
+            "alert_type": "DISK_WATERMARK",
+            "severity": (
+                AlertSeverity.CRITICAL
+                if disk_report.status == DiskWatermark.LIMIT
+                else AlertSeverity.WARNING
+            ),
+            "message": f"Disk watermark reached: {disk_report.status}",
+            "details": {"usage_ratio": disk_report.usage_ratio},
+            "active": disk_report.status != DiskWatermark.NORMAL,
+        },
+        {
+            "alert_type": "STALE_LOCK",
+            "severity": AlertSeverity.WARNING,
+            "message": "One or more stale locks require intervention.",
+            "details": {"stale_lock_count": stale_lock_count},
+            "active": stale_lock_count > 0,
+        },
+        {
+            "alert_type": "FAILED_RUNS_24H",
+            "severity": AlertSeverity.WARNING,
+            "message": "Recent failed jobs were detected.",
+            "details": {"failed_run_count_24h": failed_24h},
+            "active": failed_24h > 0,
+        },
+    ]
+    inserted_alert_count = 0
+    for spec in alert_specs:
+        inserted_alert_count += int(
+            sync_open_alert_event(
+            connection,
+            alert_id=f"alert-{spec['alert_type'].lower()}-{utc_now().strftime('%Y%m%dT%H%M%S%f')}",
+            created_at=snapshot_at,
+            alert_type=str(spec["alert_type"]),
+            severity=str(spec["severity"]),
+            component_name="health",
+            message=str(spec["message"]),
+            details=spec["details"],
+            job_run_id=job_run_id,
+            active=bool(spec["active"]),
+            )
+        )
+    open_alert_count = int(
+        _scalar(
+            connection,
+            "SELECT COUNT(*) FROM fact_alert_event WHERE status = 'OPEN'",
+        )
+        or 0
     )
     if disk_report.status == DiskWatermark.LIMIT or stale_lock_count > 0:
         overall_status = JobStatus.FAILED
@@ -548,52 +591,10 @@ def materialize_health_snapshots(
         ]
     )
     insert_health_snapshot_rows(connection, rows)
-    alerts: list[tuple[str, str, str, dict[str, object]]] = []
-    if disk_report.status != DiskWatermark.NORMAL:
-        alerts.append(
-            (
-                "DISK_WATERMARK",
-                (
-                    AlertSeverity.CRITICAL
-                    if disk_report.status == DiskWatermark.LIMIT
-                    else AlertSeverity.WARNING
-                ),
-                f"Disk watermark reached: {disk_report.status}",
-                {"usage_ratio": disk_report.usage_ratio},
-            )
-        )
-    if stale_lock_count > 0:
-        alerts.append(
-            (
-                "STALE_LOCK",
-                AlertSeverity.WARNING,
-                "One or more stale locks require intervention.",
-                {"stale_lock_count": stale_lock_count},
-            )
-        )
-    if failed_24h > 0:
-        alerts.append(
-            (
-                "FAILED_RUNS_24H",
-                AlertSeverity.WARNING,
-                "Recent failed jobs were detected.",
-                {"failed_run_count_24h": failed_24h},
-            )
-        )
-    for alert_type, severity, message, details in alerts:
-        insert_alert_event(
-            connection,
-            alert_id=f"alert-{alert_type.lower()}-{utc_now().strftime('%Y%m%dT%H%M%S%f')}",
-            created_at=snapshot_at,
-            alert_type=alert_type,
-            severity=severity,
-            component_name="health",
-            status="OPEN",
-            message=message,
-            details=details,
-            job_run_id=job_run_id,
-        )
-    notes = f"Health snapshots materialized. rows={len(rows)} alerts={len(alerts)}"
+    notes = (
+        f"Health snapshots materialized. rows={len(rows)} "
+        f"alerts_open={open_alert_count} alerts_inserted={inserted_alert_count}"
+    )
     return OpsJobResult(
         run_id=job_run_id or "embedded",
         job_name="materialize_health_snapshots",
