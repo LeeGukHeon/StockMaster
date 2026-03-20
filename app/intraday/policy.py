@@ -1084,16 +1084,10 @@ def _load_policy_base_frame(
     ).fetchdf()
     if frame.empty or alpha_lineage_by_horizon is None:
         return frame
-    lineage_frame = frame.copy()
-    lineage_frame["horizon"] = pd.to_numeric(lineage_frame["horizon"], errors="coerce").astype(int)
-    allowed_mask = lineage_frame.apply(
-        lambda row: (
-            row.get("active_alpha_model_id")
-            == alpha_lineage_by_horizon.get(int(row["horizon"]))
-        ),
-        axis=1,
-    )
-    return lineage_frame.loc[allowed_mask].reset_index(drop=True)
+    frame["horizon"] = pd.to_numeric(frame["horizon"], errors="coerce").astype(int)
+    expected_active_model = frame["horizon"].map(alpha_lineage_by_horizon)
+    allowed_mask = frame["active_alpha_model_id"].eq(expected_active_model)
+    return frame.loc[allowed_mask].reset_index(drop=True)
 
 
 def _regime_cluster(value: object) -> str:
@@ -1756,30 +1750,38 @@ def _evaluate_candidate_set(
     evaluation_rows: list[dict[str, object]] = []
     experiment_rows: list[dict[str, object]] = []
     now_ts = pd.Timestamp.now(tz="UTC")
+    horizons = sorted({int(value) for value in candidates["horizon"].dropna().unique()})
+    candidate_frames_by_horizon = {
+        horizon: candidates.loc[candidates["horizon"] == horizon]
+        for horizon in horizons
+    }
     if not splits:
-        evaluations = [
-            _evaluate_policy_candidate(
-                candidate,
-                decision_frame,
-                experiment_run_id=f"{run_id_prefix}-h{int(candidate['horizon'])}",
-                experiment_type=experiment_type,
-                search_space_version=search_space_version,
-                objective_version=objective_version,
-                split_version=split_version,
-                split_mode=split_mode,
-                split_name="all",
-                split_index=0,
-                window_start_date=pd.Timestamp(decision_frame["session_date"].min()).date()
-                if not decision_frame.empty
-                else date.today(),
-                window_end_date=pd.Timestamp(decision_frame["session_date"].max()).date()
-                if not decision_frame.empty
-                else date.today(),
-            )
-            for _, candidate in candidates.iterrows()
-        ]
+        evaluations: list[dict[str, object]] = []
+        for horizon, horizon_candidates in candidate_frames_by_horizon.items():
+            horizon_frame = decision_frame.loc[decision_frame["horizon"] == horizon]
+            for _, candidate in horizon_candidates.iterrows():
+                evaluations.append(
+                    _evaluate_policy_candidate(
+                        candidate,
+                        horizon_frame,
+                        experiment_run_id=f"{run_id_prefix}-h{int(candidate['horizon'])}",
+                        experiment_type=experiment_type,
+                        search_space_version=search_space_version,
+                        objective_version=objective_version,
+                        split_version=split_version,
+                        split_mode=split_mode,
+                        split_name="all",
+                        split_index=0,
+                        window_start_date=pd.Timestamp(decision_frame["session_date"].min()).date()
+                        if not decision_frame.empty
+                        else date.today(),
+                        window_end_date=pd.Timestamp(decision_frame["session_date"].max()).date()
+                        if not decision_frame.empty
+                        else date.today(),
+                    )
+                )
         evaluation_rows.extend(evaluations)
-        for horizon in sorted({int(value) for value in candidates["horizon"].unique()}):
+        for horizon in horizons:
             experiment_rows.append(
                 {
                     "experiment_run_id": f"{run_id_prefix}-h{horizon}",
@@ -1807,9 +1809,7 @@ def _evaluate_candidate_set(
                     "horizon": horizon,
                     "checkpoint_scope": "MULTI",
                     "regime_scope": "MULTI",
-                    "candidate_count": int(
-                        candidates.loc[candidates["horizon"] == horizon].shape[0]
-                    ),
+                    "candidate_count": int(candidate_frames_by_horizon[horizon].shape[0]),
                     "selected_policy_candidate_id": None,
                     "fallback_used_flag": True,
                     "status": "success",
@@ -1829,25 +1829,35 @@ def _evaluate_candidate_set(
                 continue
             window_start_date = split_dates[0]
             window_end_date = split_dates[-1]
-            for _, candidate in candidates.iterrows():
-                evaluation_rows.append(
-                    _evaluate_policy_candidate(
-                        candidate,
-                        window_frame,
-                        experiment_run_id=f"{run_id_prefix}-h{int(candidate['horizon'])}-s{int(split['split_index'])}",
-                        experiment_type=experiment_type,
-                        search_space_version=search_space_version,
-                        objective_version=objective_version,
-                        split_version=split_version,
-                        split_mode=split_mode,
-                        split_name=split_name,
-                        split_index=int(split["split_index"]),
-                        window_start_date=window_start_date,
-                        window_end_date=window_end_date,
+            window_frames_by_horizon = {
+                horizon: window_frame.loc[window_frame["horizon"] == horizon]
+                for horizon in horizons
+            }
+            for horizon, horizon_candidates in candidate_frames_by_horizon.items():
+                horizon_window_frame = window_frames_by_horizon[horizon]
+                if horizon_window_frame.empty:
+                    continue
+                for _, candidate in horizon_candidates.iterrows():
+                    evaluation_rows.append(
+                        _evaluate_policy_candidate(
+                            candidate,
+                            horizon_window_frame,
+                            experiment_run_id=(
+                                f"{run_id_prefix}-h{int(candidate['horizon'])}-s{int(split['split_index'])}"
+                            ),
+                            experiment_type=experiment_type,
+                            search_space_version=search_space_version,
+                            objective_version=objective_version,
+                            split_version=split_version,
+                            split_mode=split_mode,
+                            split_name=split_name,
+                            split_index=int(split["split_index"]),
+                            window_start_date=window_start_date,
+                            window_end_date=window_end_date,
+                        )
                     )
-                )
-        for horizon in sorted({int(value) for value in candidates["horizon"].unique()}):
-            horizon_candidates = candidates.loc[candidates["horizon"] == horizon]
+        for horizon in horizons:
+            horizon_candidates = candidate_frames_by_horizon[horizon]
             validation_rows = [
                 row
                 for row in evaluation_rows
