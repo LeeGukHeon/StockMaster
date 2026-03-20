@@ -401,6 +401,17 @@ def _existing_columns(frame, columns: Iterable[str]) -> list[str]:
     return [column for column in columns if column in frame.columns]
 
 
+def _deduplicate_preserving_order(columns: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for column in columns:
+        if column in seen:
+            continue
+        seen.add(column)
+        ordered.append(column)
+    return ordered
+
+
 def _localized_display(frame, columns: list[str] | None = None):
     display = frame.copy() if not columns else frame[columns].copy()
     localized = localize_frame(display)
@@ -454,6 +465,7 @@ def render_data_sheet(
         frame,
         [column for column in [primary_column, *secondary_columns, *detail_columns] if column is not None],
     )
+    selected_columns = _deduplicate_preserving_order(selected_columns)
     localized, label_map = _localized_display(frame, selected_columns or None)
     primary_label = label_map.get(primary_column) if primary_column else None
 

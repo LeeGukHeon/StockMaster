@@ -2614,6 +2614,19 @@ def _format_scalar_for_display(column: str, value: object) -> object:
     return translated
 
 
+def _deduplicate_display_columns(columns: list[object]) -> list[str]:
+    counts: dict[str, int] = {}
+    deduplicated: list[str] = []
+    for column in columns:
+        label = str(column)
+        counts[label] = counts.get(label, 0) + 1
+        if counts[label] == 1:
+            deduplicated.append(label)
+        else:
+            deduplicated.append(f"{label} ({counts[label]})")
+    return deduplicated
+
+
 def localize_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame
@@ -2654,7 +2667,9 @@ def localize_frame(frame: pd.DataFrame) -> pd.DataFrame:
                 value,
             )
         )
-    return localized.rename(columns=UI_COLUMN_LABELS)
+    localized = localized.rename(columns=UI_COLUMN_LABELS)
+    localized.columns = _deduplicate_display_columns(list(localized.columns))
+    return localized
 
 
 def format_ranking_version_label(value: str) -> str:
