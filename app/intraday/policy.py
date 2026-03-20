@@ -946,6 +946,7 @@ def _load_policy_candidates(
         """,
         [search_space_version, *horizons],
     ).fetchdf()
+    return frame
 
 
 def _load_policy_base_frame(
@@ -1099,6 +1100,14 @@ def _regime_cluster(value: object) -> str:
     return REGIME_FAMILY_TO_CLUSTER.get(str(value or ""), "UNKNOWN")
 
 
+def _row_get(row: object, key: str, default: object = None) -> object:
+    if isinstance(row, pd.Series):
+        return row.get(key, default)
+    if isinstance(row, dict):
+        return row.get(key, default)
+    return getattr(row, key, default)
+
+
 def _candidate_scope_mask(frame: pd.DataFrame, candidate: pd.Series) -> pd.Series:
     mask = frame["horizon"].eq(int(candidate["horizon"]))
     scope_type = str(candidate["scope_type"])
@@ -1115,28 +1124,30 @@ def _candidate_scope_mask(frame: pd.DataFrame, candidate: pd.Series) -> pd.Serie
     )
 
 
-def _estimated_gap_up_pct(row: pd.Series) -> float:
-    if pd.notna(row.get("baseline_open_price")) and pd.notna(row.get("label_entry_price")):
-        open_price = float(row["baseline_open_price"])
-        reference = float(row["label_entry_price"])
+def _estimated_gap_up_pct(row: object) -> float:
+    baseline_open_price = _row_get(row, "baseline_open_price")
+    label_entry_price = _row_get(row, "label_entry_price")
+    if pd.notna(baseline_open_price) and pd.notna(label_entry_price):
+        open_price = float(baseline_open_price)
+        reference = float(label_entry_price)
         if reference:
             return max(0.0, (open_price / reference - 1.0) * 100.0)
     score = (
         50.0
-        if pd.isna(row.get("gap_opening_quality_score"))
-        else float(row["gap_opening_quality_score"])
+        if pd.isna(_row_get(row, "gap_opening_quality_score"))
+        else float(_row_get(row, "gap_opening_quality_score"))
     )
     return max(0.0, (55.0 - score) / 5.0)
 
 
 def _policy_transition(
-    row: pd.Series,
+    row: object,
     candidate: pd.Series,
     *,
     trace_source: str,
 ) -> dict[str, object]:
-    raw_action = str(row.get("raw_action") or "DATA_INSUFFICIENT")
-    adjusted_action = str(row.get("adjusted_action") or raw_action)
+    raw_action = str(_row_get(row, "raw_action") or "DATA_INSUFFICIENT")
+    adjusted_action = str(_row_get(row, "adjusted_action") or raw_action)
     reasons = rank_list(
         [f"policy_template:{candidate['template_id']}", f"policy_scope:{candidate['scope_key']}"]
     )
@@ -1153,7 +1164,7 @@ def _policy_transition(
         return {
             "tuned_action": "AVOID_TODAY",
             "tuned_score": float(
-                row.get("adjusted_timing_score") or row.get("raw_timing_score") or 0.0
+                _row_get(row, "adjusted_timing_score") or _row_get(row, "raw_timing_score") or 0.0
             ),
             "policy_trace": trace_source,
             "policy_candidate_id": candidate["policy_candidate_id"],
@@ -1161,38 +1172,40 @@ def _policy_transition(
             "reason_codes": rank_list(reasons + ["adjusted_avoid_preserved"]),
         }
 
-    selection_score = float(row.get("final_selection_value") or 0.0)
+    selection_score = float(_row_get(row, "final_selection_value") or 0.0)
     signal_quality = float(
-        row.get("raw_signal_quality_score") or row.get("signal_quality_score") or 0.0
+        _row_get(row, "raw_signal_quality_score") or _row_get(row, "signal_quality_score") or 0.0
     )
     execution_strength = float(
-        row.get("execution_strength") or row.get("execution_strength_score") or 0.0
+        _row_get(row, "execution_strength") or _row_get(row, "execution_strength_score") or 0.0
     )
     orderbook_imbalance = (
-        abs(float(row["imbalance_ratio"]))
-        if pd.notna(row.get("imbalance_ratio"))
-        else float(row.get("orderbook_score") or 0.0) / 100.0
+        abs(float(_row_get(row, "imbalance_ratio")))
+        if pd.notna(_row_get(row, "imbalance_ratio"))
+        else float(_row_get(row, "orderbook_score") or 0.0) / 100.0
     )
     spread_bps = (
-        float(row["spread_bps"])
-        if pd.notna(row.get("spread_bps"))
-        else max(0.0, (60.0 - float(row.get("orderbook_score") or 50.0)) * 0.25)
+        float(_row_get(row, "spread_bps"))
+        if pd.notna(_row_get(row, "spread_bps"))
+        else max(0.0, (60.0 - float(_row_get(row, "orderbook_score") or 50.0)) * 0.25)
     )
-    base_score = float(row.get("adjusted_timing_score") or row.get("raw_timing_score") or 50.0)
-    uncertainty_score = float(row.get("uncertainty_score") or 0.0)
-    market_breadth_ratio = float(row.get("market_breadth_ratio") or 0.5)
-    market_shock_proxy = float(row.get("market_shock_proxy") or 0.0)
+    base_score = float(
+        _row_get(row, "adjusted_timing_score") or _row_get(row, "raw_timing_score") or 50.0
+    )
+    uncertainty_score = float(_row_get(row, "uncertainty_score") or 0.0)
+    market_breadth_ratio = float(_row_get(row, "market_breadth_ratio") or 0.5)
+    market_shock_proxy = float(_row_get(row, "market_shock_proxy") or 0.0)
     gap_up_pct = _estimated_gap_up_pct(row)
     data_weak = (
-        str(row.get("market_regime_family") or "") == "DATA_WEAK"
-        or str(row.get("data_quality_flag") or "") == "weak"
+        str(_row_get(row, "market_regime_family") or "") == "DATA_WEAK"
+        or str(_row_get(row, "data_quality_flag") or "") == "weak"
     )
 
     penalties = {
         "uncertainty": float(candidate["uncertainty_penalty_weight"]) * uncertainty_score / 10.0,
         "spread": float(candidate["spread_penalty_weight"]) * max(0.0, spread_bps - 12.0),
         "friction": float(candidate["friction_penalty_weight"])
-        * max(0.0, 55.0 - float(row.get("risk_friction_score") or 55.0))
+        * max(0.0, 55.0 - float(_row_get(row, "risk_friction_score") or 55.0))
         / 6.0,
         "gap": float(candidate["gap_chase_penalty_weight"])
         * max(0.0, gap_up_pct - float(candidate["max_gap_up_allowance_pct"]))
@@ -1218,7 +1231,7 @@ def _policy_transition(
     elif orderbook_imbalance < float(candidate["min_orderbook_imbalance_gate"]):
         tuned_action = "WAIT_RECHECK"
         reasons.append("orderbook_imbalance_gate_block")
-    elif int(row.get("candidate_rank") or 0) > int(candidate["selection_rank_cap"]):
+    elif int(_row_get(row, "candidate_rank") or 0) > int(candidate["selection_rank_cap"]):
         tuned_action = "WAIT_RECHECK"
         reasons.append("selection_rank_cap_block")
     elif data_weak and not bool(candidate["allow_enter_under_data_weak"]):
@@ -1280,7 +1293,7 @@ def _evaluate_policy_candidate(
     window_start_date: date,
     window_end_date: date,
 ) -> dict[str, object]:
-    scoped = decision_frame.loc[_candidate_scope_mask(decision_frame, candidate)].copy()
+    scoped = decision_frame.loc[_candidate_scope_mask(decision_frame, candidate)]
     if scoped.empty:
         result = {
             "experiment_run_id": experiment_run_id,
@@ -1325,30 +1338,131 @@ def _evaluate_policy_candidate(
         result["objective_score"] = _objective_score(result)
         return result
 
-    group_rows: list[dict[str, object]] = []
-    for _, row in scoped.iterrows():
-        transition = _policy_transition(row, candidate, trace_source="direct_policy")
-        group_rows.append({**row.to_dict(), **transition})
-    tuned = pd.DataFrame(group_rows)
-    grouped = _group_decision_rows(tuned)
     outcomes: list[dict[str, object]] = []
-    for partition in grouped.values():
-        partition = partition.sort_values("checkpoint_time").reset_index(drop=True)
-        chosen = partition.loc[partition["tuned_action"] == "ENTER_NOW"]
-        chosen_row = None if chosen.empty else chosen.iloc[0]
-        last_row = partition.iloc[-1]
+    current_key: tuple[date, str, int] | None = None
+    current_partition: list[tuple[object, dict[str, object]]] = []
+    for row in scoped.itertuples(index=False):
+        row_key = (
+            pd.Timestamp(_row_get(row, "session_date")).date(),
+            str(_row_get(row, "symbol")).zfill(6),
+            int(_row_get(row, "horizon")),
+        )
+        if current_key is not None and row_key != current_key:
+            current_partition.sort(key=lambda item: str(_row_get(item[0], "checkpoint_time") or ""))
+            chosen_pair = next(
+                (
+                    item
+                    for item in current_partition
+                    if str(item[1]["tuned_action"]) == "ENTER_NOW"
+                ),
+                None,
+            )
+            chosen_row = None if chosen_pair is None else chosen_pair[0]
+            last_row = current_partition[-1][0]
+            outcome_status = _normalize_outcome_status(
+                _row_get(last_row, "label_available_flag"),
+                _row_get(last_row, "exclusion_reason"),
+            )
+            baseline_open_return = (
+                None
+                if pd.isna(_row_get(last_row, "baseline_open_return"))
+                else float(_row_get(last_row, "baseline_open_return"))
+            )
+            baseline_forward_return = (
+                None
+                if pd.isna(_row_get(last_row, "baseline_forward_return"))
+                else float(_row_get(last_row, "baseline_forward_return"))
+            )
+            if outcome_status != "matured":
+                realized_excess_return = None
+                timing_edge_bps = None
+                executed_flag = False
+                no_entry_flag = False
+                final_status = outcome_status
+                skip_saved_loss_flag = False
+                missed_winner_flag = False
+            elif (
+                chosen_row is not None
+                and pd.notna(_row_get(chosen_row, "entry_reference_price"))
+                and pd.notna(_row_get(chosen_row, "exit_price"))
+            ):
+                entry_price = float(_row_get(chosen_row, "entry_reference_price"))
+                exit_price = float(_row_get(chosen_row, "exit_price"))
+                realized_return = exit_price / entry_price - 1.0 if entry_price else None
+                realized_excess_return = (
+                    None
+                    if realized_return is None or baseline_forward_return is None
+                    else realized_return - baseline_forward_return
+                )
+                timing_edge = (
+                    None
+                    if realized_return is None or baseline_open_return is None
+                    else realized_return - baseline_open_return
+                )
+                timing_edge_bps = None if timing_edge is None else timing_edge * 10000.0
+                executed_flag = True
+                no_entry_flag = False
+                final_status = "executed"
+                skip_saved_loss_flag = False
+                missed_winner_flag = False
+            else:
+                realized_excess_return = (
+                    None if baseline_forward_return is None else 0.0 - baseline_forward_return
+                )
+                timing_edge_bps = (
+                    None if baseline_open_return is None else (0.0 - baseline_open_return) * 10000.0
+                )
+                executed_flag = False
+                no_entry_flag = True
+                final_status = "no_entry"
+                skip_saved_loss_flag = (
+                    baseline_open_return is not None and baseline_open_return < 0
+                )
+                missed_winner_flag = (
+                    baseline_open_return is not None and baseline_open_return > 0
+                )
+            outcomes.append(
+                {
+                    "session_date": pd.Timestamp(_row_get(last_row, "session_date")).date(),
+                    "outcome_status": final_status,
+                    "executed_flag": executed_flag,
+                    "no_entry_flag": no_entry_flag,
+                    "realized_excess_return": realized_excess_return,
+                    "timing_edge_vs_open_bps": timing_edge_bps,
+                    "skip_saved_loss_flag": skip_saved_loss_flag,
+                    "missed_winner_flag": missed_winner_flag,
+                }
+            )
+            current_partition = []
+        current_partition.append(
+            (row, _policy_transition(row, candidate, trace_source="direct_policy"))
+        )
+        current_key = row_key
+    if current_partition:
+        current_partition.sort(key=lambda item: str(_row_get(item[0], "checkpoint_time") or ""))
+        chosen_pair = next(
+            (
+                item
+                for item in current_partition
+                if str(item[1]["tuned_action"]) == "ENTER_NOW"
+            ),
+            None,
+        )
+        chosen_row = None if chosen_pair is None else chosen_pair[0]
+        last_row = current_partition[-1][0]
         outcome_status = _normalize_outcome_status(
-            last_row["label_available_flag"], last_row["exclusion_reason"]
+            _row_get(last_row, "label_available_flag"),
+            _row_get(last_row, "exclusion_reason"),
         )
         baseline_open_return = (
             None
-            if pd.isna(last_row["baseline_open_return"])
-            else float(last_row["baseline_open_return"])
+            if pd.isna(_row_get(last_row, "baseline_open_return"))
+            else float(_row_get(last_row, "baseline_open_return"))
         )
         baseline_forward_return = (
             None
-            if pd.isna(last_row["baseline_forward_return"])
-            else float(last_row["baseline_forward_return"])
+            if pd.isna(_row_get(last_row, "baseline_forward_return"))
+            else float(_row_get(last_row, "baseline_forward_return"))
         )
         if outcome_status != "matured":
             realized_excess_return = None
@@ -1360,11 +1474,11 @@ def _evaluate_policy_candidate(
             missed_winner_flag = False
         elif (
             chosen_row is not None
-            and pd.notna(chosen_row["entry_reference_price"])
-            and pd.notna(chosen_row["exit_price"])
+            and pd.notna(_row_get(chosen_row, "entry_reference_price"))
+            and pd.notna(_row_get(chosen_row, "exit_price"))
         ):
-            entry_price = float(chosen_row["entry_reference_price"])
-            exit_price = float(chosen_row["exit_price"])
+            entry_price = float(_row_get(chosen_row, "entry_reference_price"))
+            exit_price = float(_row_get(chosen_row, "exit_price"))
             realized_return = exit_price / entry_price - 1.0 if entry_price else None
             realized_excess_return = (
                 None
@@ -1396,7 +1510,7 @@ def _evaluate_policy_candidate(
             missed_winner_flag = baseline_open_return is not None and baseline_open_return > 0
         outcomes.append(
             {
-                "session_date": pd.Timestamp(last_row["session_date"]).date(),
+                "session_date": pd.Timestamp(_row_get(last_row, "session_date")).date(),
                 "outcome_status": final_status,
                 "executed_flag": executed_flag,
                 "no_entry_flag": no_entry_flag,
@@ -1710,9 +1824,7 @@ def _evaluate_candidate_set(
     for split in splits:
         for split_name in ("train", "validation", "test"):
             split_dates = split[f"{split_name}_dates"]
-            window_frame = decision_frame.loc[
-                decision_frame["session_date"].isin(split_dates)
-            ].copy()
+            window_frame = decision_frame.loc[decision_frame["session_date"].isin(split_dates)]
             if window_frame.empty:
                 continue
             window_start_date = split_dates[0]
