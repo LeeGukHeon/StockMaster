@@ -15,7 +15,6 @@ services:
       APP_DUCKDB_PATH: /workspace/data/marts/main.duckdb
       METADATA_DB_ENABLED: ${METADATA_DB_ENABLED:-true}
       METADATA_DB_BACKEND: ${METADATA_DB_BACKEND:-postgres}
-      METADATA_DB_URL: ${METADATA_DB_URL:-}
       METADATA_DB_SCHEMA: ${METADATA_DB_SCHEMA:-public}
       PYTHONUNBUFFERED: "1"
     command:
