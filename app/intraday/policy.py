@@ -1510,28 +1510,45 @@ def _walkforward_splits(
     test_sessions: int,
     step_sessions: int,
 ) -> list[dict[str, object]]:
-    if len(session_dates) < (train_sessions + validation_sessions + test_sessions):
+    ordered = sorted(dict.fromkeys(session_dates))
+    if len(ordered) < (train_sessions + validation_sessions + test_sessions):
         return []
     splits: list[dict[str, object]] = []
-    cursor = 0
     split_index = 0
+    step = max(1, int(step_sessions))
+    if mode == "ANCHORED_WALKFORWARD":
+        cursor = int(train_sessions) + int(validation_sessions)
+        while cursor + int(test_sessions) <= len(ordered):
+            splits.append(
+                {
+                    "split_index": split_index,
+                    "train_dates": ordered[: cursor - int(validation_sessions)],
+                    "validation_dates": ordered[cursor - int(validation_sessions) : cursor],
+                    "test_dates": ordered[cursor : cursor + int(test_sessions)],
+                }
+            )
+            split_index += 1
+            cursor += step
+        return splits
+
+    cursor = 0
     while True:
-        train_start = 0 if mode == "ANCHORED_WALKFORWARD" else cursor
-        train_end = train_start + train_sessions
-        validation_end = train_end + validation_sessions
-        test_end = validation_end + test_sessions
-        if test_end > len(session_dates):
+        train_start = cursor
+        train_end = train_start + int(train_sessions)
+        validation_end = train_end + int(validation_sessions)
+        test_end = validation_end + int(test_sessions)
+        if test_end > len(ordered):
             break
         splits.append(
             {
                 "split_index": split_index,
-                "train_dates": session_dates[train_start:train_end],
-                "validation_dates": session_dates[train_end:validation_end],
-                "test_dates": session_dates[validation_end:test_end],
+                "train_dates": ordered[train_start:train_end],
+                "validation_dates": ordered[train_end:validation_end],
+                "test_dates": ordered[validation_end:test_end],
             }
         )
         split_index += 1
-        cursor += step_sessions
+        cursor += step
     return splits
 
 
