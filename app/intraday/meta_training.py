@@ -459,8 +459,13 @@ def _fit_panel_model(
     validation_dates: list[date],
     artifact_root: Path,
     notes_suffix: str,
+    panel_frame: pd.DataFrame | None = None,
 ) -> _PanelTrainingArtifacts:
-    panel_frame = _panel_frame(dataset, horizon=horizon, panel_name=panel_name)
+    panel_frame = (
+        panel_frame
+        if panel_frame is not None
+        else _panel_frame(dataset, horizon=horizon, panel_name=panel_name)
+    )
     if "session_date" not in panel_frame.columns:
         panel_frame = pd.DataFrame(columns=["session_date", "target_class"])
     training_run_id = f"{run_id}-h{int(horizon)}-{panel_name.lower()}"
@@ -744,9 +749,18 @@ def train_intraday_meta_models(
                 metric_rows: list[dict[str, object]] = []
                 artifact_paths: list[str] = []
                 artifact_root = settings.paths.artifacts_dir / "intraday_meta_models" / run_context.run_id
+                panel_frames = {
+                    (int(horizon), panel_name): _panel_frame(
+                        dataset,
+                        horizon=int(horizon),
+                        panel_name=panel_name,
+                    )
+                    for horizon in horizons
+                    for panel_name in (ENTER_PANEL, WAIT_PANEL)
+                }
                 for horizon in horizons:
                     for panel_name in (ENTER_PANEL, WAIT_PANEL):
-                        panel_frame = _panel_frame(dataset, horizon=horizon, panel_name=panel_name)
+                        panel_frame = panel_frames[(int(horizon), panel_name)]
                         session_date_values = (
                             panel_frame["session_date"].tolist()
                             if not panel_frame.empty and "session_date" in panel_frame.columns
@@ -766,6 +780,7 @@ def train_intraday_meta_models(
                             validation_dates=validation_dates,
                             artifact_root=artifact_root,
                             notes_suffix=f"split_fallback={fallback_used}:{fallback_reason}",
+                            panel_frame=panel_frame,
                         )
                         training_rows.append(artifacts.training_row)
                         metric_rows.extend(artifacts.metric_rows)
@@ -999,9 +1014,19 @@ def run_intraday_meta_walkforward(
                 metric_rows: list[dict[str, object]] = []
                 artifact_paths: list[str] = []
                 artifact_root = settings.paths.artifacts_dir / "intraday_meta_walkforward" / run_context.run_id
+                panel_frames = {
+                    (int(horizon), panel_name): _panel_frame(
+                        dataset,
+                        horizon=int(horizon),
+                        panel_name=panel_name,
+                    )
+                    for horizon in horizons
+                    for panel_name in (ENTER_PANEL, WAIT_PANEL)
+                }
                 for split in splits:
                     for horizon in horizons:
                         for panel_name in (ENTER_PANEL, WAIT_PANEL):
+                            panel_frame = panel_frames[(int(horizon), panel_name)]
                             artifacts = _fit_panel_model(
                                 dataset,
                                 run_id=f"{run_context.run_id}-split{int(split['split_index'])}",
@@ -1015,6 +1040,7 @@ def run_intraday_meta_walkforward(
                                     f"walkforward_mode={effective_mode} split={split['split_index']} "
                                     f"fallback={split['fallback_used']}:{split['fallback_reason']}"
                                 ),
+                                panel_frame=panel_frame,
                             )
                             training_rows.append(artifacts.training_row)
                             metric_rows.extend(artifacts.metric_rows)
@@ -1024,8 +1050,9 @@ def run_intraday_meta_walkforward(
                                 artifact_paths.append(str(artifacts.diagnostic_path))
                             if split["test_dates"] and artifacts.artifact_path:
                                 payload = load_model_artifact(artifacts.artifact_path)
-                                test_frame = _panel_frame(dataset, horizon=horizon, panel_name=panel_name)
-                                test_frame = test_frame.loc[test_frame["session_date"].isin(split["test_dates"])].copy()
+                                test_frame = panel_frame.loc[
+                                    panel_frame["session_date"].isin(split["test_dates"])
+                                ].copy()
                                 if not test_frame.empty:
                                     test_features = feature_frame_with_dummies(
                                         test_frame,
