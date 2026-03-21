@@ -468,7 +468,8 @@ def _stock_workbench_live_recommendation_frame(
                 final_selection_value AS live_d1_selection_v2_value,
                 grade AS live_d1_selection_v2_grade,
                 eligible_flag AS live_d1_eligible_flag,
-                report_candidate_flag AS live_d1_report_candidate_flag
+                (COALESCE(eligible_flag, FALSE) AND COALESCE(final_selection_rank_pct, 0.0) >= 0.85)
+                    AS live_d1_report_candidate_flag
             FROM fact_ranking
             WHERE as_of_date = ?
               AND horizon = 1
@@ -480,7 +481,8 @@ def _stock_workbench_live_recommendation_frame(
                 final_selection_value AS live_d5_selection_v2_value,
                 grade AS live_d5_selection_v2_grade,
                 eligible_flag AS live_d5_eligible_flag,
-                report_candidate_flag AS live_d5_report_candidate_flag
+                (COALESCE(eligible_flag, FALSE) AND COALESCE(final_selection_rank_pct, 0.0) >= 0.85)
+                    AS live_d5_report_candidate_flag
             FROM fact_ranking
             WHERE as_of_date = ?
               AND horizon = 5
