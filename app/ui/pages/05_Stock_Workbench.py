@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -13,27 +14,24 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.common.time import today_local
 from app.ui.components import (
-    render_narrative_card,
     render_page_footer,
     render_page_header,
     render_record_cards,
     render_screen_guide,
+    render_story_stream,
     render_warning_banner,
 )
 from app.ui.helpers import (
     available_symbol_options,
     format_execution_mode_label,
     format_ui_date,
-    format_ui_number,
-    format_ui_time,
-    format_ui_value,
     latest_intraday_decision_lineage_frame,
     load_ui_page_context,
     stock_workbench_flow_frame,
-    stock_workbench_live_recommendation_frame,
     stock_workbench_intraday_decision_frame,
     stock_workbench_intraday_timing_frame,
     stock_workbench_intraday_tuned_frame,
+    stock_workbench_live_recommendation_frame,
     stock_workbench_news_frame,
     stock_workbench_outcome_frame,
     stock_workbench_price_frame,
@@ -52,6 +50,17 @@ symbol_lookup = {
 }
 
 
+def _display_text(value: object, fallback: str = "-") -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, float) and pd.isna(value):
+        return fallback
+    text = str(value).strip()
+    if not text or text in {"nan", "NaN", "NaT", "None"}:
+        return fallback
+    return text
+
+
 def _latest_axis_row(frame, *, date_column: str, time_column: str | None = None):
     if frame.empty:
         return None
@@ -61,32 +70,227 @@ def _latest_axis_row(frame, *, date_column: str, time_column: str | None = None)
         ordered = ordered.sort_values(sort_columns, ascending=[False] * len(sort_columns))
     return ordered.iloc[0]
 
+
+def _build_context_items(live_row, summary_row, intraday_row) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    if live_row is not None:
+        items.append(
+            {
+                "eyebrow": "Live Recalc",
+                "title": f"{_display_text(live_row.get('symbol'))} 즉석 추천",
+                "body": (
+                    f"D1 {_display_text(live_row.get('live_d1_selection_v2_grade'))} / "
+                    f"D5 {_display_text(live_row.get('live_d5_selection_v2_grade'))} / "
+                    f"예상 초과수익률 {_display_text(live_row.get('live_d5_expected_excess_return'))}"
+                ),
+                "meta": (
+                    f"기준일 {format_ui_date(live_row.get('live_as_of_date'))} · "
+                    f"기준가 {_display_text(live_row.get('live_reference_price'))}"
+                ),
+                "badge": _display_text(live_row.get("live_d5_selection_v2_grade"), "LIVE"),
+                "tone": "positive",
+            }
+        )
+    if summary_row is not None:
+        items.append(
+            {
+                "eyebrow": "Batch Snapshot",
+                "title": f"{_display_text(summary_row.get('company_name'))} 종가 기준 요약",
+                "body": (
+                    f"D1 {_display_text(summary_row.get('d1_selection_v2_grade'))} / "
+                    f"D5 {_display_text(summary_row.get('d5_selection_v2_grade'))} / "
+                    f"알파 기대 {_display_text(summary_row.get('d5_alpha_expected_excess_return'))}"
+                ),
+                "meta": f"기준일 {format_ui_date(summary_row.get('as_of_date'))} · 시장 {_display_text(summary_row.get('market'))}",
+                "badge": _display_text(summary_row.get("d5_selection_v2_grade"), "BATCH"),
+                "tone": "accent",
+            }
+        )
+    if intraday_row is not None:
+        session_date = intraday_row.get("session_date") or intraday_row.get("selection_date")
+        items.append(
+            {
+                "eyebrow": "Intraday",
+                "title": f"{format_ui_date(session_date)} {_display_text(intraday_row.get('checkpoint_time'))} 판단",
+                "body": (
+                    f"raw {_display_text(intraday_row.get('raw_action'))} / "
+                    f"adjusted {_display_text(intraday_row.get('adjusted_action'))} / "
+                    f"final {_display_text(intraday_row.get('final_action'))}"
+                ),
+                "meta": "오늘 장중 기준" if session_date == today_local(settings.app.timezone) else "최근 저장된 세션 기준",
+                "badge": _display_text(intraday_row.get("final_action"), "FLOW"),
+                "tone": "warning",
+            }
+        )
+    return items
+
+
+def _build_feature_items(summary: pd.DataFrame) -> list[dict[str, str]]:
+    if summary.empty:
+        return []
+    row = summary.iloc[0]
+    return [
+        {
+            "eyebrow": "Momentum",
+            "title": "성과와 뉴스 흐름",
+            "body": f"5일 {_display_text(row.get('ret_5d'))} / 20일 {_display_text(row.get('ret_20d'))} / 최근 뉴스 {_display_text(row.get('news_count_3d'))}",
+            "meta": f"ADV20 {_display_text(row.get('adv_20'))}",
+            "badge": "MOMENTUM",
+            "tone": "neutral",
+        },
+        {
+            "eyebrow": "Flow",
+            "title": "수급 품질",
+            "body": (
+                f"외국인 5일 비율 {_display_text(row.get('foreign_net_value_ratio_5d'))} / "
+                f"스마트머니 20일 {_display_text(row.get('smart_money_flow_ratio_20d'))}"
+            ),
+            "meta": f"flow coverage {_display_text(row.get('flow_coverage_flag'))}",
+            "badge": "FLOW",
+            "tone": "accent",
+        },
+        {
+            "eyebrow": "Alpha",
+            "title": "D5 알파 밴드",
+            "body": (
+                f"expected {_display_text(row.get('d5_alpha_expected_excess_return'))} / "
+                f"lower {_display_text(row.get('d5_alpha_lower_band'))} / "
+                f"upper {_display_text(row.get('d5_alpha_upper_band'))}"
+            ),
+            "meta": (
+                f"uncertainty {_display_text(row.get('d5_alpha_uncertainty_score'))} · "
+                f"disagreement {_display_text(row.get('d5_alpha_disagreement_score'))}"
+            ),
+            "badge": "ALPHA",
+            "tone": "positive",
+        },
+    ]
+
+
+def _build_market_items(price_history: pd.DataFrame, flow_history: pd.DataFrame, news_history: pd.DataFrame) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    if not price_history.empty:
+        row = price_history.iloc[0]
+        items.append(
+            {
+                "eyebrow": "Price",
+                "title": f"{format_ui_date(row.get('trading_date'))} 종가 {_display_text(row.get('close'))}",
+                "body": f"시가 {_display_text(row.get('open'))} / 고가 {_display_text(row.get('high'))} / 저가 {_display_text(row.get('low'))}",
+                "meta": f"거래량 {_display_text(row.get('volume'))} · 거래대금 {_display_text(row.get('turnover_value'))}",
+                "badge": "PRICE",
+                "tone": "neutral",
+            }
+        )
+    if not flow_history.empty:
+        row = flow_history.iloc[0]
+        items.append(
+            {
+                "eyebrow": "Flow",
+                "title": f"{format_ui_date(row.get('trading_date'))} 수급 요약",
+                "body": (
+                    f"외국인 {_display_text(row.get('foreign_net_value'))} / "
+                    f"기관 {_display_text(row.get('institution_net_value'))} / "
+                    f"개인 {_display_text(row.get('individual_net_value'))}"
+                ),
+                "meta": "금액 기준 순매수/순매도",
+                "badge": "FLOW",
+                "tone": "accent",
+            }
+        )
+    if not news_history.empty:
+        row = news_history.iloc[0]
+        items.append(
+            {
+                "eyebrow": _display_text(row.get("publisher"), "News"),
+                "title": _display_text(row.get("title")),
+                "body": _display_text(row.get("query_bucket")),
+                "meta": f"{format_ui_date(row.get('signal_date'))} · {_display_text(row.get('published_at'))}",
+                "badge": "NEWS",
+                "tone": "neutral",
+            }
+        )
+    return items
+
+
+def _build_track_items(outcome_history: pd.DataFrame, intraday_tuned: pd.DataFrame, intraday_timing: pd.DataFrame) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    if not outcome_history.empty:
+        row = outcome_history.iloc[0]
+        items.append(
+            {
+                "eyebrow": "Outcome",
+                "title": f"{format_ui_date(row.get('selection_date'))} 선택 결과",
+                "body": (
+                    f"horizon {_display_text(row.get('horizon'))} / "
+                    f"realized {_display_text(row.get('realized_excess_return'))} / "
+                    f"status {_display_text(row.get('outcome_status'))}"
+                ),
+                "meta": f"band {_display_text(row.get('band_status'))}",
+                "badge": _display_text(row.get("outcome_status"), "OUTCOME"),
+                "tone": "warning",
+            }
+        )
+    if not intraday_tuned.empty:
+        row = intraday_tuned.iloc[0]
+        items.append(
+            {
+                "eyebrow": "Meta Overlay",
+                "title": f"{format_ui_date(row.get('session_date'))} {_display_text(row.get('checkpoint_time'))}",
+                "body": (
+                    f"tuned {_display_text(row.get('tuned_action'))} / "
+                    f"final {_display_text(row.get('final_action'))} / "
+                    f"class {_display_text(row.get('predicted_class'))}"
+                ),
+                "meta": f"margin {_display_text(row.get('confidence_margin'))}",
+                "badge": _display_text(row.get("final_action"), "META"),
+                "tone": "accent",
+            }
+        )
+    if not intraday_timing.empty:
+        row = intraday_timing.iloc[0]
+        items.append(
+            {
+                "eyebrow": "Timing",
+                "title": f"{format_ui_date(row.get('session_date'))} 시점 비교",
+                "body": (
+                    f"checkpoint {_display_text(row.get('selected_checkpoint_time'))} / "
+                    f"edge {_display_text(row.get('timing_edge_bps'))}"
+                ),
+                "meta": f"action {_display_text(row.get('selected_action'))} · status {_display_text(row.get('outcome_status'))}",
+                "badge": "TIMING",
+                "tone": "neutral",
+            }
+        )
+    return items
+
+
 render_page_header(
     settings,
     page_name="종목 분석",
     title="종목 분석",
-    description="추천 이유, 제외 이유, 장중 판단, 사후 결과를 종목별로 한눈에 확인합니다.",
+    description="종목 하나를 깊게 파되, 큰 표 대신 현재 해석과 과거 흐름을 세로 브리프로 먼저 읽는 구조로 바꿨습니다.",
 )
 render_screen_guide(
-    summary="한 종목만 깊게 보고 싶을 때 쓰는 화면입니다. 왜 추천됐는지, 왜 빠졌는지, 이후 결과가 어땠는지를 종목 단위로 확인합니다.",
+    summary="종가 기준, 즉석 재계산, 장중 판단, 사후 결과를 한 종목 중심으로 이어 읽습니다.",
     bullets=[
-        "처음에는 종목 핵심 요약과 가격/밴드, 수급 추이만 봐도 충분합니다.",
-        "장중 판단과 메타 보정은 연구용 참고 정보라서 실제 주문 내역이 아니라는 점을 함께 보세요.",
+        "현재 해석에서 가장 최신 기준점을 먼저 확인합니다.",
+        "특징 브리프에서 점수와 수급, 알파 밴드를 읽습니다.",
+        "시장·뉴스·사후 추적은 필요한 만큼만 펼쳐서 원본을 확인합니다.",
     ],
 )
 render_warning_banner(
     "INFO",
-    "장중 판단과 메타 보정은 연구용 비매매 출력입니다. 실제 주문은 연결되지 않습니다.",
+    "장중 판단과 메타 보정은 연구용 해석 정보이며, 실제 주문을 직접 수행하지 않습니다.",
 )
 
 if not symbol_lookup:
     st.info("조회 가능한 종목이 아직 없습니다.")
 else:
     selected_option = st.selectbox(
-        "종목 검색",
+        "종목 선택",
         options=list(symbol_lookup.keys()),
         index=0,
-        help="종목코드나 종목명으로 검색할 수 있습니다.",
+        help="종목코드 또는 종목명으로 빠르게 이동할 수 있습니다.",
     )
     selected_symbol = symbol_lookup[selected_option]
     summary = stock_workbench_summary_frame(settings, symbol=selected_symbol)
@@ -99,6 +303,7 @@ else:
     intraday_tuned = stock_workbench_intraday_tuned_frame(settings, symbol=selected_symbol, limit=20)
     intraday_timing = stock_workbench_intraday_timing_frame(settings, symbol=selected_symbol, limit=20)
     lineage = latest_intraday_decision_lineage_frame(settings, symbol=selected_symbol, limit=20)
+
     live_row = live_recommendation.iloc[0] if not live_recommendation.empty else None
     summary_row = summary.iloc[0] if not summary.empty else None
     intraday_row = _latest_axis_row(lineage, date_column="selection_date", time_column="checkpoint_time")
@@ -109,224 +314,90 @@ else:
             time_column="checkpoint_time",
         )
 
-    render_warning_banner(
-        "INFO",
-        "이 화면은 현재 다시 계산한 값, 마지막 장마감 배치값, 다음 거래일 계획, 저장된 장중 판단이 함께 있습니다. 각 카드 제목의 기준 축을 먼저 보고 읽으세요.",
+    render_story_stream(
+        title="현재 해석",
+        summary="즉석 재계산, 마지막 종가 배치, 최근 장중 판단을 한 번에 이어 읽습니다.",
+        items=_build_context_items(live_row, summary_row, intraday_row),
+        empty_message="현재 해석에 필요한 최신 데이터가 아직 없습니다.",
+    )
+    render_story_stream(
+        title="특징 브리프",
+        summary="점수, 수급, 알파 기대 밴드를 큰 표 대신 핵심 문장으로 압축했습니다.",
+        items=_build_feature_items(summary),
+        empty_message="특징 브리프에 필요한 요약 데이터가 없습니다.",
+    )
+    render_story_stream(
+        title="시장·뉴스 라운지",
+        summary="가격, 수급, 뉴스 최신 상태를 한 줄씩 빠르게 읽습니다.",
+        items=_build_market_items(price_history, flow_history, news_history),
+        empty_message="가격·수급·뉴스 데이터가 아직 없습니다.",
+    )
+    render_story_stream(
+        title="사후 추적",
+        summary="결과, 메타 보정, 시점 비교를 최신 건부터 서술형으로 보여줍니다.",
+        items=_build_track_items(outcome_history, intraday_tuned, intraday_timing),
+        empty_message="사후 추적 데이터가 아직 없습니다.",
     )
 
-    axis_left, axis_right = st.columns(2)
-    with axis_left:
-        if live_row is not None:
-            render_narrative_card(
-                "즉석 계산 기준",
-                (
-                    f"{format_ui_date(live_row.get('live_as_of_date'))} 장마감 데이터로 현재 다시 계산한 값입니다. "
-                    f"기준 가격은 {format_ui_date(live_row.get('live_reference_date'))} 종가 "
-                    f"{format_ui_value('live_reference_price', live_row.get('live_reference_price'))}입니다."
-                ),
-            )
-        else:
-            render_narrative_card(
-                "즉석 계산 기준",
-                "현재 다시 계산한 즉석 추천 값이 아직 없습니다.",
-            )
-        if live_row is not None and live_row.get("latest_portfolio_as_of_date") is not None:
-            render_narrative_card(
-                "다음 거래일 계획 기준",
-                (
-                    f"{format_ui_date(live_row.get('latest_portfolio_as_of_date'))} 기준 목표북입니다. "
-                    f"실행 모드는 {format_execution_mode_label(str(live_row.get('latest_portfolio_execution_mode') or '-'))}이고 "
-                    f"진입 예정일은 {format_ui_date(live_row.get('latest_portfolio_entry_trade_date'))}입니다."
-                ),
-            )
-        else:
-            render_narrative_card(
-                "다음 거래일 계획 기준",
-                "아직 다음 거래일 목표북이 생성되지 않았습니다.",
-            )
-    with axis_right:
-        if summary_row is not None:
-            render_narrative_card(
-                "마지막 장마감 기준",
-                (
-                    f"{format_ui_date(summary_row.get('as_of_date'))} 장마감 배치 결과입니다. "
-                    "등급과 선정 점수는 현재 장중 실시간 값이 아니라 마지막 저장 배치값입니다."
-                ),
-            )
-        else:
-            render_narrative_card(
-                "마지막 장마감 기준",
-                "마지막 장마감 요약 데이터가 아직 없습니다.",
-            )
-        if intraday_row is not None:
-            session_date = intraday_row.get("session_date") or intraday_row.get("selection_date")
-            historical_suffix = (
-                "오늘 장중 값이 아니라 마지막 저장 세션입니다."
-                if session_date is not None and session_date != today_local(settings.app.timezone)
-                else "오늘 장중 저장 세션 기준입니다."
-            )
-            render_narrative_card(
-                "최근 장중 판단 기준",
-                (
-                    f"{format_ui_date(session_date)} {format_ui_time(intraday_row.get('checkpoint_time'))} 중간 확인 시각 기준입니다. "
-                    f"{historical_suffix}"
-                ),
-            )
-        else:
-            render_narrative_card(
-                "최근 장중 판단 기준",
-                "저장된 장중 판단 기록이 아직 없습니다.",
-            )
-
-    if summary.empty:
-        render_narrative_card(
-            "종목 요약",
-            f"{selected_symbol} 종목의 요약 데이터가 아직 없습니다. 유니버스와 적재 상태를 먼저 확인해 주세요.",
+    with st.expander("원본 상세 보기", expanded=False):
+        render_record_cards(
+            live_recommendation,
+            title="즉석 추천 원본",
+            primary_column="symbol",
+            secondary_columns=["company_name", "live_d5_selection_v2_grade"],
+            detail_columns=[
+                "live_as_of_date",
+                "live_reference_price",
+                "live_d1_selection_v2_value",
+                "live_d1_selection_v2_grade",
+                "live_d5_selection_v2_value",
+                "live_d5_selection_v2_grade",
+                "live_d5_expected_excess_return",
+                "live_d5_target_price",
+                "latest_portfolio_target_weight",
+                "latest_portfolio_gate_status",
+            ],
+            limit=1,
+            empty_message="즉석 추천 원본이 없습니다.",
+            show_table_expander=False,
         )
-    else:
-        row = summary.iloc[0]
-        render_narrative_card(
-            "종목 요약",
-            (
-                f"{selected_symbol}의 현재 등급은 {row.get('grade', '-')}, "
-                f"선정 점수는 {format_ui_number(row.get('final_selection_value'))}, "
-                f"포트폴리오 진입 가능 여부는 {row.get('portfolio_eligible_flag', '-')}입니다."
-            ),
+        render_record_cards(
+            summary,
+            title="종목 요약 원본",
+            primary_column="symbol",
+            secondary_columns=["company_name", "market"],
+            detail_columns=[
+                "as_of_date",
+                "d1_selection_v2_grade",
+                "d5_selection_v2_grade",
+                "d5_alpha_expected_excess_return",
+                "ret_5d",
+                "ret_20d",
+                "news_count_3d",
+            ],
+            limit=1,
+            empty_message="종목 요약 원본이 없습니다.",
+            show_table_expander=False,
         )
-
-    render_record_cards(
-        live_recommendation,
-        title="즉석 추천 계산 | 현재 다시 계산",
-        primary_column="symbol",
-        secondary_columns=["company_name", "live_d5_selection_v2_grade"],
-        detail_columns=[
-            "live_as_of_date",
-            "live_reference_price",
-            "live_d1_selection_v2_value",
-            "live_d1_selection_v2_grade",
-            "live_d1_eligible_flag",
-            "live_d5_selection_v2_value",
-            "live_d5_selection_v2_grade",
-            "live_d5_eligible_flag",
-            "live_d5_report_candidate_flag",
-            "live_d5_expected_excess_return",
-            "live_d5_target_price",
-            "live_d5_upper_target_price",
-            "live_d5_stop_price",
-            "latest_portfolio_included_flag",
-            "latest_portfolio_target_weight",
-            "latest_portfolio_gate_status",
-        ],
-        limit=1,
-        empty_message="즉석 추천 계산에 필요한 최신 기준 데이터가 아직 없습니다.",
-        table_expander_label="즉석 추천 계산 원본 보기",
-    )
-
-    render_record_cards(
-        summary,
-        title="종목 핵심 요약 | 마지막 장마감 기준",
-        primary_column="symbol",
-        secondary_columns=["company_name", "grade"],
-        detail_columns=[
-            "as_of_date",
-            "final_selection_value",
-            "expected_excess_return",
-            "portfolio_eligible_flag",
-        ],
-        limit=1,
-        empty_message="종목 요약이 없습니다.",
-        table_expander_label="종목 요약 원본 표 보기",
-    )
-
-    render_record_cards(
-        price_history,
-        title="가격 / 밴드 | 장마감 데이터 기준",
-        primary_column="as_of_date",
-        secondary_columns=["close"],
-        detail_columns=["expected_excess_return", "lower_band", "upper_band"],
-        limit=8,
-        empty_message="가격/밴드 이력이 없습니다.",
-        table_expander_label="가격 / 밴드 원본 표 보기",
-    )
-
-    render_record_cards(
-        flow_history,
-        title="수급 추이 | 일별 저장 데이터",
-        primary_column="trading_date",
-        detail_columns=[
-            "foreign_net_buy_value",
-            "institution_net_buy_value",
-            "individual_net_buy_value",
-        ],
-        limit=8,
-        empty_message="수급 이력이 없습니다.",
-        table_expander_label="수급 원본 표 보기",
-    )
-
-    render_record_cards(
-        outcome_history,
-        title="선정 / 사후 기록 | 과거 배치 이력",
-        primary_column="selection_date",
-        secondary_columns=["ranking_version", "outcome_status"],
-        detail_columns=["horizon", "realized_excess_return", "band_status"],
-        limit=8,
-        empty_message="선정/사후 기록이 없습니다.",
-        table_expander_label="선정 / 사후 원본 표 보기",
-    )
-
-    render_record_cards(
-        intraday_decisions,
-        title="최근 장중 판단 | 저장된 장중 세션 기준",
-        primary_column="session_date",
-        secondary_columns=["checkpoint_time", "horizon"],
-        detail_columns=["raw_action", "adjusted_action", "market_regime_family", "adjusted_timing_score"],
-        limit=8,
-        empty_message="장중 판단 기록이 없습니다.",
-        table_expander_label="장중 판단 원본 표 보기",
-    )
-
-    render_record_cards(
-        intraday_tuned,
-        title="메타 보정 / 최종 판단 | 저장된 장중 세션 기준",
-        primary_column="session_date",
-        secondary_columns=["checkpoint_time", "horizon"],
-        detail_columns=["tuned_action", "final_action", "predicted_class", "confidence_margin"],
-        limit=8,
-        empty_message="장중 메타 보정 기록이 없습니다.",
-        table_expander_label="메타 보정 원본 표 보기",
-    )
-
-    render_record_cards(
-        lineage,
-        title="장중 판단 흐름 | 저장된 장중 세션 기준",
-        primary_column="selection_date",
-        secondary_columns=["checkpoint_time", "portfolio_execution_mode"],
-        detail_columns=["raw_action", "adjusted_action", "final_action", "gate_status"],
-        limit=8,
-        empty_message="판단 흐름 기록이 없습니다.",
-        table_expander_label="판단 흐름 원본 표 보기",
-    )
-
-    render_record_cards(
-        intraday_timing,
-        title="시점 대비 결과 | 과거 세션 평가",
-        primary_column="session_date",
-        secondary_columns=["horizon", "selected_checkpoint_time"],
-        detail_columns=["selected_action", "timing_edge_bps", "outcome_status"],
-        limit=8,
-        empty_message="시점 비교 결과가 없습니다.",
-        table_expander_label="시점 비교 원본 표 보기",
-    )
-
-    render_record_cards(
-        news_history,
-        title="관련 뉴스 / 리포트 | 저장된 게시 시각 기준",
-        primary_column="title",
-        secondary_columns=["provider", "published_at"],
-        detail_columns=["news_category", "linked_symbols"],
-        limit=8,
-        empty_message="관련 뉴스가 없습니다.",
-        table_expander_label="뉴스 원본 표 보기",
-    )
+        render_record_cards(
+            intraday_decisions,
+            title="장중 판단 원본",
+            primary_column="session_date",
+            secondary_columns=["checkpoint_time", "horizon"],
+            detail_columns=["raw_action", "adjusted_action", "market_regime_family", "adjusted_timing_score"],
+            limit=6,
+            empty_message="장중 판단 원본이 없습니다.",
+            show_table_expander=False,
+        )
+        render_record_cards(
+            outcome_history,
+            title="사후 결과 원본",
+            primary_column="selection_date",
+            secondary_columns=["ranking_version", "outcome_status"],
+            detail_columns=["horizon", "realized_excess_return", "band_status"],
+            limit=6,
+            empty_message="사후 결과 원본이 없습니다.",
+            show_table_expander=False,
+        )
 
 render_page_footer(settings, page_name="종목 분석")

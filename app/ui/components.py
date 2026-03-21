@@ -597,6 +597,61 @@ def render_narrative_card(title: str, body: str) -> None:
     )
 
 
+def render_story_stream(
+    *,
+    title: str,
+    summary: str,
+    items: list[dict[str, str]],
+    empty_message: str,
+) -> None:
+    def _story_badge(label: str, tone: str) -> str:
+        normalized = "".join(ch for ch in str(tone).lower() if ch.isalpha() or ch == "-") or "neutral"
+        return f'<span class="sm-mini-pill sm-tone-{escape(normalized)}">{escape(str(label))}</span>'
+
+    if not items:
+        st.markdown(
+            (
+                '<section class="sm-stream">'
+                f'<div class="sm-stream-head"><h3>{escape(title)}</h3><p>{escape(summary)}</p></div>'
+                f'<div class="sm-stream-empty">{escape(empty_message)}</div>'
+                '</section>'
+            ),
+            unsafe_allow_html=True,
+        )
+        return
+
+    story_html: list[str] = []
+    for item in items:
+        eyebrow = item.get("eyebrow", "")
+        heading = item.get("title", "-")
+        body = item.get("body", "-")
+        meta = item.get("meta", "")
+        badge = item.get("badge", "")
+        tone = item.get("tone", "neutral")
+        badge_html = _story_badge(badge, tone) if badge else ""
+        story_html.append(
+            '<article class="sm-story">'
+            '<div class="sm-story-top">'
+            f"{badge_html}"
+            f'<span class="sm-story-eyebrow">{escape(str(eyebrow))}</span>'
+            '</div>'
+            f'<h4>{escape(str(heading))}</h4>'
+            f'<p>{escape(str(body))}</p>'
+            f'<div class="sm-story-meta">{escape(str(meta))}</div>'
+            '</article>'
+        )
+
+    st.markdown(
+        (
+            '<section class="sm-stream">'
+            f'<div class="sm-stream-head"><h3>{escape(title)}</h3><p>{escape(summary)}</p></div>'
+            f'<div class="sm-story-list">{"".join(story_html)}</div>'
+            '</section>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def render_screen_guide(
     *,
     summary: str,
