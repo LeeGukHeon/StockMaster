@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
+from app.ui.read_model import load_ui_read_model_manifest
 from app.ui.components import (
     render_glossary_hint,
     render_page_footer,
@@ -38,7 +39,7 @@ from app.ui.helpers import (
     load_ui_page_context,
 )
 
-settings, _activity = load_ui_page_context(
+settings, activity = load_ui_page_context(
     PROJECT_ROOT,
     page_key="leaderboard",
     page_title="리더보드",
@@ -153,8 +154,17 @@ def _build_validation_items(validation: pd.DataFrame, evaluation_comparison: pd.
     return items
 
 
-ranking_versions = available_ranking_versions(settings)
-evaluation_comparison = latest_evaluation_comparison_frame(settings)
+read_model_manifest = load_ui_read_model_manifest(settings)
+ranking_versions = (
+    [str(read_model_manifest["ranking_version"])]
+    if activity.writer_active and read_model_manifest.get("ranking_version")
+    else available_ranking_versions(settings)
+)
+evaluation_comparison = (
+    pd.DataFrame()
+    if activity.writer_active
+    else latest_evaluation_comparison_frame(settings)
+)
 
 render_page_header(
     settings,
@@ -193,7 +203,11 @@ else:
         index=default_version_index,
         format_func=format_ranking_version_label,
     )
-    ranking_dates = available_ranking_dates(settings, ranking_version=selected_version)
+    ranking_dates = (
+        [str(read_model_manifest["ranking_as_of_date"])]
+        if activity.writer_active and read_model_manifest.get("ranking_as_of_date")
+        else available_ranking_dates(settings, ranking_version=selected_version)
+    )
     selected_date = st.selectbox("기준일", options=ranking_dates, index=0, format_func=format_ui_date)
     horizon = st.selectbox("기간", options=[1, 5], index=1, format_func=lambda value: f"D+{value}")
     market = st.selectbox(
@@ -220,9 +234,13 @@ else:
         ranking_version=selected_version,
     )
     validation = (
-        latest_selection_validation_summary_frame(settings, limit=50)
-        if selected_version == SELECTION_ENGINE_VERSION
-        else latest_validation_summary_frame(settings, limit=50)
+        pd.DataFrame()
+        if activity.writer_active
+        else (
+            latest_selection_validation_summary_frame(settings, limit=50)
+            if selected_version == SELECTION_ENGINE_VERSION
+            else latest_validation_summary_frame(settings, limit=50)
+        )
     )
     filtered_validation = (
         validation.loc[validation["horizon"] == horizon].copy() if not validation.empty else validation

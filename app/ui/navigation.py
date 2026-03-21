@@ -36,6 +36,7 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             icon=":material/monitoring:",
             url_path="market-pulse",
             path=_page_path(project_root, "app/ui/pages/04_Market_Pulse.py"),
+            access_mode="safe",
         ),
         PageSpec(
             key="leaderboard",
@@ -43,6 +44,7 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             icon=":material/leaderboard:",
             url_path="leaderboard",
             path=_page_path(project_root, "app/ui/pages/03_Leaderboard.py"),
+            access_mode="safe",
         ),
         PageSpec(
             key="portfolio",
@@ -50,6 +52,7 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             icon=":material/account_balance:",
             url_path="portfolio",
             path=_page_path(project_root, "app/ui/pages/08_Portfolio_Studio.py"),
+            access_mode="safe",
         ),
         PageSpec(
             key="portfolio_evaluation",

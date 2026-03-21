@@ -82,6 +82,7 @@ from app.storage.metadata_postgres import (
     metadata_postgres_enabled,
 )
 from app.ui.navigation import safe_dashboard_page_keys
+from app.ui.read_model import load_ui_read_model_frame, load_ui_read_model_manifest
 
 try:
     from streamlit.runtime.scriptrunner import get_script_run_ctx
@@ -113,6 +114,21 @@ def _metadata_fetchone(
         return fetchone_postgres_sql(settings, query, params or [])
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
         return connection.execute(query, params or []).fetchone()
+
+
+def _read_model_frame(settings: Settings, dataset_name: str) -> pd.DataFrame:
+    try:
+        return load_ui_read_model_frame(settings, dataset_name)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _read_model_manifest(settings: Settings) -> dict[str, object]:
+    try:
+        payload = load_ui_read_model_manifest(settings)
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 SAFE_DASHBOARD_PAGE_KEYS: frozenset[str] = safe_dashboard_page_keys()
@@ -1402,6 +1418,10 @@ def _latest_portfolio_session_date(settings: Settings, *, as_of_date=None):
 
 
 def latest_recommendation_timeline(settings: Settings) -> dict[str, object]:
+    manifest = _read_model_manifest(settings)
+    timeline_payload = manifest.get("recommendation_timeline")
+    if isinstance(timeline_payload, dict) and timeline_payload:
+        return timeline_payload
     if not settings.paths.duckdb_path.exists():
         return {}
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -1478,6 +1498,12 @@ def latest_portfolio_policy_registry_frame(
     active_only: bool = False,
     limit: int = 20,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "portfolio_policy_registry")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        if active_only:
+            frame = frame.loc[frame["active_flag"].fillna(False)].copy()
+        return frame.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     query = """
@@ -1514,6 +1540,16 @@ def latest_portfolio_candidate_frame(
     execution_mode: str | None = None,
     limit: int = 30,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "portfolio_candidate")
+    manifest = _read_model_manifest(settings)
+    snapshot_date = manifest.get("portfolio_as_of_date")
+    if not snapshot.empty and (as_of_date is None or str(as_of_date) == str(snapshot_date)):
+        frame = snapshot.copy()
+        if execution_mode:
+            frame = frame.loc[
+                frame["execution_mode"].astype(str).str.upper() == str(execution_mode).upper()
+            ].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = as_of_date or _latest_portfolio_as_of_date(settings)
     if target_date is None or not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
@@ -1558,6 +1594,20 @@ def latest_portfolio_target_book_frame(
     included_only: bool = False,
     limit: int = 30,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "portfolio_target_book")
+    manifest = _read_model_manifest(settings)
+    snapshot_date = manifest.get("portfolio_as_of_date")
+    if not snapshot.empty and (as_of_date is None or str(as_of_date) == str(snapshot_date)):
+        frame = snapshot.copy()
+        if execution_mode:
+            frame = frame.loc[
+                frame["execution_mode"].astype(str).str.upper() == str(execution_mode).upper()
+            ].copy()
+        if not include_cash and "symbol" in frame.columns:
+            frame = frame.loc[frame["symbol"].astype(str) != "__CASH__"].copy()
+        if included_only and "included_flag" in frame.columns:
+            frame = frame.loc[frame["included_flag"].fillna(False)].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = as_of_date or _latest_portfolio_as_of_date(settings)
     if target_date is None or not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
@@ -1628,6 +1678,16 @@ def latest_portfolio_waitlist_frame(
     execution_mode: str | None = None,
     limit: int = 20,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "portfolio_waitlist")
+    manifest = _read_model_manifest(settings)
+    snapshot_date = manifest.get("portfolio_as_of_date")
+    if not snapshot.empty and (as_of_date is None or str(as_of_date) == str(snapshot_date)):
+        frame = snapshot.copy()
+        if execution_mode:
+            frame = frame.loc[
+                frame["execution_mode"].astype(str).str.upper() == str(execution_mode).upper()
+            ].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = as_of_date or _latest_portfolio_as_of_date(settings)
     if target_date is None or not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
@@ -1668,6 +1728,16 @@ def latest_portfolio_rebalance_plan_frame(
     execution_mode: str | None = None,
     limit: int = 40,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "portfolio_rebalance")
+    manifest = _read_model_manifest(settings)
+    snapshot_date = manifest.get("portfolio_as_of_date")
+    if not snapshot.empty and (as_of_date is None or str(as_of_date) == str(snapshot_date)):
+        frame = snapshot.copy()
+        if execution_mode:
+            frame = frame.loc[
+                frame["execution_mode"].astype(str).str.upper() == str(execution_mode).upper()
+            ].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = as_of_date or _latest_portfolio_as_of_date(settings)
     if target_date is None or not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
@@ -1708,6 +1778,9 @@ def latest_portfolio_nav_frame(
     *,
     limit: int = 30,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "portfolio_nav")
+    if not snapshot.empty:
+        return snapshot.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -1767,6 +1840,11 @@ def latest_portfolio_constraint_frame(
     as_of_date=None,
     limit: int = 30,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "portfolio_constraints")
+    manifest = _read_model_manifest(settings)
+    snapshot_date = manifest.get("portfolio_as_of_date")
+    if not snapshot.empty and (as_of_date is None or str(as_of_date) == str(snapshot_date)):
+        return snapshot.head(limit).reset_index(drop=True)
     target_date = as_of_date or _latest_portfolio_as_of_date(settings)
     if target_date is None or not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
@@ -3413,6 +3491,9 @@ def latest_feature_coverage_frame(settings: Settings) -> pd.DataFrame:
 
 
 def latest_regime_frame(settings: Settings) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "market_regime")
+    if not snapshot.empty:
+        return snapshot
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -3600,6 +3681,17 @@ def leaderboard_frame(
     limit: int = 20,
     ranking_version: str | None = None,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "leaderboard")
+    manifest = _read_model_manifest(settings)
+    snapshot_version = manifest.get("ranking_version")
+    snapshot_date = manifest.get("ranking_as_of_date")
+    if not snapshot.empty and (ranking_version is None or str(ranking_version) == str(snapshot_version)):
+        if as_of_date is None or str(as_of_date) == str(snapshot_date):
+            frame = snapshot.copy()
+            frame = frame.loc[frame["horizon"] == int(horizon)].copy()
+            if market.upper() != "ALL":
+                frame = frame.loc[frame["market"].astype(str).str.upper() == market.upper()].copy()
+            return frame.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -3698,6 +3790,15 @@ def latest_sector_outlook_frame(
     limit: int = 3,
     candidate_limit: int = 40,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "sector_outlook")
+    manifest = _read_model_manifest(settings)
+    snapshot_version = manifest.get("ranking_version")
+    snapshot_date = manifest.get("ranking_as_of_date")
+    if not snapshot.empty and (ranking_version is None or str(ranking_version) == str(snapshot_version)):
+        if as_of_date is None or str(as_of_date) == str(snapshot_date):
+            frame = snapshot.copy()
+            frame = frame.loc[frame["horizon"] == int(horizon)].copy()
+            return frame.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -3726,6 +3827,15 @@ def leaderboard_grade_count_frame(
     horizon: int = 5,
     ranking_version: str | None = None,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "leaderboard_grade_counts")
+    manifest = _read_model_manifest(settings)
+    snapshot_version = manifest.get("ranking_version")
+    snapshot_date = manifest.get("ranking_as_of_date")
+    if not snapshot.empty and (ranking_version is None or str(ranking_version) == str(snapshot_version)):
+        if as_of_date is None or str(as_of_date) == str(snapshot_date):
+            frame = snapshot.copy()
+            frame = frame.loc[frame["horizon"] == int(horizon)].copy()
+            return frame.reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -3750,6 +3860,9 @@ def leaderboard_grade_count_frame(
 
 
 def latest_flow_summary_frame(settings: Settings) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "flow_summary")
+    if not snapshot.empty:
+        return snapshot
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -4023,6 +4136,9 @@ def latest_evaluation_comparison_frame(settings: Settings) -> pd.DataFrame:
 
 
 def latest_alpha_promotion_summary_frame(settings: Settings, *, limit: int = 10) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "alpha_promotion_summary")
+    if not snapshot.empty:
+        return snapshot.head(limit).copy()
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -4356,6 +4472,9 @@ def evaluation_outcomes_frame(
 
 
 def market_pulse_frame(settings: Settings) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "market_pulse")
+    if not snapshot.empty:
+        return snapshot
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -4414,6 +4533,9 @@ def market_pulse_frame(settings: Settings) -> pd.DataFrame:
 
 
 def latest_market_news_frame(settings: Settings, *, limit: int = 5) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "market_news")
+    if not snapshot.empty:
+        return snapshot.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -5589,6 +5711,10 @@ def latest_intraday_market_context_frame(
 
 
 def latest_market_mood_summary(settings: Settings) -> dict[str, str]:
+    manifest = _read_model_manifest(settings)
+    market_mood = manifest.get("market_mood")
+    if isinstance(market_mood, dict) and market_mood:
+        return {str(key): str(value) for key, value in market_mood.items()}
     today = today_local(settings.app.timezone)
     intraday = latest_intraday_market_context_frame(settings, session_date=today, limit=50)
     if not intraday.empty:

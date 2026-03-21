@@ -100,6 +100,7 @@ from app.release.snapshot import (
     build_report_index,
     build_ui_freshness_snapshot,
 )
+from app.ui.read_model import materialize_ui_read_model_snapshot
 from app.release.validation import validate_release_candidate
 from app.reports.close_brief import publish_discord_close_brief
 from app.reports.discord_eod import publish_discord_eod_report
@@ -516,6 +517,15 @@ def _refresh_release_views(
     job.run_step(
         "build_latest_app_snapshot",
         build_latest_app_snapshot,
+        settings,
+        connection=connection,
+        as_of_date=as_of_date,
+        job_run_id=job.run_id,
+        critical=False,
+    )
+    job.run_step(
+        "materialize_ui_read_model_snapshot",
+        materialize_ui_read_model_snapshot,
         settings,
         connection=connection,
         as_of_date=as_of_date,
