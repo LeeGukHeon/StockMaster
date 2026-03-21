@@ -17,6 +17,7 @@ from app.ui.dashboard_v2 import (
     display_number,
     display_percent,
     display_text,
+    display_value,
     load_dashboard_v2_context,
     read_dashboard_frame,
     render_dashboard_v2_empty,
@@ -55,7 +56,7 @@ else:
         summary_items.append(
             {
                 "eyebrow": "성과 요약",
-                "title": f"{display_text(row.get('window_type'))} · D+{display_text(row.get('horizon'))}",
+                "title": f"{display_value('window_type', row.get('window_type'))} · D+{display_text(row.get('horizon'))}",
                 "body": (
                     f"평균 초과수익 {display_percent(row.get('mean_realized_excess_return'), signed=True)} / "
                     f"적중률 {display_percent(row.get('hit_rate'))}"
@@ -69,7 +70,7 @@ else:
         summary_items.append(
             {
                 "eyebrow": "기준선 비교",
-                "title": f"{display_text(row.get('window_type'))} · D+{display_text(row.get('horizon'))}",
+                "title": f"{display_value('window_type', row.get('window_type'))} · D+{display_text(row.get('horizon'))}",
                 "body": (
                     f"selection {display_percent(row.get('selection_avg_excess'), signed=True)} / "
                     f"explanatory {display_percent(row.get('explanatory_avg_excess'), signed=True)}"
@@ -105,7 +106,7 @@ else:
         calibration_items.append(
             {
                 "eyebrow": "캘리브레이션",
-                "title": f"D+{display_text(row.get('horizon'))} · {display_text(row.get('bin_type'))}",
+                "title": f"D+{display_text(row.get('horizon'))} · {display_value('bin_type', row.get('bin_type'))}",
                 "body": (
                     f"기대값 {display_percent(row.get('expected_median'), signed=True)} / "
                     f"관측값 {display_percent(row.get('observed_mean'), signed=True)} / "
@@ -120,13 +121,13 @@ else:
         calibration_items.append(
             {
                 "eyebrow": "정책 평가",
-                "title": display_text(row.get("template_id")),
+                "title": display_value("template_id", row.get("template_id")),
                 "body": (
                     f"목표 점수 {display_number(row.get('objective_score'))} / "
                     f"적중률 {display_percent(row.get('hit_rate'))} / "
                     f"평가 세션 {display_number(row.get('test_session_count'))}회"
                 ),
-                "meta": f"{display_text(row.get('scope_type'))} · D+{display_text(row.get('horizon'))}",
+                "meta": f"{display_value('scope_type', row.get('scope_type'))} · D+{display_text(row.get('horizon'))}",
                 "badge": "정책",
                 "tone": "accent",
             }

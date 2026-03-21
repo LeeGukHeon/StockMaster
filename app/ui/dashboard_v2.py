@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -11,12 +12,14 @@ from app.settings import Settings
 from app.ui.components import inject_app_styles, render_page_footer, render_story_stream, render_warning_banner
 from app.ui.helpers import (
     dashboard_activity_state,
+    format_ui_value,
     format_ui_date,
     format_ui_datetime,
     format_ui_number,
     format_ui_percent,
     latest_recommendation_timeline_text,
     load_ui_base_settings,
+    translate_ui_token,
 )
 from app.ui.read_model import load_ui_read_model_frame, load_ui_read_model_manifest
 
@@ -58,7 +61,44 @@ def display_text(value: object, fallback: str = "-") -> str:
     text = str(value).strip()
     if not text or text in {"nan", "NaN", "NaT", "None"}:
         return fallback
-    return text
+    translated = translate_ui_token(text)
+    return translated if translated not in {"", "-"} else fallback
+
+
+def display_value(column: str, value: object, fallback: str = "-") -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, float) and pd.isna(value):
+        return fallback
+    text = str(format_ui_value(column, value)).strip()
+    return text if text and text not in {"nan", "NaN", "NaT", "None"} else fallback
+
+
+def display_token_list(raw_value: object, *, fallback: str = "-", max_items: int | None = None) -> str:
+    if raw_value in (None, "", "[]"):
+        return fallback
+
+    tokens: list[str] = []
+    if isinstance(raw_value, list):
+        tokens = [str(item).strip() for item in raw_value if str(item).strip()]
+    else:
+        text = str(raw_value).strip()
+        if not text:
+            return fallback
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            tokens = [str(item).strip() for item in parsed if str(item).strip()]
+        else:
+            tokens = [part.strip() for part in text.split(",") if part.strip()]
+
+    if max_items is not None:
+        tokens = tokens[:max_items]
+    if not tokens:
+        return fallback
+    return ", ".join(display_text(token) for token in tokens)
 
 
 def display_number(value: object, *, decimals: int = 2, fallback: str = "-") -> str:

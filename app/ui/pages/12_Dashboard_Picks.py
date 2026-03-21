@@ -1,8 +1,6 @@
 # ruff: noqa: E402, E501
 
 from __future__ import annotations
-
-import json
 import sys
 from pathlib import Path
 
@@ -18,6 +16,8 @@ from app.ui.dashboard_v2 import (
     display_number,
     display_percent,
     display_text,
+    display_token_list,
+    display_value,
     load_dashboard_v2_context,
     read_dashboard_frame,
     render_dashboard_v2_empty,
@@ -30,19 +30,6 @@ settings, activity, manifest = load_dashboard_v2_context(PROJECT_ROOT)
 leaderboard = read_dashboard_frame(settings, "leaderboard")
 target_book = read_dashboard_frame(settings, "portfolio_target_book")
 sector_outlook = read_dashboard_frame(settings, "sector_outlook")
-
-
-def _parse_list(raw_value: object) -> list[str]:
-    if raw_value in (None, "", "[]"):
-        return []
-    try:
-        parsed = json.loads(str(raw_value))
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [str(item) for item in parsed if str(item).strip()]
-
 
 def _tone_from_grade(grade: object) -> str:
     value = str(grade).upper()
@@ -102,8 +89,8 @@ else:
 
     leader_items = []
     for row in filtered_board.head(5).to_dict(orient="records"):
-        reasons = ", ".join(_parse_list(row.get("reasons"))[:3])
-        risks = ", ".join(_parse_list(row.get("risks"))[:2])
+        reasons = display_token_list(row.get("reasons"), fallback="", max_items=3)
+        risks = display_token_list(row.get("risks"), fallback="", max_items=2)
         body_parts = [
             display_text(row.get("industry")),
             f"예상 초과수익률 {display_percent(row.get('expected_excess_return'), signed=True)}",
@@ -131,7 +118,7 @@ else:
     for row in filtered_target.head(5).to_dict(orient="records"):
         target_items.append(
             {
-                "eyebrow": display_text(row.get("execution_mode")),
+                "eyebrow": display_value("execution_mode", row.get("execution_mode")),
                 "title": f"{display_text(row.get('symbol'))} · {display_text(row.get('company_name'))}",
                 "body": (
                     f"{display_text(row.get('action_plan_label'))} / "
@@ -140,7 +127,7 @@ else:
                 ),
                 "meta": (
                     f"진입 예정일 {display_text(row.get('entry_trade_date'))} · "
-                    f"게이트 {display_text(row.get('gate_status'))}"
+                    f"게이트 {display_value('gate_status', row.get('gate_status'))}"
                 ),
                 "badge": display_text(row.get("market")),
                 "tone": "accent",

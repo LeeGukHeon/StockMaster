@@ -17,6 +17,7 @@ from app.ui.dashboard_v2 import (
     display_number,
     display_percent,
     display_text,
+    display_value,
     load_dashboard_v2_context,
     read_dashboard_frame,
     render_dashboard_v2_empty,
@@ -85,8 +86,8 @@ def render_today_page() -> None:
                     f"목표 비중 {display_percent(row.get('target_weight'))} / "
                     f"목표가 {display_number(row.get('target_price'))}"
                 ),
-                "meta": f"진입 예정일 {display_text(row.get('entry_trade_date'))} · 게이트 {display_text(row.get('gate_status'))}",
-                "badge": display_text(row.get("execution_mode"), "편입"),
+                "meta": f"진입 예정일 {display_text(row.get('entry_trade_date'))} · 게이트 {display_value('gate_status', row.get('gate_status'))}",
+                "badge": display_value("execution_mode", row.get("execution_mode"), "편입"),
                 "tone": "accent",
             }
         )
@@ -143,13 +144,13 @@ def render_today_page() -> None:
         weekly_items.append(
             {
                 "eyebrow": "정책 평가",
-                "title": display_text(row.get("template_id")),
+                "title": display_value("template_id", row.get("template_id")),
                 "body": (
                     f"목표 점수 {display_number(row.get('objective_score'))} / "
                     f"적중률 {display_percent(row.get('hit_rate'))} / "
                     f"평가 세션 {display_number(row.get('test_session_count'))}회"
                 ),
-                "meta": f"{display_text(row.get('scope_type'))} · D+{display_text(row.get('horizon'))}",
+                "meta": f"{display_value('scope_type', row.get('scope_type'))} · D+{display_text(row.get('horizon'))}",
                 "badge": "주간 보고",
                 "tone": "warning",
             }

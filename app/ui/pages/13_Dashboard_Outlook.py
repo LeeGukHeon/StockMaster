@@ -18,6 +18,7 @@ from app.ui.dashboard_v2 import (
     display_number,
     display_percent,
     display_text,
+    display_value,
     load_dashboard_v2_context,
     read_dashboard_frame,
     render_dashboard_v2_empty,
@@ -114,13 +115,13 @@ else:
                 "eyebrow": "포트폴리오 상태",
                 "title": f"편입 여부 {display_bool(portfolio_row.get('included_flag'))}",
                 "body": (
-                    f"실행 방식 {display_text(portfolio_row.get('execution_mode'))} / "
+                    f"실행 방식 {display_value('execution_mode', portfolio_row.get('execution_mode'))} / "
                     f"목표 비중 {display_percent(portfolio_row.get('target_weight'))} / "
                     f"목표가 {display_number(portfolio_row.get('target_price'))}"
                 ),
                 "meta": (
                     f"진입 예정일 {display_text(portfolio_row.get('entry_trade_date'))} · "
-                    f"게이트 {display_text(portfolio_row.get('gate_status'))}"
+                    f"게이트 {display_value('gate_status', portfolio_row.get('gate_status'))}"
                 ),
                 "badge": display_text(portfolio_row.get("market")),
                 "tone": "neutral",

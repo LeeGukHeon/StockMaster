@@ -1250,7 +1250,7 @@ UI_VALUE_LABELS: dict[str, dict[str, str]] = {
         "label_pending": "아직 결과 대기",
     },
     "window_type": {
-        "cohort": "코호트",
+        "cohort": "동일 시작 묶음",
         "rolling_20d": "20거래일 롤링",
         "rolling_60d": "60거래일 롤링",
     },
@@ -1263,7 +1263,7 @@ UI_VALUE_LABELS: dict[str, dict[str, str]] = {
         "grade": "등급",
         "decile": "10분위",
         "overall": "전체",
-        "expected_return_bin": "예상수익 구간",
+        "expected_return_bin": "예상수익 구간별",
     },
     "quality_flag": {
         "ok": "양호",
@@ -2148,26 +2148,27 @@ UI_VALUE_LABELS.setdefault("skip_reason_code", {}).update(
 )
 
 UI_REASON_TAG_LABELS: dict[str, str] = {
-    "short_term_momentum_strong": "단기 모멘텀 강함",
-    "breakout_near_20d_high": "20일 고점 근접",
+    "short_term_momentum_strong": "단기 탄력 강함",
+    "hort_term_momentum_strong": "단기 탄력 강함",
+    "breakout_near_20d_high": "20일 고점 돌파 직전",
     "turnover_surge": "거래대금 급증",
-    "fresh_news_catalyst": "신규 뉴스 촉매",
-    "quality_metrics_supportive": "질적 지표 우호",
-    "low_drawdown_relative": "낙폭 안정적",
-    "foreign_institution_flow_supportive": "외국인·기관 수급 우호",
-    "implementation_friction_contained": "실행 마찰 낮음",
+    "fresh_news_catalyst": "새 뉴스 모멘텀",
+    "quality_metrics_supportive": "기초 지표 우호적",
+    "low_drawdown_relative": "낙폭이 상대적으로 작음",
+    "foreign_institution_flow_supportive": "외국인·기관 수급 우호적",
+    "implementation_friction_contained": "실행 부담 낮음",
 }
 
 UI_RISK_TAG_LABELS: dict[str, str] = {
-    "high_realized_volatility": "실현 변동성 높음",
+    "high_realized_volatility": "실현 변동성 큼",
     "large_recent_drawdown": "최근 낙폭 큼",
-    "weak_fundamental_coverage": "재무 커버리지 약함",
+    "weak_fundamental_coverage": "재무 정보가 빈약함",
     "thin_liquidity": "유동성 부족",
-    "news_link_low_confidence": "뉴스 연결 신뢰 낮음",
-    "data_missingness_high": "데이터 결손 높음",
+    "news_link_low_confidence": "뉴스 연결 신뢰도 낮음",
+    "data_missingness_high": "데이터 누락 많음",
     "uncertainty_proxy_high": "불확실성 지표 높음",
-    "implementation_friction_high": "실행 마찰 높음",
-    "flow_coverage_missing": "수급 커버리지 부족",
+    "implementation_friction_high": "실행 부담 큼",
+    "flow_coverage_missing": "수급 정보 부족",
 }
 
 UI_NOTE_TAG_LABELS: dict[str, str] = {
@@ -2186,9 +2187,10 @@ UI_REASON_TAG_LABELS.update(
 )
 UI_RISK_TAG_LABELS.update(
     {
-        "model_uncertainty_high": "모델 불확실성 높음",
-        "model_disagreement_high": "모델 불일치 높음",
-        "prediction_fallback": "예측 fallback 사용",
+        "model_uncertainty_high": "모델 확신 낮음",
+        "model_disagreement_high": "모델 판단이 엇갈림",
+        "prediction_fallback": "예측 보완값 사용",
+        "expected_return_binmodel_disagreement_high": "예상수익 구간별 / 모델 판단이 엇갈림",
     }
 )
 UI_NOTE_TAG_LABELS.update(UI_RISK_TAG_LABELS)
@@ -2327,6 +2329,12 @@ def _translate_generic_token(value: object) -> object:
         "service_slug",
         "provider",
         "provider_name",
+        "window_type",
+        "bucket_type",
+        "bin_type",
+        "scope_type",
+        "template_id",
+        "decision_label",
     )
     for column in fallback_columns:
         translated = _translate_scalar(column, text)
@@ -2868,6 +2876,14 @@ def format_execution_mode_label(value: str) -> str:
 
 def format_ui_value(column: str, value: object) -> str:
     return str(_format_scalar_for_display(column, value))
+
+
+def translate_ui_token(value: object) -> str:
+    translated = _translate_generic_token(value)
+    if translated is None:
+        return "-"
+    text = str(translated).strip()
+    return text or "-"
 
 
 def format_disk_status_label(value: object) -> str:
@@ -6465,11 +6481,34 @@ UI_VALUE_LABELS.setdefault("run_type", {}).update(
 )
 UI_VALUE_LABELS.setdefault("scope_type", {}).update(
     {
-        "GLOBAL": "전역",
+        "GLOBAL": "공통",
         "HORIZON": "기간별",
-        "HORIZON_CHECKPOINT": "기간+체크포인트",
-        "HORIZON_REGIME_CLUSTER": "기간+레짐 클러스터",
-        "HORIZON_CHECKPOINT_REGIME_FAMILY": "기간+체크포인트+레짐 패밀리",
+        "HORIZON_CHECKPOINT": "기간·시점별",
+        "HORIZON_REGIME_CLUSTER": "기간·장세 조합별",
+        "HORIZON_CHECKPOINT_REGIME_FAMILY": "기간·시점·장세군별",
+    }
+)
+UI_VALUE_LABELS.setdefault("template_id", {}).update(
+    {
+        "RISK_ON_LIGHT": "상승 우위 탄력형",
+        "GAP_GUARD_STRICT": "갭 추격 억제형",
+        "COHORT_GUARD_STRICT": "동일 시작 묶음 방어 강화형",
+        "FULL_BALANCED": "균형형 기본안",
+    }
+)
+UI_VALUE_LABELS.setdefault("bin_type", {}).update(
+    {
+        "expected_return_bin": "예상수익 구간별",
+    }
+)
+UI_VALUE_LABELS.setdefault("decision_label", {}).update(
+    {
+        "Active kept": "기존 모델 유지",
+        "Challenger promoted": "도전자 모델 승격",
+        "No auto-promotion": "자동 승격 없음",
+        "KEEP_ACTIVE": "기존 모델 유지",
+        "PROMOTE_CHALLENGER": "도전자 모델 승격",
+        "NO_AUTO_PROMOTION": "자동 승격 없음",
     }
 )
 UI_VALUE_LABELS.setdefault("promotion_type", {}).update(
