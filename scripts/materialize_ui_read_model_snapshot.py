@@ -18,7 +18,7 @@ def main() -> None:
     default_env = project_root / "deploy" / "env" / ".env.server"
     env_file = args.env_file or (default_env if default_env.exists() else None)
     settings = load_settings(project_root=project_root, env_file=env_file)
-    with duckdb_connection(settings.paths.duckdb_path) as connection:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
         bootstrap_core_tables(connection)
         result = materialize_ui_read_model_snapshot(
             settings,
