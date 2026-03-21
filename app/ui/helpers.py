@@ -4600,6 +4600,12 @@ def latest_market_news_frame(settings: Settings, *, limit: int = 5) -> pd.DataFr
 
 
 def available_symbols(settings: Settings, *, limit: int | None = None) -> list[str]:
+    snapshot = _read_model_frame(settings, "symbol_options")
+    if not snapshot.empty and "symbol" in snapshot.columns:
+        frame = snapshot.copy()
+        if limit is not None and int(limit) > 0:
+            frame = frame.head(int(limit)).copy()
+        return [str(value).zfill(6) for value in frame["symbol"].tolist()]
     if not settings.paths.duckdb_path.exists():
         return []
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -4631,6 +4637,12 @@ def available_symbol_options(
     *,
     limit: int | None = None,
 ) -> list[tuple[str, str | None]]:
+    snapshot = _read_model_frame(settings, "symbol_options")
+    if not snapshot.empty and {"symbol", "company_name"}.issubset(snapshot.columns):
+        frame = snapshot.copy()
+        if limit is not None and int(limit) > 0:
+            frame = frame.head(int(limit)).copy()
+        return [(str(row.symbol).zfill(6), row.company_name) for row in frame.itertuples(index=False)]
     if not settings.paths.duckdb_path.exists():
         return []
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -4658,6 +4670,10 @@ def available_symbol_options(
 
 
 def stock_workbench_summary_frame(settings: Settings, *, symbol: str) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "stock_workbench_summary")
+    if not snapshot.empty:
+        frame = snapshot.loc[snapshot["symbol"].astype(str) == str(symbol).zfill(6)].copy()
+        return frame.reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -4927,6 +4943,10 @@ def stock_workbench_live_recommendation_frame(
     *,
     symbol: str,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "stock_workbench_live_recommendation")
+    if not snapshot.empty:
+        frame = snapshot.loc[snapshot["symbol"].astype(str) == str(symbol).zfill(6)].copy()
+        return frame.reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     normalized_symbol = str(symbol).zfill(6)
@@ -5111,6 +5131,11 @@ def stock_workbench_price_frame(
     symbol: str,
     limit: int = 30,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "stock_workbench_price_history")
+    if not snapshot.empty:
+        frame = snapshot.loc[snapshot["symbol"].astype(str) == str(symbol).zfill(6)].copy()
+        frame = frame.sort_values("trading_date", ascending=False).head(limit)
+        return frame.reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -5127,6 +5152,11 @@ def stock_workbench_price_frame(
 
 
 def stock_workbench_flow_frame(settings: Settings, *, symbol: str, limit: int = 30) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "stock_workbench_flow_history")
+    if not snapshot.empty:
+        frame = snapshot.loc[snapshot["symbol"].astype(str) == str(symbol).zfill(6)].copy()
+        frame = frame.sort_values("trading_date", ascending=False).head(limit)
+        return frame.reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -5150,6 +5180,14 @@ def stock_workbench_flow_frame(settings: Settings, *, symbol: str, limit: int = 
 
 
 def stock_workbench_news_frame(settings: Settings, *, symbol: str, limit: int = 10) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "stock_workbench_news_history")
+    if not snapshot.empty:
+        needle = str(symbol).zfill(6)
+        frame = snapshot.loc[
+            snapshot["symbol_candidates"].astype(str).str.contains(needle, na=False, regex=False)
+        ].copy()
+        frame = frame.sort_values(["signal_date", "published_at"], ascending=[False, False]).head(limit)
+        return frame.reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -5171,6 +5209,11 @@ def stock_workbench_outcome_frame(
     symbol: str,
     limit: int = 20,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "stock_workbench_outcome_history")
+    if not snapshot.empty:
+        frame = snapshot.loc[snapshot["symbol"].astype(str) == str(symbol).zfill(6)].copy()
+        frame = frame.sort_values(["selection_date", "ranking_version", "horizon"], ascending=[False, True, True]).head(limit)
+        return frame.reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -5254,6 +5297,11 @@ UI_COLUMN_LABELS.update(
 
 
 def _latest_intraday_session_date(settings: Settings):
+    snapshot = _read_model_frame(settings, "intraday_status_latest")
+    if not snapshot.empty and "session_date" in snapshot.columns:
+        values = snapshot["session_date"].dropna()
+        if not values.empty:
+            return pd.Timestamp(values.astype(str).max()).date()
     if not settings.paths.duckdb_path.exists():
         return None
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -5266,6 +5314,9 @@ def _latest_intraday_session_date(settings: Settings):
 
 
 def latest_intraday_status_frame(settings: Settings) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_status_latest")
+    if not snapshot.empty:
+        return snapshot
     session_date = _latest_intraday_session_date(settings)
     if session_date is None:
         return pd.DataFrame()
@@ -5387,6 +5438,16 @@ def latest_intraday_decision_lineage_frame(
     symbol: str | None = None,
     limit: int = 50,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_decision_lineage_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        target_date = session_date or _latest_intraday_meta_session_date(settings) or _latest_intraday_session_date(settings)
+        if target_date is not None and "session_date" in frame.columns:
+            frame = frame.loc[frame["session_date"].astype(str) == str(target_date)].copy()
+        if symbol:
+            frame = frame.loc[frame["symbol"].astype(str) == symbol.zfill(6)].copy()
+        frame = frame.sort_values(["horizon", "symbol", "checkpoint_time"]).head(limit)
+        return frame.reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     target_date = (
@@ -5507,6 +5568,9 @@ UI_VALUE_LABELS.setdefault("latest_report_type", {}).update(
 
 
 def latest_intraday_checkpoint_health_frame(settings: Settings) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_checkpoint_health_latest")
+    if not snapshot.empty:
+        return snapshot
     session_date = _latest_intraday_session_date(settings)
     if session_date is None:
         return pd.DataFrame()
@@ -5579,6 +5643,13 @@ def intraday_console_candidate_frame(
     session_date=None,
     limit: int = 50,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_candidate_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        target_date = session_date or _latest_intraday_session_date(settings)
+        if target_date is not None and "session_date" in frame.columns:
+            frame = frame.loc[frame["session_date"].astype(str) == str(target_date)].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = session_date or _latest_intraday_session_date(settings)
     if target_date is None:
         return pd.DataFrame()
@@ -5613,6 +5684,15 @@ def intraday_console_signal_frame(
     checkpoint: str | None = None,
     limit: int = 50,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_signal_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        target_date = session_date or _latest_intraday_session_date(settings)
+        if target_date is not None and "session_date" in frame.columns:
+            frame = frame.loc[frame["session_date"].astype(str) == str(target_date)].copy()
+        if checkpoint is not None and "checkpoint_time" in frame.columns:
+            frame = frame.loc[frame["checkpoint_time"].astype(str) == str(checkpoint)].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = session_date or _latest_intraday_session_date(settings)
     if target_date is None:
         return pd.DataFrame()
@@ -5661,6 +5741,15 @@ def intraday_console_decision_frame(
     checkpoint: str | None = None,
     limit: int = 50,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_decision_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        target_date = session_date or _latest_intraday_session_date(settings)
+        if target_date is not None and "session_date" in frame.columns:
+            frame = frame.loc[frame["session_date"].astype(str) == str(target_date)].copy()
+        if checkpoint is not None and "checkpoint_time" in frame.columns:
+            frame = frame.loc[frame["checkpoint_time"].astype(str) == str(checkpoint)].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = session_date or _latest_intraday_session_date(settings)
     if target_date is None:
         return pd.DataFrame()
@@ -5705,6 +5794,9 @@ def intraday_console_decision_frame(
 
 
 def intraday_console_timing_frame(settings: Settings, *, limit: int = 30) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "stock_workbench_intraday_timing")
+    if not snapshot.empty:
+        return snapshot.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -5734,6 +5826,13 @@ def latest_intraday_market_context_frame(
     session_date=None,
     limit: int = 20,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_market_context_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        target_date = session_date or _latest_intraday_session_date(settings)
+        if target_date is not None and "session_date" in frame.columns:
+            frame = frame.loc[frame["session_date"].astype(str) == str(target_date)].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = session_date or _latest_intraday_session_date(settings)
     if target_date is None:
         return pd.DataFrame()
@@ -6209,6 +6308,15 @@ def intraday_console_adjusted_decision_frame(
     checkpoint: str | None = None,
     limit: int = 50,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_adjusted_decision_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        target_date = session_date or _latest_intraday_session_date(settings)
+        if target_date is not None and "session_date" in frame.columns:
+            frame = frame.loc[frame["session_date"].astype(str) == str(target_date)].copy()
+        if checkpoint is not None and "checkpoint_time" in frame.columns:
+            frame = frame.loc[frame["checkpoint_time"].astype(str) == str(checkpoint)].copy()
+        return frame.head(limit).reset_index(drop=True)
     return latest_intraday_adjustment_frame(
         settings,
         session_date=session_date,
@@ -6223,6 +6331,13 @@ def intraday_console_strategy_trace_frame(
     session_date=None,
     limit: int = 50,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_strategy_trace_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        target_date = session_date or _latest_intraday_session_date(settings)
+        if target_date is not None and "session_date" in frame.columns:
+            frame = frame.loc[frame["session_date"].astype(str) == str(target_date)].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = session_date or _latest_intraday_session_date(settings)
     if target_date is None:
         return pd.DataFrame()
@@ -6259,6 +6374,11 @@ def stock_workbench_intraday_decision_frame(
     symbol: str,
     limit: int = 20,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "stock_workbench_intraday_decision")
+    if not snapshot.empty:
+        frame = snapshot.loc[snapshot["symbol"].astype(str) == str(symbol).zfill(6)].copy()
+        frame = frame.sort_values(["session_date", "checkpoint_time", "horizon"], ascending=[False, False, True]).head(limit)
+        return frame.reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -6297,6 +6417,11 @@ def stock_workbench_intraday_timing_frame(
     symbol: str,
     limit: int = 20,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "stock_workbench_intraday_timing")
+    if not snapshot.empty:
+        frame = snapshot.loc[snapshot["symbol"].astype(str) == str(symbol).zfill(6)].copy()
+        frame = frame.sort_values(["session_date", "horizon", "strategy_id"], ascending=[False, True, True]).head(limit)
+        return frame.reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -6631,6 +6756,14 @@ def latest_intraday_policy_recommendation_frame(
     recommendation_date=None,
     limit: int = 30,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_policy_recommendation_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        if recommendation_date is not None and "recommendation_date" in frame.columns:
+            frame = frame.loc[
+                frame["recommendation_date"].astype(str) == str(recommendation_date)
+            ].copy()
+        return frame.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -6679,6 +6812,19 @@ def latest_intraday_active_policy_frame(
     limit: int = 30,
     active_only: bool = True,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_active_policy_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        if as_of_date is not None and "effective_from_date" in frame.columns:
+            target = str(as_of_date)
+            frame = frame.loc[
+                frame["effective_from_date"].astype(str).le(target)
+                & (
+                    frame["effective_to_date"].isna()
+                    | frame["effective_to_date"].astype(str).ge(target)
+                )
+            ].copy()
+        return frame.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -6832,6 +6978,29 @@ def intraday_console_tuned_action_frame(
     symbol: str | None = None,
     limit: int = 50,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_meta_decision_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        target_date = session_date or _latest_intraday_session_date(settings)
+        if target_date is not None and "session_date" in frame.columns:
+            frame = frame.loc[frame["session_date"].astype(str) == str(target_date)].copy()
+        if symbol:
+            frame = frame.loc[frame["symbol"].astype(str) == symbol.zfill(6)].copy()
+        columns = [
+            "session_date",
+            "checkpoint_time",
+            "symbol",
+            "company_name",
+            "horizon",
+            "adjusted_action",
+            "tuned_action",
+            "final_action",
+            "confidence_margin",
+            "fallback_flag",
+            "active_meta_model_id",
+        ]
+        available = [column for column in columns if column in frame.columns]
+        return frame.loc[:, available].head(limit).reset_index(drop=True)
     target_date = session_date or _latest_intraday_session_date(settings)
     if target_date is None:
         return pd.DataFrame()
@@ -6871,6 +7040,11 @@ def stock_workbench_intraday_tuned_frame(
     symbol: str,
     limit: int = 20,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "stock_workbench_intraday_tuned")
+    if not snapshot.empty:
+        frame = snapshot.loc[snapshot["symbol"].astype(str) == str(symbol).zfill(6)].copy()
+        frame = frame.sort_values(["session_date", "checkpoint_time", "horizon"], ascending=[False, False, True]).head(limit)
+        return frame.reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -6981,6 +7155,19 @@ def latest_intraday_meta_active_model_frame(
     limit: int = 30,
     active_only: bool = True,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_meta_active_model_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        if as_of_date is not None and "effective_from_date" in frame.columns:
+            target = str(as_of_date)
+            frame = frame.loc[
+                frame["effective_from_date"].astype(str).le(target)
+                & (
+                    frame["effective_to_date"].isna()
+                    | frame["effective_to_date"].astype(str).ge(target)
+                )
+            ].copy()
+        return frame.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -7127,6 +7314,16 @@ def latest_intraday_meta_run_status_frame(
 
 
 def _latest_intraday_meta_session_date(settings: Settings):
+    decision_snapshot = _read_model_frame(settings, "intraday_meta_decision_latest")
+    if not decision_snapshot.empty and "session_date" in decision_snapshot.columns:
+        values = decision_snapshot["session_date"].dropna().astype(str)
+        if not values.empty:
+            return pd.Timestamp(values.max()).date()
+    prediction_snapshot = _read_model_frame(settings, "intraday_meta_prediction_latest")
+    if not prediction_snapshot.empty and "session_date" in prediction_snapshot.columns:
+        values = prediction_snapshot["session_date"].dropna().astype(str)
+        if not values.empty:
+            return pd.Timestamp(values.max()).date()
     if not settings.paths.duckdb_path.exists():
         return None
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -7148,6 +7345,15 @@ def latest_intraday_meta_prediction_frame(
     symbol: str | None = None,
     limit: int = 50,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_meta_prediction_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        target_date = session_date or _latest_intraday_meta_session_date(settings)
+        if target_date is not None and "session_date" in frame.columns:
+            frame = frame.loc[frame["session_date"].astype(str) == str(target_date)].copy()
+        if symbol:
+            frame = frame.loc[frame["symbol"].astype(str) == symbol.zfill(6)].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = session_date or _latest_intraday_meta_session_date(settings)
     if target_date is None or not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
@@ -7194,6 +7400,15 @@ def latest_intraday_meta_decision_frame(
     symbol: str | None = None,
     limit: int = 50,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_meta_decision_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        target_date = session_date or _latest_intraday_meta_session_date(settings)
+        if target_date is not None and "session_date" in frame.columns:
+            frame = frame.loc[frame["session_date"].astype(str) == str(target_date)].copy()
+        if symbol:
+            frame = frame.loc[frame["symbol"].astype(str) == symbol.zfill(6)].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = session_date or _latest_intraday_meta_session_date(settings)
     if target_date is None or not settings.paths.duckdb_path.exists():
         return pd.DataFrame()

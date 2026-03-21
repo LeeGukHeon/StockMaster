@@ -67,8 +67,8 @@ def test_load_ui_page_context_blocks_restricted_page_during_active_job(monkeypat
     with pytest.raises(StopCalled):
         load_ui_page_context(
             Path("."),
-            page_key="stock_workbench",
-            page_title="종목 분석",
+            page_key="research_lab",
+            page_title="리서치 랩",
         )
 
     assert warnings

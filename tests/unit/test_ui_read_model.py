@@ -5,9 +5,12 @@ import json
 import pandas as pd
 
 from app.ui.helpers import (
+    available_symbol_options,
     latest_portfolio_target_book_frame,
+    latest_intraday_status_frame,
     latest_recommendation_timeline,
     leaderboard_frame,
+    stock_workbench_summary_frame,
 )
 from app.ui.read_model import (
     ui_read_model_dataset_path,
@@ -215,3 +218,107 @@ def test_latest_recommendation_timeline_uses_read_model_manifest(tmp_path) -> No
 
     assert timeline["selection_as_of_date"] == "2026-03-20"
     assert timeline["portfolio_session_date"] == "2026-03-23"
+
+
+def test_available_symbol_options_uses_read_model_snapshot(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    _write_read_model_frame(
+        settings,
+        "symbol_options",
+        pd.DataFrame(
+            [
+                {"symbol": "005930", "company_name": "SamsungElec"},
+                {"symbol": "000660", "company_name": "SKHynix"},
+            ]
+        ),
+    )
+
+    options = available_symbol_options(settings)
+
+    assert options == [("005930", "SamsungElec"), ("000660", "SKHynix")]
+
+
+def test_stock_workbench_summary_frame_uses_read_model_snapshot(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    _write_read_model_frame(
+        settings,
+        "stock_workbench_summary",
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "005930",
+                    "company_name": "SamsungElec",
+                    "market": "KOSPI",
+                    "as_of_date": "2026-03-20",
+                    "ret_5d": 0.05,
+                    "ret_20d": 0.12,
+                    "adv_20": 1000000.0,
+                    "news_count_3d": 4,
+                    "foreign_net_value_ratio_5d": 0.04,
+                    "smart_money_flow_ratio_20d": 0.11,
+                    "flow_coverage_flag": True,
+                    "d1_selection_v2_value": 0.82,
+                    "d1_selection_v2_grade": "A",
+                    "d1_selection_value": 0.71,
+                    "d1_grade": "B",
+                    "d5_selection_v2_value": 0.91,
+                    "d5_selection_v2_grade": "A",
+                    "d5_selection_value": 0.73,
+                    "d5_grade": "B",
+                    "d5_alpha_expected_excess_return": 0.03,
+                    "d5_alpha_lower_band": -0.01,
+                    "d5_alpha_upper_band": 0.05,
+                    "d5_alpha_uncertainty_score": 0.12,
+                    "d5_alpha_disagreement_score": 0.03,
+                    "d5_alpha_fallback_flag": False,
+                    "d5_expected_excess_return": 0.025,
+                    "d5_lower_band": -0.015,
+                    "d5_upper_band": 0.04,
+                    "d1_realized_excess_return": None,
+                    "d1_band_status": None,
+                    "d5_selection_v2_realized_excess_return": None,
+                    "d5_selection_v2_band_status": None,
+                    "d5_realized_excess_return": None,
+                    "d5_band_status": None,
+                }
+            ]
+        ),
+    )
+
+    frame = stock_workbench_summary_frame(settings, symbol="005930")
+
+    assert len(frame) == 1
+    assert frame.iloc[0]["company_name"] == "SamsungElec"
+    assert frame.iloc[0]["d5_selection_v2_grade"] == "A"
+
+
+def test_latest_intraday_status_frame_uses_read_model_snapshot(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    _write_read_model_frame(
+        settings,
+        "intraday_status_latest",
+        pd.DataFrame(
+            [
+                {
+                    "session_date": "2026-03-20",
+                    "candidate_symbols": 15,
+                    "bar_symbols": 15,
+                    "trade_symbols": 15,
+                    "quote_symbols": 15,
+                    "signal_symbols": 15,
+                    "raw_decision_symbols": 15,
+                    "adjusted_symbols": 10,
+                    "meta_prediction_symbols": 10,
+                    "meta_decision_symbols": 10,
+                    "final_action_symbols": 10,
+                    "avg_bar_latency_ms": 120.0,
+                    "avg_quote_latency_ms": 98.0,
+                }
+            ]
+        ),
+    )
+
+    frame = latest_intraday_status_frame(settings)
+
+    assert len(frame) == 1
+    assert int(frame.iloc[0]["candidate_symbols"]) == 15

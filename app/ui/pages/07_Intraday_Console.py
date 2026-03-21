@@ -44,8 +44,8 @@ from app.ui.helpers import (
     latest_intraday_status_frame,
     latest_intraday_strategy_comparison_frame,
     latest_intraday_summary_report_preview,
+    load_ui_base_settings,
     load_ui_page_context,
-    load_ui_settings,
 )
 
 settings, _activity = load_ui_page_context(
@@ -74,7 +74,7 @@ def _safe_int(value: object) -> int:
 
 @st.cache_data(ttl=30, show_spinner=False)
 def _load_intraday_console_section(project_root_str: str, section: str) -> dict[str, object]:
-    local_settings = load_ui_settings(Path(project_root_str))
+    local_settings = load_ui_base_settings(Path(project_root_str))
     if section == "개요":
         return {
             "status_frame": latest_intraday_status_frame(local_settings),

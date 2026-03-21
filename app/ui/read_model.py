@@ -11,6 +11,7 @@ import duckdb
 import pandas as pd
 
 from app.common.time import now_local
+from app.intraday.policy import apply_active_intraday_policy_frame
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ml.promotion import load_alpha_promotion_summary
@@ -345,6 +346,1011 @@ def _latest_portfolio_policy_registry_frame(connection: duckdb.DuckDBPyConnectio
         ORDER BY effective_from_date DESC, created_at DESC
         """
     ).fetchdf()
+
+
+def _symbol_options_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT symbol, company_name
+        FROM dim_symbol
+        WHERE market IN ('KOSPI', 'KOSDAQ')
+        ORDER BY symbol
+        """
+    ).fetchdf()
+
+
+def _stock_workbench_summary_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            feature.symbol,
+            symbol_meta.company_name,
+            symbol_meta.market,
+            feature.as_of_date,
+            feature.ret_5d,
+            feature.ret_20d,
+            feature.adv_20,
+            feature.news_count_3d,
+            feature.foreign_net_value_ratio_5d,
+            feature.smart_money_flow_ratio_20d,
+            feature.flow_coverage_flag,
+            selection_v2_1.final_selection_value AS d1_selection_v2_value,
+            selection_v2_1.grade AS d1_selection_v2_grade,
+            selection_1.final_selection_value AS d1_selection_value,
+            selection_1.grade AS d1_grade,
+            selection_v2_5.final_selection_value AS d5_selection_v2_value,
+            selection_v2_5.grade AS d5_selection_v2_grade,
+            selection_5.final_selection_value AS d5_selection_value,
+            selection_5.grade AS d5_grade,
+            prediction_alpha_5.expected_excess_return AS d5_alpha_expected_excess_return,
+            prediction_alpha_5.lower_band AS d5_alpha_lower_band,
+            prediction_alpha_5.upper_band AS d5_alpha_upper_band,
+            prediction_alpha_5.uncertainty_score AS d5_alpha_uncertainty_score,
+            prediction_alpha_5.disagreement_score AS d5_alpha_disagreement_score,
+            prediction_alpha_5.fallback_flag AS d5_alpha_fallback_flag,
+            prediction_5.expected_excess_return AS d5_expected_excess_return,
+            prediction_5.lower_band AS d5_lower_band,
+            prediction_5.upper_band AS d5_upper_band,
+            outcome_1.realized_excess_return AS d1_realized_excess_return,
+            outcome_1.band_status AS d1_band_status,
+            outcome_v2_5.realized_excess_return AS d5_selection_v2_realized_excess_return,
+            outcome_v2_5.band_status AS d5_selection_v2_band_status,
+            outcome_5.realized_excess_return AS d5_realized_excess_return,
+            outcome_5.band_status AS d5_band_status
+        FROM vw_feature_matrix_latest AS feature
+        JOIN dim_symbol AS symbol_meta
+          ON feature.symbol = symbol_meta.symbol
+        LEFT JOIN vw_ranking_latest AS selection_v2_1
+          ON feature.symbol = selection_v2_1.symbol
+         AND selection_v2_1.horizon = 1
+         AND selection_v2_1.ranking_version = ?
+        LEFT JOIN vw_ranking_latest AS selection_1
+          ON feature.symbol = selection_1.symbol
+         AND selection_1.horizon = 1
+         AND selection_1.ranking_version = ?
+        LEFT JOIN vw_ranking_latest AS selection_v2_5
+          ON feature.symbol = selection_v2_5.symbol
+         AND selection_v2_5.horizon = 5
+         AND selection_v2_5.ranking_version = ?
+        LEFT JOIN vw_ranking_latest AS selection_5
+          ON feature.symbol = selection_5.symbol
+         AND selection_5.horizon = 5
+         AND selection_5.ranking_version = ?
+        LEFT JOIN vw_prediction_latest AS prediction_alpha_5
+          ON feature.symbol = prediction_alpha_5.symbol
+         AND prediction_alpha_5.horizon = 5
+         AND prediction_alpha_5.prediction_version = ?
+        LEFT JOIN vw_prediction_latest AS prediction_5
+          ON feature.symbol = prediction_5.symbol
+         AND prediction_5.horizon = 5
+         AND prediction_5.prediction_version = ?
+        LEFT JOIN vw_selection_outcome_latest AS outcome_1
+         ON feature.symbol = outcome_1.symbol
+         AND outcome_1.horizon = 1
+         AND outcome_1.ranking_version = ?
+        LEFT JOIN vw_selection_outcome_latest AS outcome_v2_5
+          ON feature.symbol = outcome_v2_5.symbol
+         AND outcome_v2_5.horizon = 5
+         AND outcome_v2_5.ranking_version = ?
+        LEFT JOIN vw_selection_outcome_latest AS outcome_5
+          ON feature.symbol = outcome_5.symbol
+         AND outcome_5.horizon = 5
+         AND outcome_5.ranking_version = ?
+        WHERE symbol_meta.market IN ('KOSPI', 'KOSDAQ')
+        ORDER BY feature.symbol
+        """,
+        [
+            SELECTION_ENGINE_V2_VERSION,
+            SELECTION_ENGINE_VERSION,
+            SELECTION_ENGINE_V2_VERSION,
+            SELECTION_ENGINE_VERSION,
+            ALPHA_PREDICTION_VERSION,
+            PREDICTION_VERSION,
+            SELECTION_ENGINE_VERSION,
+            SELECTION_ENGINE_V2_VERSION,
+            SELECTION_ENGINE_VERSION,
+        ],
+    ).fetchdf()
+
+
+def _stock_workbench_live_recommendation_frame(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    ranking_as_of_date,
+) -> pd.DataFrame:
+    if ranking_as_of_date is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        WITH d1 AS (
+            SELECT
+                symbol,
+                final_selection_value AS live_d1_selection_v2_value,
+                grade AS live_d1_selection_v2_grade,
+                eligible_flag AS live_d1_eligible_flag,
+                report_candidate_flag AS live_d1_report_candidate_flag
+            FROM fact_ranking
+            WHERE as_of_date = ?
+              AND horizon = 1
+              AND ranking_version = ?
+        ),
+        d5 AS (
+            SELECT
+                symbol,
+                final_selection_value AS live_d5_selection_v2_value,
+                grade AS live_d5_selection_v2_grade,
+                eligible_flag AS live_d5_eligible_flag,
+                report_candidate_flag AS live_d5_report_candidate_flag
+            FROM fact_ranking
+            WHERE as_of_date = ?
+              AND horizon = 5
+              AND ranking_version = ?
+        ),
+        prediction AS (
+            SELECT
+                symbol,
+                expected_excess_return AS live_d5_expected_excess_return,
+                lower_band,
+                upper_band
+            FROM fact_prediction
+            WHERE as_of_date = ?
+              AND horizon = 5
+              AND prediction_version = ?
+              AND ranking_version = ?
+        ),
+        reference_price AS (
+            SELECT
+                symbol,
+                trading_date AS live_reference_date,
+                close AS live_reference_price
+            FROM fact_daily_ohlcv
+            WHERE trading_date = ?
+        ),
+        latest_target AS (
+            SELECT
+                symbol,
+                as_of_date AS latest_portfolio_as_of_date,
+                entry_trade_date AS latest_portfolio_entry_trade_date,
+                execution_mode AS latest_portfolio_execution_mode,
+                included_flag AS latest_portfolio_included_flag,
+                target_weight AS latest_portfolio_target_weight,
+                gate_status AS latest_portfolio_gate_status
+            FROM fact_portfolio_target_book
+            WHERE as_of_date = (SELECT MAX(as_of_date) FROM fact_portfolio_target_book)
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY symbol
+                ORDER BY included_flag DESC, target_weight DESC NULLS LAST, execution_mode
+            ) = 1
+        )
+        SELECT
+            symbol_dim.symbol,
+            symbol_dim.company_name,
+            symbol_dim.market,
+            ? AS live_as_of_date,
+            reference_price.live_reference_date,
+            reference_price.live_reference_price,
+            d1.live_d1_selection_v2_value,
+            d1.live_d1_selection_v2_grade,
+            d1.live_d1_eligible_flag,
+            d1.live_d1_report_candidate_flag,
+            d5.live_d5_selection_v2_value,
+            d5.live_d5_selection_v2_grade,
+            d5.live_d5_eligible_flag,
+            d5.live_d5_report_candidate_flag,
+            prediction.live_d5_expected_excess_return,
+            CASE
+                WHEN reference_price.live_reference_price IS NULL OR prediction.live_d5_expected_excess_return IS NULL THEN NULL
+                ELSE reference_price.live_reference_price * (1.0 + prediction.live_d5_expected_excess_return)
+            END AS live_d5_target_price,
+            CASE
+                WHEN reference_price.live_reference_price IS NULL OR prediction.upper_band IS NULL THEN NULL
+                ELSE reference_price.live_reference_price * (1.0 + prediction.upper_band)
+            END AS live_d5_upper_target_price,
+            CASE
+                WHEN reference_price.live_reference_price IS NULL OR prediction.lower_band IS NULL THEN NULL
+                ELSE reference_price.live_reference_price * (1.0 + prediction.lower_band)
+            END AS live_d5_stop_price,
+            latest_target.latest_portfolio_as_of_date,
+            latest_target.latest_portfolio_entry_trade_date,
+            latest_target.latest_portfolio_execution_mode,
+            latest_target.latest_portfolio_included_flag,
+            latest_target.latest_portfolio_target_weight,
+            latest_target.latest_portfolio_gate_status
+        FROM dim_symbol AS symbol_dim
+        LEFT JOIN d1
+          ON symbol_dim.symbol = d1.symbol
+        LEFT JOIN d5
+          ON symbol_dim.symbol = d5.symbol
+        LEFT JOIN prediction
+          ON symbol_dim.symbol = prediction.symbol
+        LEFT JOIN reference_price
+          ON symbol_dim.symbol = reference_price.symbol
+        LEFT JOIN latest_target
+          ON symbol_dim.symbol = latest_target.symbol
+        WHERE symbol_dim.market IN ('KOSPI', 'KOSDAQ')
+        ORDER BY symbol_dim.symbol
+        """,
+        [
+            ranking_as_of_date,
+            SELECTION_ENGINE_V2_VERSION,
+            ranking_as_of_date,
+            SELECTION_ENGINE_V2_VERSION,
+            ranking_as_of_date,
+            ALPHA_PREDICTION_VERSION,
+            SELECTION_ENGINE_V2_VERSION,
+            ranking_as_of_date,
+            ranking_as_of_date,
+        ],
+    ).fetchdf()
+
+
+def _top_n_per_symbol(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    source_sql: str,
+    symbol_column: str,
+    order_clause: str,
+    limit_per_symbol: int,
+) -> pd.DataFrame:
+    return connection.execute(
+        f"""
+        SELECT *
+        FROM (
+            SELECT
+                source.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY {symbol_column}
+                    ORDER BY {order_clause}
+                ) AS _row_number
+            FROM ({source_sql}) AS source
+        ) ranked
+        WHERE _row_number <= ?
+        """,
+        [limit_per_symbol],
+    ).fetchdf()
+
+
+def _stock_workbench_price_history_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return _top_n_per_symbol(
+        connection,
+        source_sql="""
+            SELECT
+                symbol,
+                trading_date,
+                open,
+                high,
+                low,
+                close,
+                volume,
+                turnover_value
+            FROM fact_daily_ohlcv
+        """,
+        symbol_column="symbol",
+        order_clause="trading_date DESC",
+        limit_per_symbol=30,
+    )
+
+
+def _stock_workbench_flow_history_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return _top_n_per_symbol(
+        connection,
+        source_sql="""
+            SELECT
+                symbol,
+                trading_date,
+                foreign_net_value,
+                institution_net_value,
+                individual_net_value,
+                foreign_net_volume,
+                institution_net_volume,
+                individual_net_volume
+            FROM fact_investor_flow
+        """,
+        symbol_column="symbol",
+        order_clause="trading_date DESC",
+        limit_per_symbol=30,
+    )
+
+
+def _stock_workbench_news_history_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            signal_date,
+            published_at,
+            title,
+            publisher,
+            query_bucket,
+            link,
+            symbol_candidates
+        FROM fact_news_item
+        ORDER BY signal_date DESC, published_at DESC
+        LIMIT 5000
+        """
+    ).fetchdf()
+
+
+def _stock_workbench_outcome_history_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return _top_n_per_symbol(
+        connection,
+        source_sql="""
+            SELECT
+                symbol,
+                selection_date,
+                evaluation_date,
+                horizon,
+                ranking_version,
+                final_selection_value,
+                expected_excess_return_at_selection,
+                realized_excess_return,
+                band_status,
+                outcome_status
+            FROM fact_selection_outcome
+        """,
+        symbol_column="symbol",
+        order_clause="selection_date DESC, ranking_version, horizon",
+        limit_per_symbol=20,
+    )
+
+
+def _latest_intraday_session_date(connection: duckdb.DuckDBPyConnection):
+    row = connection.execute("SELECT MAX(session_date) FROM fact_intraday_candidate_session").fetchone()
+    return None if row is None else row[0]
+
+
+def _latest_intraday_meta_session_date(connection: duckdb.DuckDBPyConnection):
+    row = connection.execute(
+        """
+        SELECT COALESCE(
+            (SELECT MAX(session_date) FROM fact_intraday_meta_decision),
+            (SELECT MAX(session_date) FROM fact_intraday_meta_prediction)
+        )
+        """
+    ).fetchone()
+    return None if row is None else row[0]
+
+
+def _latest_intraday_status_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    session_date = _latest_intraday_session_date(connection)
+    if session_date is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            candidate.session_date,
+            COUNT(DISTINCT candidate.symbol) AS candidate_symbols,
+            COUNT(DISTINCT bar.symbol) AS bar_symbols,
+            COUNT(DISTINCT trade.symbol) AS trade_symbols,
+            COUNT(DISTINCT quote.symbol) AS quote_symbols,
+            COUNT(DISTINCT signal.symbol) AS signal_symbols,
+            COUNT(DISTINCT decision.symbol) AS raw_decision_symbols,
+            COUNT(DISTINCT adjusted.symbol) AS adjusted_symbols,
+            COUNT(DISTINCT meta_prediction.symbol) AS meta_prediction_symbols,
+            COUNT(DISTINCT meta_decision.symbol) AS meta_decision_symbols,
+            COUNT(DISTINCT final_action.symbol) AS final_action_symbols,
+            AVG(bar.fetch_latency_ms) AS avg_bar_latency_ms,
+            AVG(quote.fetch_latency_ms) AS avg_quote_latency_ms
+        FROM fact_intraday_candidate_session AS candidate
+        LEFT JOIN fact_intraday_bar_1m AS bar
+          ON candidate.session_date = bar.session_date
+         AND candidate.symbol = bar.symbol
+        LEFT JOIN fact_intraday_trade_summary AS trade
+          ON candidate.session_date = trade.session_date
+         AND candidate.symbol = trade.symbol
+        LEFT JOIN fact_intraday_quote_summary AS quote
+          ON candidate.session_date = quote.session_date
+         AND candidate.symbol = quote.symbol
+        LEFT JOIN fact_intraday_signal_snapshot AS signal
+          ON candidate.session_date = signal.session_date
+         AND candidate.symbol = signal.symbol
+        LEFT JOIN fact_intraday_entry_decision AS decision
+          ON candidate.session_date = decision.session_date
+         AND candidate.symbol = decision.symbol
+        LEFT JOIN fact_intraday_adjusted_entry_decision AS adjusted
+          ON candidate.session_date = adjusted.session_date
+         AND candidate.symbol = adjusted.symbol
+        LEFT JOIN fact_intraday_meta_prediction AS meta_prediction
+          ON candidate.session_date = meta_prediction.session_date
+         AND candidate.symbol = meta_prediction.symbol
+        LEFT JOIN fact_intraday_meta_decision AS meta_decision
+          ON candidate.session_date = meta_decision.session_date
+         AND candidate.symbol = meta_decision.symbol
+        LEFT JOIN fact_intraday_final_action AS final_action
+          ON candidate.session_date = final_action.session_date
+         AND candidate.symbol = final_action.symbol
+        WHERE candidate.session_date = ?
+        GROUP BY candidate.session_date
+        """,
+        [session_date],
+    ).fetchdf()
+
+
+def _latest_intraday_checkpoint_health_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    session_date = _latest_intraday_session_date(connection)
+    if session_date is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            signal.checkpoint_time,
+            AVG(signal.signal_quality_score) AS avg_signal_quality,
+            SUM(CASE WHEN decision.action = 'ENTER_NOW' THEN 1 ELSE 0 END) AS enter_now_count,
+            SUM(CASE WHEN decision.action = 'WAIT_RECHECK' THEN 1 ELSE 0 END) AS wait_recheck_count,
+            SUM(CASE WHEN decision.action = 'AVOID_TODAY' THEN 1 ELSE 0 END) AS avoid_today_count,
+            SUM(CASE WHEN decision.action = 'DATA_INSUFFICIENT' THEN 1 ELSE 0 END) AS data_insufficient_count,
+            SUM(CASE WHEN adjusted.adjusted_action = 'ENTER_NOW' THEN 1 ELSE 0 END) AS adjusted_enter_now_count,
+            SUM(CASE WHEN adjusted.adjusted_action = 'WAIT_RECHECK' THEN 1 ELSE 0 END) AS adjusted_wait_recheck_count,
+            SUM(CASE WHEN adjusted.adjusted_action = 'AVOID_TODAY' THEN 1 ELSE 0 END) AS adjusted_avoid_today_count,
+            SUM(CASE WHEN adjusted.adjusted_action = 'DATA_INSUFFICIENT' THEN 1 ELSE 0 END) AS adjusted_data_insufficient_count,
+            SUM(CASE WHEN quote.quote_status = 'unavailable' THEN 1 ELSE 0 END) AS quote_unavailable_count,
+            SUM(CASE WHEN trade.trade_summary_status = 'unavailable' THEN 1 ELSE 0 END) AS trade_unavailable_count
+        FROM fact_intraday_signal_snapshot AS signal
+        LEFT JOIN fact_intraday_entry_decision AS decision
+          ON signal.session_date = decision.session_date
+         AND signal.symbol = decision.symbol
+         AND signal.horizon = decision.horizon
+         AND signal.checkpoint_time = decision.checkpoint_time
+         AND signal.ranking_version = decision.ranking_version
+        LEFT JOIN fact_intraday_quote_summary AS quote
+          ON signal.session_date = quote.session_date
+         AND signal.symbol = quote.symbol
+         AND signal.checkpoint_time = quote.checkpoint_time
+        LEFT JOIN fact_intraday_trade_summary AS trade
+          ON signal.session_date = trade.session_date
+         AND signal.symbol = trade.symbol
+         AND signal.checkpoint_time = trade.checkpoint_time
+        LEFT JOIN fact_intraday_adjusted_entry_decision AS adjusted
+          ON signal.session_date = adjusted.session_date
+         AND signal.symbol = adjusted.symbol
+         AND signal.horizon = adjusted.horizon
+         AND signal.checkpoint_time = adjusted.checkpoint_time
+         AND signal.ranking_version = adjusted.ranking_version
+        WHERE signal.session_date = ?
+        GROUP BY signal.checkpoint_time
+        ORDER BY signal.checkpoint_time
+        """,
+        [session_date],
+    ).fetchdf()
+
+
+def _latest_intraday_market_context_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    session_date = _latest_intraday_session_date(connection)
+    if session_date is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            session_date,
+            checkpoint_time,
+            context_scope,
+            market_session_state,
+            prior_daily_regime_state,
+            market_breadth_ratio,
+            candidate_mean_return_from_open,
+            candidate_mean_relative_volume,
+            candidate_mean_signal_quality,
+            bar_coverage_ratio,
+            trade_coverage_ratio,
+            quote_coverage_ratio,
+            data_quality_flag
+        FROM fact_intraday_market_context_snapshot
+        WHERE session_date = ?
+        ORDER BY checkpoint_time, context_scope
+        LIMIT 200
+        """,
+        [session_date],
+    ).fetchdf()
+
+
+def _intraday_console_candidate_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    session_date = _latest_intraday_session_date(connection)
+    if session_date is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            session_date,
+            selection_date,
+            symbol,
+            company_name,
+            market,
+            horizon,
+            candidate_rank,
+            final_selection_value,
+            grade,
+            expected_excess_return,
+            session_status
+        FROM fact_intraday_candidate_session
+        WHERE session_date = ?
+        ORDER BY horizon, candidate_rank, symbol
+        LIMIT 500
+        """,
+        [session_date],
+    ).fetchdf()
+
+
+def _intraday_console_signal_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    session_date = _latest_intraday_session_date(connection)
+    if session_date is None:
+        return pd.DataFrame()
+    checkpoint = connection.execute(
+        """
+        SELECT MAX(checkpoint_time)
+        FROM fact_intraday_signal_snapshot
+        WHERE session_date = ?
+        """,
+        [session_date],
+    ).fetchone()
+    if checkpoint is None or checkpoint[0] is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            session_date,
+            checkpoint_time,
+            symbol,
+            horizon,
+            gap_opening_quality_score,
+            micro_trend_score,
+            relative_activity_score,
+            orderbook_score,
+            execution_strength_score,
+            risk_friction_score,
+            signal_quality_score,
+            timing_adjustment_score
+        FROM fact_intraday_signal_snapshot
+        WHERE session_date = ?
+          AND checkpoint_time = ?
+        ORDER BY horizon, timing_adjustment_score DESC, symbol
+        LIMIT 500
+        """,
+        [session_date, checkpoint[0]],
+    ).fetchdf()
+
+
+def _intraday_console_decision_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    session_date = _latest_intraday_session_date(connection)
+    if session_date is None:
+        return pd.DataFrame()
+    checkpoint = connection.execute(
+        """
+        SELECT MAX(checkpoint_time)
+        FROM fact_intraday_entry_decision
+        WHERE session_date = ?
+        """,
+        [session_date],
+    ).fetchone()
+    if checkpoint is None or checkpoint[0] is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            decision.session_date,
+            decision.checkpoint_time,
+            decision.symbol,
+            candidate.company_name,
+            decision.horizon,
+            decision.action,
+            decision.action_score,
+            decision.signal_quality_score,
+            decision.entry_reference_price
+        FROM fact_intraday_entry_decision AS decision
+        LEFT JOIN fact_intraday_candidate_session AS candidate
+          ON decision.session_date = candidate.session_date
+         AND decision.symbol = candidate.symbol
+         AND decision.horizon = candidate.horizon
+         AND decision.ranking_version = candidate.ranking_version
+        WHERE decision.session_date = ?
+          AND decision.checkpoint_time = ?
+        ORDER BY decision.horizon, decision.action_score DESC, decision.symbol
+        LIMIT 500
+        """,
+        [session_date, checkpoint[0]],
+    ).fetchdf()
+
+
+def _intraday_console_adjusted_decision_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    session_date = _latest_intraday_session_date(connection)
+    if session_date is None:
+        return pd.DataFrame()
+    checkpoint = connection.execute(
+        """
+        SELECT MAX(checkpoint_time)
+        FROM fact_intraday_adjusted_entry_decision
+        WHERE session_date = ?
+        """,
+        [session_date],
+    ).fetchone()
+    if checkpoint is None or checkpoint[0] is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            session_date,
+            checkpoint_time,
+            symbol,
+            company_name,
+            horizon,
+            market_regime_family,
+            adjustment_profile,
+            raw_action,
+            adjusted_action,
+            adjusted_timing_score,
+            signal_quality_flag,
+            fallback_flag
+        FROM fact_intraday_adjusted_entry_decision
+        WHERE session_date = ?
+          AND checkpoint_time = ?
+        ORDER BY horizon, adjusted_timing_score DESC, symbol
+        LIMIT 500
+        """,
+        [session_date, checkpoint[0]],
+    ).fetchdf()
+
+
+def _intraday_console_strategy_trace_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    session_date = _latest_intraday_session_date(connection)
+    if session_date is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            session_date,
+            symbol,
+            company_name,
+            horizon,
+            strategy_id,
+            entry_checkpoint_time,
+            market_regime_family,
+            adjustment_profile,
+            executed_flag,
+            no_entry_flag,
+            realized_excess_return,
+            timing_edge_vs_open_bps,
+            skip_reason_code,
+            outcome_status
+        FROM fact_intraday_strategy_result
+        WHERE session_date = ?
+        ORDER BY horizon, symbol, strategy_id
+        LIMIT 1000
+        """,
+        [session_date],
+    ).fetchdf()
+
+
+def _latest_intraday_meta_prediction_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    session_date = _latest_intraday_meta_session_date(connection)
+    if session_date is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            prediction.session_date,
+            prediction.checkpoint_time,
+            prediction.symbol,
+            symbol_dim.company_name,
+            prediction.horizon,
+            prediction.panel_name,
+            prediction.tuned_action,
+            prediction.predicted_class,
+            prediction.predicted_class_probability,
+            prediction.confidence_margin,
+            prediction.uncertainty_score,
+            prediction.disagreement_score,
+            prediction.fallback_flag,
+            prediction.fallback_reason
+        FROM fact_intraday_meta_prediction AS prediction
+        LEFT JOIN dim_symbol AS symbol_dim
+          ON prediction.symbol = symbol_dim.symbol
+        WHERE prediction.session_date = ?
+        ORDER BY prediction.horizon, prediction.symbol, prediction.checkpoint_time
+        LIMIT 1000
+        """,
+        [session_date],
+    ).fetchdf()
+
+
+def _latest_intraday_meta_decision_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    session_date = _latest_intraday_meta_session_date(connection)
+    if session_date is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            decision.session_date,
+            decision.checkpoint_time,
+            decision.symbol,
+            symbol_dim.company_name,
+            decision.horizon,
+            decision.raw_action,
+            decision.adjusted_action,
+            decision.tuned_action,
+            decision.final_action,
+            decision.panel_name,
+            decision.predicted_class,
+            decision.predicted_class_probability,
+            decision.confidence_margin,
+            decision.uncertainty_score,
+            decision.disagreement_score,
+            decision.override_applied_flag,
+            decision.override_type,
+            decision.hard_guard_block_flag,
+            decision.fallback_flag,
+            decision.fallback_reason,
+            decision.active_meta_model_id
+        FROM fact_intraday_meta_decision AS decision
+        LEFT JOIN dim_symbol AS symbol_dim
+          ON decision.symbol = symbol_dim.symbol
+        WHERE decision.session_date = ?
+        ORDER BY decision.horizon, decision.symbol, decision.checkpoint_time
+        LIMIT 1000
+        """,
+        [session_date],
+    ).fetchdf()
+
+
+def _latest_intraday_policy_recommendation_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    row = connection.execute(
+        "SELECT MAX(recommendation_date) FROM fact_intraday_policy_selection_recommendation"
+    ).fetchone()
+    if row is None or row[0] is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            recommendation_date,
+            horizon,
+            scope_type,
+            scope_key,
+            recommendation_rank,
+            policy_candidate_id,
+            template_id,
+            test_session_count,
+            executed_count,
+            execution_rate,
+            mean_realized_excess_return,
+            hit_rate,
+            mean_timing_edge_vs_open_bps,
+            stability_score,
+            objective_score,
+            manual_review_required_flag,
+            fallback_scope_type,
+            fallback_scope_key
+        FROM fact_intraday_policy_selection_recommendation
+        WHERE recommendation_date = ?
+        ORDER BY horizon, recommendation_rank, scope_type, scope_key
+        LIMIT 200
+        """,
+        [row[0]],
+    ).fetchdf()
+
+
+def _latest_intraday_active_policy_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    row = connection.execute(
+        "SELECT MAX(effective_from_date) FROM fact_intraday_active_policy"
+    ).fetchone()
+    if row is None or row[0] is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            active.horizon,
+            active.scope_type,
+            active.scope_key,
+            active.checkpoint_time,
+            active.regime_cluster,
+            active.regime_family,
+            active.policy_candidate_id,
+            candidate.template_id,
+            active.source_recommendation_date,
+            active.promotion_type,
+            active.effective_from_date,
+            active.effective_to_date,
+            active.fallback_scope_type,
+            active.fallback_scope_key,
+            active.note
+        FROM fact_intraday_active_policy AS active
+        JOIN fact_intraday_policy_candidate AS candidate
+          ON active.policy_candidate_id = candidate.policy_candidate_id
+        WHERE active.effective_from_date <= ?
+          AND (active.effective_to_date IS NULL OR active.effective_to_date >= ?)
+          AND active.active_flag = TRUE
+        ORDER BY active.horizon, active.scope_type, active.scope_key
+        LIMIT 200
+        """,
+        [row[0], row[0]],
+    ).fetchdf()
+
+
+def _latest_intraday_meta_active_model_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    row = connection.execute(
+        "SELECT MAX(effective_from_date) FROM fact_intraday_active_meta_model"
+    ).fetchone()
+    if row is None or row[0] is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            active.horizon,
+            active.panel_name,
+            active.active_meta_model_id,
+            active.training_run_id,
+            active.model_version,
+            active.source_type,
+            active.promotion_type,
+            active.effective_from_date,
+            active.effective_to_date,
+            active.note,
+            train.fallback_flag,
+            train.fallback_reason
+        FROM fact_intraday_active_meta_model AS active
+        LEFT JOIN fact_model_training_run AS train
+          ON active.training_run_id = train.training_run_id
+        WHERE active.effective_from_date <= ?
+          AND (active.effective_to_date IS NULL OR active.effective_to_date >= ?)
+          AND active.active_flag = TRUE
+        ORDER BY active.horizon, active.panel_name
+        LIMIT 200
+        """,
+        [row[0], row[0]],
+    ).fetchdf()
+
+
+def _latest_intraday_decision_lineage_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    session_date = _latest_intraday_meta_session_date(connection) or _latest_intraday_session_date(connection)
+    if session_date is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            session_date,
+            selection_date,
+            checkpoint_time,
+            symbol,
+            company_name,
+            horizon,
+            market,
+            ranking_version,
+            raw_action,
+            adjusted_action,
+            final_action,
+            predicted_class,
+            predicted_class_probability,
+            confidence_margin,
+            uncertainty_score,
+            disagreement_score,
+            candidate_session_run_id,
+            ranking_run_id,
+            raw_decision_run_id,
+            adjusted_decision_run_id,
+            meta_decision_run_id,
+            prediction_run_id,
+            portfolio_target_run_id,
+            portfolio_execution_mode,
+            gate_status,
+            target_weight,
+            target_notional,
+            target_shares,
+            market_regime_state,
+            final_selection_value,
+            expected_excess_return
+        FROM vw_intraday_decision_lineage
+        WHERE session_date = ?
+        ORDER BY horizon, symbol, checkpoint_time
+        LIMIT 2000
+        """,
+        [session_date],
+    ).fetchdf()
+
+
+def _stock_workbench_intraday_decision_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return _top_n_per_symbol(
+        connection,
+        source_sql="""
+            SELECT
+                raw.symbol,
+                raw.session_date,
+                raw.checkpoint_time,
+                raw.horizon,
+                raw.action AS raw_action,
+                adjusted.adjusted_action,
+                adjusted.market_regime_family,
+                adjusted.adjustment_profile,
+                raw.action_score AS raw_timing_score,
+                adjusted.adjusted_timing_score,
+                adjusted.signal_quality_flag,
+                adjusted.fallback_flag
+            FROM fact_intraday_entry_decision AS raw
+            LEFT JOIN fact_intraday_adjusted_entry_decision AS adjusted
+              ON raw.session_date = adjusted.session_date
+             AND raw.symbol = adjusted.symbol
+             AND raw.horizon = adjusted.horizon
+             AND raw.checkpoint_time = adjusted.checkpoint_time
+             AND raw.ranking_version = adjusted.ranking_version
+        """,
+        symbol_column="symbol",
+        order_clause="session_date DESC, checkpoint_time DESC, horizon",
+        limit_per_symbol=20,
+    )
+
+
+def _stock_workbench_intraday_timing_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return _top_n_per_symbol(
+        connection,
+        source_sql="""
+            SELECT
+                symbol,
+                session_date,
+                horizon,
+                strategy_id,
+                entry_checkpoint_time,
+                market_regime_family,
+                adjustment_profile,
+                executed_flag,
+                no_entry_flag,
+                realized_excess_return,
+                timing_edge_vs_open_bps,
+                outcome_status
+            FROM fact_intraday_strategy_result
+        """,
+        symbol_column="symbol",
+        order_clause="session_date DESC, horizon, strategy_id",
+        limit_per_symbol=20,
+    )
+
+
+def _stock_workbench_intraday_tuned_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return _top_n_per_symbol(
+        connection,
+        source_sql="""
+            SELECT
+                symbol,
+                session_date,
+                checkpoint_time,
+                company_name,
+                horizon,
+                raw_action,
+                adjusted_action,
+                tuned_action,
+                final_action,
+                panel_name,
+                predicted_class,
+                predicted_class_probability,
+                confidence_margin,
+                uncertainty_score,
+                disagreement_score,
+                fallback_flag,
+                fallback_reason,
+                active_meta_model_id
+            FROM (
+                SELECT
+                    decision.symbol,
+                    decision.session_date,
+                    decision.checkpoint_time,
+                    symbol_dim.company_name,
+                    decision.horizon,
+                    decision.raw_action,
+                    decision.adjusted_action,
+                    decision.tuned_action,
+                    decision.final_action,
+                    decision.panel_name,
+                    decision.predicted_class,
+                    decision.predicted_class_probability,
+                    decision.confidence_margin,
+                    decision.uncertainty_score,
+                    decision.disagreement_score,
+                    decision.fallback_flag,
+                    decision.fallback_reason,
+                    decision.active_meta_model_id
+                FROM fact_intraday_meta_decision AS decision
+                LEFT JOIN dim_symbol AS symbol_dim
+                  ON decision.symbol = symbol_dim.symbol
+            )
+        """,
+        symbol_column="symbol",
+        order_clause="session_date DESC, checkpoint_time DESC, horizon",
+        limit_per_symbol=20,
+    )
 
 
 def _latest_portfolio_candidate_frame(connection: duckdb.DuckDBPyConnection, *, as_of_date) -> pd.DataFrame:
@@ -1070,9 +2076,75 @@ def materialize_ui_read_model_snapshot(
             "portfolio_policy_registry",
             _latest_portfolio_policy_registry_frame(connection),
         ),
+        UIReadModelDataset("symbol_options", _symbol_options_frame(connection)),
+        UIReadModelDataset("stock_workbench_summary", _stock_workbench_summary_frame(connection)),
+        UIReadModelDataset(
+            "stock_workbench_live_recommendation",
+            _stock_workbench_live_recommendation_frame(connection, ranking_as_of_date=ranking_as_of_date),
+        ),
+        UIReadModelDataset("stock_workbench_price_history", _stock_workbench_price_history_frame(connection)),
+        UIReadModelDataset("stock_workbench_flow_history", _stock_workbench_flow_history_frame(connection)),
+        UIReadModelDataset("stock_workbench_news_history", _stock_workbench_news_history_frame(connection)),
+        UIReadModelDataset("stock_workbench_outcome_history", _stock_workbench_outcome_history_frame(connection)),
+        UIReadModelDataset(
+            "stock_workbench_intraday_decision",
+            _stock_workbench_intraday_decision_frame(connection),
+        ),
+        UIReadModelDataset(
+            "stock_workbench_intraday_timing",
+            _stock_workbench_intraday_timing_frame(connection),
+        ),
+        UIReadModelDataset(
+            "stock_workbench_intraday_tuned",
+            _stock_workbench_intraday_tuned_frame(connection),
+        ),
         UIReadModelDataset(
             "portfolio_nav",
             _latest_portfolio_nav_frame(connection),
+        ),
+        UIReadModelDataset("intraday_status_latest", _latest_intraday_status_frame(connection)),
+        UIReadModelDataset(
+            "intraday_checkpoint_health_latest",
+            _latest_intraday_checkpoint_health_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_market_context_latest",
+            _latest_intraday_market_context_frame(connection),
+        ),
+        UIReadModelDataset("intraday_candidate_latest", _intraday_console_candidate_frame(connection)),
+        UIReadModelDataset("intraday_signal_latest", _intraday_console_signal_frame(connection)),
+        UIReadModelDataset("intraday_decision_latest", _intraday_console_decision_frame(connection)),
+        UIReadModelDataset(
+            "intraday_adjusted_decision_latest",
+            _intraday_console_adjusted_decision_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_strategy_trace_latest",
+            _intraday_console_strategy_trace_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_meta_prediction_latest",
+            _latest_intraday_meta_prediction_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_meta_decision_latest",
+            _latest_intraday_meta_decision_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_decision_lineage_latest",
+            _latest_intraday_decision_lineage_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_policy_recommendation_latest",
+            _latest_intraday_policy_recommendation_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_active_policy_latest",
+            _latest_intraday_active_policy_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_meta_active_model_latest",
+            _latest_intraday_meta_active_model_frame(connection),
         ),
         UIReadModelDataset(
             "intraday_research_capability_latest",
