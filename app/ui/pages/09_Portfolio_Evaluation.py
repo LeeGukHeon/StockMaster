@@ -21,10 +21,14 @@ from app.ui.components import (
 from app.ui.helpers import (
     latest_portfolio_evaluation_frame,
     latest_portfolio_nav_frame,
-    load_ui_settings,
+    load_ui_page_context,
 )
 
-settings = load_ui_settings(PROJECT_ROOT)
+settings, _activity = load_ui_page_context(
+    PROJECT_ROOT,
+    page_key="portfolio_evaluation",
+    page_title="추천안 평가",
+)
 nav_frame = latest_portfolio_nav_frame(settings, limit=60)
 evaluation_frame = latest_portfolio_evaluation_frame(settings, limit=80)
 

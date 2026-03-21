@@ -5,7 +5,7 @@ import math
 import numbers
 import re
 import secrets
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, time
 from hashlib import sha256
 from pathlib import Path
@@ -112,6 +112,106 @@ def _metadata_fetchone(
         return fetchone_postgres_sql(settings, query, params or [])
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
         return connection.execute(query, params or []).fetchone()
+
+
+SAFE_DASHBOARD_PAGE_KEYS: frozenset[str] = frozenset({"today", "docs"})
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardActivityState:
+    writer_active: bool
+    lock_names: tuple[str, ...]
+    running_job_names: tuple[str, ...]
+    source: str
+
+
+def _active_serial_lock_names(settings: Settings) -> tuple[str, ...]:
+    lock_root = settings.paths.cache_dir / "scheduler_serial_locks"
+    if not lock_root.exists():
+        return ()
+    return tuple(sorted(path.name for path in lock_root.iterdir() if path.is_dir()))
+
+
+def dashboard_activity_state(settings: Settings) -> DashboardActivityState:
+    lock_names: tuple[str, ...] = ()
+    running_job_names: tuple[str, ...] = ()
+    source = "filesystem"
+    if metadata_postgres_enabled(settings):
+        try:
+            lock_frame = fetchdf_postgres_sql(
+                settings,
+                """
+                SELECT lock_name
+                FROM fact_active_lock
+                WHERE released_at IS NULL
+                ORDER BY acquired_at DESC
+                LIMIT 20
+                """,
+            )
+            run_frame = fetchdf_postgres_sql(
+                settings,
+                """
+                SELECT job_name
+                FROM fact_job_run
+                WHERE status = 'RUNNING'
+                ORDER BY started_at DESC
+                LIMIT 20
+                """,
+            )
+            lock_names = tuple(
+                str(value)
+                for value in lock_frame.get("lock_name", pd.Series(dtype="object")).dropna().tolist()
+            )
+            running_job_names = tuple(
+                str(value)
+                for value in run_frame.get("job_name", pd.Series(dtype="object")).dropna().tolist()
+            )
+            source = "metadata_postgres"
+        except Exception:
+            lock_names = ()
+            running_job_names = ()
+            source = "filesystem_fallback"
+    if not lock_names and not running_job_names:
+        lock_names = _active_serial_lock_names(settings)
+    return DashboardActivityState(
+        writer_active=bool(lock_names or running_job_names),
+        lock_names=lock_names,
+        running_job_names=running_job_names,
+        source=source,
+    )
+
+
+def load_ui_base_settings(project_root: Path) -> Settings:
+    settings = load_settings(project_root=project_root)
+    _require_dashboard_access(settings)
+    ensure_storage_layout(settings)
+    return settings
+
+
+def _dashboard_access_message(page_title: str, activity: DashboardActivityState) -> str:
+    lock_text = ", ".join(activity.lock_names[:3]) if activity.lock_names else "-"
+    running_text = ", ".join(activity.running_job_names[:3]) if activity.running_job_names else "-"
+    return (
+        f"`{page_title}` 화면은 현재 학습/백필 같은 쓰기 작업이 진행 중이라 잠시 잠겨 있습니다. "
+        f"active_lock={lock_text}, running_jobs={running_text}. "
+        "이 시간에는 `오늘`, `문서 / 도움말` 화면만 안전하게 볼 수 있습니다."
+    )
+
+
+def load_ui_page_context(
+    project_root: Path,
+    *,
+    page_key: str,
+    page_title: str,
+) -> tuple[Settings, DashboardActivityState]:
+    base_settings = load_ui_base_settings(project_root)
+    activity = dashboard_activity_state(base_settings)
+    if activity.writer_active and page_key not in SAFE_DASHBOARD_PAGE_KEYS:
+        st.warning(_dashboard_access_message(page_title, activity))
+        st.stop()
+    if activity.writer_active:
+        return base_settings, activity
+    return load_ui_settings(project_root), activity
 
 
 def _latest_manifest_preview(settings: Settings, *, run_type: str) -> str | None:
@@ -746,10 +846,10 @@ def latest_release_candidate_preview(settings: Settings) -> str | None:
     return previews[0].read_text(encoding="utf-8")
 
 
-def load_ui_settings(project_root: Path) -> Settings:
-    settings = load_settings(project_root=project_root)
-    _require_dashboard_access(settings)
-    ensure_storage_layout(settings)
+def load_ui_settings(project_root: Path, *, bootstrap_duckdb: bool = True) -> Settings:
+    settings = load_ui_base_settings(project_root)
+    if not bootstrap_duckdb:
+        return settings
     read_only = settings.paths.duckdb_path.exists()
     with duckdb_connection(settings.paths.duckdb_path, read_only=read_only) as connection:
         bootstrap_core_tables(connection)

@@ -41,10 +41,14 @@ from app.ui.helpers import (
     latest_intraday_timing_calibration_frame,
     latest_postmortem_preview,
     latest_selection_engine_comparison_frame,
-    load_ui_settings,
+    load_ui_page_context,
 )
 
-settings = load_ui_settings(PROJECT_ROOT)
+settings, _activity = load_ui_page_context(
+    PROJECT_ROOT,
+    page_key="evaluation",
+    page_title="사후 평가",
+)
 evaluation_dates = available_evaluation_dates(settings)
 
 latest_summary = latest_evaluation_summary_frame(settings, limit=30)

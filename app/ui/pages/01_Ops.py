@@ -55,11 +55,15 @@ from app.ui.helpers import (
     latest_scheduler_state_frame,
     latest_step_failure_frame,
     latest_successful_pipeline_output_frame,
-    load_ui_settings,
+    load_ui_page_context,
     scheduler_job_catalog_frame,
 )
 
-settings = load_ui_settings(PROJECT_ROOT)
+settings, _activity = load_ui_page_context(
+    PROJECT_ROOT,
+    page_key="ops",
+    page_title="운영",
+)
 snapshot = latest_app_snapshot_frame(settings)
 health = latest_health_snapshot_frame(settings, limit=40)
 runs = latest_job_runs_frame(settings, limit=20)

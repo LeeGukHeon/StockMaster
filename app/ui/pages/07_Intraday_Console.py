@@ -45,7 +45,14 @@ from app.ui.helpers import (
     latest_intraday_status_frame,
     latest_intraday_strategy_comparison_frame,
     latest_intraday_summary_report_preview,
+    load_ui_page_context,
     load_ui_settings,
+)
+
+settings, _activity = load_ui_page_context(
+    PROJECT_ROOT,
+    page_key="intraday_console",
+    page_title="장중 콘솔",
 )
 
 

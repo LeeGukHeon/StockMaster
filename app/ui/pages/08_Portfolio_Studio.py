@@ -30,10 +30,14 @@ from app.ui.helpers import (
     latest_portfolio_target_book_frame,
     latest_portfolio_waitlist_frame,
     latest_recommendation_timeline_text,
-    load_ui_settings,
+    load_ui_page_context,
 )
 
-settings = load_ui_settings(PROJECT_ROOT)
+settings, _activity = load_ui_page_context(
+    PROJECT_ROOT,
+    page_key="portfolio",
+    page_title="추천 구성안",
+)
 
 render_page_header(
     settings,

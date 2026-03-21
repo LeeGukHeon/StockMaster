@@ -13,6 +13,7 @@ class PageSpec:
     url_path: str
     path: Path | None = None
     callable_name: str | None = None
+    access_mode: str = "restricted"
 
 
 def _page_path(project_root: Path, relative_path: str) -> Path:
@@ -27,6 +28,7 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             icon=":material/home:",
             url_path="today",
             callable_name="render_today_page",
+            access_mode="safe",
         ),
         PageSpec(
             key="market_pulse",
@@ -97,6 +99,7 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             icon=":material/health_metrics:",
             url_path="health-dashboard",
             path=_page_path(project_root, "app/ui/pages/10_Health_Dashboard.py"),
+            access_mode="safe",
         ),
         PageSpec(
             key="docs",
@@ -104,6 +107,7 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             icon=":material/menu_book:",
             url_path="docs-help",
             path=_page_path(project_root, "app/ui/pages/11_Docs_Help.py"),
+            access_mode="safe",
         ),
     )
 
@@ -112,11 +116,14 @@ def build_navigation_registry(
     project_root: Path,
     *,
     render_today_page: Callable[[], None],
+    allowed_page_keys: set[str] | None = None,
 ):
     import streamlit as st
 
     registry: dict[str, object] = {}
     for spec in page_specs(project_root):
+        if allowed_page_keys is not None and spec.key not in allowed_page_keys:
+            continue
         if spec.callable_name is not None:
             registry[spec.key] = st.Page(
                 render_today_page,
@@ -140,11 +147,13 @@ def build_navigation_pages(
     project_root: Path,
     *,
     render_today_page: Callable[[], None],
+    allowed_page_keys: set[str] | None = None,
 ):
     return list(
         build_navigation_registry(
             project_root,
             render_today_page=render_today_page,
+            allowed_page_keys=allowed_page_keys,
         ).values()
     )
 

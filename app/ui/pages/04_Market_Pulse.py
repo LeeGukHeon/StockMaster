@@ -25,11 +25,15 @@ from app.ui.helpers import (
     latest_market_mood_summary,
     latest_regime_frame,
     leaderboard_frame,
-    load_ui_settings,
+    load_ui_page_context,
     market_pulse_frame,
 )
 
-settings = load_ui_settings(PROJECT_ROOT)
+settings, _activity = load_ui_page_context(
+    PROJECT_ROOT,
+    page_key="market_pulse",
+    page_title="시장 현황",
+)
 pulse = market_pulse_frame(settings)
 regime = latest_regime_frame(settings)
 flow = latest_flow_summary_frame(settings)

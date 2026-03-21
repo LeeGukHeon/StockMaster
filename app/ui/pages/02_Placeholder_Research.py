@@ -51,7 +51,7 @@ from app.ui.helpers import (
     latest_intraday_research_capability_frame,
     latest_job_runs_frame,
     latest_model_training_summary_frame,
-    load_ui_settings,
+    load_ui_page_context,
 )
 
 POLICY_TEMPLATE_LABELS = {
@@ -293,7 +293,11 @@ def _render_meta_change_summary() -> None:
 
     st.success("바꿔도 괜찮다고 판단되면 바로 아래 `메타 모델 바로 반영` 버튼을 누르시면 됩니다.")
 
-settings = load_ui_settings(PROJECT_ROOT)
+settings, _activity = load_ui_page_context(
+    PROJECT_ROOT,
+    page_key="research_lab",
+    page_title="리서치 랩",
+)
 
 recent_runs = latest_job_runs_frame(settings, limit=60)
 weekly_calibration_runs = (

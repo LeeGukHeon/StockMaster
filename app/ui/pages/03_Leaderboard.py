@@ -32,10 +32,14 @@ from app.ui.helpers import (
     latest_validation_summary_frame,
     leaderboard_frame,
     leaderboard_grade_count_frame,
-    load_ui_settings,
+    load_ui_page_context,
 )
 
-settings = load_ui_settings(PROJECT_ROOT)
+settings, _activity = load_ui_page_context(
+    PROJECT_ROOT,
+    page_key="leaderboard",
+    page_title="리더보드",
+)
 ranking_versions = available_ranking_versions(settings)
 evaluation_comparison = latest_evaluation_comparison_frame(settings)
 

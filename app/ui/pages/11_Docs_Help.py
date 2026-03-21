@@ -20,9 +20,13 @@ from app.ui.components import (
     render_report_center,
     render_screen_guide,
 )
-from app.ui.helpers import latest_release_candidate_preview, load_ui_settings
+from app.ui.helpers import latest_release_candidate_preview, load_ui_page_context
 
-settings = load_ui_settings(PROJECT_ROOT)
+settings, activity = load_ui_page_context(
+    PROJECT_ROOT,
+    page_key="docs",
+    page_title="문서 / 도움말",
+)
 
 render_page_header(
     settings,

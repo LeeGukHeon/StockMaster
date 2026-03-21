@@ -28,7 +28,7 @@ from app.ui.helpers import (
     format_ui_time,
     format_ui_value,
     latest_intraday_decision_lineage_frame,
-    load_ui_settings,
+    load_ui_page_context,
     stock_workbench_flow_frame,
     stock_workbench_live_recommendation_frame,
     stock_workbench_intraday_decision_frame,
@@ -40,7 +40,11 @@ from app.ui.helpers import (
     stock_workbench_summary_frame,
 )
 
-settings = load_ui_settings(PROJECT_ROOT)
+settings, _activity = load_ui_page_context(
+    PROJECT_ROOT,
+    page_key="stock_workbench",
+    page_title="종목 분석",
+)
 symbol_options = available_symbol_options(settings, limit=None)
 symbol_lookup = {
     f"{symbol} | {company_name}" if company_name else symbol: symbol

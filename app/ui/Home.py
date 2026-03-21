@@ -29,6 +29,8 @@ from app.ui.components import (
     render_warning_banner,
 )
 from app.ui.helpers import (
+    SAFE_DASHBOARD_PAGE_KEYS,
+    dashboard_activity_state,
     format_ui_date,
     format_ui_value,
     home_banner_freshness_levels,
@@ -44,6 +46,8 @@ from app.ui.helpers import (
     latest_report_index_frame,
     latest_ui_freshness_frame,
     leaderboard_frame,
+    load_ui_base_settings,
+    load_ui_page_context,
     load_ui_settings,
 )
 from app.ui.navigation import build_navigation_registry
@@ -138,8 +142,81 @@ def _quick_link(label: str, page_key: str, description: str) -> None:
 
 
 def render_today_page() -> None:
-    settings = load_ui_settings(PROJECT_ROOT)
+    settings, activity = load_ui_page_context(
+        PROJECT_ROOT,
+        page_key="today",
+        page_title="오늘",
+    )
     inject_app_styles()
+    if activity.writer_active:
+        snapshot_row = _snapshot_row(settings)
+        alerts = latest_alert_event_frame(settings, limit=10)
+        freshness = latest_ui_freshness_frame(settings, limit=20)
+        critical_freshness, warning_freshness = home_banner_freshness_levels(freshness)
+        latest_reports = latest_report_index_frame(settings, limit=12, latest_only=True)
+        release_preview = latest_release_candidate_preview(settings)
+
+        st.title("오늘")
+        st.caption("학습/백필 중에도 안전하게 볼 수 있는 읽기 전용 요약 화면입니다.")
+        render_warning_banner(
+            "WARNING",
+            "현재 학습/백필 같은 쓰기 작업이 진행 중이라 일부 분석 화면은 잠시 잠겨 있습니다. "
+            "이 화면은 메타데이터 기준 읽기 전용으로만 표시됩니다.",
+        )
+        render_screen_guide(
+            summary="지금은 운영 작업과 충돌하지 않는 최소 요약만 보여줍니다.",
+            bullets=[
+                "상세 종목분석, 리더보드, 포트폴리오, 평가, 장중 콘솔은 작업 종료 후 다시 열 수 있습니다.",
+                "작업 중에는 오늘, 문서 / 도움말 화면만 안전하게 볼 수 있습니다.",
+            ],
+        )
+        render_status_badges(_policy_badges(snapshot_row))
+        if snapshot_row is not None:
+            top_left, top_mid, top_right = st.columns(3)
+            top_left.metric("현재 기준일", format_ui_date(snapshot_row.get("as_of_date")))
+            top_mid.metric("운영 상태", format_ui_value("health_status", snapshot_row.get("health_status")))
+            top_right.metric("열린 알림", int(snapshot_row.get("warning_alert_count") or 0))
+        if not critical_freshness.empty:
+            render_warning_banner("CRITICAL", "일부 데이터셋 최신성이 임계치 바깥입니다.")
+        elif not warning_freshness.empty:
+            render_warning_banner("WARNING", "일부 데이터셋 최신성이 경고 구간입니다.")
+        render_record_cards(
+            alerts,
+            title="중요 알림",
+            primary_column="message",
+            secondary_columns=["severity", "component_name"],
+            detail_columns=["created_at", "alert_type", "status"],
+            limit=6,
+            empty_message="열린 알림이 없습니다.",
+            table_expander_label="알림 전체 보기",
+        )
+        render_record_cards(
+            freshness,
+            title="최신성 점검",
+            primary_column="dataset_name",
+            secondary_columns=["warning_level", "page_name"],
+            detail_columns=["latest_available_ts", "stale_flag"],
+            limit=8,
+            empty_message="최신성 스냅샷이 없습니다.",
+            table_expander_label="최신성 전체 보기",
+        )
+        if not latest_reports.empty:
+            render_data_sheet(
+                latest_reports,
+                title="최신 리포트",
+                primary_column="report_type",
+                secondary_columns=["status", "as_of_date"],
+                detail_columns=["generated_ts", "published_flag"],
+                limit=8,
+                empty_message="최신 리포트가 없습니다.",
+                table_expander_label="리포트 전체 보기",
+            )
+        if release_preview:
+            with st.expander("최신 릴리즈 체크리스트 미리보기", expanded=False):
+                render_report_preview(title="릴리즈 체크리스트", preview=release_preview)
+        _quick_link("문서 / 도움말", "docs", "런북과 운영 문서를 확인합니다.")
+        render_page_footer(settings, page_name="오늘")
+        return
 
     snapshot_row = _snapshot_row(settings)
     alerts = latest_alert_event_frame(settings, limit=10)
@@ -411,9 +488,12 @@ def render_today_page() -> None:
 
 st.set_page_config(page_title="StockMaster", page_icon="SM", layout="wide")
 
+NAV_SETTINGS = load_ui_base_settings(PROJECT_ROOT)
+NAV_ACTIVITY = dashboard_activity_state(NAV_SETTINGS)
 NAVIGATION_REGISTRY = build_navigation_registry(
     PROJECT_ROOT,
     render_today_page=render_today_page,
+    allowed_page_keys=set(SAFE_DASHBOARD_PAGE_KEYS) if NAV_ACTIVITY.writer_active else None,
 )
 
 navigation = st.navigation(
