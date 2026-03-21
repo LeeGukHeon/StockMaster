@@ -23,10 +23,21 @@ from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from app.storage.manifests import record_run_finish, record_run_start
 
 DISCORD_MESSAGE_LIMIT = 1800
+DISCORD_EOD_CANDIDATE_HORIZON = 1
+DISCORD_EOD_SECTOR_HORIZON = 1
 
 REASON_LABELS = {
     "ml_alpha_supportive": "최근 흐름과 모델 판단이 함께 받쳐줌",
     "prediction_fallback_used": "예측 보조값을 함께 참고함",
+    "short_term_momentum_strong": "단기 탄력 강함",
+    "hort_term_momentum_strong": "단기 탄력 강함",
+    "breakout_near_20d_high": "20일 고점 돌파 직전",
+    "turnover_surge": "거래대금 급증",
+    "fresh_news_catalyst": "새 뉴스 모멘텀",
+    "quality_metrics_supportive": "기초 지표 우호적",
+    "low_drawdown_relative": "낙폭이 상대적으로 작음",
+    "foreign_institution_flow_supportive": "외국인·기관 수급 우호적",
+    "implementation_friction_contained": "실행 부담 낮음",
 }
 
 RISK_LABELS = {
@@ -40,8 +51,31 @@ RISK_LABELS = {
     "implementation_friction_high": "실행 부담이 큼",
     "flow_coverage_missing": "수급 정보가 부족함",
     "model_uncertainty_high": "모델 확신이 낮음",
-    "model_disagreement_high": "모델끼리 의견이 갈림",
+    "model_disagreement_high": "모델 판단이 엇갈림",
     "prediction_fallback": "예측 보조값을 함께 참고함",
+}
+
+ALPHA_DECISION_LABELS = {
+    "Active kept": "기존 모델 유지",
+    "Challenger promoted": "도전자 모델 승격",
+    "No auto-promotion": "자동 승격 없음",
+    "KEEP_ACTIVE": "기존 모델 유지",
+    "PROMOTE_CHALLENGER": "도전자 모델 승격",
+    "NO_AUTO_PROMOTION": "자동 승격 없음",
+}
+
+ALPHA_DECISION_REASON_LABELS = {
+    "incumbent remained in the superior set": "현재 모델이 우수 후보군에 남음",
+    "one challenger survived the superior set": "도전자 1개만 우수 후보군에 남음",
+    "combo candidate survived the superior set": "혼합 후보가 우수 후보군에 남음",
+    "multiple challengers survived without a clear winner": "도전자 여러 개가 남았지만 뚜렷한 승자가 없음",
+    "matured shadow self-backtest history is not available": "성숙한 shadow 검증 이력이 아직 부족함",
+    "shadow self-backtest matrix is incomplete": "shadow 검증 손실 행렬이 아직 불완전함",
+}
+
+EXECUTION_STYLE_LABELS = {
+    "OPEN_ALL": "시가 일괄 진입",
+    "TIMING_ASSISTED": "장중 보정 진입",
 }
 
 REGIME_LABELS = {
@@ -282,6 +316,7 @@ def _load_official_target_rows(
           AND target.execution_mode = 'OPEN_ALL'
           AND target.included_flag = TRUE
           AND target.symbol <> '__CASH__'
+          AND COALESCE(target.target_weight, 0.0) > 0.0
         ORDER BY target.target_rank, target.symbol
         LIMIT ?
         """,
@@ -314,6 +349,28 @@ def _translate_tags(raw_value: object, mapping: dict[str, str]) -> str:
     return ", ".join(labels) if labels else "-"
 
 
+def _translate_alpha_decision_label(value: object) -> str:
+    text = str(value or "-")
+    return ALPHA_DECISION_LABELS.get(text, text)
+
+
+def _translate_alpha_decision_reason(value: object) -> str:
+    text = str(value or "-")
+    return ALPHA_DECISION_REASON_LABELS.get(text, text)
+
+
+def _translate_execution_style(value: object) -> str:
+    text = str(value or "-")
+    return EXECUTION_STYLE_LABELS.get(text, text)
+
+
+def _date_text(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    text = str(value)
+    return text.split(" ", 1)[0]
+
+
 def _pct_text(value: object) -> str:
     if value is None or pd.isna(value):
         return "미확인"
@@ -333,7 +390,10 @@ def _format_pick_block(row: pd.Series, *, rank: int) -> list[str]:
         )
     if pd.notna(row.get("selection_date")) or pd.notna(row.get("next_entry_trade_date")):
         lines.append(
-            f"   - 언제 보나: 선정일 {row.get('selection_date') or '-'} / 진입 예정일 {row.get('next_entry_trade_date') or '-'}"
+            "   - 언제 보나: 선정일 {selection_date} / 진입 예정일 {entry_date}".format(
+                selection_date=_date_text(row.get("selection_date")),
+                entry_date=_date_text(row.get("next_entry_trade_date")),
+            )
         )
     if pd.notna(row.get("selection_close_price")):
         lines.append(f"   - 참고 기준가: {float(row['selection_close_price']):,.0f}원")
@@ -388,7 +448,7 @@ def _format_official_pick_block(row: pd.Series, *, rank: int) -> list[str]:
     if pd.notna(row.get("score_value")):
         summary_parts.append(f"추천 점수 {float(row['score_value']):+.2f}")
     if pd.notna(row.get("gate_status")):
-        summary_parts.append(f"진입 판단 {row['gate_status']}")
+        summary_parts.append(f"진입 방식 {_translate_execution_style(row['gate_status'])}")
     lines.append(
         f"   - 공식 추천안: {' | '.join(summary_parts) if summary_parts else '다음 거래일 공식 추천안에 포함'}"
     )
@@ -399,9 +459,9 @@ def _format_official_pick_block(row: pd.Series, *, rank: int) -> list[str]:
 
     schedule_parts: list[str] = []
     if pd.notna(row.get("entry_trade_date")):
-        schedule_parts.append(f"진입 예정일 {row['entry_trade_date']}")
+        schedule_parts.append(f"진입 예정일 {_date_text(row['entry_trade_date'])}")
     if pd.notna(row.get("exit_trade_date")):
-        schedule_parts.append(f"관찰 종료일 {row['exit_trade_date']}")
+        schedule_parts.append(f"관찰 종료일 {_date_text(row['exit_trade_date'])}")
     if pd.notna(row.get("plan_horizon")):
         schedule_parts.append(f"관찰 기간 {int(row['plan_horizon'])}거래일")
     if schedule_parts:
@@ -441,16 +501,20 @@ def _format_alpha_promotion_line(row: pd.Series) -> str:
     active_text = str(row.get("active_model_label") or "-")
     if active_top10:
         active_text = f"{active_text} {active_top10}"
+    decision_label = _translate_alpha_decision_label(row.get("decision_label"))
+    decision_reason = _translate_alpha_decision_reason(row.get("decision_reason_label"))
     return (
-        f"- {int(row['horizon'])}거래일 모델 점검: {row['decision_label']} "
+        f"- {int(row['horizon'])}거래일 모델 점검: {decision_label} "
         f"| 현재 사용 {active_text} | 비교 후보 {compare_text} "
-        f"| 비교 표본 {int(row['sample_count'])}{p_value} | 판단 이유 {row['decision_reason_label']}"
+        f"| 비교 표본 {int(row['sample_count'])}{p_value} | 판단 이유 {decision_reason}"
     )
 
 
 def _build_payload_content(
     *,
     as_of_date: date,
+    sector_horizon: int,
+    candidate_horizon: int,
     market_pulse: dict[str, object],
     alpha_promotion: pd.DataFrame,
     sector_outlook: pd.DataFrame,
@@ -484,7 +548,7 @@ def _build_payload_content(
     lines.extend(
         [
             "",
-            "**다음 거래일 강세 예상 업종**",
+            f"**다음 거래일 강세 예상 업종 (D+{int(sector_horizon)})**",
         ]
     )
     if sector_outlook.empty:
@@ -495,7 +559,7 @@ def _build_payload_content(
     lines.extend(
         [
             "",
-            "**단일매수 상위 5종목**",
+            f"**다음 거래일 상위 후보 5종목 (D+{int(candidate_horizon)})**",
         ]
     )
     if single_buy_candidates.empty:
@@ -635,14 +699,14 @@ def render_discord_eod_report(
                     as_of_date=as_of_date,
                     ranking_version=SELECTION_ENGINE_V2_VERSION,
                     prediction_version=ALPHA_PREDICTION_VERSION,
-                    horizon=5,
+                    horizon=DISCORD_EOD_SECTOR_HORIZON,
                     candidate_limit=max(top_limit * 8, 30),
                     limit=3,
                 )
                 single_buy_candidates = _load_top_selection_rows(
                     connection,
                     as_of_date=as_of_date,
-                    horizon=5,
+                    horizon=DISCORD_EOD_CANDIDATE_HORIZON,
                     limit=top_limit,
                 )
                 official_targets = _load_official_target_rows(
@@ -653,6 +717,8 @@ def render_discord_eod_report(
                 market_news = _load_market_news(connection, as_of_date=as_of_date)
                 content = _build_payload_content(
                     as_of_date=as_of_date,
+                    sector_horizon=DISCORD_EOD_SECTOR_HORIZON,
+                    candidate_horizon=DISCORD_EOD_CANDIDATE_HORIZON,
                     market_pulse=market_pulse,
                     alpha_promotion=alpha_promotion,
                     sector_outlook=sector_outlook,
