@@ -12,12 +12,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.ui.components import render_record_cards, render_screen_guide, render_story_stream
 from app.ui.dashboard_v2 import (
+    DASHBOARD_DEFAULT_PICK_HORIZON,
     dashboard_snapshot_note,
     display_number,
     display_percent,
     display_text,
     display_token_list,
     display_value,
+    filter_dashboard_leaderboard,
+    filter_dashboard_target_book,
     load_dashboard_v2_context,
     read_dashboard_frame,
     render_dashboard_v2_empty,
@@ -63,25 +66,12 @@ else:
     horizon = st.segmented_control(
         "추천 기간",
         options=[1, 5],
-        default=5,
+        default=DASHBOARD_DEFAULT_PICK_HORIZON,
         format_func=lambda value: f"D+{value}",
     )
 
-    filtered_board = leaderboard.copy()
-    if not filtered_board.empty:
-        filtered_board = filtered_board.loc[filtered_board["horizon"] == int(horizon)].copy()
-        if market != "ALL":
-            filtered_board = filtered_board.loc[
-                filtered_board["market"].astype(str).str.upper() == market
-            ].copy()
-
-    filtered_target = target_book.copy()
-    if not filtered_target.empty:
-        filtered_target = filtered_target.loc[filtered_target["included_flag"].fillna(False)].copy()
-        if market != "ALL":
-            filtered_target = filtered_target.loc[
-                filtered_target["market"].astype(str).str.upper() == market
-            ].copy()
+    filtered_board = filter_dashboard_leaderboard(leaderboard, horizon=int(horizon), market=market)
+    filtered_target = filter_dashboard_target_book(target_book, market=market)
 
     filtered_sector = sector_outlook.copy()
     if not filtered_sector.empty and "horizon" in filtered_sector.columns:

@@ -30,6 +30,10 @@ REGIME_LABELS = {
     "unknown": "판단 보류",
 }
 
+DASHBOARD_DEFAULT_PICK_HORIZON = 5
+_DASHBOARD_EXCLUDED_TARGET_SYMBOLS = {"__CASH__"}
+_EXECUTION_MODE_PRIORITY = {"OPEN_ALL": 0, "TIMING_ASSISTED": 1}
+
 
 def load_dashboard_v2_context(project_root: Path):
     settings = load_ui_base_settings(project_root)
@@ -144,6 +148,60 @@ def display_scope(scope: object) -> str:
 def display_market_mood(headline: object) -> str:
     value = display_text(headline, "-").lower()
     return REGIME_LABELS.get(value, display_text(headline))
+
+
+def filter_dashboard_leaderboard(
+    frame: pd.DataFrame,
+    *,
+    horizon: int = DASHBOARD_DEFAULT_PICK_HORIZON,
+    market: str = "ALL",
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    filtered = frame.copy()
+    if "horizon" in filtered.columns:
+        horizon_values = pd.to_numeric(filtered["horizon"], errors="coerce")
+        filtered = filtered.loc[horizon_values == int(horizon)].copy()
+    if market != "ALL" and "market" in filtered.columns:
+        filtered = filtered.loc[filtered["market"].astype(str).str.upper() == market].copy()
+    return filtered
+
+
+def filter_dashboard_target_book(frame: pd.DataFrame, *, market: str = "ALL") -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    filtered = frame.copy()
+    if "included_flag" in filtered.columns:
+        filtered = filtered.loc[filtered["included_flag"].fillna(False)].copy()
+    if market != "ALL" and "market" in filtered.columns:
+        filtered = filtered.loc[filtered["market"].astype(str).str.upper() == market].copy()
+    if "symbol" in filtered.columns:
+        filtered = filtered.loc[
+            ~filtered["symbol"].astype(str).isin(_DASHBOARD_EXCLUDED_TARGET_SYMBOLS)
+        ].copy()
+    if "target_weight" in filtered.columns:
+        target_weights = pd.to_numeric(filtered["target_weight"], errors="coerce").fillna(0.0)
+        filtered = filtered.loc[target_weights > 0].copy()
+    if filtered.empty:
+        return filtered
+    filtered = filtered.assign(_original_order=range(len(filtered)))
+    if "execution_mode" in filtered.columns:
+        filtered = filtered.assign(
+            _execution_priority=filtered["execution_mode"]
+            .astype(str)
+            .map(_EXECUTION_MODE_PRIORITY)
+            .fillna(99)
+        )
+    else:
+        filtered = filtered.assign(_execution_priority=99)
+    if "symbol" in filtered.columns:
+        filtered = (
+            filtered.sort_values(["symbol", "_execution_priority", "_original_order"])
+            .drop_duplicates(subset=["symbol"], keep="first")
+            .sort_values("_original_order")
+            .copy()
+        )
+    return filtered.drop(columns=["_execution_priority", "_original_order"], errors="ignore")
 
 
 def render_dashboard_v2_header(

@@ -13,11 +13,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.ui.components import render_story_stream
 from app.ui.dashboard_v2 import (
+    DASHBOARD_DEFAULT_PICK_HORIZON,
     dashboard_snapshot_note,
     display_number,
     display_percent,
     display_text,
     display_value,
+    filter_dashboard_leaderboard,
+    filter_dashboard_target_book,
     load_dashboard_v2_context,
     read_dashboard_frame,
     render_dashboard_v2_empty,
@@ -60,8 +63,14 @@ def render_today_page() -> None:
         render_dashboard_v2_footer(settings, manifest=manifest, page_name="대시보드")
         return
 
+    filtered_leaderboard = filter_dashboard_leaderboard(
+        leaderboard,
+        horizon=DASHBOARD_DEFAULT_PICK_HORIZON,
+    )
+    filtered_target_book = filter_dashboard_target_book(target_book)
+
     picks_items = []
-    for row in leaderboard.head(3).to_dict(orient="records"):
+    for row in filtered_leaderboard.head(3).to_dict(orient="records"):
         picks_items.append(
             {
                 "eyebrow": display_text(row.get("market")),
@@ -76,7 +85,7 @@ def render_today_page() -> None:
                 "tone": "positive",
             }
         )
-    for row in target_book.loc[target_book["included_flag"].fillna(False)].head(2).to_dict(orient="records"):
+    for row in filtered_target_book.head(2).to_dict(orient="records"):
         picks_items.append(
             {
                 "eyebrow": "공식 편입안",
