@@ -18,6 +18,7 @@ from app.ui.dashboard_v2 import (
     display_number,
     display_percent,
     display_text,
+    display_value,
     filter_dashboard_leaderboard,
     load_dashboard_v2_context,
     read_dashboard_frame,
