@@ -41,12 +41,12 @@ def test_build_payload_content_labels_candidate_horizon_explicitly() -> None:
         alpha_promotion=pd.DataFrame(),
         sector_outlook=pd.DataFrame(),
         single_buy_candidates=pd.DataFrame(),
-        official_targets=pd.DataFrame(),
         market_news=pd.DataFrame(),
     )
 
     assert "**다음 거래일 강세 예상 업종 (D+1)**" in content
     assert "**다음 거래일 상위 후보 5종목 (D+1)**" in content
+    assert "공식 추천안" not in content
 
 
 def test_load_official_target_rows_excludes_cash_and_zero_weight() -> None:

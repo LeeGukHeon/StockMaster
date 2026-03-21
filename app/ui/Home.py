@@ -18,9 +18,7 @@ from app.ui.dashboard_v2 import (
     display_number,
     display_percent,
     display_text,
-    display_value,
     filter_dashboard_leaderboard,
-    filter_dashboard_target_book,
     load_dashboard_v2_context,
     read_dashboard_frame,
     render_dashboard_v2_empty,
@@ -44,7 +42,6 @@ def _quick_link(label: str, page_key: str, description: str) -> None:
 def render_today_page() -> None:
     settings, activity, manifest = load_dashboard_v2_context(PROJECT_ROOT)
     leaderboard = read_dashboard_frame(settings, "leaderboard")
-    target_book = read_dashboard_frame(settings, "portfolio_target_book")
     summary_frame = read_dashboard_frame(settings, "stock_workbench_summary")
     live_frame = read_dashboard_frame(settings, "stock_workbench_live_recommendation")
     alpha_promotion = read_dashboard_frame(settings, "alpha_promotion_summary")
@@ -58,7 +55,7 @@ def render_today_page() -> None:
         manifest=manifest,
     )
 
-    if leaderboard.empty and target_book.empty and summary_frame.empty:
+    if leaderboard.empty and summary_frame.empty:
         render_dashboard_v2_empty("Dashboard v2용 스냅샷이 아직 준비되지 않았습니다.")
         render_dashboard_v2_footer(settings, manifest=manifest, page_name="대시보드")
         return
@@ -67,7 +64,6 @@ def render_today_page() -> None:
         leaderboard,
         horizon=DASHBOARD_DEFAULT_PICK_HORIZON,
     )
-    filtered_target_book = filter_dashboard_target_book(target_book)
 
     picks_items = []
     for row in filtered_leaderboard.head(3).to_dict(orient="records"):
@@ -83,21 +79,6 @@ def render_today_page() -> None:
                 "meta": f"선정 점수 {display_number(row.get('final_selection_value'))}",
                 "badge": display_text(row.get("grade"), "추천"),
                 "tone": "positive",
-            }
-        )
-    for row in filtered_target_book.head(2).to_dict(orient="records"):
-        picks_items.append(
-            {
-                "eyebrow": "공식 편입안",
-                "title": f"{display_text(row.get('symbol'))} · {display_text(row.get('company_name'))}",
-                "body": (
-                    f"{display_text(row.get('action_plan_label'))} / "
-                    f"목표 비중 {display_percent(row.get('target_weight'))} / "
-                    f"목표가 {display_number(row.get('target_price'))}"
-                ),
-                "meta": f"진입 예정일 {display_text(row.get('entry_trade_date'))} · 게이트 {display_value('gate_status', row.get('gate_status'))}",
-                "badge": display_value("execution_mode", row.get("execution_mode"), "편입"),
-                "tone": "accent",
             }
         )
 
@@ -187,7 +168,7 @@ def render_today_page() -> None:
     st.subheader("바로 가기")
     left, mid, right = st.columns(3)
     with left:
-        _quick_link("추천 종목", "picks", "내일 바로 볼 종목과 공식 편입안을 봅니다.")
+        _quick_link("추천 종목", "picks", "내일 바로 볼 상위 후보와 섹터 흐름을 봅니다.")
         _quick_link("즉석 종목 전망", "outlook", "종목 하나를 눌러 최신 스냅샷 전망을 봅니다.")
     with mid:
         _quick_link("주간 보고", "weekly_report", "주간 캘리브레이션과 정책 보고만 모아 봅니다.")

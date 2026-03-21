@@ -163,23 +163,10 @@ def _publish_readiness(connection, *, as_of_date: date) -> tuple[bool, dict[str,
             ).fetchone()[0]
             or 0
         ),
-        "portfolio_rows": int(
-            connection.execute(
-                """
-                SELECT COUNT(*)
-                FROM fact_portfolio_target_book
-                WHERE as_of_date = ?
-                  AND execution_mode = 'OPEN_ALL'
-                  AND symbol <> '__CASH__'
-                """,
-                [as_of_date],
-            ).fetchone()[0]
-            or 0
-        ),
     }
     ready = all(
         readiness[key] > 0
-        for key in ("ranking_rows", "prediction_rows", "regime_rows", "ohlcv_rows", "portfolio_rows")
+        for key in ("ranking_rows", "prediction_rows", "regime_rows", "ohlcv_rows")
     )
     return ready, readiness
 
@@ -519,7 +506,6 @@ def _build_payload_content(
     alpha_promotion: pd.DataFrame,
     sector_outlook: pd.DataFrame,
     single_buy_candidates: pd.DataFrame,
-    official_targets: pd.DataFrame,
     market_news: pd.DataFrame,
 ) -> str:
     lines = [
@@ -536,7 +522,7 @@ def _build_payload_content(
             f" | 외국인 플러스 비율 {_pct_text(market_pulse.get('foreign_positive_ratio'))}"
             f" | 기관 플러스 비율 {_pct_text(market_pulse.get('institution_positive_ratio'))}"
         ),
-        "- 아래는 상위 업종 흐름, 단일매수 상위 후보, 공식 추천안을 순서대로 정리한 장마감 요약입니다.",
+        "- 아래는 상위 업종 흐름과 다음 거래일 상위 후보를 순서대로 정리한 장마감 요약입니다.",
         "- 기대수익과 참고 범위는 과거 통계 기반 참고치일 뿐, 실제 수익을 보장하는 값은 아닙니다.",
         "",
         "**모델 점검**",
@@ -567,17 +553,6 @@ def _build_payload_content(
     else:
         for index, (_, row) in enumerate(single_buy_candidates.iterrows(), start=1):
             lines.extend(_format_pick_block(row, rank=index))
-    lines.extend(
-        [
-            "",
-            "**다음 거래일 공식 추천안**",
-        ]
-    )
-    if official_targets.empty:
-        lines.append("- 오늘 생성된 공식 추천안에는 바로 담을 종목이 없습니다.")
-    else:
-        for index, (_, row) in enumerate(official_targets.iterrows(), start=1):
-            lines.extend(_format_official_pick_block(row, rank=index))
     lines.append("")
     lines.append("**시장 전체 주요 뉴스**")
     if market_news.empty:
@@ -678,7 +653,6 @@ def render_discord_eod_report(
                 input_sources=[
                     "fact_ranking",
                     "fact_prediction",
-                    "fact_portfolio_target_book",
                     "fact_market_regime_snapshot",
                     "fact_news_item",
                     "fact_alpha_promotion_test",
@@ -709,11 +683,6 @@ def render_discord_eod_report(
                     horizon=DISCORD_EOD_CANDIDATE_HORIZON,
                     limit=top_limit,
                 )
-                official_targets = _load_official_target_rows(
-                    connection,
-                    as_of_date=as_of_date,
-                    limit=top_limit,
-                )
                 market_news = _load_market_news(connection, as_of_date=as_of_date)
                 content = _build_payload_content(
                     as_of_date=as_of_date,
@@ -723,7 +692,6 @@ def render_discord_eod_report(
                     alpha_promotion=alpha_promotion,
                     sector_outlook=sector_outlook,
                     single_buy_candidates=single_buy_candidates,
-                    official_targets=official_targets,
                     market_news=market_news,
                 )
                 messages = _build_payload_messages(
@@ -822,8 +790,7 @@ def publish_discord_eod_report(
                     f"ranking_rows={readiness['ranking_rows']}, "
                     f"prediction_rows={readiness['prediction_rows']}, "
                     f"regime_rows={readiness['regime_rows']}, "
-                    f"ohlcv_rows={readiness['ohlcv_rows']}, "
-                    f"portfolio_rows={readiness['portfolio_rows']}."
+                    f"ohlcv_rows={readiness['ohlcv_rows']}."
                 )
                 record_run_finish(
                     connection,

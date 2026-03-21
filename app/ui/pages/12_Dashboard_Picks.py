@@ -13,14 +13,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.ui.components import render_record_cards, render_screen_guide, render_story_stream
 from app.ui.dashboard_v2 import (
     DASHBOARD_DEFAULT_PICK_HORIZON,
-    dashboard_snapshot_note,
     display_number,
     display_percent,
     display_text,
     display_token_list,
-    display_value,
     filter_dashboard_leaderboard,
-    filter_dashboard_target_book,
     load_dashboard_v2_context,
     read_dashboard_frame,
     render_dashboard_v2_empty,
@@ -31,7 +28,6 @@ from app.ui.dashboard_v2 import (
 
 settings, activity, manifest = load_dashboard_v2_context(PROJECT_ROOT)
 leaderboard = read_dashboard_frame(settings, "leaderboard")
-target_book = read_dashboard_frame(settings, "portfolio_target_book")
 sector_outlook = read_dashboard_frame(settings, "sector_outlook")
 
 def _tone_from_grade(grade: object) -> str:
@@ -45,21 +41,20 @@ def _tone_from_grade(grade: object) -> str:
 
 render_dashboard_v2_header(
     title="추천 종목",
-    description="내일 바로 볼 종목과 공식 편입안을 읽기 전용 스냅샷 기준으로만 보여줍니다.",
+    description="내일 바로 볼 상위 후보와 섹터 흐름만 읽기 전용 스냅샷 기준으로 보여줍니다.",
     settings=settings,
     activity=activity,
     manifest=manifest,
 )
 render_screen_guide(
-    summary="추천 종목 화면은 상단 후보, 공식 편입안, 섹터 포인트만 남긴 얇은 화면입니다.",
+    summary="추천 종목 화면은 상단 후보와 섹터 포인트만 남긴 얇은 화면입니다.",
     bullets=[
         "상단 후보에서 종목 이유와 리스크를 먼저 읽습니다.",
-        "공식 편입안에서 실제 target book과 진입 예정일을 확인합니다.",
         "섹터 포인트는 이번 스냅샷 기준 강한 묶음만 보여줍니다.",
     ],
 )
 
-if leaderboard.empty and target_book.empty:
+if leaderboard.empty:
     render_dashboard_v2_empty("추천 종목 스냅샷이 아직 준비되지 않았습니다.")
 else:
     market = st.segmented_control("시장 범위", options=["ALL", "KOSPI", "KOSDAQ"], default="ALL")
@@ -71,7 +66,6 @@ else:
     )
 
     filtered_board = filter_dashboard_leaderboard(leaderboard, horizon=int(horizon), market=market)
-    filtered_target = filter_dashboard_target_book(target_book, market=market)
 
     filtered_sector = sector_outlook.copy()
     if not filtered_sector.empty and "horizon" in filtered_sector.columns:
@@ -104,26 +98,6 @@ else:
             }
         )
 
-    target_items = []
-    for row in filtered_target.head(5).to_dict(orient="records"):
-        target_items.append(
-            {
-                "eyebrow": display_value("execution_mode", row.get("execution_mode")),
-                "title": f"{display_text(row.get('symbol'))} · {display_text(row.get('company_name'))}",
-                "body": (
-                    f"{display_text(row.get('action_plan_label'))} / "
-                    f"목표 비중 {display_percent(row.get('target_weight'))} / "
-                    f"목표가 {display_number(row.get('target_price'))}"
-                ),
-                "meta": (
-                    f"진입 예정일 {display_text(row.get('entry_trade_date'))} · "
-                    f"게이트 {display_value('gate_status', row.get('gate_status'))}"
-                ),
-                "badge": display_text(row.get("market")),
-                "tone": "accent",
-            }
-        )
-
     sector_items = []
     for row in filtered_sector.head(4).to_dict(orient="records"):
         sector_items.append(
@@ -148,12 +122,6 @@ else:
         empty_message="현재 조건에 맞는 상단 후보가 없습니다.",
     )
     render_story_stream(
-        title="공식 편입안",
-        summary=dashboard_snapshot_note(manifest),
-        items=target_items,
-        empty_message="현재 스냅샷에 공식 편입안이 없습니다.",
-    )
-    render_story_stream(
         title="섹터 포인트",
         summary="이번 스냅샷에서 강한 흐름이 모인 섹터와 업종만 추렸습니다.",
         items=sector_items,
@@ -169,16 +137,6 @@ else:
             detail_columns=["expected_excess_return", "final_selection_value", "model_spec_id"],
             limit=10,
             empty_message="리더보드 원본이 없습니다.",
-            show_table_expander=False,
-        )
-        render_record_cards(
-            filtered_target,
-            title="타겟북 원본",
-            primary_column="symbol",
-            secondary_columns=["company_name", "action_plan_label"],
-            detail_columns=["target_weight", "target_price", "entry_trade_date", "gate_status"],
-            limit=10,
-            empty_message="타겟북 원본이 없습니다.",
             show_table_expander=False,
         )
 
