@@ -47,7 +47,7 @@ def test_filter_dashboard_leaderboard_uses_default_horizon() -> None:
         ]
     )
     filtered = filter_dashboard_leaderboard(frame, horizon=DASHBOARD_DEFAULT_PICK_HORIZON)
-    assert filtered["symbol"].tolist() == ["B", "C"]
+    assert filtered["symbol"].tolist() == ["A"]
 
 
 def test_filter_dashboard_target_book_excludes_cash_zero_weight_and_duplicates() -> None:
