@@ -2082,6 +2082,12 @@ def materialize_ui_read_model_snapshot(
                     "alpha_promotion_summary",
                     load_alpha_promotion_summary(connection),
                 ),
+                UIReadModelDataset("symbol_options", _symbol_options_frame(connection)),
+                UIReadModelDataset("stock_workbench_summary", _stock_workbench_summary_frame(connection)),
+                UIReadModelDataset(
+                    "stock_workbench_live_recommendation",
+                    _stock_workbench_live_recommendation_frame(connection, ranking_as_of_date=ranking_as_of_date),
+                ),
                 UIReadModelDataset("evaluation_summary_latest", _latest_evaluation_summary_frame(connection)),
                 UIReadModelDataset("evaluation_comparison_latest", _latest_evaluation_comparison_frame(connection)),
                 UIReadModelDataset(
