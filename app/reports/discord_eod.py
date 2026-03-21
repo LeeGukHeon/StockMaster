@@ -351,6 +351,15 @@ def _translate_execution_style(value: object) -> str:
     return EXECUTION_STYLE_LABELS.get(text, text)
 
 
+def _horizon_hold_basis_label(horizon: int) -> str:
+    horizon_value = int(horizon)
+    if horizon_value == 1:
+        return "하루 보유 기준"
+    if horizon_value == 5:
+        return "5거래일 보유 기준"
+    return f"{horizon_value}거래일 보유 기준"
+
+
 def _date_text(value: object) -> str:
     if value is None or pd.isna(value):
         return "-"
@@ -488,10 +497,11 @@ def _format_alpha_promotion_line(row: pd.Series) -> str:
     active_text = str(row.get("active_model_label") or "-")
     if active_top10:
         active_text = f"{active_text} {active_top10}"
+    horizon_basis = _horizon_hold_basis_label(int(row["horizon"]))
     decision_label = _translate_alpha_decision_label(row.get("decision_label"))
     decision_reason = _translate_alpha_decision_reason(row.get("decision_reason_label"))
     return (
-        f"- {int(row['horizon'])}거래일 모델 점검: {decision_label} "
+        f"- {horizon_basis} 모델 점검 (D+{int(row['horizon'])}): {decision_label} "
         f"| 현재 사용 {active_text} | 비교 후보 {compare_text} "
         f"| 비교 표본 {int(row['sample_count'])}{p_value} | 판단 이유 {decision_reason}"
     )
@@ -508,6 +518,8 @@ def _build_payload_content(
     single_buy_candidates: pd.DataFrame,
     market_news: pd.DataFrame,
 ) -> str:
+    sector_basis = _horizon_hold_basis_label(sector_horizon)
+    candidate_basis = _horizon_hold_basis_label(candidate_horizon)
     lines = [
         f"**StockMaster 오늘 장마감 요약 | {as_of_date.isoformat()}**",
         "",
@@ -523,6 +535,8 @@ def _build_payload_content(
             f" | 기관 플러스 비율 {_pct_text(market_pulse.get('institution_positive_ratio'))}"
         ),
         "- 아래는 상위 업종 흐름과 다음 거래일 상위 후보를 순서대로 정리한 장마감 요약입니다.",
+        f"- 상위 후보와 업종 흐름은 {candidate_basis}(D+{int(candidate_horizon)})으로 읽어주세요.",
+        "- 모델 점검은 하루 보유 기준(D+1)과 5거래일 보유 기준(D+5)을 함께 보여줍니다.",
         "- 기대수익과 참고 범위는 과거 통계 기반 참고치일 뿐, 실제 수익을 보장하는 값은 아닙니다.",
         "",
         "**모델 점검**",
@@ -534,7 +548,7 @@ def _build_payload_content(
     lines.extend(
         [
             "",
-            f"**다음 거래일 강세 예상 업종 (D+{int(sector_horizon)})**",
+            f"**다음 거래일 강세 예상 업종 | {sector_basis} (D+{int(sector_horizon)})**",
         ]
     )
     if sector_outlook.empty:
@@ -545,7 +559,7 @@ def _build_payload_content(
     lines.extend(
         [
             "",
-            f"**다음 거래일 상위 후보 5종목 (D+{int(candidate_horizon)})**",
+            f"**다음 거래일 상위 후보 5종목 | {candidate_basis} (D+{int(candidate_horizon)})**",
         ]
     )
     if single_buy_candidates.empty:

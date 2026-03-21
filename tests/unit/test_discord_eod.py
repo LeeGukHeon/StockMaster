@@ -30,6 +30,7 @@ def test_format_alpha_promotion_line_uses_korean_labels() -> None:
 
     assert "기존 모델 유지" in line
     assert "현재 모델이 우수 후보군에 남음" in line
+    assert "하루 보유 기준 모델 점검 (D+1)" in line
 
 
 def test_build_payload_content_labels_candidate_horizon_explicitly() -> None:
@@ -44,8 +45,9 @@ def test_build_payload_content_labels_candidate_horizon_explicitly() -> None:
         market_news=pd.DataFrame(),
     )
 
-    assert "**다음 거래일 강세 예상 업종 (D+1)**" in content
-    assert "**다음 거래일 상위 후보 5종목 (D+1)**" in content
+    assert "**다음 거래일 강세 예상 업종 | 하루 보유 기준 (D+1)**" in content
+    assert "**다음 거래일 상위 후보 5종목 | 하루 보유 기준 (D+1)**" in content
+    assert "모델 점검은 하루 보유 기준(D+1)과 5거래일 보유 기준(D+5)을 함께 보여줍니다." in content
     assert "공식 추천안" not in content
 
 
