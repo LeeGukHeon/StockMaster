@@ -872,45 +872,48 @@ def _latest_intraday_meta_overlay_comparison_frame(
     *,
     metric_scope: str,
 ) -> pd.DataFrame:
-    if metric_scope == "overlay":
+    try:
+        if metric_scope == "overlay":
+            return connection.execute(
+                """
+                SELECT
+                    horizon,
+                    panel_name,
+                    MAX(CASE WHEN metric_name = 'policy_only_mean_excess_return' THEN metric_value END) AS policy_only_mean_excess_return,
+                    MAX(CASE WHEN metric_name = 'meta_overlay_mean_excess_return' THEN metric_value END) AS meta_overlay_mean_excess_return,
+                    MAX(CASE WHEN metric_name = 'same_exit_lift_mean_excess_return' THEN metric_value END) AS same_exit_lift_mean_excess_return,
+                    MAX(CASE WHEN metric_name = 'same_exit_lift_mean_timing_edge_bps' THEN metric_value END) AS same_exit_lift_mean_timing_edge_bps,
+                    MAX(CASE WHEN metric_name = 'override_rate' THEN metric_value END) AS override_rate,
+                    MAX(CASE WHEN metric_name = 'fallback_rate' THEN metric_value END) AS fallback_rate,
+                    MAX(CASE WHEN metric_name = 'upgrade_precision' THEN metric_value END) AS upgrade_precision,
+                    MAX(CASE WHEN metric_name = 'downgrade_precision' THEN metric_value END) AS downgrade_precision
+                FROM fact_intraday_meta_overlay_comparison
+                WHERE metric_scope = 'overlay'
+                GROUP BY horizon, panel_name
+                ORDER BY horizon, panel_name
+                LIMIT 100
+                """
+            ).fetchdf()
         return connection.execute(
             """
             SELECT
+                metric_scope,
+                comparison_value,
                 horizon,
                 panel_name,
-                MAX(CASE WHEN metric_name = 'policy_only_mean_excess_return' THEN metric_value END) AS policy_only_mean_excess_return,
-                MAX(CASE WHEN metric_name = 'meta_overlay_mean_excess_return' THEN metric_value END) AS meta_overlay_mean_excess_return,
-                MAX(CASE WHEN metric_name = 'same_exit_lift_mean_excess_return' THEN metric_value END) AS same_exit_lift_mean_excess_return,
-                MAX(CASE WHEN metric_name = 'same_exit_lift_mean_timing_edge_bps' THEN metric_value END) AS same_exit_lift_mean_timing_edge_bps,
-                MAX(CASE WHEN metric_name = 'override_rate' THEN metric_value END) AS override_rate,
-                MAX(CASE WHEN metric_name = 'fallback_rate' THEN metric_value END) AS fallback_rate,
-                MAX(CASE WHEN metric_name = 'upgrade_precision' THEN metric_value END) AS upgrade_precision,
-                MAX(CASE WHEN metric_name = 'downgrade_precision' THEN metric_value END) AS downgrade_precision
+                metric_name,
+                policy_only_value,
+                meta_overlay_value,
+                metric_delta
             FROM fact_intraday_meta_overlay_comparison
-            WHERE metric_scope = 'overlay'
-            GROUP BY horizon, panel_name
-            ORDER BY horizon, panel_name
-            LIMIT 100
-            """
+            WHERE metric_scope = ?
+            ORDER BY horizon, panel_name, comparison_value, metric_name
+            LIMIT 400
+            """,
+            [metric_scope],
         ).fetchdf()
-    return connection.execute(
-        """
-        SELECT
-            metric_scope,
-            comparison_value,
-            horizon,
-            panel_name,
-            metric_name,
-            policy_only_value,
-            meta_overlay_value,
-            metric_delta
-        FROM fact_intraday_meta_overlay_comparison
-        WHERE metric_scope = ?
-        ORDER BY horizon, panel_name, comparison_value, metric_name
-        LIMIT 400
-        """,
-        [metric_scope],
-    ).fetchdf()
+    except duckdb.Error:
+        return pd.DataFrame()
 
 
 def _latest_krx_service_status_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
