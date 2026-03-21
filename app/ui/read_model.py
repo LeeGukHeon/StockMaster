@@ -162,10 +162,20 @@ def _write_manifest(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _copy_snapshot_to_latest(snapshot_root: Path, latest_root: Path) -> None:
+    _copy_snapshot_to_latest_with_mode(snapshot_root, latest_root, replace_all=True)
+
+
+def _copy_snapshot_to_latest_with_mode(
+    snapshot_root: Path,
+    latest_root: Path,
+    *,
+    replace_all: bool,
+) -> None:
     latest_root.mkdir(parents=True, exist_ok=True)
-    for existing in latest_root.glob("*"):
-        if existing.is_file():
-            existing.unlink()
+    if replace_all:
+        for existing in latest_root.glob("*"):
+            if existing.is_file():
+                existing.unlink()
     for item in snapshot_root.iterdir():
         if item.is_file():
             shutil.copy2(item, latest_root / item.name)
@@ -2047,151 +2057,167 @@ def materialize_ui_read_model_snapshot(
     connection: duckdb.DuckDBPyConnection,
     as_of_date: date | None,
     job_run_id: str,
+    scope: str = "all",
 ) -> OpsJobResult:
+    normalized_scope = str(scope).strip().lower() or "all"
+    if normalized_scope not in {"all", "core", "stock_intraday"}:
+        raise ValueError(f"Unsupported UI read-model scope: {scope}")
+
     ranking_version = _resolve_latest_ranking_version(connection)
     ranking_as_of_date = _resolve_latest_ranking_date(connection, ranking_version)
     portfolio_as_of_date = _latest_portfolio_as_of_date(connection)
     portfolio_session_date = _latest_portfolio_session_date(connection, as_of_date=portfolio_as_of_date)
     regime_frame = _latest_regime_frame(connection)
     market_news_frame = _latest_market_news_frame(connection)
-    datasets: list[UIReadModelDataset] = [
-        UIReadModelDataset("market_pulse", _market_pulse_frame(connection)),
-        UIReadModelDataset("market_regime", regime_frame),
-        UIReadModelDataset("market_news", market_news_frame),
-        UIReadModelDataset("flow_summary", _latest_flow_summary_frame(connection)),
-        UIReadModelDataset(
-            "alpha_promotion_summary",
-            load_alpha_promotion_summary(connection),
-        ),
-        UIReadModelDataset("evaluation_summary_latest", _latest_evaluation_summary_frame(connection)),
-        UIReadModelDataset("evaluation_comparison_latest", _latest_evaluation_comparison_frame(connection)),
-        UIReadModelDataset(
-            "selection_engine_comparison_latest",
-            _latest_selection_engine_comparison_frame(connection),
-        ),
-        UIReadModelDataset(
-            "calibration_diagnostic_latest",
-            _latest_calibration_diagnostic_frame(connection),
-        ),
-        UIReadModelDataset("evaluation_outcomes_recent", _evaluation_outcomes_recent_frame(connection)),
-        UIReadModelDataset(
-            "portfolio_policy_registry",
-            _latest_portfolio_policy_registry_frame(connection),
-        ),
-        UIReadModelDataset("symbol_options", _symbol_options_frame(connection)),
-        UIReadModelDataset("stock_workbench_summary", _stock_workbench_summary_frame(connection)),
-        UIReadModelDataset(
-            "stock_workbench_live_recommendation",
-            _stock_workbench_live_recommendation_frame(connection, ranking_as_of_date=ranking_as_of_date),
-        ),
-        UIReadModelDataset("stock_workbench_price_history", _stock_workbench_price_history_frame(connection)),
-        UIReadModelDataset("stock_workbench_flow_history", _stock_workbench_flow_history_frame(connection)),
-        UIReadModelDataset("stock_workbench_news_history", _stock_workbench_news_history_frame(connection)),
-        UIReadModelDataset("stock_workbench_outcome_history", _stock_workbench_outcome_history_frame(connection)),
-        UIReadModelDataset(
-            "stock_workbench_intraday_decision",
-            _stock_workbench_intraday_decision_frame(connection),
-        ),
-        UIReadModelDataset(
-            "stock_workbench_intraday_timing",
-            _stock_workbench_intraday_timing_frame(connection),
-        ),
-        UIReadModelDataset(
-            "stock_workbench_intraday_tuned",
-            _stock_workbench_intraday_tuned_frame(connection),
-        ),
-        UIReadModelDataset(
-            "portfolio_nav",
-            _latest_portfolio_nav_frame(connection),
-        ),
-        UIReadModelDataset("intraday_status_latest", _latest_intraday_status_frame(connection)),
-        UIReadModelDataset(
-            "intraday_checkpoint_health_latest",
-            _latest_intraday_checkpoint_health_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_market_context_latest",
-            _latest_intraday_market_context_frame(connection),
-        ),
-        UIReadModelDataset("intraday_candidate_latest", _intraday_console_candidate_frame(connection)),
-        UIReadModelDataset("intraday_signal_latest", _intraday_console_signal_frame(connection)),
-        UIReadModelDataset("intraday_decision_latest", _intraday_console_decision_frame(connection)),
-        UIReadModelDataset(
-            "intraday_adjusted_decision_latest",
-            _intraday_console_adjusted_decision_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_strategy_trace_latest",
-            _intraday_console_strategy_trace_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_meta_prediction_latest",
-            _latest_intraday_meta_prediction_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_meta_decision_latest",
-            _latest_intraday_meta_decision_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_decision_lineage_latest",
-            _latest_intraday_decision_lineage_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_policy_recommendation_latest",
-            _latest_intraday_policy_recommendation_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_active_policy_latest",
-            _latest_intraday_active_policy_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_meta_active_model_latest",
-            _latest_intraday_meta_active_model_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_research_capability_latest",
-            _latest_intraday_research_capability_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_strategy_comparison_latest",
-            _latest_intraday_strategy_comparison_frame(connection, comparison_scope="all"),
-        ),
-        UIReadModelDataset(
-            "intraday_strategy_comparison_regime_latest",
-            _latest_intraday_strategy_comparison_frame(connection, comparison_scope="regime_family"),
-        ),
-        UIReadModelDataset(
-            "intraday_timing_calibration_latest",
-            _latest_intraday_timing_calibration_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_policy_evaluation_latest",
-            _latest_intraday_policy_evaluation_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_policy_ablation_latest",
-            _latest_intraday_policy_ablation_frame(connection),
-        ),
-        UIReadModelDataset(
-            "intraday_meta_overlay_latest",
-            _latest_intraday_meta_overlay_comparison_frame(connection, metric_scope="overlay"),
-        ),
-        UIReadModelDataset(
-            "intraday_meta_overlay_regime_latest",
-            _latest_intraday_meta_overlay_comparison_frame(connection, metric_scope="regime"),
-        ),
-        UIReadModelDataset(
-            "intraday_meta_overlay_checkpoint_latest",
-            _latest_intraday_meta_overlay_comparison_frame(connection, metric_scope="checkpoint"),
-        ),
-        UIReadModelDataset("krx_service_status_latest", _latest_krx_service_status_frame(connection)),
-        UIReadModelDataset("krx_budget_latest", _latest_krx_budget_snapshot_frame(connection)),
-        UIReadModelDataset("krx_request_log_latest", _latest_krx_request_log_frame(connection)),
-        UIReadModelDataset(
-            "krx_source_attribution_latest",
-            _latest_krx_source_attribution_frame(connection),
-        ),
-    ]
+    datasets: list[UIReadModelDataset] = []
+
+    if normalized_scope in {"all", "core"}:
+        datasets.extend(
+            [
+                UIReadModelDataset("market_pulse", _market_pulse_frame(connection)),
+                UIReadModelDataset("market_regime", regime_frame),
+                UIReadModelDataset("market_news", market_news_frame),
+                UIReadModelDataset("flow_summary", _latest_flow_summary_frame(connection)),
+                UIReadModelDataset(
+                    "alpha_promotion_summary",
+                    load_alpha_promotion_summary(connection),
+                ),
+                UIReadModelDataset("evaluation_summary_latest", _latest_evaluation_summary_frame(connection)),
+                UIReadModelDataset("evaluation_comparison_latest", _latest_evaluation_comparison_frame(connection)),
+                UIReadModelDataset(
+                    "selection_engine_comparison_latest",
+                    _latest_selection_engine_comparison_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "calibration_diagnostic_latest",
+                    _latest_calibration_diagnostic_frame(connection),
+                ),
+                UIReadModelDataset("evaluation_outcomes_recent", _evaluation_outcomes_recent_frame(connection)),
+                UIReadModelDataset(
+                    "portfolio_policy_registry",
+                    _latest_portfolio_policy_registry_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "portfolio_nav",
+                    _latest_portfolio_nav_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_research_capability_latest",
+                    _latest_intraday_research_capability_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_strategy_comparison_latest",
+                    _latest_intraday_strategy_comparison_frame(connection, comparison_scope="all"),
+                ),
+                UIReadModelDataset(
+                    "intraday_strategy_comparison_regime_latest",
+                    _latest_intraday_strategy_comparison_frame(connection, comparison_scope="regime_family"),
+                ),
+                UIReadModelDataset(
+                    "intraday_timing_calibration_latest",
+                    _latest_intraday_timing_calibration_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_policy_evaluation_latest",
+                    _latest_intraday_policy_evaluation_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_policy_ablation_latest",
+                    _latest_intraday_policy_ablation_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_meta_overlay_latest",
+                    _latest_intraday_meta_overlay_comparison_frame(connection, metric_scope="overlay"),
+                ),
+                UIReadModelDataset(
+                    "intraday_meta_overlay_regime_latest",
+                    _latest_intraday_meta_overlay_comparison_frame(connection, metric_scope="regime"),
+                ),
+                UIReadModelDataset(
+                    "intraday_meta_overlay_checkpoint_latest",
+                    _latest_intraday_meta_overlay_comparison_frame(connection, metric_scope="checkpoint"),
+                ),
+                UIReadModelDataset("krx_service_status_latest", _latest_krx_service_status_frame(connection)),
+                UIReadModelDataset("krx_budget_latest", _latest_krx_budget_snapshot_frame(connection)),
+                UIReadModelDataset("krx_request_log_latest", _latest_krx_request_log_frame(connection)),
+                UIReadModelDataset(
+                    "krx_source_attribution_latest",
+                    _latest_krx_source_attribution_frame(connection),
+                ),
+            ]
+        )
+
+    if normalized_scope in {"all", "stock_intraday"}:
+        datasets.extend(
+            [
+                UIReadModelDataset("symbol_options", _symbol_options_frame(connection)),
+                UIReadModelDataset("stock_workbench_summary", _stock_workbench_summary_frame(connection)),
+                UIReadModelDataset(
+                    "stock_workbench_live_recommendation",
+                    _stock_workbench_live_recommendation_frame(connection, ranking_as_of_date=ranking_as_of_date),
+                ),
+                UIReadModelDataset("stock_workbench_price_history", _stock_workbench_price_history_frame(connection)),
+                UIReadModelDataset("stock_workbench_flow_history", _stock_workbench_flow_history_frame(connection)),
+                UIReadModelDataset("stock_workbench_news_history", _stock_workbench_news_history_frame(connection)),
+                UIReadModelDataset("stock_workbench_outcome_history", _stock_workbench_outcome_history_frame(connection)),
+                UIReadModelDataset(
+                    "stock_workbench_intraday_decision",
+                    _stock_workbench_intraday_decision_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "stock_workbench_intraday_timing",
+                    _stock_workbench_intraday_timing_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "stock_workbench_intraday_tuned",
+                    _stock_workbench_intraday_tuned_frame(connection),
+                ),
+                UIReadModelDataset("intraday_status_latest", _latest_intraday_status_frame(connection)),
+                UIReadModelDataset(
+                    "intraday_checkpoint_health_latest",
+                    _latest_intraday_checkpoint_health_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_market_context_latest",
+                    _latest_intraday_market_context_frame(connection),
+                ),
+                UIReadModelDataset("intraday_candidate_latest", _intraday_console_candidate_frame(connection)),
+                UIReadModelDataset("intraday_signal_latest", _intraday_console_signal_frame(connection)),
+                UIReadModelDataset("intraday_decision_latest", _intraday_console_decision_frame(connection)),
+                UIReadModelDataset(
+                    "intraday_adjusted_decision_latest",
+                    _intraday_console_adjusted_decision_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_strategy_trace_latest",
+                    _intraday_console_strategy_trace_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_meta_prediction_latest",
+                    _latest_intraday_meta_prediction_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_meta_decision_latest",
+                    _latest_intraday_meta_decision_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_decision_lineage_latest",
+                    _latest_intraday_decision_lineage_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_policy_recommendation_latest",
+                    _latest_intraday_policy_recommendation_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_active_policy_latest",
+                    _latest_intraday_active_policy_frame(connection),
+                ),
+                UIReadModelDataset(
+                    "intraday_meta_active_model_latest",
+                    _latest_intraday_meta_active_model_frame(connection),
+                ),
+            ]
+        )
 
     if ranking_version is not None and ranking_as_of_date is not None:
         leaderboard = _leaderboard_frame(
@@ -2204,31 +2230,32 @@ def materialize_ui_read_model_snapshot(
             as_of_date=ranking_as_of_date,
             ranking_version=ranking_version,
         )
-        datasets.append(UIReadModelDataset("leaderboard", leaderboard))
-        datasets.append(UIReadModelDataset("leaderboard_grade_counts", grade_counts))
-        sector_frames: list[pd.DataFrame] = []
-        prediction_version = _prediction_version_for_ranking(ranking_version)
-        if prediction_version is not None:
-            for horizon in (1, 5):
-                sector_frame = sector_outlook_frame(
-                    connection,
-                    as_of_date=ranking_as_of_date,
-                    ranking_version=ranking_version,
-                    prediction_version=prediction_version,
-                    horizon=horizon,
-                    candidate_limit=40,
-                    limit=10,
+        if normalized_scope in {"all", "core"}:
+            datasets.append(UIReadModelDataset("leaderboard", leaderboard))
+            datasets.append(UIReadModelDataset("leaderboard_grade_counts", grade_counts))
+            sector_frames: list[pd.DataFrame] = []
+            prediction_version = _prediction_version_for_ranking(ranking_version)
+            if prediction_version is not None:
+                for horizon in (1, 5):
+                    sector_frame = sector_outlook_frame(
+                        connection,
+                        as_of_date=ranking_as_of_date,
+                        ranking_version=ranking_version,
+                        prediction_version=prediction_version,
+                        horizon=horizon,
+                        candidate_limit=40,
+                        limit=10,
+                    )
+                    if not sector_frame.empty:
+                        sector_frames.append(sector_frame)
+                datasets.append(
+                    UIReadModelDataset(
+                        "sector_outlook",
+                        pd.concat(sector_frames, ignore_index=True) if sector_frames else pd.DataFrame(),
+                    )
                 )
-                if not sector_frame.empty:
-                    sector_frames.append(sector_frame)
-            datasets.append(
-                UIReadModelDataset(
-                    "sector_outlook",
-                    pd.concat(sector_frames, ignore_index=True) if sector_frames else pd.DataFrame(),
-                )
-            )
 
-    if portfolio_as_of_date is not None:
+    if portfolio_as_of_date is not None and normalized_scope in {"all", "core"}:
         datasets.extend(
             [
                 UIReadModelDataset(
@@ -2278,6 +2305,7 @@ def materialize_ui_read_model_snapshot(
         "read_model_version": UI_READ_MODEL_VERSION,
         "built_at": now_local(settings.app.timezone).isoformat(),
         "job_run_id": job_run_id,
+        "scope": normalized_scope,
         "as_of_date": target_as_of_date.isoformat(),
         "ranking_version": ranking_version,
         "ranking_as_of_date": None if ranking_as_of_date is None else str(ranking_as_of_date),
@@ -2291,10 +2319,34 @@ def materialize_ui_read_model_snapshot(
         ),
         "datasets": {dataset.name: int(len(dataset.frame)) for dataset in datasets},
     }
+    if normalized_scope != "all":
+        previous_manifest = load_ui_read_model_manifest(settings)
+        previous_datasets = previous_manifest.get("datasets")
+        if isinstance(previous_datasets, dict):
+            merged_datasets = dict(previous_datasets)
+            merged_datasets.update(manifest["datasets"])
+            manifest["datasets"] = merged_datasets
+        for key in (
+            "ranking_version",
+            "ranking_as_of_date",
+            "portfolio_as_of_date",
+            "portfolio_session_date",
+            "market_mood",
+            "recommendation_timeline",
+            "as_of_date",
+        ):
+            if key not in previous_manifest:
+                continue
+            if manifest.get(key) in (None, {}, ""):
+                manifest[key] = previous_manifest[key]
     manifest_path = snapshot_root / "manifest.json"
     _write_manifest(manifest_path, manifest)
     artifact_paths.append(str(manifest_path))
-    _copy_snapshot_to_latest(snapshot_root, latest_root)
+    _copy_snapshot_to_latest_with_mode(
+        snapshot_root,
+        latest_root,
+        replace_all=(normalized_scope == "all"),
+    )
     _write_manifest(ui_read_model_manifest_path(settings), manifest)
 
     return OpsJobResult(
@@ -2302,7 +2354,7 @@ def materialize_ui_read_model_snapshot(
         job_name="materialize_ui_read_model_snapshot",
         status=JobStatus.SUCCESS,
         notes=(
-            f"UI read model snapshot refreshed for as_of_date={target_as_of_date.isoformat()} "
+            f"UI read model snapshot refreshed for scope={normalized_scope} as_of_date={target_as_of_date.isoformat()} "
             f"datasets={len(datasets)}"
         ),
         artifact_paths=artifact_paths,
