@@ -3821,7 +3821,8 @@ def latest_sector_outlook_frame(
     if not snapshot.empty and (ranking_version is None or str(ranking_version) == str(snapshot_version)):
         if as_of_date is None or str(as_of_date) == str(snapshot_date):
             frame = snapshot.copy()
-            frame = frame.loc[frame["horizon"] == int(horizon)].copy()
+            if "horizon" in frame.columns:
+                frame = frame.loc[frame["horizon"] == int(horizon)].copy()
             return frame.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()

@@ -2247,6 +2247,8 @@ def materialize_ui_read_model_snapshot(
                         limit=10,
                     )
                     if not sector_frame.empty:
+                        sector_frame = sector_frame.copy()
+                        sector_frame["horizon"] = int(horizon)
                         sector_frames.append(sector_frame)
                 datasets.append(
                     UIReadModelDataset(
