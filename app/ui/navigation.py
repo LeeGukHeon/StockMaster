@@ -67,7 +67,6 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             icon=":material/timeline:",
             url_path="intraday-console",
             path=_page_path(project_root, "app/ui/pages/07_Intraday_Console.py"),
-            access_mode="safe",
         ),
         PageSpec(
             key="evaluation",
@@ -83,7 +82,6 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             icon=":material/query_stats:",
             url_path="stock-workbench",
             path=_page_path(project_root, "app/ui/pages/05_Stock_Workbench.py"),
-            access_mode="safe",
         ),
         PageSpec(
             key="research_lab",
