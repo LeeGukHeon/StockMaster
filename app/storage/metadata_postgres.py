@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Lock
 from typing import Iterator
 
 import pandas as pd
@@ -17,9 +18,16 @@ from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from app.storage.metadata_schema import METADATA_TABLES, postgres_metadata_ddl
 
+_BOOTSTRAPPED_POSTGRES_METADATA_KEYS: set[tuple[str, str]] = set()
+_BOOTSTRAPPED_POSTGRES_METADATA_LOCK = Lock()
+
 
 def metadata_postgres_enabled(settings: Settings) -> bool:
     return bool(settings.metadata.enabled and settings.metadata.backend == "postgres")
+
+
+def _postgres_metadata_cache_key(settings: Settings) -> tuple[str, str]:
+    return (settings.metadata.db_url or "", settings.metadata.db_schema)
 
 
 @contextmanager
@@ -57,6 +65,18 @@ def bootstrap_postgres_metadata_store(settings: Settings) -> None:
             )
             for ddl in postgres_metadata_ddl(schema):
                 cursor.execute(ddl)
+    with _BOOTSTRAPPED_POSTGRES_METADATA_LOCK:
+        _BOOTSTRAPPED_POSTGRES_METADATA_KEYS.add(_postgres_metadata_cache_key(settings))
+
+
+def ensure_postgres_metadata_store(settings: Settings, *, force: bool = False) -> None:
+    if not metadata_postgres_enabled(settings):
+        return
+    cache_key = _postgres_metadata_cache_key(settings)
+    with _BOOTSTRAPPED_POSTGRES_METADATA_LOCK:
+        if not force and cache_key in _BOOTSTRAPPED_POSTGRES_METADATA_KEYS:
+            return
+    bootstrap_postgres_metadata_store(settings)
 
 
 def _frame_from_duckdb(settings: Settings, table_name: str) -> pd.DataFrame:
@@ -146,6 +166,7 @@ def _postgres_query(query: str) -> str:
 def execute_postgres_sql(settings: Settings, query: str, params: list | tuple | None = None) -> None:
     if not metadata_postgres_enabled(settings):
         return
+    ensure_postgres_metadata_store(settings)
     with postgres_metadata_connection(settings) as connection:
         with connection.cursor() as cursor:
             cursor.execute(_postgres_query(query), list(params or []))
@@ -158,6 +179,7 @@ def executemany_postgres_sql(
 ) -> None:
     if not metadata_postgres_enabled(settings) or not rows:
         return
+    ensure_postgres_metadata_store(settings)
     with postgres_metadata_connection(settings) as connection:
         with connection.cursor() as cursor:
             cursor.executemany(_postgres_query(query), rows)
@@ -170,6 +192,7 @@ def fetchone_postgres_sql(
 ):
     if not metadata_postgres_enabled(settings):
         return None
+    ensure_postgres_metadata_store(settings)
     with postgres_metadata_connection(settings) as connection:
         with connection.cursor() as cursor:
             cursor.execute(_postgres_query(query), list(params or []))
@@ -183,6 +206,7 @@ def fetchdf_postgres_sql(
 ) -> pd.DataFrame:
     if not metadata_postgres_enabled(settings):
         return pd.DataFrame()
+    ensure_postgres_metadata_store(settings)
     with postgres_metadata_connection(settings) as connection:
         with connection.cursor() as cursor:
             cursor.execute(_postgres_query(query), list(params or []))
