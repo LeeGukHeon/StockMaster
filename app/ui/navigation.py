@@ -74,6 +74,7 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             icon=":material/fact_check:",
             url_path="evaluation",
             path=_page_path(project_root, "app/ui/pages/06_Evaluation.py"),
+            access_mode="safe",
         ),
         PageSpec(
             key="stock_workbench",
@@ -102,6 +103,7 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             icon=":material/health_metrics:",
             url_path="health-dashboard",
             path=_page_path(project_root, "app/ui/pages/10_Health_Dashboard.py"),
+            access_mode="safe",
         ),
         PageSpec(
             key="docs",

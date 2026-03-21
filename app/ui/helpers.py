@@ -2938,6 +2938,9 @@ def krx_service_registry_frame() -> pd.DataFrame:
 
 
 def latest_krx_service_status_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "krx_service_status_latest")
+    if not snapshot.empty:
+        return snapshot.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -2963,6 +2966,9 @@ def latest_krx_service_status_frame(settings: Settings, limit: int = 20) -> pd.D
 
 
 def latest_krx_budget_snapshot_frame(settings: Settings, limit: int = 10) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "krx_budget_latest")
+    if not snapshot.empty:
+        return snapshot.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -2986,6 +2992,9 @@ def latest_krx_budget_snapshot_frame(settings: Settings, limit: int = 10) -> pd.
 
 
 def latest_krx_request_log_frame(settings: Settings, limit: int = 30) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "krx_request_log_latest")
+    if not snapshot.empty:
+        return snapshot.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -3012,6 +3021,9 @@ def latest_krx_request_log_frame(settings: Settings, limit: int = 30) -> pd.Data
 
 
 def latest_krx_source_attribution_frame(settings: Settings, limit: int = 20) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "krx_source_attribution_latest")
+    if not snapshot.empty:
+        return snapshot.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -3658,6 +3670,18 @@ def available_ranking_dates(settings: Settings, *, ranking_version: str | None =
 
 
 def available_evaluation_dates(settings: Settings) -> list[str]:
+    snapshot = _read_model_frame(settings, "evaluation_outcomes_recent")
+    if not snapshot.empty and "evaluation_date" in snapshot.columns:
+        values = (
+            snapshot["evaluation_date"]
+            .dropna()
+            .astype(str)
+            .drop_duplicates()
+            .sort_values(ascending=False)
+            .tolist()
+        )
+        if values:
+            return values
     if not settings.paths.duckdb_path.exists():
         return []
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -3969,6 +3993,9 @@ def latest_model_metric_summary_frame(settings: Settings) -> pd.DataFrame:
 
 
 def latest_selection_engine_comparison_frame(settings: Settings) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "selection_engine_comparison_latest")
+    if not snapshot.empty:
+        return snapshot
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -4076,6 +4103,9 @@ def latest_outcome_summary_frame(settings: Settings) -> pd.DataFrame:
 
 
 def latest_evaluation_summary_frame(settings: Settings, *, limit: int = 20) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "evaluation_summary_latest")
+    if not snapshot.empty:
+        return snapshot.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -4102,6 +4132,9 @@ def latest_evaluation_summary_frame(settings: Settings, *, limit: int = 20) -> p
 
 
 def latest_evaluation_comparison_frame(settings: Settings) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "evaluation_comparison_latest")
+    if not snapshot.empty:
+        return snapshot
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -4398,6 +4431,9 @@ UI_COLUMN_LABELS.update(
 
 
 def latest_calibration_diagnostic_frame(settings: Settings, *, limit: int = 20) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "calibration_diagnostic_latest")
+    if not snapshot.empty:
+        return snapshot.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -4430,6 +4466,17 @@ def evaluation_outcomes_frame(
     ranking_version: str = SELECTION_ENGINE_VERSION,
     limit: int = 50,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "evaluation_outcomes_recent")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        if evaluation_date is None and "evaluation_date" in frame.columns:
+            values = frame["evaluation_date"].dropna().astype(str)
+            evaluation_date = values.max() if not values.empty else None
+        if evaluation_date is not None:
+            frame = frame.loc[frame["evaluation_date"].astype(str) == str(evaluation_date)].copy()
+        frame = frame.loc[frame["horizon"] == int(horizon)].copy()
+        frame = frame.loc[frame["ranking_version"].astype(str) == str(ranking_version)].copy()
+        return frame.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -5280,6 +5327,12 @@ def latest_intraday_research_capability_frame(
     as_of_date=None,
     limit: int = 20,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_research_capability_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        if as_of_date is not None and "as_of_date" in frame.columns:
+            frame = frame.loc[frame["as_of_date"].astype(str) == str(as_of_date)].copy()
+        return frame.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -5964,6 +6017,19 @@ def latest_intraday_strategy_comparison_frame(
     comparison_scope: str = "all",
     limit: int = 30,
 ) -> pd.DataFrame:
+    dataset_name = (
+        "intraday_strategy_comparison_regime_latest"
+        if comparison_scope == "regime_family"
+        else "intraday_strategy_comparison_latest"
+    )
+    snapshot = _read_model_frame(settings, dataset_name)
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        if end_session_date is not None and "end_session_date" in frame.columns:
+            frame = frame.loc[frame["end_session_date"].astype(str) == str(end_session_date)].copy()
+        if "comparison_scope" in frame.columns:
+            frame = frame.loc[frame["comparison_scope"].astype(str) == str(comparison_scope)].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = end_session_date or _latest_intraday_session_date(settings)
     if target_date is None:
         return pd.DataFrame()
@@ -6007,6 +6073,14 @@ def latest_intraday_timing_calibration_frame(
     grouping_key: str | None = None,
     limit: int = 30,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_timing_calibration_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        if window_end_date is not None and "window_end_date" in frame.columns:
+            frame = frame.loc[frame["window_end_date"].astype(str) == str(window_end_date)].copy()
+        if grouping_key is not None and "grouping_key" in frame.columns:
+            frame = frame.loc[frame["grouping_key"].astype(str) == str(grouping_key)].copy()
+        return frame.head(limit).reset_index(drop=True)
     target_date = window_end_date or _latest_intraday_session_date(settings)
     if target_date is None:
         return pd.DataFrame()
@@ -6458,6 +6532,17 @@ def latest_intraday_policy_evaluation_frame(
     split_name: str = "test",
     limit: int = 30,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_policy_evaluation_latest")
+    if not snapshot.empty:
+        frame = snapshot.copy()
+        split_order = [split_name]
+        if split_name == "test":
+            split_order.extend(["validation", "all"])
+        for target_split in split_order:
+            candidate = frame.loc[frame["split_name"].astype(str) == str(target_split)].copy()
+            if not candidate.empty:
+                return candidate.head(limit).reset_index(drop=True)
+        return pd.DataFrame()
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -6509,6 +6594,9 @@ def latest_intraday_policy_ablation_frame(
     *,
     limit: int = 30,
 ) -> pd.DataFrame:
+    snapshot = _read_model_frame(settings, "intraday_policy_ablation_latest")
+    if not snapshot.empty:
+        return snapshot.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -7158,6 +7246,15 @@ def latest_intraday_meta_overlay_comparison_frame(
     metric_scope: str = "overlay",
     limit: int = 30,
 ) -> pd.DataFrame:
+    dataset_name = {
+        "overlay": "intraday_meta_overlay_latest",
+        "regime": "intraday_meta_overlay_regime_latest",
+        "checkpoint": "intraday_meta_overlay_checkpoint_latest",
+    }.get(metric_scope, "")
+    if dataset_name:
+        snapshot = _read_model_frame(settings, dataset_name)
+        if not snapshot.empty:
+            return snapshot.head(limit).reset_index(drop=True)
     if not settings.paths.duckdb_path.exists():
         return pd.DataFrame()
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:

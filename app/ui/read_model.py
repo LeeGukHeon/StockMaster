@@ -548,6 +548,452 @@ def _latest_flow_summary_frame(connection: duckdb.DuckDBPyConnection) -> pd.Data
     ).fetchdf()
 
 
+def _latest_evaluation_summary_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            summary_date,
+            window_type,
+            horizon,
+            ranking_version,
+            segment_value,
+            count_evaluated,
+            mean_realized_excess_return,
+            hit_rate,
+            avg_expected_excess_return
+        FROM vw_latest_evaluation_summary
+        WHERE segment_type = 'coverage'
+          AND segment_value = 'all'
+        ORDER BY window_type, horizon, ranking_version
+        LIMIT 200
+        """
+    ).fetchdf()
+
+
+def _latest_evaluation_comparison_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        WITH latest_summary AS (
+            SELECT *
+            FROM vw_latest_evaluation_summary
+            WHERE segment_type = 'coverage'
+              AND segment_value = 'all'
+        )
+        SELECT
+            selection.summary_date,
+            selection.window_type,
+            selection.horizon,
+            selection.mean_realized_excess_return AS selection_avg_excess,
+            explanatory.mean_realized_excess_return AS explanatory_avg_excess,
+            selection.mean_realized_excess_return
+                - explanatory.mean_realized_excess_return AS avg_excess_gap,
+            selection.hit_rate - explanatory.hit_rate AS hit_rate_gap
+        FROM latest_summary AS selection
+        JOIN latest_summary AS explanatory
+          ON selection.summary_date = explanatory.summary_date
+         AND selection.window_type = explanatory.window_type
+         AND selection.horizon = explanatory.horizon
+         AND selection.ranking_version = ?
+         AND explanatory.ranking_version = ?
+        ORDER BY selection.window_type, selection.horizon
+        """,
+        [SELECTION_ENGINE_VERSION, EXPLANATORY_RANKING_VERSION],
+    ).fetchdf()
+
+
+def _latest_selection_engine_comparison_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        WITH latest_summary AS (
+            SELECT *
+            FROM vw_latest_evaluation_summary
+            WHERE segment_type = 'coverage'
+              AND segment_value = 'all'
+              AND ranking_version IN (?, ?, ?)
+        )
+        SELECT
+            v2.summary_date,
+            v2.window_type,
+            v2.horizon,
+            v2.mean_realized_excess_return AS selection_v2_avg_excess,
+            v1.mean_realized_excess_return AS selection_v1_avg_excess,
+            expl.mean_realized_excess_return AS explanatory_v0_avg_excess,
+            v2.mean_realized_excess_return - v1.mean_realized_excess_return
+                AS v2_vs_v1_gap,
+            v2.mean_realized_excess_return - expl.mean_realized_excess_return
+                AS v2_vs_explanatory_gap
+        FROM latest_summary AS v2
+        LEFT JOIN latest_summary AS v1
+          ON v2.summary_date = v1.summary_date
+         AND v2.window_type = v1.window_type
+         AND v2.horizon = v1.horizon
+         AND v1.ranking_version = ?
+        LEFT JOIN latest_summary AS expl
+          ON v2.summary_date = expl.summary_date
+         AND v2.window_type = expl.window_type
+         AND v2.horizon = expl.horizon
+         AND expl.ranking_version = ?
+        WHERE v2.ranking_version = ?
+        ORDER BY v2.window_type, v2.horizon
+        """,
+        [
+            SELECTION_ENGINE_V2_VERSION,
+            SELECTION_ENGINE_VERSION,
+            EXPLANATORY_RANKING_VERSION,
+            SELECTION_ENGINE_VERSION,
+            EXPLANATORY_RANKING_VERSION,
+            SELECTION_ENGINE_V2_VERSION,
+        ],
+    ).fetchdf()
+
+
+def _latest_calibration_diagnostic_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            diagnostic_date,
+            horizon,
+            bin_type,
+            bin_value,
+            sample_count,
+            expected_median,
+            observed_mean,
+            coverage_rate,
+            median_bias,
+            quality_flag
+        FROM vw_latest_calibration_diagnostic
+        ORDER BY horizon, bin_type, bin_value
+        LIMIT 400
+        """
+    ).fetchdf()
+
+
+def _evaluation_outcomes_recent_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        WITH recent_dates AS (
+            SELECT DISTINCT evaluation_date
+            FROM fact_selection_outcome
+            WHERE evaluation_date IS NOT NULL
+            ORDER BY evaluation_date DESC
+            LIMIT 30
+        )
+        SELECT
+            outcome.evaluation_date,
+            outcome.selection_date,
+            outcome.symbol,
+            meta.company_name,
+            meta.market,
+            outcome.horizon,
+            outcome.ranking_version,
+            outcome.final_selection_value,
+            outcome.expected_excess_return_at_selection,
+            outcome.realized_excess_return,
+            outcome.band_status,
+            outcome.outcome_status
+        FROM fact_selection_outcome AS outcome
+        JOIN recent_dates
+          ON outcome.evaluation_date = recent_dates.evaluation_date
+        JOIN dim_symbol AS meta
+          ON outcome.symbol = meta.symbol
+        ORDER BY outcome.evaluation_date DESC, outcome.horizon, outcome.symbol
+        """
+    ).fetchdf()
+
+
+def _latest_intraday_research_capability_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            as_of_date,
+            feature_slug,
+            enabled_flag,
+            rollout_mode,
+            dependency_ready_flag,
+            blocking_dependency,
+            report_available_flag,
+            latest_report_type,
+            last_successful_run_id,
+            last_degraded_run_id,
+            last_skip_reason
+        FROM vw_latest_intraday_research_capability
+        ORDER BY feature_slug
+        LIMIT 100
+        """
+    ).fetchdf()
+
+
+def _latest_intraday_strategy_comparison_frame(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    comparison_scope: str,
+) -> pd.DataFrame:
+    row = connection.execute(
+        "SELECT MAX(end_session_date) FROM fact_intraday_strategy_comparison WHERE comparison_scope = ?",
+        [comparison_scope],
+    ).fetchone()
+    if row is None or row[0] is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            end_session_date,
+            horizon,
+            strategy_id,
+            comparison_scope,
+            comparison_value,
+            cutoff_checkpoint_time,
+            sample_count,
+            matured_count,
+            executed_count,
+            no_entry_count,
+            execution_rate,
+            mean_realized_excess_return,
+            median_realized_excess_return,
+            hit_rate,
+            mean_timing_edge_vs_open_bps,
+            positive_timing_edge_rate,
+            skip_saved_loss_rate,
+            missed_winner_rate,
+            coverage_ok_rate
+        FROM fact_intraday_strategy_comparison
+        WHERE end_session_date = ?
+          AND comparison_scope = ?
+        ORDER BY horizon, comparison_value, strategy_id
+        LIMIT 400
+        """,
+        [row[0], comparison_scope],
+    ).fetchdf()
+
+
+def _latest_intraday_timing_calibration_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    row = connection.execute(
+        "SELECT MAX(window_end_date) FROM fact_intraday_timing_calibration",
+    ).fetchone()
+    if row is None or row[0] is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            window_end_date,
+            horizon,
+            grouping_key,
+            grouping_value,
+            sample_count,
+            executed_count,
+            execution_rate,
+            mean_realized_excess_return,
+            hit_rate,
+            mean_timing_edge_vs_open_bps,
+            skip_saved_loss_rate,
+            missed_winner_rate,
+            quality_flag
+        FROM fact_intraday_timing_calibration
+        WHERE window_end_date = ?
+          AND grouping_key IN ('overall', 'strategy_id', 'regime_family')
+        ORDER BY horizon, grouping_key, grouping_value
+        LIMIT 400
+        """,
+        [row[0]],
+    ).fetchdf()
+
+
+def _latest_intraday_policy_evaluation_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    split_order = ["test", "validation", "all"]
+    for split_name in split_order:
+        frame = connection.execute(
+            """
+            SELECT
+                experiment_run_id,
+                split_name,
+                split_index,
+                horizon,
+                template_id,
+                scope_type,
+                scope_key,
+                checkpoint_time,
+                regime_cluster,
+                regime_family,
+                window_session_count,
+                sample_count,
+                matured_count,
+                executed_count,
+                execution_rate,
+                mean_realized_excess_return,
+                hit_rate,
+                mean_timing_edge_vs_open_bps,
+                skip_saved_loss_rate,
+                missed_winner_rate,
+                left_tail_proxy,
+                stability_score,
+                objective_score,
+                manual_review_required_flag,
+                fallback_scope_type,
+                fallback_scope_key
+            FROM vw_latest_intraday_policy_evaluation
+            WHERE split_name = ?
+            ORDER BY window_end_date DESC, horizon, objective_score DESC NULLS LAST
+            LIMIT 200
+            """,
+            [split_name],
+        ).fetchdf()
+        if not frame.empty:
+            return frame
+    return pd.DataFrame()
+
+
+def _latest_intraday_policy_ablation_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            ablation_date,
+            horizon,
+            base_policy_source,
+            ablation_name,
+            sample_count,
+            mean_realized_excess_return_delta,
+            hit_rate_delta,
+            mean_timing_edge_vs_open_bps_delta,
+            execution_rate_delta,
+            skip_saved_loss_rate_delta,
+            missed_winner_rate_delta,
+            left_tail_proxy_delta,
+            stability_score_delta,
+            objective_score_delta
+        FROM vw_latest_intraday_policy_ablation_result
+        ORDER BY ablation_date DESC, horizon, ablation_name
+        LIMIT 200
+        """
+    ).fetchdf()
+
+
+def _latest_intraday_meta_overlay_comparison_frame(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    metric_scope: str,
+) -> pd.DataFrame:
+    if metric_scope == "overlay":
+        return connection.execute(
+            """
+            SELECT
+                horizon,
+                panel_name,
+                MAX(CASE WHEN metric_name = 'policy_only_mean_excess_return' THEN metric_value END) AS policy_only_mean_excess_return,
+                MAX(CASE WHEN metric_name = 'meta_overlay_mean_excess_return' THEN metric_value END) AS meta_overlay_mean_excess_return,
+                MAX(CASE WHEN metric_name = 'same_exit_lift_mean_excess_return' THEN metric_value END) AS same_exit_lift_mean_excess_return,
+                MAX(CASE WHEN metric_name = 'same_exit_lift_mean_timing_edge_bps' THEN metric_value END) AS same_exit_lift_mean_timing_edge_bps,
+                MAX(CASE WHEN metric_name = 'override_rate' THEN metric_value END) AS override_rate,
+                MAX(CASE WHEN metric_name = 'fallback_rate' THEN metric_value END) AS fallback_rate,
+                MAX(CASE WHEN metric_name = 'upgrade_precision' THEN metric_value END) AS upgrade_precision,
+                MAX(CASE WHEN metric_name = 'downgrade_precision' THEN metric_value END) AS downgrade_precision
+            FROM fact_intraday_meta_overlay_comparison
+            WHERE metric_scope = 'overlay'
+            GROUP BY horizon, panel_name
+            ORDER BY horizon, panel_name
+            LIMIT 100
+            """
+        ).fetchdf()
+    return connection.execute(
+        """
+        SELECT
+            metric_scope,
+            comparison_value,
+            horizon,
+            panel_name,
+            metric_name,
+            policy_only_value,
+            meta_overlay_value,
+            metric_delta
+        FROM fact_intraday_meta_overlay_comparison
+        WHERE metric_scope = ?
+        ORDER BY horizon, panel_name, comparison_value, metric_name
+        LIMIT 400
+        """,
+        [metric_scope],
+    ).fetchdf()
+
+
+def _latest_krx_service_status_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            service_slug,
+            display_name_ko,
+            approval_expected,
+            enabled_by_env,
+            last_smoke_status,
+            last_smoke_ts,
+            last_success_ts,
+            last_http_status,
+            last_error_class,
+            fallback_mode
+        FROM vw_latest_krx_service_status
+        ORDER BY display_name_ko
+        LIMIT 100
+        """
+    ).fetchdf()
+
+
+def _latest_krx_budget_snapshot_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            provider_name,
+            date_kst,
+            request_budget,
+            requests_used,
+            usage_ratio,
+            throttle_state,
+            snapshot_ts
+        FROM vw_latest_external_api_budget_snapshot
+        WHERE provider_name = 'krx'
+        ORDER BY date_kst DESC, snapshot_ts DESC
+        LIMIT 100
+        """
+    ).fetchdf()
+
+
+def _latest_krx_request_log_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            request_ts,
+            provider_name,
+            service_slug,
+            as_of_date,
+            http_status,
+            status,
+            latency_ms,
+            rows_received,
+            used_fallback,
+            error_code
+        FROM fact_external_api_request_log
+        WHERE provider_name = 'krx'
+        ORDER BY request_ts DESC
+        LIMIT 200
+        """
+    ).fetchdf()
+
+
+def _latest_krx_source_attribution_frame(connection: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    return connection.execute(
+        """
+        SELECT
+            snapshot_ts,
+            as_of_date,
+            page_slug,
+            component_slug,
+            source_label,
+            provider_name,
+            active_flag
+        FROM vw_latest_source_attribution_snapshot
+        WHERE provider_name = 'krx'
+        ORDER BY snapshot_ts DESC, page_slug, component_slug
+        LIMIT 200
+        """
+    ).fetchdf()
+
+
 def _latest_market_mood_summary(regime_frame: pd.DataFrame) -> dict[str, str]:
     if regime_frame.empty:
         return {
@@ -606,6 +1052,17 @@ def materialize_ui_read_model_snapshot(
             "alpha_promotion_summary",
             load_alpha_promotion_summary(connection),
         ),
+        UIReadModelDataset("evaluation_summary_latest", _latest_evaluation_summary_frame(connection)),
+        UIReadModelDataset("evaluation_comparison_latest", _latest_evaluation_comparison_frame(connection)),
+        UIReadModelDataset(
+            "selection_engine_comparison_latest",
+            _latest_selection_engine_comparison_frame(connection),
+        ),
+        UIReadModelDataset(
+            "calibration_diagnostic_latest",
+            _latest_calibration_diagnostic_frame(connection),
+        ),
+        UIReadModelDataset("evaluation_outcomes_recent", _evaluation_outcomes_recent_frame(connection)),
         UIReadModelDataset(
             "portfolio_policy_registry",
             _latest_portfolio_policy_registry_frame(connection),
@@ -613,6 +1070,49 @@ def materialize_ui_read_model_snapshot(
         UIReadModelDataset(
             "portfolio_nav",
             _latest_portfolio_nav_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_research_capability_latest",
+            _latest_intraday_research_capability_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_strategy_comparison_latest",
+            _latest_intraday_strategy_comparison_frame(connection, comparison_scope="all"),
+        ),
+        UIReadModelDataset(
+            "intraday_strategy_comparison_regime_latest",
+            _latest_intraday_strategy_comparison_frame(connection, comparison_scope="regime_family"),
+        ),
+        UIReadModelDataset(
+            "intraday_timing_calibration_latest",
+            _latest_intraday_timing_calibration_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_policy_evaluation_latest",
+            _latest_intraday_policy_evaluation_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_policy_ablation_latest",
+            _latest_intraday_policy_ablation_frame(connection),
+        ),
+        UIReadModelDataset(
+            "intraday_meta_overlay_latest",
+            _latest_intraday_meta_overlay_comparison_frame(connection, metric_scope="overlay"),
+        ),
+        UIReadModelDataset(
+            "intraday_meta_overlay_regime_latest",
+            _latest_intraday_meta_overlay_comparison_frame(connection, metric_scope="regime"),
+        ),
+        UIReadModelDataset(
+            "intraday_meta_overlay_checkpoint_latest",
+            _latest_intraday_meta_overlay_comparison_frame(connection, metric_scope="checkpoint"),
+        ),
+        UIReadModelDataset("krx_service_status_latest", _latest_krx_service_status_frame(connection)),
+        UIReadModelDataset("krx_budget_latest", _latest_krx_budget_snapshot_frame(connection)),
+        UIReadModelDataset("krx_request_log_latest", _latest_krx_request_log_frame(connection)),
+        UIReadModelDataset(
+            "krx_source_attribution_latest",
+            _latest_krx_source_attribution_frame(connection),
         ),
     ]
 
