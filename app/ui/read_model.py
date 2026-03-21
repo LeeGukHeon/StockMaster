@@ -460,14 +460,14 @@ def _latest_portfolio_nav_frame(connection: duckdb.DuckDBPyConnection) -> pd.Dat
             execution_mode,
             portfolio_policy_id,
             portfolio_policy_version,
-            nav,
-            gross_exposure,
-            net_exposure,
+            nav_value,
+            cumulative_return,
+            drawdown,
+            turnover_ratio,
             cash_weight,
             holding_count,
-            turnover,
-            max_single_name_weight,
-            created_at
+            max_single_weight,
+            top3_weight
         FROM fact_portfolio_nav_snapshot
         ORDER BY snapshot_date DESC, execution_mode
         LIMIT 40
