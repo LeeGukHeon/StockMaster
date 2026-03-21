@@ -29,7 +29,6 @@ from app.ui.components import (
     render_warning_banner,
 )
 from app.ui.helpers import (
-    SAFE_DASHBOARD_PAGE_KEYS,
     dashboard_activity_state,
     format_ui_date,
     format_ui_value,
@@ -50,7 +49,11 @@ from app.ui.helpers import (
     load_ui_page_context,
     load_ui_settings,
 )
-from app.ui.navigation import build_navigation_registry
+from app.ui.navigation import (
+    build_navigation_registry,
+    dashboard_page_groups,
+    safe_dashboard_page_keys,
+)
 
 
 def _snapshot_row(settings):
@@ -141,6 +144,19 @@ def _quick_link(label: str, page_key: str, description: str) -> None:
     st.page_link(page, label=f"{label} 열기", icon=":material/open_in_new:")
 
 
+def _render_page_access_summary() -> None:
+    safe_specs, restricted_specs = dashboard_page_groups(PROJECT_ROOT)
+    allowed_col, blocked_col = st.columns(2)
+    with allowed_col:
+        st.markdown("**지금 열 수 있는 페이지**")
+        for spec in safe_specs:
+            st.markdown(f"- {spec.title}")
+    with blocked_col:
+        st.markdown("**작업 종료 후 열리는 페이지**")
+        for spec in restricted_specs:
+            st.markdown(f"- {spec.title}")
+
+
 def render_today_page() -> None:
     settings, activity = load_ui_page_context(
         PROJECT_ROOT,
@@ -170,6 +186,7 @@ def render_today_page() -> None:
                 "작업 중에는 오늘, 문서 / 도움말 화면만 안전하게 볼 수 있습니다.",
             ],
         )
+        _render_page_access_summary()
         render_status_badges(_policy_badges(snapshot_row))
         if snapshot_row is not None:
             top_left, top_mid, top_right = st.columns(3)
@@ -493,7 +510,7 @@ NAV_ACTIVITY = dashboard_activity_state(NAV_SETTINGS)
 NAVIGATION_REGISTRY = build_navigation_registry(
     PROJECT_ROOT,
     render_today_page=render_today_page,
-    allowed_page_keys=set(SAFE_DASHBOARD_PAGE_KEYS) if NAV_ACTIVITY.writer_active else None,
+    allowed_page_keys=set(safe_dashboard_page_keys(PROJECT_ROOT)) if NAV_ACTIVITY.writer_active else None,
 )
 
 navigation = st.navigation(

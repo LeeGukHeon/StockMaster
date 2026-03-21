@@ -81,6 +81,7 @@ from app.storage.metadata_postgres import (
     fetchone_postgres_sql,
     metadata_postgres_enabled,
 )
+from app.ui.navigation import safe_dashboard_page_keys
 
 try:
     from streamlit.runtime.scriptrunner import get_script_run_ctx
@@ -114,7 +115,7 @@ def _metadata_fetchone(
         return connection.execute(query, params or []).fetchone()
 
 
-SAFE_DASHBOARD_PAGE_KEYS: frozenset[str] = frozenset({"today", "docs"})
+SAFE_DASHBOARD_PAGE_KEYS: frozenset[str] = safe_dashboard_page_keys()
 
 
 @dataclass(frozen=True, slots=True)

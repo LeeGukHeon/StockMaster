@@ -99,7 +99,6 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             icon=":material/health_metrics:",
             url_path="health-dashboard",
             path=_page_path(project_root, "app/ui/pages/10_Health_Dashboard.py"),
-            access_mode="safe",
         ),
         PageSpec(
             key="docs",
@@ -110,6 +109,21 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
             access_mode="safe",
         ),
     )
+
+
+def safe_dashboard_page_keys(project_root: Path | None = None) -> frozenset[str]:
+    root = project_root or Path(__file__).resolve().parents[2]
+    return frozenset(spec.key for spec in page_specs(root) if spec.access_mode == "safe")
+
+
+def dashboard_page_groups(
+    project_root: Path | None = None,
+) -> tuple[tuple[PageSpec, ...], tuple[PageSpec, ...]]:
+    root = project_root or Path(__file__).resolve().parents[2]
+    specs = page_specs(root)
+    safe_specs = tuple(spec for spec in specs if spec.access_mode == "safe")
+    restricted_specs = tuple(spec for spec in specs if spec.access_mode != "safe")
+    return safe_specs, restricted_specs
 
 
 def build_navigation_registry(
