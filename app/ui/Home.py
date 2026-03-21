@@ -14,6 +14,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.ui.components import render_story_stream
 from app.ui.dashboard_v2 import (
     dashboard_snapshot_note,
+    display_number,
+    display_percent,
     display_text,
     load_dashboard_v2_context,
     read_dashboard_frame,
@@ -45,16 +47,16 @@ def render_today_page() -> None:
     policy_eval = read_dashboard_frame(settings, "intraday_policy_evaluation_latest")
 
     render_dashboard_v2_header(
-        title="Dashboard v2",
-        description="추천 종목, 즉석 종목 전망, 주간 캘리브레이션/정책 보고만 남긴 새 대시보드입니다.",
+        title="핵심만 보는 새 대시보드",
+        description="추천 종목, 즉석 종목 전망, 주간 보고만 남기고 나머지는 콘솔로 분리한 새 시작 화면입니다.",
         settings=settings,
         activity=activity,
         manifest=manifest,
     )
 
     if leaderboard.empty and target_book.empty and summary_frame.empty:
-        render_dashboard_v2_empty("Dashboard v2 read-store가 아직 준비되지 않았습니다.")
-        render_dashboard_v2_footer(settings, manifest=manifest, page_name="홈")
+        render_dashboard_v2_empty("Dashboard v2용 스냅샷이 아직 준비되지 않았습니다.")
+        render_dashboard_v2_footer(settings, manifest=manifest, page_name="대시보드")
         return
 
     picks_items = []
@@ -64,27 +66,27 @@ def render_today_page() -> None:
                 "eyebrow": display_text(row.get("market")),
                 "title": f"{display_text(row.get('symbol'))} · {display_text(row.get('company_name'))}",
                 "body": (
-                    f"grade {display_text(row.get('grade'))} / "
-                    f"예상 초과수익률 {display_text(row.get('expected_excess_return'))} / "
-                    f"진입일 {display_text(row.get('next_entry_trade_date'))}"
+                    f"등급 {display_text(row.get('grade'))} / "
+                    f"예상 초과수익률 {display_percent(row.get('expected_excess_return'), signed=True)} / "
+                    f"진입 예정일 {display_text(row.get('next_entry_trade_date'))}"
                 ),
-                "meta": f"점수 {display_text(row.get('final_selection_value'))}",
-                "badge": display_text(row.get("grade"), "PICK"),
+                "meta": f"선정 점수 {display_number(row.get('final_selection_value'))}",
+                "badge": display_text(row.get("grade"), "추천"),
                 "tone": "positive",
             }
         )
     for row in target_book.loc[target_book["included_flag"].fillna(False)].head(2).to_dict(orient="records"):
         picks_items.append(
             {
-                "eyebrow": "Official",
+                "eyebrow": "공식 편입안",
                 "title": f"{display_text(row.get('symbol'))} · {display_text(row.get('company_name'))}",
                 "body": (
                     f"{display_text(row.get('action_plan_label'))} / "
-                    f"비중 {display_text(row.get('target_weight'))} / "
-                    f"목표가 {display_text(row.get('target_price'))}"
+                    f"목표 비중 {display_percent(row.get('target_weight'))} / "
+                    f"목표가 {display_number(row.get('target_price'))}"
                 ),
-                "meta": f"gate {display_text(row.get('gate_status'))}",
-                "badge": display_text(row.get("execution_mode"), "BOOK"),
+                "meta": f"진입 예정일 {display_text(row.get('entry_trade_date'))} · 게이트 {display_text(row.get('gate_status'))}",
+                "badge": display_text(row.get("execution_mode"), "편입"),
                 "tone": "accent",
             }
         )
@@ -93,15 +95,15 @@ def render_today_page() -> None:
     for row in live_frame.head(2).to_dict(orient="records"):
         outlook_items.append(
             {
-                "eyebrow": "Instant",
+                "eyebrow": "즉석 전망",
                 "title": f"{display_text(row.get('symbol'))} · {display_text(row.get('company_name'))}",
                 "body": (
                     f"D1 {display_text(row.get('live_d1_selection_v2_grade'))} / "
                     f"D5 {display_text(row.get('live_d5_selection_v2_grade'))} / "
-                    f"예상 {display_text(row.get('live_d5_expected_excess_return'))}"
+                    f"예상 초과수익률 {display_percent(row.get('live_d5_expected_excess_return'), signed=True)}"
                 ),
-                "meta": f"기준가 {display_text(row.get('live_reference_price'))}",
-                "badge": display_text(row.get("live_d5_selection_v2_grade"), "LIVE"),
+                "meta": f"기준가 {display_number(row.get('live_reference_price'))}",
+                "badge": display_text(row.get("live_d5_selection_v2_grade"), "전망"),
                 "tone": "positive",
             }
         )
@@ -109,14 +111,15 @@ def render_today_page() -> None:
         for row in summary_frame.head(2).to_dict(orient="records"):
             outlook_items.append(
                 {
-                    "eyebrow": "Snapshot",
+                    "eyebrow": "저장 스냅샷",
                     "title": f"{display_text(row.get('symbol'))} · {display_text(row.get('company_name'))}",
                     "body": (
-                        f"D5 grade {display_text(row.get('d5_selection_v2_grade'))} / "
-                        f"알파 {display_text(row.get('d5_alpha_expected_excess_return'))}"
+                        f"5일 수익률 {display_percent(row.get('ret_5d'), signed=True)} / "
+                        f"20일 수익률 {display_percent(row.get('ret_20d'), signed=True)} / "
+                        f"D5 알파 기대수익 {display_percent(row.get('d5_alpha_expected_excess_return'), signed=True)}"
                     ),
-                    "meta": f"ret_20d {display_text(row.get('ret_20d'))} / news {display_text(row.get('news_count_3d'))}",
-                    "badge": display_text(row.get("d5_selection_v2_grade"), "OUTLOOK"),
+                    "meta": f"최근 3일 뉴스 {display_number(row.get('news_count_3d'))}건",
+                    "badge": display_text(row.get("d5_selection_v2_grade"), "스냅샷"),
                     "tone": "accent",
                 }
             )
@@ -125,32 +128,35 @@ def render_today_page() -> None:
     for row in alpha_promotion.head(2).to_dict(orient="records"):
         weekly_items.append(
             {
-                "eyebrow": "Alpha",
+                "eyebrow": "알파 비교",
                 "title": f"{display_text(row.get('active_model_label'))} vs {display_text(row.get('comparison_model_label'))}",
-                "body": f"{display_text(row.get('decision_label'))} / gap {display_text(row.get('promotion_gap'))}",
-                "meta": f"sample {display_text(row.get('sample_count'))}",
-                "badge": display_text(row.get("decision_label"), "ALPHA"),
+                "body": (
+                    f"{display_text(row.get('decision_label'))} / "
+                    f"격차 {display_percent(row.get('promotion_gap'), signed=True, percent_points=True)}"
+                ),
+                "meta": f"표본 {display_number(row.get('sample_count'))}개",
+                "badge": display_text(row.get("decision_label"), "알파"),
                 "tone": "neutral",
             }
         )
     for row in policy_eval.head(2).to_dict(orient="records"):
         weekly_items.append(
             {
-                "eyebrow": "Policy",
+                "eyebrow": "정책 평가",
                 "title": display_text(row.get("template_id")),
                 "body": (
-                    f"objective {display_text(row.get('objective_score'))} / "
-                    f"test {display_text(row.get('test_session_count'))} / "
-                    f"hit {display_text(row.get('hit_rate'))}"
+                    f"목표 점수 {display_number(row.get('objective_score'))} / "
+                    f"적중률 {display_percent(row.get('hit_rate'))} / "
+                    f"평가 세션 {display_number(row.get('test_session_count'))}회"
                 ),
                 "meta": f"{display_text(row.get('scope_type'))} · D+{display_text(row.get('horizon'))}",
-                "badge": "WEEKLY",
+                "badge": "주간 보고",
                 "tone": "warning",
             }
         )
 
     render_story_stream(
-        title="추천 종목",
+        title="추천 종목 한눈에 보기",
         summary=recommendation_timeline_note(settings),
         items=picks_items,
         empty_message="추천 종목 데이터가 없습니다.",
@@ -163,7 +169,7 @@ def render_today_page() -> None:
     )
     render_story_stream(
         title="주간 캘리브레이션 / 정책 보고",
-        summary="이번 스냅샷에 포함된 모델/정책 비교만 간단히 보여줍니다.",
+        summary="이번 스냅샷에 담긴 모델·정책 변화만 간단히 보여줍니다.",
         items=weekly_items,
         empty_message="주간 보고 데이터가 없습니다.",
     )
@@ -174,13 +180,13 @@ def render_today_page() -> None:
         _quick_link("추천 종목", "picks", "내일 바로 볼 종목과 공식 편입안을 봅니다.")
         _quick_link("즉석 종목 전망", "outlook", "종목 하나를 눌러 최신 스냅샷 전망을 봅니다.")
     with mid:
-        _quick_link("주간 보고", "weekly_report", "주간 캘리브레이션과 정책 보고만 봅니다.")
-        _quick_link("운영 콘솔", "ops_console", "운영 로그와 상태는 여기로 분리했습니다.")
+        _quick_link("주간 보고", "weekly_report", "주간 캘리브레이션과 정책 보고만 모아 봅니다.")
+        _quick_link("운영 콘솔", "ops_console", "운영 로그와 세부 상태는 여기서 확인합니다.")
     with right:
-        _quick_link("리서치 콘솔", "research_console", "장중 trace와 연구 화면은 여기로 보냅니다.")
+        _quick_link("리서치 콘솔", "research_console", "장중 흐름과 연구 화면은 별도 콘솔로 봅니다.")
         _quick_link("문서 / 도움말", "docs", "설명서와 복구 문서를 확인합니다.")
 
-    render_dashboard_v2_footer(settings, manifest=manifest, page_name="홈")
+    render_dashboard_v2_footer(settings, manifest=manifest, page_name="대시보드")
 
 
 SETTINGS, ACTIVITY, _MANIFEST = load_dashboard_v2_context(PROJECT_ROOT)

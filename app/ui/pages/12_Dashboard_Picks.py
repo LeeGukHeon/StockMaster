@@ -6,7 +6,6 @@ import json
 import sys
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -16,6 +15,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.ui.components import render_record_cards, render_screen_guide, render_story_stream
 from app.ui.dashboard_v2 import (
     dashboard_snapshot_note,
+    display_number,
+    display_percent,
     display_text,
     load_dashboard_v2_context,
     read_dashboard_frame,
@@ -54,28 +55,24 @@ def _tone_from_grade(grade: object) -> str:
 
 render_dashboard_v2_header(
     title="추천 종목",
-    description="내일 바로 볼 종목과 공식 편입안을 최신 read-store 기준으로만 보여줍니다.",
+    description="내일 바로 볼 종목과 공식 편입안을 읽기 전용 스냅샷 기준으로만 보여줍니다.",
     settings=settings,
     activity=activity,
     manifest=manifest,
 )
 render_screen_guide(
-    summary="추천 종목 화면은 리더보드 상단 후보, 공식 target book, 섹터 집중 포인트만 남겼습니다.",
+    summary="추천 종목 화면은 상단 후보, 공식 편입안, 섹터 포인트만 남긴 얇은 화면입니다.",
     bullets=[
         "상단 후보에서 종목 이유와 리스크를 먼저 읽습니다.",
-        "공식 편입안에서 실제 target book과 진입일을 확인합니다.",
-        "섹터 포인트는 이번 스냅샷 기준 강한 흐름 묶음만 봅니다.",
+        "공식 편입안에서 실제 target book과 진입 예정일을 확인합니다.",
+        "섹터 포인트는 이번 스냅샷 기준 강한 묶음만 보여줍니다.",
     ],
 )
 
 if leaderboard.empty and target_book.empty:
-    render_dashboard_v2_empty("추천 종목 read-store가 아직 준비되지 않았습니다.")
+    render_dashboard_v2_empty("추천 종목 스냅샷이 아직 준비되지 않았습니다.")
 else:
-    market = st.segmented_control(
-        "시장 범위",
-        options=["ALL", "KOSPI", "KOSDAQ"],
-        default="ALL",
-    )
+    market = st.segmented_control("시장 범위", options=["ALL", "KOSPI", "KOSDAQ"], default="ALL")
     horizon = st.segmented_control(
         "추천 기간",
         options=[1, 5],
@@ -93,9 +90,7 @@ else:
 
     filtered_target = target_book.copy()
     if not filtered_target.empty:
-        filtered_target = filtered_target.loc[
-            filtered_target["included_flag"].fillna(False)
-        ].copy()
+        filtered_target = filtered_target.loc[filtered_target["included_flag"].fillna(False)].copy()
         if market != "ALL":
             filtered_target = filtered_target.loc[
                 filtered_target["market"].astype(str).str.upper() == market
@@ -105,27 +100,26 @@ else:
     if not filtered_sector.empty and "horizon" in filtered_sector.columns:
         filtered_sector = filtered_sector.loc[filtered_sector["horizon"] == int(horizon)].copy()
 
-    leader_items: list[dict[str, str]] = []
+    leader_items = []
     for row in filtered_board.head(5).to_dict(orient="records"):
         reasons = ", ".join(_parse_list(row.get("reasons"))[:3])
         risks = ", ".join(_parse_list(row.get("risks"))[:2])
+        body_parts = [
+            display_text(row.get("industry")),
+            f"예상 초과수익률 {display_percent(row.get('expected_excess_return'), signed=True)}",
+        ]
+        if reasons:
+            body_parts.append(f"핵심 근거 {reasons}")
+        if risks:
+            body_parts.append(f"유의할 리스크 {risks}")
         leader_items.append(
             {
-                "eyebrow": f"{display_text(row.get('market'))} · rank {display_text(row.get('final_selection_rank_pct'))}",
+                "eyebrow": f"{display_text(row.get('market'))} · 상위 {display_percent(row.get('final_selection_rank_pct'))}",
                 "title": f"{display_text(row.get('symbol'))} · {display_text(row.get('company_name'))}",
-                "body": " / ".join(
-                    part
-                    for part in [
-                        display_text(row.get("industry")),
-                        f"예상 초과수익률 {display_text(row.get('expected_excess_return'))}",
-                        f"근거 {reasons}" if reasons else "",
-                        f"리스크 {risks}" if risks else "",
-                    ]
-                    if part
-                ),
+                "body": " / ".join(body_parts),
                 "meta": (
-                    f"진입일 {display_text(row.get('next_entry_trade_date'))} · "
-                    f"점수 {display_text(row.get('final_selection_value'))} · "
+                    f"진입 예정일 {display_text(row.get('next_entry_trade_date'))} · "
+                    f"선정 점수 {display_number(row.get('final_selection_value'))} · "
                     f"모델 {display_text(row.get('model_spec_id'))}"
                 ),
                 "badge": display_text(row.get("grade")),
@@ -133,7 +127,7 @@ else:
             }
         )
 
-    target_items: list[dict[str, str]] = []
+    target_items = []
     for row in filtered_target.head(5).to_dict(orient="records"):
         target_items.append(
             {
@@ -141,28 +135,28 @@ else:
                 "title": f"{display_text(row.get('symbol'))} · {display_text(row.get('company_name'))}",
                 "body": (
                     f"{display_text(row.get('action_plan_label'))} / "
-                    f"비중 {display_text(row.get('target_weight'))} / "
-                    f"목표가 {display_text(row.get('target_price'))}"
+                    f"목표 비중 {display_percent(row.get('target_weight'))} / "
+                    f"목표가 {display_number(row.get('target_price'))}"
                 ),
                 "meta": (
-                    f"진입일 {display_text(row.get('entry_trade_date'))} · "
-                    f"gate {display_text(row.get('gate_status'))}"
+                    f"진입 예정일 {display_text(row.get('entry_trade_date'))} · "
+                    f"게이트 {display_text(row.get('gate_status'))}"
                 ),
                 "badge": display_text(row.get("market")),
                 "tone": "accent",
             }
         )
 
-    sector_items: list[dict[str, str]] = []
+    sector_items = []
     for row in filtered_sector.head(4).to_dict(orient="records"):
         sector_items.append(
             {
-                "eyebrow": "Sector",
+                "eyebrow": "섹터 포인트",
                 "title": display_text(row.get("outlook_label")),
                 "body": (
-                    f"표본 {display_text(row.get('symbol_count'))}개 / "
-                    f"상위 {display_text(row.get('top10_count'))}개 / "
-                    f"기대 {display_text(row.get('avg_expected_excess_return'))}"
+                    f"표본 {display_number(row.get('symbol_count'))}개 / "
+                    f"상위 {display_number(row.get('top10_count'))}개 / "
+                    f"평균 기대수익 {display_percent(row.get('avg_expected_excess_return'), signed=True)}"
                 ),
                 "meta": display_text(row.get("sample_symbols")),
                 "badge": display_text(row.get("broad_sector")),
@@ -184,7 +178,7 @@ else:
     )
     render_story_stream(
         title="섹터 포인트",
-        summary="이번 스냅샷에서 강한 섹터/업종 묶음만 추렸습니다.",
+        summary="이번 스냅샷에서 강한 흐름이 모인 섹터와 업종만 추렸습니다.",
         items=sector_items,
         empty_message="섹터 포인트 데이터가 없습니다.",
     )

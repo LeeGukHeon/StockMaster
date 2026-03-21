@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -15,6 +14,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.ui.components import render_record_cards, render_screen_guide, render_story_stream
 from app.ui.dashboard_v2 import (
     dashboard_snapshot_note,
+    display_number,
+    display_percent,
     display_text,
     load_dashboard_v2_context,
     read_dashboard_frame,
@@ -30,7 +31,6 @@ alpha_promotion = read_dashboard_frame(settings, "alpha_promotion_summary")
 calibration = read_dashboard_frame(settings, "calibration_diagnostic_latest")
 policy_eval = read_dashboard_frame(settings, "intraday_policy_evaluation_latest")
 
-
 render_dashboard_v2_header(
     title="주간 캘리브레이션 / 정책 보고",
     description="주간 성과, 알파 비교, 캘리브레이션 상태만 남긴 얇은 보고 화면입니다.",
@@ -39,92 +39,95 @@ render_dashboard_v2_header(
     manifest=manifest,
 )
 render_screen_guide(
-    summary="주간 보고는 실험 로그 대신 성과 변화와 정책 상태만 보여줍니다.",
+    summary="주간 보고는 실험 로그 전체 대신 성과 변화와 정책 상태만 보여줍니다.",
     bullets=[
-        "성과 요약에서 window별 평균 초과수익과 hit rate를 읽습니다.",
+        "성과 요약에서 기간별 평균 초과수익과 적중률을 먼저 읽습니다.",
         "알파 비교에서 active와 challenger 차이를 확인합니다.",
-        "캘리브레이션 / 정책 섹션에서 밴드와 walkforward 상태를 봅니다.",
+        "캘리브레이션과 정책 평가에서 밴드 상태와 walk-forward 결과를 봅니다.",
     ],
 )
 
 if evaluation_summary.empty and alpha_promotion.empty and calibration.empty:
-    render_dashboard_v2_empty("주간 보고용 read-store가 아직 준비되지 않았습니다.")
+    render_dashboard_v2_empty("주간 보고용 스냅샷이 아직 준비되지 않았습니다.")
 else:
-    summary_items: list[dict[str, str]] = []
+    summary_items = []
     for row in evaluation_summary.head(4).to_dict(orient="records"):
         summary_items.append(
             {
-                "eyebrow": "Summary",
+                "eyebrow": "성과 요약",
                 "title": f"{display_text(row.get('window_type'))} · D+{display_text(row.get('horizon'))}",
                 "body": (
-                    f"평균 초과수익 {display_text(row.get('mean_realized_excess_return'))} / "
-                    f"hit {display_text(row.get('hit_rate'))}"
+                    f"평균 초과수익 {display_percent(row.get('mean_realized_excess_return'), signed=True)} / "
+                    f"적중률 {display_percent(row.get('hit_rate'))}"
                 ),
-                "meta": f"평가수 {display_text(row.get('count_evaluated'))} · 기준일 {display_text(row.get('summary_date'))}",
-                "badge": display_text(row.get("ranking_version"), "SUMMARY"),
+                "meta": f"평가수 {display_number(row.get('count_evaluated'))}개 · 기준일 {display_text(row.get('summary_date'))}",
+                "badge": display_text(row.get("ranking_version"), "평가"),
                 "tone": "neutral",
             }
         )
     for row in evaluation_comparison.head(2).to_dict(orient="records"):
         summary_items.append(
             {
-                "eyebrow": "Compare",
+                "eyebrow": "기준선 비교",
                 "title": f"{display_text(row.get('window_type'))} · D+{display_text(row.get('horizon'))}",
                 "body": (
-                    f"selection {display_text(row.get('selection_avg_excess'))} / "
-                    f"explanatory {display_text(row.get('explanatory_avg_excess'))}"
+                    f"selection {display_percent(row.get('selection_avg_excess'), signed=True)} / "
+                    f"explanatory {display_percent(row.get('explanatory_avg_excess'), signed=True)}"
                 ),
-                "meta": f"gap {display_text(row.get('avg_excess_gap'))}",
-                "badge": "COMPARE",
+                "meta": f"격차 {display_percent(row.get('avg_excess_gap'), signed=True, percent_points=True)}",
+                "badge": "비교",
                 "tone": "accent",
             }
         )
 
-    alpha_items: list[dict[str, str]] = []
+    alpha_items = []
     for row in alpha_promotion.head(4).to_dict(orient="records"):
         alpha_items.append(
             {
-                "eyebrow": display_text(row.get("summary_title"), "Alpha"),
+                "eyebrow": display_text(row.get("summary_title"), "알파 비교"),
                 "title": f"{display_text(row.get('active_model_label'))} vs {display_text(row.get('comparison_model_label'))}",
                 "body": (
                     f"{display_text(row.get('decision_label'))} / "
-                    f"active {display_text(row.get('active_top10_mean_excess_return'))} / "
-                    f"challenger {display_text(row.get('comparison_top10_mean_excess_return'))}"
+                    f"active {display_percent(row.get('active_top10_mean_excess_return'), signed=True)} / "
+                    f"challenger {display_percent(row.get('comparison_top10_mean_excess_return'), signed=True)}"
                 ),
-                "meta": f"sample {display_text(row.get('sample_count'))} · gap {display_text(row.get('promotion_gap'))}",
-                "badge": display_text(row.get("decision_label"), "ALPHA"),
+                "meta": (
+                    f"표본 {display_number(row.get('sample_count'))}개 · "
+                    f"격차 {display_percent(row.get('promotion_gap'), signed=True, percent_points=True)}"
+                ),
+                "badge": display_text(row.get("decision_label"), "알파"),
                 "tone": "neutral",
             }
         )
 
-    calibration_items: list[dict[str, str]] = []
+    calibration_items = []
     for row in calibration.head(4).to_dict(orient="records"):
         calibration_items.append(
             {
-                "eyebrow": "Calibration",
+                "eyebrow": "캘리브레이션",
                 "title": f"D+{display_text(row.get('horizon'))} · {display_text(row.get('bin_type'))}",
                 "body": (
-                    f"expected {display_text(row.get('expected_median'))} / "
-                    f"observed {display_text(row.get('observed_mean'))} / "
-                    f"coverage {display_text(row.get('coverage_rate'))}"
+                    f"기대값 {display_percent(row.get('expected_median'), signed=True)} / "
+                    f"관측값 {display_percent(row.get('observed_mean'), signed=True)} / "
+                    f"커버리지 {display_percent(row.get('coverage_rate'))}"
                 ),
-                "meta": f"quality {display_text(row.get('quality_flag'))} · window {display_text(row.get('diagnostic_date'))}",
-                "badge": "CAL",
+                "meta": f"품질 {display_text(row.get('quality_flag'))} · 기준 {display_text(row.get('diagnostic_date'))}",
+                "badge": "보정",
                 "tone": "warning",
             }
         )
     for row in policy_eval.head(3).to_dict(orient="records"):
         calibration_items.append(
             {
-                "eyebrow": "Policy",
+                "eyebrow": "정책 평가",
                 "title": display_text(row.get("template_id")),
                 "body": (
-                    f"objective {display_text(row.get('objective_score'))} / "
-                    f"test {display_text(row.get('test_session_count'))} / "
-                    f"hit {display_text(row.get('hit_rate'))}"
+                    f"목표 점수 {display_number(row.get('objective_score'))} / "
+                    f"적중률 {display_percent(row.get('hit_rate'))} / "
+                    f"평가 세션 {display_number(row.get('test_session_count'))}회"
                 ),
                 "meta": f"{display_text(row.get('scope_type'))} · D+{display_text(row.get('horizon'))}",
-                "badge": "WF",
+                "badge": "정책",
                 "tone": "accent",
             }
         )
@@ -137,15 +140,15 @@ else:
     )
     render_story_stream(
         title="알파 비교",
-        summary="active 모델과 challenger 차이를 주간 기준으로 읽습니다.",
+        summary="active 모델과 challenger 차이를 이번 주 기준으로 읽습니다.",
         items=alpha_items,
         empty_message="알파 비교 데이터가 없습니다.",
     )
     render_story_stream(
-        title="캘리브레이션 / 정책",
-        summary="밴드와 정책 walkforward 상태를 같은 흐름으로 보여줍니다.",
+        title="캘리브레이션 / 정책 평가",
+        summary="밴드 보정과 정책 walk-forward 상태를 한 흐름으로 보여줍니다.",
         items=calibration_items,
-        empty_message="캘리브레이션 / 정책 데이터가 없습니다.",
+        empty_message="캘리브레이션 / 정책 평가 데이터가 없습니다.",
     )
 
     with st.expander("원본 데이터 보기", expanded=False):

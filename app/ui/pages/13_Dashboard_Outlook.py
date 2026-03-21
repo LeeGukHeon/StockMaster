@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -15,6 +14,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.ui.components import render_record_cards, render_screen_guide, render_story_stream
 from app.ui.dashboard_v2 import (
     dashboard_snapshot_note,
+    display_bool,
+    display_number,
+    display_percent,
     display_text,
     load_dashboard_v2_context,
     read_dashboard_frame,
@@ -30,7 +32,7 @@ live_frame = read_dashboard_frame(settings, "stock_workbench_live_recommendation
 target_book = read_dashboard_frame(settings, "portfolio_target_book")
 
 
-def _symbol_labels(frame: pd.DataFrame) -> list[str]:
+def _symbol_labels(frame) -> list[str]:
     labels: list[str] = []
     for row in frame.itertuples(index=False):
         symbol = display_text(getattr(row, "symbol", None))
@@ -47,11 +49,11 @@ render_dashboard_v2_header(
     manifest=manifest,
 )
 render_screen_guide(
-    summary="즉석 전망은 실시간 본 DB 재계산이 아니라, 최신 read-store 기준의 종목 스냅샷을 보여줍니다.",
+    summary="즉석 종목 전망은 실시간 본 DB 재계산이 아니라 최신 읽기 전용 스냅샷을 보여줍니다.",
     bullets=[
         "즉석 전망에서 D1/D5 기준점과 기대수익을 먼저 확인합니다.",
-        "종가 기준 요약에서 수급/알파 밴드 핵심만 읽습니다.",
-        "포트폴리오 편입 여부와 타겟북 상태를 마지막에 확인합니다.",
+        "종가 기준 요약에서 최근 수익률과 알파 밴드를 읽습니다.",
+        "포트폴리오 편입 여부와 target book 상태를 마지막에 확인합니다.",
     ],
 )
 
@@ -64,71 +66,72 @@ else:
 
     summary = summary_frame.loc[summary_frame["symbol"].astype(str) == selected_symbol].copy()
     live = live_frame.loc[live_frame["symbol"].astype(str) == selected_symbol].copy()
-    portfolio = target_book.loc[
-        target_book["symbol"].astype(str) == selected_symbol
-    ].copy()
+    portfolio = target_book.loc[target_book["symbol"].astype(str) == selected_symbol].copy()
     summary_row = summary.iloc[0] if not summary.empty else None
     live_row = live.iloc[0] if not live.empty else None
     portfolio_row = portfolio.iloc[0] if not portfolio.empty else None
 
-    instant_items: list[dict[str, str]] = []
+    outlook_items = []
     if live_row is not None:
-        instant_items.append(
+        outlook_items.append(
             {
-                "eyebrow": "Instant",
+                "eyebrow": "즉석 스냅샷",
                 "title": f"{display_text(live_row.get('symbol'))} · {display_text(live_row.get('company_name'))}",
                 "body": (
-                    f"D1 {display_text(live_row.get('live_d1_selection_v2_grade'))} / "
-                    f"D5 {display_text(live_row.get('live_d5_selection_v2_grade'))} / "
-                    f"예상 초과수익률 {display_text(live_row.get('live_d5_expected_excess_return'))}"
+                    f"D1 등급 {display_text(live_row.get('live_d1_selection_v2_grade'))} / "
+                    f"D5 등급 {display_text(live_row.get('live_d5_selection_v2_grade'))} / "
+                    f"예상 초과수익률 {display_percent(live_row.get('live_d5_expected_excess_return'), signed=True)}"
                 ),
                 "meta": (
                     f"기준일 {display_text(live_row.get('live_as_of_date'))} · "
-                    f"기준가 {display_text(live_row.get('live_reference_price'))}"
+                    f"기준가 {display_number(live_row.get('live_reference_price'))}"
                 ),
-                "badge": display_text(live_row.get("live_d5_selection_v2_grade"), "LIVE"),
+                "badge": display_text(live_row.get("live_d5_selection_v2_grade"), "즉석"),
                 "tone": "positive",
             }
         )
     if summary_row is not None:
-        instant_items.append(
+        outlook_items.append(
             {
-                "eyebrow": "Snapshot",
-                "title": "종가 기준 요약",
+                "eyebrow": "종가 기준 요약",
+                "title": "최근 흐름",
                 "body": (
-                    f"ret_5d {display_text(summary_row.get('ret_5d'))} / "
-                    f"ret_20d {display_text(summary_row.get('ret_20d'))} / "
-                    f"news_3d {display_text(summary_row.get('news_count_3d'))}"
+                    f"5일 수익률 {display_percent(summary_row.get('ret_5d'), signed=True)} / "
+                    f"20일 수익률 {display_percent(summary_row.get('ret_20d'), signed=True)} / "
+                    f"최근 3일 뉴스 {display_number(summary_row.get('news_count_3d'))}건"
                 ),
                 "meta": (
-                    f"D5 알파 {display_text(summary_row.get('d5_alpha_expected_excess_return'))} / "
-                    f"uncertainty {display_text(summary_row.get('d5_alpha_uncertainty_score'))}"
+                    f"D5 알파 기대수익 {display_percent(summary_row.get('d5_alpha_expected_excess_return'), signed=True)} / "
+                    f"불확실성 {display_number(summary_row.get('d5_alpha_uncertainty_score'))}"
                 ),
-                "badge": display_text(summary_row.get("d5_selection_v2_grade"), "BATCH"),
+                "badge": display_text(summary_row.get("d5_selection_v2_grade"), "요약"),
                 "tone": "accent",
             }
         )
     if portfolio_row is not None:
-        instant_items.append(
+        outlook_items.append(
             {
-                "eyebrow": "Portfolio",
-                "title": f"편입 상태 {display_text(portfolio_row.get('included_flag'))}",
+                "eyebrow": "포트폴리오 상태",
+                "title": f"편입 여부 {display_bool(portfolio_row.get('included_flag'))}",
                 "body": (
-                    f"실행 {display_text(portfolio_row.get('execution_mode'))} / "
-                    f"비중 {display_text(portfolio_row.get('target_weight'))} / "
-                    f"목표가 {display_text(portfolio_row.get('target_price'))}"
+                    f"실행 방식 {display_text(portfolio_row.get('execution_mode'))} / "
+                    f"목표 비중 {display_percent(portfolio_row.get('target_weight'))} / "
+                    f"목표가 {display_number(portfolio_row.get('target_price'))}"
                 ),
-                "meta": f"entry {display_text(portfolio_row.get('entry_trade_date'))} · gate {display_text(portfolio_row.get('gate_status'))}",
+                "meta": (
+                    f"진입 예정일 {display_text(portfolio_row.get('entry_trade_date'))} · "
+                    f"게이트 {display_text(portfolio_row.get('gate_status'))}"
+                ),
                 "badge": display_text(portfolio_row.get("market")),
                 "tone": "neutral",
             }
         )
 
     render_story_stream(
-        title="즉석 전망",
+        title="즉석 전망 브리프",
         summary=dashboard_snapshot_note(manifest),
-        items=instant_items,
-        empty_message="이 종목의 즉석 전망 스냅샷이 없습니다.",
+        items=outlook_items,
+        empty_message="이 종목의 최신 전망 스냅샷이 없습니다.",
     )
 
     with st.expander("원본 데이터 보기", expanded=False):

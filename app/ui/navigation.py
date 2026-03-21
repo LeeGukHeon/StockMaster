@@ -24,9 +24,9 @@ def page_specs(project_root: Path) -> tuple[PageSpec, ...]:
     return (
         PageSpec(
             key="today",
-            title="홈",
+            title="대시보드",
             icon=":material/home:",
-            url_path="home",
+            url_path="dashboard",
             callable_name="render_today_page",
             access_mode="safe",
         ),
