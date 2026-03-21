@@ -91,6 +91,10 @@ MODEL_SPEC_LABELS = {
     "alpha_rolling_120_v1": "최근 120거래일 중심 학습",
     "alpha_rolling_250_v1": "최근 250거래일 중심 학습",
     "alpha_recursive_rolling_combo": "누적+최근 구간 혼합",
+    "recursive": "확장형 누적 학습",
+    "rolling 120d": "최근 120거래일 중심 학습",
+    "rolling 250d": "최근 250거래일 중심 학습",
+    "recursive+rolling combo": "누적+최근 구간 혼합",
 }
 
 
@@ -351,6 +355,11 @@ def _translate_execution_style(value: object) -> str:
     return EXECUTION_STYLE_LABELS.get(text, text)
 
 
+def _translate_model_label(value: object) -> str:
+    text = str(value or "-")
+    return MODEL_SPEC_LABELS.get(text, text)
+
+
 def _horizon_hold_basis_label(horizon: int) -> str:
     horizon_value = int(horizon)
     if horizon_value == 1:
@@ -410,11 +419,9 @@ def _format_pick_block(row: pd.Series, *, rank: int) -> list[str]:
                 stop=base_price * (1.0 + float(row["lower_band"])),
             )
         )
-    model_spec = MODEL_SPEC_LABELS.get(str(row.get("model_spec_id")), str(row.get("model_spec_id") or "-"))
+    model_spec = _translate_model_label(row.get("model_spec_id"))
     if row.get("active_alpha_model_id") or row.get("model_spec_id"):
-        lines.append(
-            f"   - 사용 모델: {model_spec} / 활성 모델 ID {row.get('active_alpha_model_id') or '-'}"
-        )
+        lines.append(f"   - 사용 모델: {model_spec}")
     lines.append(f"   - 주요 근거: {reasons}")
     lines.append(f"   - 주의할 점: {risks}")
     return lines
@@ -482,29 +489,31 @@ def _format_official_pick_block(row: pd.Series, *, rank: int) -> list[str]:
 
 
 def _format_alpha_promotion_line(row: pd.Series) -> str:
-    p_value = ""
-    if pd.notna(row.get("p_value")):
-        p_value = f" | p={float(row['p_value']):.3f}"
     active_top10 = ""
     if pd.notna(row.get("active_top10_mean_excess_return")):
         active_top10 = f"{float(row['active_top10_mean_excess_return']):+.2%}"
     compare_top10 = ""
     if pd.notna(row.get("comparison_top10_mean_excess_return")):
         compare_top10 = f"{float(row['comparison_top10_mean_excess_return']):+.2%}"
-    compare_text = str(row.get("comparison_model_label") or "-")
+    compare_text = _translate_model_label(row.get("comparison_model_label"))
     if compare_top10:
         compare_text = f"{compare_text} {compare_top10}"
-    active_text = str(row.get("active_model_label") or "-")
+    active_text = _translate_model_label(row.get("active_model_label"))
     if active_top10:
         active_text = f"{active_text} {active_top10}"
     horizon_basis = _horizon_hold_basis_label(int(row["horizon"]))
     decision_label = _translate_alpha_decision_label(row.get("decision_label"))
     decision_reason = _translate_alpha_decision_reason(row.get("decision_reason_label"))
-    return (
-        f"- {horizon_basis} 모델 점검 (D+{int(row['horizon'])}): {decision_label} "
-        f"| 현재 사용 {active_text} | 비교 후보 {compare_text} "
-        f"| 비교 표본 {int(row['sample_count'])}{p_value} | 판단 이유 {decision_reason}"
-    )
+    summary_parts = [
+        f"- {horizon_basis} 모델 점검 (D+{int(row['horizon'])}): {decision_label}",
+        f"현재 사용 모델 {active_text}",
+    ]
+    if compare_text not in {"-", ""}:
+        summary_parts.append(f"비교 후보 {compare_text}")
+    if pd.notna(row.get("sample_count")):
+        summary_parts.append(f"비교 표본 {int(row['sample_count'])}개")
+    summary_parts.append(f"판단 이유 {decision_reason}")
+    return " | ".join(summary_parts)
 
 
 def _build_payload_content(

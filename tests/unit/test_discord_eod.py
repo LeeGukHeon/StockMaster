@@ -2,15 +2,13 @@ from __future__ import annotations
 
 from datetime import date
 
-import duckdb
 import pandas as pd
 
 from app.reports.discord_eod import (
     _build_payload_content,
+    _format_pick_block,
     _format_alpha_promotion_line,
-    _load_official_target_rows,
 )
-from app.storage.duckdb import bootstrap_core_tables
 
 
 def test_format_alpha_promotion_line_uses_korean_labels() -> None:
@@ -31,6 +29,8 @@ def test_format_alpha_promotion_line_uses_korean_labels() -> None:
     assert "기존 모델 유지" in line
     assert "현재 모델이 우수 후보군에 남음" in line
     assert "하루 보유 기준 모델 점검 (D+1)" in line
+    assert "확장형 누적 학습" in line
+    assert "p=" not in line
 
 
 def test_build_payload_content_labels_candidate_horizon_explicitly() -> None:
@@ -51,59 +51,33 @@ def test_build_payload_content_labels_candidate_horizon_explicitly() -> None:
     assert "공식 추천안" not in content
 
 
-def test_load_official_target_rows_excludes_cash_and_zero_weight() -> None:
-    connection = duckdb.connect(":memory:")
-    bootstrap_core_tables(connection)
-    as_of_date = date(2026, 3, 20)
-    common_values = {
-        "run_id": "seed-run",
-        "as_of_date": as_of_date,
-        "execution_mode": "OPEN_ALL",
-        "portfolio_policy_id": "policy",
-        "portfolio_policy_version": "v1",
-        "created_at": "2026-03-20T18:40:00+09:00",
-    }
-
-    rows = [
+def test_format_pick_block_omits_active_model_id() -> None:
+    row = pd.Series(
         {
-            **common_values,
             "symbol": "357580",
             "company_name": "아모센스",
             "market": "KOSDAQ",
-            "target_rank": 1,
-            "target_weight": 0.18,
-            "included_flag": True,
-        },
-        {
-            **common_values,
-            "symbol": "476830",
-            "company_name": "알지노믹스",
-            "market": "KOSDAQ",
-            "target_rank": 2,
-            "target_weight": 0.0,
-            "included_flag": True,
-        },
-        {
-            **common_values,
-            "symbol": "__CASH__",
-            "company_name": "현금",
-            "market": "CASH",
-            "target_rank": 9999,
-            "target_weight": 0.82,
-            "included_flag": True,
-        },
-    ]
+            "industry": "전자부품/통신장비",
+            "sector": "코스닥 제조/기술",
+            "final_selection_value": 68.7,
+            "grade": "C",
+            "selection_date": "2026-03-20 00:00:00",
+            "next_entry_trade_date": "2026-03-23 00:00:00",
+            "selection_close_price": 8860,
+            "expected_excess_return": 0.0014,
+            "lower_band": -0.0137,
+            "upper_band": 0.0131,
+            "model_spec_id": "alpha_recursive_expanding_v1",
+            "active_alpha_model_id": "freeze_alpha_active_model-xxx",
+            "top_reason_tags_json": '["short_term_momentum_strong"]',
+            "risk_flags_json": '["model_uncertainty_high"]',
+        }
+    )
 
-    for row in rows:
-        columns = ", ".join(row.keys())
-        placeholders = ", ".join("?" for _ in row)
-        connection.execute(
-            f"INSERT INTO fact_portfolio_target_book ({columns}) VALUES ({placeholders})",
-            list(row.values()),
-        )
+    lines = _format_pick_block(row, rank=1)
+    rendered = "\n".join(lines)
 
-    try:
-        frame = _load_official_target_rows(connection, as_of_date=as_of_date, limit=10)
-        assert frame["symbol"].tolist() == ["357580"]
-    finally:
-        connection.close()
+    assert "사용 모델: 확장형 누적 학습" in rendered
+    assert "활성 모델 ID" not in rendered
+    assert "단기 탄력 강함" in rendered
+    assert "모델 확신이 낮음" in rendered
