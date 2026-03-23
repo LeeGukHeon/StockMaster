@@ -581,3 +581,42 @@ def fetch_discord_bot_snapshot_rows(
         LIMIT ?
     """
     return fetchdf_postgres_sql(settings, sql, params)
+
+
+def fetch_active_job_runs(
+    settings: Settings,
+    *,
+    limit: int = 5,
+) -> pd.DataFrame:
+    if not metadata_postgres_enabled(settings):
+        return pd.DataFrame()
+    sql = """
+        SELECT
+            job.run_id,
+            job.job_name,
+            job.as_of_date,
+            job.started_at,
+            ROUND(EXTRACT(EPOCH FROM (NOW() - job.started_at)))::BIGINT AS running_seconds,
+            step.step_name,
+            step.step_order,
+            step.started_at AS step_started_at,
+            ROUND(EXTRACT(EPOCH FROM (NOW() - step.started_at)))::BIGINT AS step_running_seconds
+        FROM fact_job_run AS job
+        LEFT JOIN LATERAL (
+            SELECT
+                step_name,
+                step_order,
+                started_at
+            FROM fact_job_step_run
+            WHERE job_run_id = job.run_id
+              AND status = 'RUNNING'
+            ORDER BY step_order DESC, started_at DESC
+            LIMIT 1
+        ) AS step
+          ON TRUE
+        WHERE job.status = 'RUNNING'
+          AND job.finished_at IS NULL
+        ORDER BY job.started_at DESC
+        LIMIT ?
+    """
+    return fetchdf_postgres_sql(settings, sql, [int(limit)])

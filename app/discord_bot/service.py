@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from app.discord_bot.live_analysis import render_live_stock_analysis
-from app.discord_bot.read_store import fetch_discord_bot_snapshot_rows
+from app.discord_bot.read_store import (
+    fetch_active_job_runs,
+    fetch_discord_bot_snapshot_rows,
+)
 from app.logging import get_logger
 from app.settings import Settings
 
@@ -31,11 +35,27 @@ def _render_snapshot_list(
     return "\n".join(lines)
 
 
-def _render_status(rows) -> str:
+def _format_running_duration(value: Any) -> str:
+    try:
+        total_seconds = max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return "-"
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}시간 {minutes}분"
+    if minutes:
+        return f"{minutes}분"
+    return f"{seconds}초"
+
+
+def _render_status(rows, active_jobs=None) -> str:
     if rows.empty:
         return "상태 스냅샷이 아직 준비되지 않았습니다."
+
     row = rows.iloc[0]
     lines = ["**StockMaster 상태**", row["summary"]]
+
     payload = row.get("payload_json")
     if isinstance(payload, str) and payload.strip():
         try:
@@ -45,6 +65,30 @@ def _render_status(rows) -> str:
         ranking_version = parsed.get("ranking_version")
         if ranking_version:
             lines.append(f"추천 모델 버전 {ranking_version}")
+
+    lines.append("")
+    if active_jobs is not None and not active_jobs.empty:
+        lines.append("**현재 진행 중인 작업**")
+        for item in active_jobs.itertuples(index=False):
+            job_name = str(getattr(item, "job_name", "") or "-")
+            job_elapsed = _format_running_duration(getattr(item, "running_seconds", None))
+            as_of_date = str(getattr(item, "as_of_date", "") or "")
+            step_name = str(getattr(item, "step_name", "") or "")
+            step_elapsed = _format_running_duration(getattr(item, "step_running_seconds", None))
+            if step_name:
+                lines.append(
+                    f"- {job_name} ({job_elapsed})"
+                    + (f" · 기준일 {as_of_date}" if as_of_date else "")
+                )
+                lines.append(f"  현재 단계: {step_name} ({step_elapsed})")
+            else:
+                lines.append(
+                    f"- {job_name} ({job_elapsed})"
+                    + (f" · 기준일 {as_of_date}" if as_of_date else "")
+                )
+    else:
+        lines.append("현재 진행 중인 작업은 없습니다.")
+
     return "\n".join(lines)
 
 
@@ -120,11 +164,12 @@ def build_discord_bot(settings: Settings):
 
     client = StockMasterDiscordBot()
 
-    @client.tree.command(name="상태", description="마지막 반영 시각과 현재 기준 상태를 보여줍니다.")
+    @client.tree.command(name="상태", description="마지막 반영 시각과 현재 진행 상태를 보여줍니다.")
     async def bot_status(interaction: discord.Interaction) -> None:
         await interaction.response.defer(thinking=True)
         rows = fetch_discord_bot_snapshot_rows(settings, snapshot_type="status", limit=1)
-        await interaction.followup.send(_render_status(rows))
+        active_jobs = fetch_active_job_runs(settings, limit=5)
+        await interaction.followup.send(_render_status(rows, active_jobs=active_jobs))
 
     @client.tree.command(name="내일종목추천", description="다음 거래일 기준 상위 후보를 보여줍니다.")
     @app_commands.rename(basis="보유기준", count="개수")
