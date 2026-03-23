@@ -20,6 +20,7 @@ from app.reports.discord_eod import (
 from app.settings import Settings
 from app.storage.metadata_postgres import (
     ensure_postgres_metadata_store,
+    execute_postgres_sql,
     executemany_postgres_sql,
     fetchdf_postgres_sql,
     metadata_postgres_enabled,
