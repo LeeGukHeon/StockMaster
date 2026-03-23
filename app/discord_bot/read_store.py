@@ -616,6 +616,16 @@ def fetch_active_job_runs(
           ON TRUE
         WHERE job.status = 'RUNNING'
           AND job.finished_at IS NULL
+          AND job.job_name IN (
+              'run_daily_close_bundle',
+              'run_evaluation_bundle',
+              'run_news_sync_bundle',
+              'run_daily_overlay_refresh_bundle',
+              'run_weekly_training_bundle',
+              'run_weekly_calibration_bundle',
+              'run_weekly_policy_research_bundle'
+          )
+          AND job.started_at >= (NOW() - INTERVAL '24 hours')
         ORDER BY job.started_at DESC
         LIMIT ?
     """

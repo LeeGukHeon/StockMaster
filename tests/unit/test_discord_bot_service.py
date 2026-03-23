@@ -32,9 +32,9 @@ def test_render_status_includes_active_jobs() -> None:
 
     assert "StockMaster 상태" in rendered
     assert "추천 모델 버전 selection_engine_v2" in rendered
-    assert "현재 진행 중인 작업" in rendered
-    assert "run_daily_close_bundle" in rendered
-    assert "train_alpha_candidate_models" in rendered
+    assert "지금 진행 중인 핵심 작업" in rendered
+    assert "내일 종목 추천 업데이트" in rendered
+    assert "후보 모델 비교 학습" in rendered
 
 
 def test_render_status_mentions_no_active_jobs() -> None:
@@ -49,4 +49,4 @@ def test_render_status_mentions_no_active_jobs() -> None:
 
     rendered = _render_status(rows, active_jobs=pd.DataFrame())
 
-    assert "현재 진행 중인 작업은 없습니다." in rendered
+    assert "지금 진행 중인 핵심 작업은 없습니다." in rendered

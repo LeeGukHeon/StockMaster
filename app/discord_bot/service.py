@@ -13,6 +13,41 @@ from app.settings import Settings
 
 logger = get_logger(__name__)
 
+JOB_LABELS: dict[str, str] = {
+    "run_daily_close_bundle": "내일 종목 추천 업데이트",
+    "run_evaluation_bundle": "사후 평가 정리",
+    "run_news_sync_bundle": "뉴스 반영",
+    "run_daily_overlay_refresh_bundle": "장중 정책 갱신",
+    "run_weekly_training_bundle": "주간 학습",
+    "run_weekly_calibration_bundle": "주간 캘리브레이션",
+    "run_weekly_policy_research_bundle": "주간 정책 리서치",
+}
+
+STEP_LABELS: dict[str, str] = {
+    "daily_pipeline": "추천 데이터 수집과 계산",
+    "sync_daily_ohlcv": "일봉 시세 수집",
+    "sync_fundamentals_snapshot": "재무 데이터 수집",
+    "sync_news_metadata": "뉴스 수집",
+    "sync_investor_flow": "수급 데이터 수집",
+    "build_feature_store": "특징값 생성",
+    "build_market_regime_snapshot": "시장 국면 계산",
+    "materialize_explanatory_ranking": "기본 점수 계산",
+    "materialize_selection_engine_v1": "기본 추천 계산",
+    "train_alpha_model_v1": "기본 추천 모델 학습",
+    "train_alpha_candidate_models": "후보 모델 비교 학습",
+    "materialize_alpha_shadow_candidates": "후보 모델 비교 점검",
+    "run_alpha_auto_promotion": "추천 모델 교체 점검",
+    "materialize_alpha_predictions_v1": "예상 수익 계산",
+    "materialize_selection_engine_v2": "최종 추천 점수 계산",
+    "calibrate_proxy_prediction_bands": "예측 구간 보정",
+    "evaluation_pipeline": "사후 평가 계산",
+    "render_evaluation_report": "사후 평가 리포트 생성",
+    "build_report_index": "리포트 인덱스 갱신",
+    "materialize_health_snapshots": "운영 상태 기록",
+    "check_pipeline_dependencies": "의존성 점검",
+    "materialize_discord_bot_read_store": "봇 조회 스냅샷 갱신",
+}
+
 
 class DiscordBotConfigError(RuntimeError):
     pass
@@ -49,6 +84,16 @@ def _format_running_duration(value: Any) -> str:
     return f"{seconds}초"
 
 
+def _job_label(value: object) -> str:
+    text = str(value or "").strip()
+    return JOB_LABELS.get(text, text or "알 수 없는 작업")
+
+
+def _step_label(value: object) -> str:
+    text = str(value or "").strip()
+    return STEP_LABELS.get(text, "")
+
+
 def _render_status(rows, active_jobs=None) -> str:
     if rows.empty:
         return "상태 스냅샷이 아직 준비되지 않았습니다."
@@ -68,26 +113,21 @@ def _render_status(rows, active_jobs=None) -> str:
 
     lines.append("")
     if active_jobs is not None and not active_jobs.empty:
-        lines.append("**현재 진행 중인 작업**")
+        lines.append("**지금 진행 중인 핵심 작업**")
         for item in active_jobs.itertuples(index=False):
-            job_name = str(getattr(item, "job_name", "") or "-")
+            job_name = _job_label(getattr(item, "job_name", ""))
             job_elapsed = _format_running_duration(getattr(item, "running_seconds", None))
             as_of_date = str(getattr(item, "as_of_date", "") or "")
-            step_name = str(getattr(item, "step_name", "") or "")
+            step_name = _step_label(getattr(item, "step_name", ""))
             step_elapsed = _format_running_duration(getattr(item, "step_running_seconds", None))
+            header = f"- {job_name} ({job_elapsed})"
+            if as_of_date:
+                header += f" · 기준일 {as_of_date}"
+            lines.append(header)
             if step_name:
-                lines.append(
-                    f"- {job_name} ({job_elapsed})"
-                    + (f" · 기준일 {as_of_date}" if as_of_date else "")
-                )
                 lines.append(f"  현재 단계: {step_name} ({step_elapsed})")
-            else:
-                lines.append(
-                    f"- {job_name} ({job_elapsed})"
-                    + (f" · 기준일 {as_of_date}" if as_of_date else "")
-                )
     else:
-        lines.append("현재 진행 중인 작업은 없습니다.")
+        lines.append("지금 진행 중인 핵심 작업은 없습니다.")
 
     return "\n".join(lines)
 
