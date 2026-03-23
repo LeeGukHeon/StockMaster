@@ -313,6 +313,7 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
 
     paths["data_dir"] = env_values.get("APP_DATA_DIR", paths.get("data_dir"))
     paths["duckdb_path"] = env_values.get("APP_DUCKDB_PATH", paths.get("duckdb_path"))
+    paths["artifacts_dir"] = env_values.get("APP_ARTIFACTS_DIR", paths.get("artifacts_dir"))
 
     storage["warning_ratio"] = float(
         env_values.get("STORAGE_WARNING_RATIO", storage.get("warning_ratio"))

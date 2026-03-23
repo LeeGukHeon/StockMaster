@@ -16,6 +16,7 @@ def test_load_settings_applies_env_overrides(tmp_path):
                 "APP_ENV=prod",
                 "APP_DATA_DIR=./runtime-data",
                 "APP_DUCKDB_PATH=./runtime-data/marts/test.duckdb",
+                "APP_ARTIFACTS_DIR=./runtime-artifacts",
                 "STORAGE_WARNING_RATIO=0.55",
                 "MODEL_DEFAULT_HORIZONS=D1,D5,D10",
                 "DISCORD_REPORT_ENABLED=true",
@@ -35,6 +36,7 @@ def test_load_settings_applies_env_overrides(tmp_path):
         settings.paths.duckdb_path
         == (project_root() / "runtime-data" / "marts" / "test.duckdb").resolve()
     )
+    assert settings.paths.artifacts_dir == (project_root() / "runtime-artifacts").resolve()
     assert settings.storage.warning_ratio == 0.55
     assert settings.model.default_horizons == ["D1", "D5", "D10"]
     assert settings.discord.enabled is True

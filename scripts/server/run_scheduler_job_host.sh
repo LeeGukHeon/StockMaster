@@ -17,6 +17,7 @@ shift || true
 
 export APP_DATA_DIR="${STOCKMASTER_RUNTIME_ROOT:-/opt/stockmaster/runtime}/data"
 export APP_DUCKDB_PATH="${APP_DATA_DIR}/marts/main.duckdb"
+export APP_ARTIFACTS_DIR="${STOCKMASTER_RUNTIME_ROOT:-/opt/stockmaster/runtime}/artifacts"
 
 if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:-duckdb}" == "postgres" ]]; then
   compose up -d metadata_db >/dev/null
