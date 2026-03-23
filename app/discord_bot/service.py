@@ -33,7 +33,7 @@ def _render_snapshot_list(
 
 def _render_status(rows) -> str:
     if rows.empty:
-        return "봇 상태 스냅샷이 아직 준비되지 않았습니다."
+        return "상태 스냅샷이 아직 준비되지 않았습니다."
     row = rows.iloc[0]
     lines = ["**StockMaster 상태**", row["summary"]]
     payload = row.get("payload_json")
@@ -120,13 +120,13 @@ def build_discord_bot(settings: Settings):
 
     client = StockMasterDiscordBot()
 
-    @client.tree.command(name="상태", description="마지막 반영 시각과 봇 응답 기준을 보여줍니다.")
+    @client.tree.command(name="상태", description="마지막 반영 시각과 현재 기준 상태를 보여줍니다.")
     async def bot_status(interaction: discord.Interaction) -> None:
         await interaction.response.defer(thinking=True)
         rows = fetch_discord_bot_snapshot_rows(settings, snapshot_type="status", limit=1)
         await interaction.followup.send(_render_status(rows))
 
-    @client.tree.command(name="내일종목추천", description="다음 거래일 상위 후보를 보여줍니다.")
+    @client.tree.command(name="내일종목추천", description="다음 거래일 기준 상위 후보를 보여줍니다.")
     @app_commands.rename(basis="보유기준", count="개수")
     @app_commands.describe(
         basis="1은 하루 보유 기준, 5는 5거래일 보유 기준입니다.",
@@ -157,7 +157,7 @@ def build_discord_bot(settings: Settings):
         )
         await interaction.followup.send(message)
 
-    @client.tree.command(name="주간보고", description="주간 모델 점검과 정책 요약을 보여줍니다.")
+    @client.tree.command(name="주간보고", description="주간 모델 평가와 정책 요약을 보여줍니다.")
     async def weekly_report(interaction: discord.Interaction) -> None:
         await interaction.response.defer(thinking=True)
         rows = fetch_discord_bot_snapshot_rows(
@@ -172,7 +172,7 @@ def build_discord_bot(settings: Settings):
         )
         await interaction.followup.send(message)
 
-    @client.tree.command(name="종목분석", description="종목명 또는 6자리 코드로 최신 요약을 보여줍니다.")
+    @client.tree.command(name="종목요약", description="종목명 또는 6자리 코드로 최신 요약을 보여줍니다.")
     @app_commands.rename(query="종목")
     @app_commands.describe(query="종목명 또는 6자리 종목코드를 입력하세요.")
     async def stock_summary(interaction: discord.Interaction, query: str) -> None:
@@ -185,7 +185,10 @@ def build_discord_bot(settings: Settings):
         )
         await interaction.followup.send(_render_stock_summary(query, rows))
 
-    @client.tree.command(name="실시간종목분석", description="최신 시세와 최근 뉴스를 반영한 실시간 분석을 보여줍니다.")
+    @client.tree.command(
+        name="즉석종목분석",
+        description="최신 시세와 최근 뉴스를 반영한 즉석 분석을 보여줍니다.",
+    )
     @app_commands.rename(query="종목")
     @app_commands.describe(query="종목명 또는 6자리 종목코드를 입력하세요.")
     async def live_stock_summary(interaction: discord.Interaction, query: str) -> None:

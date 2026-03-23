@@ -71,7 +71,7 @@ bot은 Postgres에서 latest snapshot을 읽어 응답한다.
 
 - `/내일종목추천`
 - `/주간보고`
-- `/종목분석`
+- `/종목요약`
 - `/상태`
 
 ## 저장 전략
@@ -96,7 +96,7 @@ bot은 Postgres에서 latest snapshot을 읽어 응답한다.
 - 원본 대형 DataFrame 저장 금지
 - 최신 응답에 필요한 작은 요약만 저장
 - 과거 히스토리는 1차 구현 범위에서 저장하지 않음
-- 실시간 종목분석 결과는 저장하지 않거나 짧은 TTL 캐시만 허용
+- 즉석 종목분석 결과는 저장하지 않거나 짧은 TTL 캐시만 허용
 
 ## 명령어 설계
 
@@ -126,7 +126,7 @@ bot은 Postgres에서 latest snapshot을 읽어 응답한다.
 - 주간 평가 요약
 - 정책/캘리브레이션 핵심 줄
 
-### `/종목분석`
+### `/종목요약`
 
 입력:
 
@@ -155,7 +155,7 @@ bot은 Postgres에서 latest snapshot을 읽어 응답한다.
 - 주간 보고 snapshot 기준일
 - bot read store 생성 시각
 
-## 실시간 종목분석 2차 방향
+## 즉석 종목분석 2차 방향
 
 실시간 분석은 bot read store와 분리한다.
 
@@ -202,13 +202,13 @@ bot은 Postgres에서 latest snapshot을 읽어 응답한다.
 
 - `fact_discord_bot_snapshot` 테이블 추가
 - latest snapshot materializer 추가
-- `/내일종목추천`, `/주간보고`, `/종목분석`, `/상태` slash command 골격 추가
+- `/내일종목추천`, `/주간보고`, `/종목요약`, `/상태` slash command 골격 추가
 - 수동 실행 스크립트 추가
 
 ## 추후 작업
 
 - Discord bot systemd service / deployment
-- 실시간 종목분석 워커
+- 즉석 종목분석 워커
 - guild scoped sync / 운영 권한 관리
 - 답변 길이 자동 분할
 - 사용자별 관심종목/알림 설정
