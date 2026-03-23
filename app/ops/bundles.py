@@ -4,6 +4,7 @@ from datetime import date
 
 from app.audit.checks import run_artifact_reference_checks, run_latest_layer_checks
 from app.common.time import today_local
+from app.discord_bot.read_store import materialize_discord_bot_read_store
 from app.intraday.adjusted_decisions import materialize_intraday_adjusted_entry_decisions
 from app.intraday.data import (
     backfill_intraday_candidate_bars,
@@ -526,6 +527,24 @@ def _refresh_release_views(
     job.run_step(
         "materialize_ui_read_model_snapshot",
         materialize_ui_read_model_snapshot,
+        settings,
+        connection=connection,
+        as_of_date=as_of_date,
+        job_run_id=job.run_id,
+        critical=False,
+    )
+
+
+def _refresh_discord_bot_store(
+    job: JobRunContext,
+    *,
+    settings: Settings,
+    connection,
+    as_of_date: date,
+) -> None:
+    job.run_step(
+        "materialize_discord_bot_read_store",
+        materialize_discord_bot_read_store,
         settings,
         connection=connection,
         as_of_date=as_of_date,
@@ -1311,6 +1330,12 @@ def run_daily_close_bundle(
                     connection=connection,
                     as_of_date=target_date,
                 )
+                _refresh_discord_bot_store(
+                    job,
+                    settings=settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                )
                 job.run_step(
                     "check_pipeline_dependencies",
                     check_pipeline_dependencies,
@@ -1493,6 +1518,12 @@ def run_evaluation_bundle(
                     critical=False,
                 )
                 _refresh_release_views(
+                    job,
+                    settings=settings,
+                    connection=connection,
+                    as_of_date=target_date,
+                )
+                _refresh_discord_bot_store(
                     job,
                     settings=settings,
                     connection=connection,
@@ -2080,6 +2111,12 @@ def run_weekly_calibration_bundle(
                     run_id=job.run_id,
                     connection=connection,
                     critical=False,
+                )
+                _refresh_discord_bot_store(
+                    job,
+                    settings=settings,
+                    connection=connection,
+                    as_of_date=target_date,
                 )
                 job.run_step(
                     "materialize_health_snapshots",

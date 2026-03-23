@@ -51,6 +51,10 @@ providers:
 discord:
   enabled: false
   username: KR Stock Research Bot
+  bot_enabled: false
+  bot_token:
+  bot_application_id:
+  bot_guild_id:
 
 metadata:
   enabled: false

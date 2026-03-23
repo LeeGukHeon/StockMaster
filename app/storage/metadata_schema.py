@@ -294,6 +294,34 @@ def postgres_metadata_ddl(schema: str) -> tuple[str, ...]:
         )
         """,
         f"""
+        CREATE TABLE IF NOT EXISTS {qualified("fact_discord_bot_snapshot")} (
+            snapshot_type TEXT NOT NULL,
+            snapshot_key TEXT NOT NULL,
+            as_of_date DATE,
+            horizon INTEGER,
+            sort_order INTEGER,
+            symbol TEXT,
+            company_name TEXT,
+            market TEXT,
+            title TEXT NOT NULL,
+            subtitle TEXT,
+            summary TEXT,
+            payload_json TEXT,
+            snapshot_ts TIMESTAMPTZ NOT NULL,
+            source_run_id TEXT,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (snapshot_type, snapshot_key)
+        )
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_fact_discord_bot_snapshot_type_order
+        ON {qualified("fact_discord_bot_snapshot")} (snapshot_type, horizon, sort_order)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_fact_discord_bot_snapshot_symbol
+        ON {qualified("fact_discord_bot_snapshot")} (symbol)
+        """,
+        f"""
         CREATE OR REPLACE VIEW "{schema}"."vw_latest_pipeline_dependency_state" AS
         SELECT *
         FROM (

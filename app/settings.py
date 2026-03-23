@@ -173,6 +173,10 @@ class DiscordConfig(BaseModel):
     enabled: bool = False
     webhook_url: str | None = None
     username: str = "KR Stock Research Bot"
+    bot_enabled: bool = False
+    bot_token: str | None = None
+    bot_application_id: int | None = None
+    bot_guild_id: int | None = None
 
 
 class DashboardAccessConfig(BaseModel):
@@ -395,6 +399,23 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
     )
     discord["webhook_url"] = env_values.get("DISCORD_WEBHOOK_URL")
     discord["username"] = env_values.get("DISCORD_USERNAME", discord.get("username"))
+    discord["bot_enabled"] = _parse_bool(
+        env_values.get("DISCORD_BOT_ENABLED"),
+        discord.get("bot_enabled", False),
+    )
+    discord["bot_token"] = env_values.get("DISCORD_BOT_TOKEN", discord.get("bot_token"))
+    bot_application_id = env_values.get("DISCORD_BOT_APPLICATION_ID")
+    discord["bot_application_id"] = (
+        int(bot_application_id)
+        if bot_application_id not in (None, "")
+        else discord.get("bot_application_id")
+    )
+    bot_guild_id = env_values.get("DISCORD_BOT_GUILD_ID")
+    discord["bot_guild_id"] = (
+        int(bot_guild_id)
+        if bot_guild_id not in (None, "")
+        else discord.get("bot_guild_id")
+    )
 
     dashboard_access["enabled"] = _parse_bool(
         env_values.get("DASHBOARD_ACCESS_ENABLED"),
