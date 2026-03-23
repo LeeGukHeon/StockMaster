@@ -8,19 +8,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 require_cmd docker
 load_server_env
 
-local_base="http://127.0.0.1:${PUBLIC_PORT:-80}"
-
 log "checking docker compose state"
 compose ps
 
-log "checking /healthz"
-http_get "${local_base}/healthz" >/dev/null
+if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:-duckdb}" == "postgres" ]]; then
+  log "checking metadata db readiness"
+  compose exec -T metadata_db pg_isready \
+    -U "${METADATA_DB_POSTGRES_USER:-stockmaster}" \
+    -d "${METADATA_DB_POSTGRES_DB:-stockmaster_meta}" >/dev/null
+fi
 
-log "checking /readyz"
-http_get "${local_base}/readyz" >/dev/null
-
-log "checking root page"
-http_get "${local_base}/" >/dev/null
+log "checking discord bot service"
+systemctl is-active --quiet stockmaster-discord-bot.service
 
 log "smoke test passed"
-

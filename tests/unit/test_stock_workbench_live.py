@@ -6,11 +6,12 @@ import pandas as pd
 
 from app.features.feature_store import build_feature_store
 from app.regime.snapshot import build_market_regime_snapshot
-from app.ui.helpers import resolve_ui_artifact_path, stock_workbench_live_recommendation_frame
+from app.common.artifacts import resolve_artifact_path
+from app.discord_bot.live_recalc import compute_live_stock_recommendation
 from tests._ticket003_support import build_test_settings, seed_ticket003_data
 
 
-def test_stock_workbench_live_recommendation_frame_returns_on_demand_snapshot(
+def test_compute_live_stock_recommendation_returns_on_demand_snapshot(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -23,7 +24,7 @@ def test_stock_workbench_live_recommendation_frame_returns_on_demand_snapshot(
     dummy_artifact.write_bytes(b"artifact")
 
     monkeypatch.setattr(
-        "app.ui.helpers._resolve_training_run_for_inference",
+        "app.discord_bot.live_recalc._resolve_training_run_for_inference",
         lambda connection, *, as_of_date, horizon: (
             {
                 "training_run_id": f"seed-h{horizon}",
@@ -86,11 +87,12 @@ def test_stock_workbench_live_recommendation_frame_returns_on_demand_snapshot(
         )
 
     monkeypatch.setattr(
-        "app.ui.helpers.build_prediction_frame_from_training_run",
+        "app.discord_bot.live_recalc.build_prediction_frame_from_training_run",
         _fake_build_prediction_frame_from_training_run,
     )
 
-    frame = stock_workbench_live_recommendation_frame(settings, symbol="005930")
+    result = compute_live_stock_recommendation(settings, symbol="005930")
+    frame = result.frame
 
     assert not frame.empty
     assert frame.iloc[0]["symbol"] == "005930"
@@ -99,7 +101,7 @@ def test_stock_workbench_live_recommendation_frame_returns_on_demand_snapshot(
     assert frame.iloc[0]["live_d5_target_price"] > frame.iloc[0]["live_reference_price"]
 
 
-def test_resolve_ui_artifact_path_maps_legacy_artifact_root(tmp_path) -> None:
+def test_resolve_artifact_path_maps_legacy_artifact_root(tmp_path) -> None:
     settings = build_test_settings(tmp_path)
     runtime_artifact = settings.paths.artifacts_dir / "models" / "alpha_model_v1.pkl"
     runtime_artifact.parent.mkdir(parents=True, exist_ok=True)
@@ -107,6 +109,6 @@ def test_resolve_ui_artifact_path_maps_legacy_artifact_root(tmp_path) -> None:
 
     legacy_artifact = settings.paths.project_root / "data" / "artifacts" / "models" / "alpha_model_v1.pkl"
 
-    resolved = resolve_ui_artifact_path(settings, str(legacy_artifact))
+    resolved = resolve_artifact_path(settings, str(legacy_artifact))
 
     assert resolved == runtime_artifact.resolve()

@@ -25,14 +25,14 @@ from app.storage.metadata_postgres import (
     fetchdf_postgres_sql,
     metadata_postgres_enabled,
 )
-from app.ui.read_model import (
-    _leaderboard_frame,
-    _latest_evaluation_summary_frame,
-    _latest_intraday_policy_evaluation_frame,
-    _resolve_latest_ranking_date,
-    _resolve_latest_ranking_version,
-    _stock_workbench_live_recommendation_frame,
-    _stock_workbench_summary_frame,
+from app.discord_bot.data_views import (
+    leaderboard_frame,
+    latest_evaluation_summary_frame,
+    latest_intraday_policy_evaluation_frame,
+    resolve_latest_ranking_date,
+    resolve_latest_ranking_version,
+    stock_workbench_live_snapshot_frame,
+    stock_workbench_summary_frame,
 )
 
 BOT_SNAPSHOT_TABLE = "fact_discord_bot_snapshot"
@@ -416,27 +416,27 @@ def materialize_discord_bot_read_store(
     ensure_postgres_metadata_store(settings)
     built_at = now_local(settings.app.timezone)
     built_at_text = built_at.isoformat()
-    ranking_version = _resolve_latest_ranking_version(connection)
-    ranking_as_of_date = _resolve_latest_ranking_date(connection, ranking_version)
+    ranking_version = resolve_latest_ranking_version(connection)
+    ranking_as_of_date = resolve_latest_ranking_date(connection, ranking_version)
     target_as_of_date = as_of_date or ranking_as_of_date or built_at.date()
     target_as_of_date_text = None if target_as_of_date is None else target_as_of_date.isoformat()
 
     leaderboard = pd.DataFrame()
     if ranking_version is not None and ranking_as_of_date is not None:
-        leaderboard = _leaderboard_frame(
+        leaderboard = leaderboard_frame(
             connection,
             as_of_date=ranking_as_of_date,
             ranking_version=ranking_version,
         )
 
-    summary_frame = _stock_workbench_summary_frame(connection)
-    live_frame = _stock_workbench_live_recommendation_frame(
+    summary_frame = stock_workbench_summary_frame(connection)
+    live_frame = stock_workbench_live_snapshot_frame(
         connection,
         ranking_as_of_date=ranking_as_of_date,
     )
     alpha_promotion = load_alpha_promotion_summary(connection, as_of_date=target_as_of_date)
-    evaluation_summary = _latest_evaluation_summary_frame(connection)
-    policy_eval = _latest_intraday_policy_evaluation_frame(connection)
+    evaluation_summary = latest_evaluation_summary_frame(connection)
+    policy_eval = latest_intraday_policy_evaluation_frame(connection)
 
     rows: list[dict[str, object]] = []
     rows.extend(

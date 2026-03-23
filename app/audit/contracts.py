@@ -887,14 +887,14 @@ CONTRACTS_BY_NAME: dict[str, TableContract] = {contract.name: contract for contr
 TICKET_CHECKLIST: tuple[ChecklistItem, ...] = (
     ChecklistItem(
         ticket_id="T000",
-        title="Foundation / bootstrap / UI skeleton",
+        title="Foundation / bootstrap / bot-first skeleton",
         required_objects=("dim_symbol", "dim_trading_calendar"),
         required_files=(
             "README.md",
             "pyproject.toml",
             "app/settings.py",
             "scripts/bootstrap.py",
-            "app/ui/Home.py",
+            "app/discord_bot/service.py",
         ),
     ),
     ChecklistItem(
@@ -1075,7 +1075,7 @@ TICKET_CHECKLIST: tuple[ChecklistItem, ...] = (
     ),
     ChecklistItem(
         ticket_id="T013",
-        title="Final workflow / dashboard / release polish",
+        title="Final workflow / Discord bot / release polish",
         required_objects=(
             "fact_latest_app_snapshot",
             "fact_latest_report_index",
@@ -1083,9 +1083,9 @@ TICKET_CHECKLIST: tuple[ChecklistItem, ...] = (
             "fact_ui_data_freshness_snapshot",
         ),
         required_files=(
-            "scripts/build_latest_app_snapshot.py",
             "scripts/build_report_index.py",
-            "scripts/build_ui_freshness_snapshot.py",
+            "scripts/materialize_discord_bot_read_store.py",
+            "scripts/run_discord_bot.py",
             "scripts/validate_release_candidate.py",
             "docs/USER_GUIDE.md",
             "docs/WORKFLOW_DAILY.md",

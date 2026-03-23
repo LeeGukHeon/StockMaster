@@ -6,7 +6,6 @@ from pathlib import Path
 def test_server_deploy_bundle_files_exist():
     required_paths = [
         Path("deploy/docker-compose.server.yml"),
-        Path("deploy/nginx/default.conf"),
         Path("deploy/env/.env.server.example"),
         Path("deploy/systemd/stockmaster-compose.service"),
         Path("scripts/server/start_server.sh"),

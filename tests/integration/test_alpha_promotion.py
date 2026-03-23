@@ -14,7 +14,7 @@ from app.ml.registry import (
     upsert_model_training_runs,
 )
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
-from app.ui.helpers import (
+from app.query_views import (
     latest_alpha_active_model_frame,
     latest_alpha_model_spec_frame,
     latest_alpha_rollback_frame,

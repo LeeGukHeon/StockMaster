@@ -6,15 +6,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/common.sh"
 
 require_cmd docker
+require_cmd python3
 load_server_env
 mkdir_runtime_dirs
 
-if [[ "${FORCE_BUILD:-false}" == "true" ]] || ! docker image inspect "${STOCKMASTER_SERVER_IMAGE:-stockmaster-server:latest}" >/dev/null 2>&1; then
-  log "building server image"
-  compose build
-else
-  log "reusing existing server image: ${STOCKMASTER_SERVER_IMAGE:-stockmaster-server:latest}"
-fi
+WORKER_VENV="${STOCKMASTER_SCHEDULER_VENV:-/opt/stockmaster/worker-venv}"
+[[ -x "${WORKER_VENV}/bin/python" ]] || fail "missing scheduler worker venv: ${WORKER_VENV}"
+
+export APP_DATA_DIR="${STOCKMASTER_RUNTIME_ROOT:-/opt/stockmaster/runtime}/data"
+export APP_DUCKDB_PATH="${APP_DATA_DIR}/marts/main.duckdb"
 
 if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:-duckdb}" == "postgres" ]]; then
   log "starting metadata db"
@@ -32,18 +32,20 @@ if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:
     sleep 2
   done
 
+  export METADATA_DB_URL="postgresql://${METADATA_DB_POSTGRES_USER:-stockmaster}:${METADATA_DB_POSTGRES_PASSWORD:-change_me}@127.0.0.1:${METADATA_DB_HOST_PORT:-5433}/${METADATA_DB_POSTGRES_DB:-stockmaster_meta}"
+
   log "bootstrapping metadata store"
-  compose run --rm app python scripts/bootstrap_metadata_store.py
+  "${WORKER_VENV}/bin/python" "${PROJECT_ROOT}/scripts/bootstrap_metadata_store.py"
 
   log "running initial metadata migration if postgres target is empty"
-  compose run --rm app python scripts/migrate_duckdb_metadata_to_postgres.py --truncate-first --if-target-empty
+  "${WORKER_VENV}/bin/python" "${PROJECT_ROOT}/scripts/migrate_duckdb_metadata_to_postgres.py" --truncate-first --if-target-empty
 fi
 
 log "running bootstrap"
-compose run --rm app python scripts/bootstrap.py
+"${WORKER_VENV}/bin/python" "${PROJECT_ROOT}/scripts/bootstrap.py"
 
-log "starting server stack"
-compose up -d
+log "starting metadata-only server stack"
+compose up -d metadata_db
 compose ps
 
 log "running local smoke test"

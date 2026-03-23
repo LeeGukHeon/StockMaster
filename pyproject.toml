@@ -23,7 +23,6 @@ dependencies = [
   "python-dotenv>=1.0,<2",
   "PyYAML>=6.0,<7",
   "scikit-learn>=1.8,<2",
-  "streamlit>=1.44,<2",
   "tenacity>=9,<10",
 ]
 

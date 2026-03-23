@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import date
-from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -17,8 +16,6 @@ from app.ops.repository import json_text
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables
 from app.storage.metadata_postgres import executemany_postgres_sql
-from app.ui.navigation import PAGE_SPECS
-
 
 REQUIRED_REPORT_TYPES: tuple[str, ...] = (
     "daily_research_report",
@@ -63,49 +60,18 @@ def _insert_checks(
         for check in checks
     ]
     columns = list(rows[0].keys())
-    connection.executemany(
-        f"""
+    values = [[row[column] for column in columns] for row in rows]
+    sql = f"""
         INSERT INTO fact_release_candidate_check ({", ".join(columns)})
         VALUES ({", ".join("?" for _ in columns)})
-        """,
-        [[row[column] for column in columns] for row in rows],
-    )
-    executemany_postgres_sql(
-        settings,
-        f"""
-        INSERT INTO fact_release_candidate_check ({", ".join(columns)})
-        VALUES ({", ".join("?" for _ in columns)})
-        """,
-        [[row[column] for column in columns] for row in rows],
-    )
+    """
+    connection.executemany(sql, values)
+    executemany_postgres_sql(settings, sql, values)
 
 
 def _view_count(connection: duckdb.DuckDBPyConnection, table_name: str) -> int:
     row = connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
     return int(row[0]) if row else 0
-
-
-def _page_contract_checks() -> list[ValidationCheck]:
-    checks: list[ValidationCheck] = []
-    for spec in PAGE_SPECS:
-        if spec.callable_name is not None:
-            exists = True
-            detail = {"page_key": spec.key, "callable_name": spec.callable_name}
-        else:
-            exists = spec.path is not None and spec.path.exists()
-            detail = {"page_key": spec.key, "path": str(spec.path) if spec.path else None}
-        checks.append(
-            ValidationCheck(
-                name=f"page_contract:{spec.key}",
-                status=JobStatus.SUCCESS if exists else JobStatus.FAILED,
-                severity="INFO" if exists else "CRITICAL",
-                detail=detail,
-                recommended_action=(
-                    "페이지 파일/엔트리를 복구하세요." if not exists else "none"
-                ),
-            )
-        )
-    return checks
 
 
 def validate_page_contracts(
@@ -114,47 +80,24 @@ def validate_page_contracts(
     connection: duckdb.DuckDBPyConnection | None,
     persist_results: bool = True,
 ) -> OpsValidationResult:
-    checks = _page_contract_checks()
-    if persist_results:
-        if connection is None:
-            raise ValueError("connection is required when persist_results=True")
+    checks = [
+        ValidationCheck(
+            name="dashboard:retired",
+            status=JobStatus.SKIPPED,
+            severity="INFO",
+            detail={"message": "Streamlit dashboard has been retired in favor of Discord bot."},
+            recommended_action="none",
+        )
+    ]
+    if persist_results and connection is not None:
         bootstrap_core_tables(connection)
         _insert_checks(connection, settings, checks)
-    warning_count = sum(1 for check in checks if check.severity != "INFO")
     return OpsValidationResult(
         run_id="embedded",
         check_count=len(checks),
-        warning_count=warning_count,
-        notes=f"Page contracts validated. checks={len(checks)} warnings={warning_count}",
+        warning_count=0,
+        notes="Dashboard page-contract validation retired.",
     )
-
-
-def _navigation_integrity_checks() -> list[ValidationCheck]:
-    url_paths = [spec.url_path for spec in PAGE_SPECS]
-    titles = [spec.title for spec in PAGE_SPECS]
-    return [
-        ValidationCheck(
-            name="navigation:url_path_unique",
-            status=JobStatus.SUCCESS if len(url_paths) == len(set(url_paths)) else JobStatus.FAILED,
-            severity="INFO" if len(url_paths) == len(set(url_paths)) else "CRITICAL",
-            detail={"url_paths": url_paths},
-            recommended_action="중복 URL path를 제거하세요.",
-        ),
-        ValidationCheck(
-            name="navigation:title_unique",
-            status=JobStatus.SUCCESS if len(titles) == len(set(titles)) else JobStatus.FAILED,
-            severity="INFO" if len(titles) == len(set(titles)) else "WARNING",
-            detail={"titles": titles},
-            recommended_action="중복 페이지 제목을 정리하세요.",
-        ),
-        ValidationCheck(
-            name="navigation:docs_page_present",
-            status=JobStatus.SUCCESS if any(spec.key == "docs" for spec in PAGE_SPECS) else JobStatus.FAILED,
-            severity="INFO" if any(spec.key == "docs" for spec in PAGE_SPECS) else "CRITICAL",
-            detail={"page_keys": [spec.key for spec in PAGE_SPECS]},
-            recommended_action="Docs/Help 페이지를 navigation에 포함하세요.",
-        ),
-    ]
 
 
 def validate_navigation_integrity(
@@ -163,18 +106,23 @@ def validate_navigation_integrity(
     connection: duckdb.DuckDBPyConnection | None,
     persist_results: bool = True,
 ) -> OpsValidationResult:
-    checks = _navigation_integrity_checks()
-    if persist_results:
-        if connection is None:
-            raise ValueError("connection is required when persist_results=True")
+    checks = [
+        ValidationCheck(
+            name="dashboard:navigation_retired",
+            status=JobStatus.SKIPPED,
+            severity="INFO",
+            detail={"message": "Dashboard navigation is retired."},
+            recommended_action="none",
+        )
+    ]
+    if persist_results and connection is not None:
         bootstrap_core_tables(connection)
         _insert_checks(connection, settings, checks)
-    warning_count = sum(1 for check in checks if check.severity != "INFO")
     return OpsValidationResult(
         run_id="embedded",
         check_count=len(checks),
-        warning_count=warning_count,
-        notes=f"Navigation integrity validated. checks={len(checks)} warnings={warning_count}",
+        warning_count=0,
+        notes="Dashboard navigation validation retired.",
     )
 
 
@@ -201,9 +149,9 @@ def validate_report_artifacts(
                     status=JobStatus.FAILED,
                     severity="CRITICAL",
                     detail={"report_type": report_type, "artifact_path": None},
-                    recommended_action=f"{report_type} 리포트를 생성하고 인덱스를 다시 빌드하세요.",
+                    recommended_action=f"{report_type} 리포트를 다시 생성하세요.",
                 )
-        )
+            )
             continue
         artifact_path = resolve_artifact_path(settings, row[1])
         payload_exists = True
@@ -228,7 +176,7 @@ def validate_report_artifacts(
                     "payload_exists": payload_exists,
                     "status": row[3],
                 },
-                recommended_action="리포트 artifact 경로를 복구하세요." if artifact_path is None else "none",
+                recommended_action="report artifact 경로를 복구하세요." if artifact_path is None else "none",
             )
         )
     _insert_checks(connection, settings, checks)
@@ -251,29 +199,25 @@ def validate_release_candidate(
     if persist_results and connection is None:
         raise ValueError("connection is required when persist_results=True")
     if connection is None:
-        raise ValueError("connection is required when persist_results=False is not using a caller-provided snapshot")
+        raise ValueError(
+            "connection is required when persist_results=False is not using a caller-provided snapshot"
+        )
     bootstrap_core_tables(connection)
     subresults = [
         validate_page_contracts(settings, connection=connection, persist_results=persist_results),
         validate_navigation_integrity(settings, connection=connection, persist_results=persist_results),
         validate_report_artifacts(settings, connection=connection),
     ]
-    freshness_rows = connection.execute(
+    bot_refresh_row = connection.execute(
         """
-        SELECT page_name, dataset_name, stale_flag, warning_level
-        FROM vw_latest_ui_data_freshness_snapshot
+        SELECT COUNT(*)
+        FROM fact_job_run
+        WHERE job_name = 'materialize_discord_bot_read_store'
+          AND status IN ('SUCCESS', 'DEGRADED_SUCCESS')
         """
-    ).fetchall()
-    stale_rows = [row for row in freshness_rows if bool(row[2])]
-    critical_rows = [row for row in freshness_rows if str(row[3]).upper() == "CRITICAL"]
+    ).fetchone()
+    bot_refresh_count = int(bot_refresh_row[0] or 0) if bot_refresh_row else 0
     checks = [
-        ValidationCheck(
-            name="release:latest_app_snapshot_present",
-            status=JobStatus.SUCCESS if _view_count(connection, "vw_latest_app_snapshot") > 0 else JobStatus.FAILED,
-            severity="INFO" if _view_count(connection, "vw_latest_app_snapshot") > 0 else "CRITICAL",
-            detail={"as_of_date": str(as_of_date) if as_of_date else None},
-            recommended_action="build_latest_app_snapshot.py를 실행하세요.",
-        ),
         ValidationCheck(
             name="release:report_index_present",
             status=JobStatus.SUCCESS if _view_count(connection, "vw_latest_report_index") > 0 else JobStatus.FAILED,
@@ -282,18 +226,11 @@ def validate_release_candidate(
             recommended_action="build_report_index.py를 실행하세요.",
         ),
         ValidationCheck(
-            name="release:ui_freshness_critical",
-            status=JobStatus.SUCCESS if not critical_rows else JobStatus.DEGRADED_SUCCESS,
-            severity="INFO" if not critical_rows else "WARNING",
-            detail={"critical_rows": [list(row) for row in critical_rows]},
-            recommended_action="critical stale dataset을 점검하세요.",
-        ),
-        ValidationCheck(
-            name="release:ui_freshness_stale",
-            status=JobStatus.SUCCESS if not stale_rows else JobStatus.DEGRADED_SUCCESS,
-            severity="INFO" if not stale_rows else "WARNING",
-            detail={"stale_rows": [list(row) for row in stale_rows]},
-            recommended_action="stale dataset을 재생성하거나 배너를 확인하세요.",
+            name="release:discord_bot_snapshot_refresh_present",
+            status=JobStatus.SUCCESS if bot_refresh_count > 0 else JobStatus.FAILED,
+            severity="INFO" if bot_refresh_count > 0 else "CRITICAL",
+            detail={"row_count": bot_refresh_count, "as_of_date": str(as_of_date) if as_of_date else None},
+            recommended_action="materialize_discord_bot_read_store.py를 실행하세요.",
         ),
     ]
     if persist_results:

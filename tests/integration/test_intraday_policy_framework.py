@@ -42,7 +42,7 @@ from app.intraday.strategy import (
 )
 from app.selection.engine_v2 import materialize_selection_engine_v2
 from app.storage.duckdb import duckdb_connection
-from app.ui.helpers import (
+from app.query_views import (
     intraday_console_tuned_action_frame,
     latest_intraday_active_policy_frame,
     latest_intraday_policy_ablation_frame,

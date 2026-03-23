@@ -5,6 +5,7 @@ from typing import Any
 
 import pandas as pd
 
+from app.discord_bot.live_recalc import compute_live_stock_recommendation
 from app.discord_bot.read_store import fetch_discord_bot_snapshot_rows
 from app.providers.kis.client import KISProvider
 from app.providers.naver_news.client import NaverNewsProvider
@@ -91,6 +92,8 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     symbol = _safe_text(row.get("symbol"))
     company_name = _safe_text(row.get("company_name"))
     market = _safe_text(row.get("market"))
+    live_result = compute_live_stock_recommendation(settings, symbol=symbol)
+    live_row = live_result.frame.iloc[0] if not live_result.frame.empty else None
 
     kis = KISProvider(settings)
     news = NaverNewsProvider(settings)
@@ -112,15 +115,37 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     low_price = _int_text(quote.get("stck_lwpr"))
     volume = _int_text(quote.get("acml_vol"))
 
+    d1_grade = (
+        _safe_text(live_row.get("live_d1_selection_v2_grade"))
+        if live_row is not None
+        else _safe_text(payload.get("d1_grade"))
+    )
+    d5_grade = (
+        _safe_text(live_row.get("live_d5_selection_v2_grade"))
+        if live_row is not None
+        else _safe_text(payload.get("d5_grade"))
+    )
+    d5_expected = (
+        live_row.get("live_d5_expected_excess_return")
+        if live_row is not None
+        else payload.get("d5_expected_excess_return")
+    )
+
     lines = [
         f"**{symbol} {company_name}**",
-        f"{market} · 최신 안정 스냅샷 + 실시간 시세 기준",
-        f"현재가 {current_price}원 · 전일 대비 {change_price}원 ({change_rate})",
-        f"D1 {payload.get('d1_grade', '-')} · D5 {payload.get('d5_grade', '-')}",
-        f"D5 예상 초과수익률 {_pct_text(payload.get('d5_expected_excess_return'))}",
+        f"{market} 기준 실시간 시세와 최신 분석을 함께 보여드립니다.",
+        f"현재가 {current_price}원, 전일 대비 {change_price}원 ({change_rate})",
+        f"D1 {d1_grade} · D5 {d5_grade}",
+        f"D5 예상 초과수익률 {_pct_text(d5_expected)}",
         f"최근 5일 수익률 {_pct_text(payload.get('ret_5d'))}",
-        f"당일 고가 {high_price}원 · 저가 {low_price}원 · 누적 거래량 {volume}",
     ]
+    if live_row is not None:
+        lines.append(
+            f"실시간 목표가 {_int_text(live_row.get('live_d5_target_price'))}원 · 손절 참고선 {_int_text(live_row.get('live_d5_stop_price'))}원"
+        )
+    elif live_result.note:
+        lines.append(live_result.note)
+    lines.append(f"당일 고가 {high_price}원 · 저가 {low_price}원 · 누적 거래량 {volume}")
     if headlines:
         lines.append("최근 뉴스")
         lines.extend(f"- {headline}" for headline in headlines)

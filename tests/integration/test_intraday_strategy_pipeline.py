@@ -20,7 +20,7 @@ from app.intraday.validation import validate_intraday_strategy_pipeline
 from app.ml.training import train_alpha_model_v1
 from app.selection.engine_v2 import materialize_selection_engine_v2
 from app.storage.duckdb import duckdb_connection
-from app.ui.helpers import (
+from app.query_views import (
     latest_intraday_market_context_frame,
     latest_intraday_strategy_comparison_frame,
     latest_intraday_timing_calibration_frame,

@@ -428,14 +428,6 @@ def render_release_candidate_checklist(
             check_name
         """
     )
-    freshness = _frame(
-        connection,
-        """
-        SELECT page_name, dataset_name, warning_level, stale_flag, latest_available_ts
-        FROM vw_latest_ui_data_freshness_snapshot
-        ORDER BY page_name, dataset_name
-        """
-    )
     lines = ["# Release Candidate Checklist", "", f"- as_of_date: {as_of_date.isoformat()}", ""]
     lines.append("## Checks")
     if checks.empty:
@@ -447,15 +439,8 @@ def render_release_candidate_checklist(
                 f"action={row.recommended_action or 'none'}"
             )
     lines.append("")
-    lines.append("## UI Freshness")
-    if freshness.empty:
-        lines.append("- no UI freshness snapshot rows")
-    else:
-        for row in freshness.itertuples(index=False):
-            lines.append(
-                f"- {row.page_name} / {row.dataset_name}: "
-                f"{row.warning_level} stale={row.stale_flag} latest={row.latest_available_ts}"
-            )
+    lines.append("## Discord Bot Snapshot")
+    lines.append("- Discord bot snapshot is managed in metadata Postgres, not in main DuckDB.")
     rendered = _write_report_artifacts(
         settings,
         folder_name="release_candidate_checklist",

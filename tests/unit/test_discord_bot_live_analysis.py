@@ -5,6 +5,7 @@ import json
 import pandas as pd
 
 from app.discord_bot.live_analysis import render_live_stock_analysis
+from app.discord_bot.live_recalc import LiveRecalcResult
 
 
 class _FakeKISProvider:
@@ -37,7 +38,7 @@ class _FakeNaverNewsProvider:
         assert query == "삼성전자"
         return {
             "items": [
-                {"title_plain": "삼성전자 수급 개선"},
+                {"title_plain": "삼성전자 실적 개선"},
                 {"title_plain": "삼성전자 AI 반도체 기대"},
             ]
         }
@@ -74,14 +75,32 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
     )
     monkeypatch.setattr("app.discord_bot.live_analysis.KISProvider", _FakeKISProvider)
     monkeypatch.setattr("app.discord_bot.live_analysis.NaverNewsProvider", _FakeNaverNewsProvider)
+    monkeypatch.setattr(
+        "app.discord_bot.live_analysis.compute_live_stock_recommendation",
+        lambda *args, **kwargs: LiveRecalcResult(
+            pd.DataFrame(
+                [
+                    {
+                        "live_d1_selection_v2_grade": "A",
+                        "live_d5_selection_v2_grade": "S",
+                        "live_d5_expected_excess_return": 0.021,
+                        "live_d5_target_price": 72500,
+                        "live_d5_stop_price": 68800,
+                    }
+                ]
+            ),
+            mode="live",
+        ),
+    )
 
     rendered = render_live_stock_analysis(object(), query="삼성전자")
 
     assert "현재가 71,000원" in rendered
-    assert "D1 A · D5 B" in rendered
-    assert "D5 예상 초과수익률 +1.23%" in rendered
+    assert "D1 A · D5 S" in rendered
+    assert "D5 예상 초과수익률 +2.10%" in rendered
     assert "최근 5일 수익률 +3.45%" in rendered
-    assert "- 삼성전자 수급 개선" in rendered
+    assert "실시간 목표가 72,500원" in rendered
+    assert "- 삼성전자 실적 개선" in rendered
 
 
 def test_render_live_stock_analysis_returns_candidate_list_for_ambiguous_query(monkeypatch) -> None:

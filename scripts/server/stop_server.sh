@@ -8,6 +8,5 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 require_cmd docker
 load_server_env
 
-log "stopping server stack"
+log "stopping metadata-only server stack"
 compose down --remove-orphans
-
