@@ -505,6 +505,71 @@ def test_news_sync_recovery_suppresses_close_brief_publish(tmp_path, monkeypatch
     assert calls == [True]
 
 
+def test_news_sync_morning_publishes_morning_brief(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    settings.discord.enabled = True
+    calls: list[bool] = []
+    noop_result = SimpleNamespace(artifact_paths=[])
+
+    monkeypatch.setattr("app.ops.bundles.sync_news_metadata", lambda *a, **k: noop_result)
+
+    def fake_publish_discord_morning_brief(_settings, *, dry_run=False, **_kwargs):
+        calls.append(bool(dry_run))
+        return noop_result
+
+    monkeypatch.setattr(
+        "app.ops.bundles.publish_discord_morning_brief",
+        fake_publish_discord_morning_brief,
+    )
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._refresh_release_views", lambda *a, **k: None)
+
+    result = run_news_sync_bundle(
+        settings,
+        as_of_date=date(2026, 3, 10),
+        profile="morning",
+        trigger_type=TriggerType.SCHEDULED,
+        force=True,
+        dry_run=False,
+    )
+
+    assert result.status == JobStatus.SUCCESS
+    assert calls == [False]
+
+
+def test_news_sync_morning_recovery_suppresses_morning_brief_publish(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    calls: list[bool] = []
+    noop_result = SimpleNamespace(artifact_paths=[])
+
+    monkeypatch.setattr("app.ops.bundles.sync_news_metadata", lambda *a, **k: noop_result)
+
+    def fake_publish_discord_morning_brief(_settings, *, dry_run=False, **_kwargs):
+        calls.append(bool(dry_run))
+        return noop_result
+
+    monkeypatch.setattr(
+        "app.ops.bundles.publish_discord_morning_brief",
+        fake_publish_discord_morning_brief,
+    )
+    monkeypatch.setattr("app.ops.bundles.materialize_health_snapshots", lambda *a, **k: noop_result)
+    monkeypatch.setattr("app.ops.bundles._refresh_release_views", lambda *a, **k: None)
+
+    result = run_news_sync_bundle(
+        settings,
+        as_of_date=date(2026, 3, 10),
+        profile="morning",
+        trigger_type=TriggerType.RECOVERY,
+        force=True,
+        dry_run=False,
+    )
+
+    assert result.status == JobStatus.SUCCESS
+    assert calls == [True]
+
+
 def test_ops_maintenance_scheduled_run_suppresses_discord_publish(tmp_path, monkeypatch) -> None:
     settings = build_test_settings(tmp_path)
     seed_ticket003_data(settings)

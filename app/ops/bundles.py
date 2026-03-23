@@ -100,6 +100,7 @@ from app.release.snapshot import build_report_index
 from app.release.validation import validate_release_candidate
 from app.reports.close_brief import publish_discord_close_brief
 from app.reports.discord_eod import publish_discord_eod_report
+from app.reports.morning_brief import publish_discord_morning_brief
 from app.scheduler.jobs import run_daily_pipeline_job, run_evaluation_job
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
@@ -1073,6 +1074,11 @@ def run_news_sync_bundle(
         and trigger_type != TriggerType.RECOVERY
         and settings.discord.enabled
     )
+    should_publish_morning_brief = (
+        profile == "morning"
+        and trigger_type != TriggerType.RECOVERY
+        and settings.discord.enabled
+    )
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
         reference_trading_date = _scheduler_target_date(
@@ -1135,6 +1141,15 @@ def run_news_sync_bundle(
                         settings,
                         as_of_date=requested_date,
                         dry_run=True if dry_run else not should_publish_close_brief,
+                        critical=False,
+                    )
+                elif profile == "morning":
+                    job.run_step(
+                        "publish_discord_morning_brief",
+                        publish_discord_morning_brief,
+                        settings,
+                        as_of_date=requested_date,
+                        dry_run=True if dry_run else not should_publish_morning_brief,
                         critical=False,
                     )
                 _refresh_release_views(
