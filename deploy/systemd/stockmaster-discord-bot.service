@@ -1,0 +1,15 @@
+[Unit]
+Description=StockMaster Discord Bot
+Requires=network-online.target
+After=network-online.target docker.service stockmaster-compose.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/stockmaster/app
+ExecStart=/bin/bash /opt/stockmaster/app/scripts/server/run_discord_bot_host.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
+import json
 
 from app.discord_bot.read_store import fetch_discord_bot_snapshot_rows
+from app.logging import get_logger
 from app.settings import Settings
+
+logger = get_logger(__name__)
 
 
 class DiscordBotConfigError(RuntimeError):
@@ -34,8 +37,6 @@ def _render_status(rows) -> str:
     lines = ["**StockMaster 상태**", row["summary"]]
     payload = row.get("payload_json")
     if isinstance(payload, str) and payload.strip():
-        import json
-
         try:
             parsed = json.loads(payload)
         except json.JSONDecodeError:
@@ -56,19 +57,14 @@ def _render_stock_summary(query: str, rows) -> str:
             empty_message=f"`{query}` 기준으로 찾은 종목이 없습니다.",
         )
     row = rows.iloc[0]
-    return "\n".join(
-        [
-            f"**{row['title']}**",
-            row["summary"],
-        ]
-    )
+    return "\n".join([f"**{row['title']}**", row["summary"]])
 
 
 def build_discord_bot(settings: Settings):
     try:
         import discord
         from discord import app_commands
-    except ModuleNotFoundError as exc:  # pragma: no cover - dependency is optional locally
+    except ModuleNotFoundError as exc:  # pragma: no cover
         raise DiscordBotConfigError(
             "discord.py is not installed. Install dependencies before running the bot."
         ) from exc
@@ -92,10 +88,31 @@ def build_discord_bot(settings: Settings):
             guild_id = settings.discord.bot_guild_id
             if guild_id:
                 guild = discord.Object(id=int(guild_id))
-                self.tree.copy_global_to(guild=guild)
-                await self.tree.sync(guild=guild)
-            else:
-                await self.tree.sync()
+                try:
+                    self.tree.copy_global_to(guild=guild)
+                    await self.tree.sync(guild=guild)
+                    logger.info(
+                        "Discord bot guild command sync completed.",
+                        extra={"guild_id": int(guild_id)},
+                    )
+                    return
+                except discord.HTTPException as exc:
+                    logger.warning(
+                        "Discord bot guild sync failed. Falling back to global sync.",
+                        extra={"guild_id": int(guild_id), "error": str(exc)},
+                    )
+            await self.tree.sync()
+            logger.info("Discord bot global command sync completed.")
+
+        async def on_ready(self) -> None:
+            logger.info(
+                "Discord bot connected.",
+                extra={
+                    "user": str(self.user),
+                    "application_id": settings.discord.bot_application_id,
+                    "guild_id": settings.discord.bot_guild_id,
+                },
+            )
 
     client = StockMasterDiscordBot()
 
