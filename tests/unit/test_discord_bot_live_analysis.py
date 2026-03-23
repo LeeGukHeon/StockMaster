@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import json
+
+import pandas as pd
+
+from app.discord_bot.live_analysis import render_live_stock_analysis
+
+
+class _FakeKISProvider:
+    def __init__(self, _settings) -> None:
+        pass
+
+    def fetch_current_quote(self, *, symbol: str, persist_probe_artifacts: bool = True):
+        assert symbol == "005930"
+        assert persist_probe_artifacts is False
+        return {
+            "output": {
+                "stck_prpr": "71000",
+                "prdy_vrss": "1200",
+                "prdy_ctrt": "1.72",
+                "stck_hgpr": "71500",
+                "stck_lwpr": "70100",
+                "acml_vol": "1234567",
+            }
+        }
+
+    def close(self) -> None:
+        return None
+
+
+class _FakeNaverNewsProvider:
+    def __init__(self, _settings) -> None:
+        pass
+
+    def search_news(self, *, query: str, limit: int = 3, start: int = 1, sort: str = "date"):
+        assert query == "삼성전자"
+        return {
+            "items": [
+                {"title_plain": "삼성전자 수급 개선"},
+                {"title_plain": "삼성전자 AI 반도체 기대"},
+            ]
+        }
+
+    def close(self) -> None:
+        return None
+
+
+def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
+    snapshot_rows = pd.DataFrame(
+        [
+            {
+                "symbol": "005930",
+                "company_name": "삼성전자",
+                "market": "KOSPI",
+                "title": "005930 삼성전자",
+                "summary": "D1 A · D5 B",
+                "payload_json": json.dumps(
+                    {
+                        "d1_grade": "A",
+                        "d5_grade": "B",
+                        "d5_expected_excess_return": 0.0123,
+                        "ret_5d": 0.0345,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        "app.discord_bot.live_analysis.fetch_discord_bot_snapshot_rows",
+        lambda *args, **kwargs: snapshot_rows,
+    )
+    monkeypatch.setattr("app.discord_bot.live_analysis.KISProvider", _FakeKISProvider)
+    monkeypatch.setattr("app.discord_bot.live_analysis.NaverNewsProvider", _FakeNaverNewsProvider)
+
+    rendered = render_live_stock_analysis(object(), query="삼성전자")
+
+    assert "현재가 71,000원" in rendered
+    assert "D1 A · D5 B" in rendered
+    assert "D5 예상 초과수익률 +1.23%" in rendered
+    assert "최근 5일 수익률 +3.45%" in rendered
+    assert "- 삼성전자 수급 개선" in rendered
+
+
+def test_render_live_stock_analysis_returns_candidate_list_for_ambiguous_query(monkeypatch) -> None:
+    snapshot_rows = pd.DataFrame(
+        [
+            {"title": "005930 삼성전자", "subtitle": "종목 요약"},
+            {"title": "005935 삼성전자우", "subtitle": "종목 요약"},
+        ]
+    )
+    monkeypatch.setattr(
+        "app.discord_bot.live_analysis.fetch_discord_bot_snapshot_rows",
+        lambda *args, **kwargs: snapshot_rows,
+    )
+
+    rendered = render_live_stock_analysis(object(), query="삼성")
+
+    assert "**종목 후보**" in rendered
+    assert "005930 삼성전자" in rendered
+    assert "005935 삼성전자우" in rendered

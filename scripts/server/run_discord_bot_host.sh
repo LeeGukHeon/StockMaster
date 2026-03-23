@@ -8,8 +8,6 @@ require_cmd python3
 load_server_env
 mkdir_runtime_dirs
 
-bash "${SERVER_SCRIPT_DIR}/ensure_scheduler_worker_venv.sh"
-
 WORKER_VENV="${STOCKMASTER_SCHEDULER_VENV:-/opt/stockmaster/worker-venv}"
 [[ -x "${WORKER_VENV}/bin/python" ]] || fail "missing scheduler worker venv: ${WORKER_VENV}"
 

@@ -63,8 +63,16 @@ class KISProvider(BaseProvider):
     def fetch_symbol_master(self, *, as_of_date=None) -> SymbolMasterSnapshot:
         return self.market_data.fetch_symbol_master(as_of_date=as_of_date)
 
-    def fetch_current_quote(self, *, symbol: str) -> dict[str, object]:
-        return self.market_data.fetch_current_quote(symbol=symbol)
+    def fetch_current_quote(
+        self,
+        *,
+        symbol: str,
+        persist_probe_artifacts: bool = True,
+    ) -> dict[str, object]:
+        return self.market_data.fetch_current_quote(
+            symbol=symbol,
+            persist_probe_artifacts=persist_probe_artifacts,
+        )
 
     def fetch_daily_ohlcv(
         self,

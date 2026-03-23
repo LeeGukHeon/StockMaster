@@ -349,7 +349,13 @@ class KisMarketDataClient:
             message = payload.get("msg1") or payload.get("msg_cd") or "Unknown KIS API error."
             raise ProviderRequestError("kis", endpoint, str(message))
 
-    def fetch_current_quote(self, *, symbol: str, market_code: str = "J") -> dict[str, Any]:
+    def fetch_current_quote(
+        self,
+        *,
+        symbol: str,
+        market_code: str = "J",
+        persist_probe_artifacts: bool = True,
+    ) -> dict[str, Any]:
         endpoint = "/uapi/domestic-stock/v1/quotations/inquire-price"
         response = request_with_retries(
             client=self.client,
@@ -367,16 +373,17 @@ class KisMarketDataClient:
 
         payload = response.json()
         self._ensure_ok(payload, endpoint=endpoint)
-        raw_path = (
-            self.settings.paths.raw_dir
-            / "kis"
-            / "current_quote_probe"
-            / f"date={today_local(self.settings.app.timezone).isoformat()}"
-            / f"{symbol}.json"
-        )
-        raw_path.parent.mkdir(parents=True, exist_ok=True)
-        raw_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        payload["_raw_path"] = str(raw_path)
+        if persist_probe_artifacts:
+            raw_path = (
+                self.settings.paths.raw_dir
+                / "kis"
+                / "current_quote_probe"
+                / f"date={today_local(self.settings.app.timezone).isoformat()}"
+                / f"{symbol}.json"
+            )
+            raw_path.parent.mkdir(parents=True, exist_ok=True)
+            raw_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            payload["_raw_path"] = str(raw_path)
         return payload
 
     def fetch_daily_ohlcv(

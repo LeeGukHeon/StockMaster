@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from app.discord_bot.live_analysis import render_live_stock_analysis
 from app.discord_bot.read_store import fetch_discord_bot_snapshot_rows
 from app.logging import get_logger
 from app.settings import Settings
@@ -183,6 +184,14 @@ def build_discord_bot(settings: Settings):
             limit=5,
         )
         await interaction.followup.send(_render_stock_summary(query, rows))
+
+    @client.tree.command(name="실시간종목분석", description="최신 시세와 최근 뉴스를 반영한 실시간 분석을 보여줍니다.")
+    @app_commands.rename(query="종목")
+    @app_commands.describe(query="종목명 또는 6자리 종목코드를 입력하세요.")
+    async def live_stock_summary(interaction: discord.Interaction, query: str) -> None:
+        await interaction.response.defer(thinking=True)
+        message = render_live_stock_analysis(settings, query=query)
+        await interaction.followup.send(message)
 
     return client
 
