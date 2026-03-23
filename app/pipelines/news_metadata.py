@@ -166,11 +166,12 @@ def sync_news_metadata(
                 input_sources=["naver_news_search", "dim_symbol", f"news_query_pack:{query_pack}"],
                 notes=f"Sync news metadata for {signal_date.isoformat()} using mode={mode}",
             )
-            try:
-                effective_limit = limit_symbols
-                if effective_limit is None and mode != "market_only" and not symbols:
-                    effective_limit = 25
+        try:
+            effective_limit = limit_symbols
+            if effective_limit is None and mode != "market_only" and not symbols:
+                effective_limit = 25
 
+            with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
                 focus_frame = load_symbol_frame(
                     connection,
                     symbols=symbols,
@@ -182,31 +183,6 @@ def sync_news_metadata(
                     focus_frame=focus_frame,
                     pack_name=query_pack,
                 )
-
-                if dry_run:
-                    notes = (
-                        f"Dry run only. signal_date={signal_date.isoformat()} "
-                        f"query_count={len(query_tasks)}"
-                    )
-                    record_run_finish(
-                        connection,
-                        run_id=run_context.run_id,
-                        finished_at=now_local(settings.app.timezone),
-                        status="success",
-                        output_artifacts=[],
-                        notes=notes,
-                    )
-                    return NewsMetadataSyncResult(
-                        run_id=run_context.run_id,
-                        signal_date=signal_date,
-                        query_count=len(query_tasks),
-                        row_count=0,
-                        deduped_row_count=0,
-                        unmatched_symbol_count=0,
-                        artifact_paths=[],
-                        notes=notes,
-                    )
-
                 existing_news_ids: set[str] = set()
                 if not force:
                     existing_news_ids = {
@@ -221,115 +197,147 @@ def sync_news_metadata(
                         ).fetchall()
                     }
 
-                artifact_paths: list[str] = []
-                staged_rows: list[dict[str, object]] = []
-
-                for task in query_tasks:
-                    payload = provider.search_news(
-                        query=task.query,
-                        limit=max_items_per_query,
-                        start=1,
-                        sort="date",
-                    )
-                    raw_path = (
-                        settings.paths.raw_dir
-                        / "naver_news"
-                        / f"fetch_date={today_local(settings.app.timezone).isoformat()}"
-                        / f"query_bucket={task.query_bucket}"
-                        / f"{run_context.run_id}_{slugify(task.query)}.json"
-                    )
-                    artifact_paths.append(str(write_json_payload(raw_path, payload)))
-
-                    for item in payload.get("items", []):
-                        published_at = _parse_published_at(item.get("pubDate"))
-                        if published_at is None or published_at.date() != signal_date:
-                            continue
-
-                        title = item.get("title_plain") or ""
-                        snippet = item.get("description_plain") or ""
-                        link = item.get("originallink") or item.get("link") or ""
-                        canonical_link = canonicalize_link(link)
-                        publisher = _publisher_from_link(link)
-                        link_result = link_news_item(
-                            symbol_frame=focus_frame,
-                            title=title,
-                            snippet=snippet,
-                            query_symbol=task.symbol,
-                            query_company_name=task.company_name,
-                        )
-                        tags = _detect_tags(f"{title} {snippet}")
-                        news_id = compute_news_id(
-                            canonical_link=canonical_link,
-                            title=title,
-                            publisher=publisher or "",
-                            published_at=published_at.isoformat(),
-                        )
-                        if news_id in existing_news_ids and not force:
-                            continue
-
-                        staged_rows.append(
-                            {
-                                "news_id": news_id,
-                                "signal_date": signal_date,
-                                "published_at": published_at,
-                                "symbol_candidates": json.dumps(
-                                    link_result.symbols,
-                                    ensure_ascii=False,
-                                ),
-                                "query_keyword": task.query,
-                                "title": title,
-                                "publisher": publisher,
-                                "link": link,
-                                "snippet": snippet,
-                                "tags_json": json.dumps(tags, ensure_ascii=False),
-                                "catalyst_score": round(min(len(tags) * 0.25, 1.0), 4),
-                                "sentiment_score": None,
-                                "freshness_score": _freshness_score(published_at, signal_date),
-                                "source": "naver_news_search",
-                                "canonical_link": canonical_link,
-                                "match_method_json": link_result.match_method_json,
-                                "query_bucket": task.query_bucket,
-                                "is_market_wide": task.is_market_wide,
-                                "source_notes_json": json.dumps(
-                                    {
-                                        "originallink": item.get("originallink"),
-                                        "naver_link": item.get("link"),
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                                "ingested_at": now_local(settings.app.timezone),
-                            }
-                        )
-
-                staged_frame = pd.DataFrame(staged_rows)
-                deduped_frame = (
-                    dedupe_news_items(staged_frame) if not staged_frame.empty else staged_frame
-                )
-                unmatched_symbol_count = 0
-                if not deduped_frame.empty:
-                    unmatched_symbol_count = int(
-                        deduped_frame["symbol_candidates"].map(lambda value: value == "[]").sum()
-                    )
-                    upsert_news_items(connection, deduped_frame)
-                    curated_path = write_parquet(
-                        deduped_frame,
-                        base_dir=settings.paths.curated_dir,
-                        dataset="news/items",
-                        partitions={"signal_date": signal_date.isoformat()},
-                        filename="news_items.parquet",
-                    )
-                    artifact_paths.append(str(curated_path))
-
-                if len(query_tasks) > 0 and deduped_frame.empty:
-                    raise RuntimeError(
-                        "No news metadata rows were materialized for the requested signal date."
-                    )
-
+            if dry_run:
                 notes = (
-                    f"News metadata sync completed. signal_date={signal_date.isoformat()}, "
-                    f"queries={len(query_tasks)}, staged_rows={len(staged_frame)}, "
-                    f"deduped_rows={len(deduped_frame)}, unmatched_symbols={unmatched_symbol_count}"
+                    f"Dry run only. signal_date={signal_date.isoformat()} "
+                    f"query_count={len(query_tasks)}"
                 )
+                with duckdb_connection(settings.paths.duckdb_path) as connection:
+                    bootstrap_core_tables(connection)
+                    record_run_finish(
+                        connection,
+                        run_id=run_context.run_id,
+                        finished_at=now_local(settings.app.timezone),
+                        status="success",
+                        output_artifacts=[],
+                        notes=notes,
+                    )
+                return NewsMetadataSyncResult(
+                    run_id=run_context.run_id,
+                    signal_date=signal_date,
+                    query_count=len(query_tasks),
+                    row_count=0,
+                    deduped_row_count=0,
+                    unmatched_symbol_count=0,
+                    artifact_paths=[],
+                    notes=notes,
+                )
+
+            artifact_paths: list[str] = []
+            staged_rows: list[dict[str, object]] = []
+
+            for task in query_tasks:
+                payload = provider.search_news(
+                    query=task.query,
+                    limit=max_items_per_query,
+                    start=1,
+                    sort="date",
+                )
+                raw_path = (
+                    settings.paths.raw_dir
+                    / "naver_news"
+                    / f"fetch_date={today_local(settings.app.timezone).isoformat()}"
+                    / f"query_bucket={task.query_bucket}"
+                    / f"{run_context.run_id}_{slugify(task.query)}.json"
+                )
+                artifact_paths.append(str(write_json_payload(raw_path, payload)))
+
+                for item in payload.get("items", []):
+                    published_at = _parse_published_at(item.get("pubDate"))
+                    if published_at is None or published_at.date() != signal_date:
+                        continue
+
+                    title = item.get("title_plain") or ""
+                    snippet = item.get("description_plain") or ""
+                    link = item.get("originallink") or item.get("link") or ""
+                    canonical_link = canonicalize_link(link)
+                    publisher = _publisher_from_link(link)
+                    link_result = link_news_item(
+                        symbol_frame=focus_frame,
+                        title=title,
+                        snippet=snippet,
+                        query_symbol=task.symbol,
+                        query_company_name=task.company_name,
+                    )
+                    tags = _detect_tags(f"{title} {snippet}")
+                    news_id = compute_news_id(
+                        canonical_link=canonical_link,
+                        title=title,
+                        publisher=publisher or "",
+                        published_at=published_at.isoformat(),
+                    )
+                    if news_id in existing_news_ids and not force:
+                        continue
+
+                    staged_rows.append(
+                        {
+                            "news_id": news_id,
+                            "signal_date": signal_date,
+                            "published_at": published_at,
+                            "symbol_candidates": json.dumps(
+                                link_result.symbols,
+                                ensure_ascii=False,
+                            ),
+                            "query_keyword": task.query,
+                            "title": title,
+                            "publisher": publisher,
+                            "link": link,
+                            "snippet": snippet,
+                            "tags_json": json.dumps(tags, ensure_ascii=False),
+                            "catalyst_score": round(min(len(tags) * 0.25, 1.0), 4),
+                            "sentiment_score": None,
+                            "freshness_score": _freshness_score(published_at, signal_date),
+                            "source": "naver_news_search",
+                            "canonical_link": canonical_link,
+                            "match_method_json": link_result.match_method_json,
+                            "query_bucket": task.query_bucket,
+                            "is_market_wide": task.is_market_wide,
+                            "source_notes_json": json.dumps(
+                                {
+                                    "originallink": item.get("originallink"),
+                                    "naver_link": item.get("link"),
+                                },
+                                ensure_ascii=False,
+                            ),
+                            "ingested_at": now_local(settings.app.timezone),
+                        }
+                    )
+
+            staged_frame = pd.DataFrame(staged_rows)
+            deduped_frame = (
+                dedupe_news_items(staged_frame) if not staged_frame.empty else staged_frame
+            )
+            unmatched_symbol_count = 0
+            if not deduped_frame.empty:
+                unmatched_symbol_count = int(
+                    deduped_frame["symbol_candidates"].map(lambda value: value == "[]").sum()
+                )
+
+            if len(query_tasks) > 0 and deduped_frame.empty:
+                raise RuntimeError(
+                    "No news metadata rows were materialized for the requested signal date."
+                )
+
+            if not deduped_frame.empty:
+                with duckdb_connection(settings.paths.duckdb_path) as connection:
+                    bootstrap_core_tables(connection)
+                    upsert_news_items(connection, deduped_frame)
+                curated_path = write_parquet(
+                    deduped_frame,
+                    base_dir=settings.paths.curated_dir,
+                    dataset="news/items",
+                    partitions={"signal_date": signal_date.isoformat()},
+                    filename="news_items.parquet",
+                )
+                artifact_paths.append(str(curated_path))
+
+            notes = (
+                f"News metadata sync completed. signal_date={signal_date.isoformat()}, "
+                f"queries={len(query_tasks)}, staged_rows={len(staged_frame)}, "
+                f"deduped_rows={len(deduped_frame)}, unmatched_symbols={unmatched_symbol_count}"
+            )
+            with duckdb_connection(settings.paths.duckdb_path) as connection:
+                bootstrap_core_tables(connection)
                 record_run_finish(
                     connection,
                     run_id=run_context.run_id,
@@ -338,17 +346,19 @@ def sync_news_metadata(
                     output_artifacts=artifact_paths,
                     notes=notes,
                 )
-                return NewsMetadataSyncResult(
-                    run_id=run_context.run_id,
-                    signal_date=signal_date,
-                    query_count=len(query_tasks),
-                    row_count=len(staged_frame),
-                    deduped_row_count=len(deduped_frame),
-                    unmatched_symbol_count=unmatched_symbol_count,
-                    artifact_paths=artifact_paths,
-                    notes=notes,
-                )
-            except Exception as exc:
+            return NewsMetadataSyncResult(
+                run_id=run_context.run_id,
+                signal_date=signal_date,
+                query_count=len(query_tasks),
+                row_count=len(staged_frame),
+                deduped_row_count=len(deduped_frame),
+                unmatched_symbol_count=unmatched_symbol_count,
+                artifact_paths=artifact_paths,
+                notes=notes,
+            )
+        except Exception as exc:
+            with duckdb_connection(settings.paths.duckdb_path) as connection:
+                bootstrap_core_tables(connection)
                 record_run_finish(
                     connection,
                     run_id=run_context.run_id,
@@ -358,7 +368,7 @@ def sync_news_metadata(
                     notes=f"News metadata sync failed for {signal_date.isoformat()}",
                     error_message=str(exc),
                 )
-                raise
-            finally:
-                if owns_provider:
-                    provider.close()
+            raise
+        finally:
+            if owns_provider:
+                provider.close()

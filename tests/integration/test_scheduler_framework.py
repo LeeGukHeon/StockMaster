@@ -320,6 +320,32 @@ def test_news_sync_bundle_uses_calendar_day_identity_on_weekend(tmp_path) -> Non
     assert as_of_date == date(2026, 3, 7)
 
 
+def test_news_sync_bundle_uses_profile_specific_lock_name(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+
+    result = run_news_sync_bundle(
+        settings,
+        as_of_date=date(2026, 3, 9),
+        profile="morning",
+        dry_run=True,
+    )
+
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        lock_name = connection.execute(
+            """
+            SELECT lock_name
+            FROM fact_job_run
+            WHERE job_name = 'run_news_sync_bundle'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()[0]
+
+    assert result.status == JobStatus.SKIPPED
+    assert lock_name == "news_sync:morning"
+
+
 def test_daily_close_bundle_self_skips_on_non_trading_day(tmp_path) -> None:
     settings = build_test_settings(tmp_path)
     seed_ticket003_data(settings)

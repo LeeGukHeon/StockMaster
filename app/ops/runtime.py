@@ -29,6 +29,7 @@ from app.ops.repository import (
     record_step_run_start,
 )
 from app.settings import Settings
+from app.storage.duckdb import bootstrap_core_tables, connect_duckdb
 from app.storage.manifests import record_run_finish, record_run_start
 
 
@@ -188,6 +189,20 @@ class JobRunContext:
         self._extra_notes: list[str] = []
         self._lock_acquired = False
         self._resolved_policy: ResolvedOpsPolicy | None = None
+
+    def _ensure_connection(self) -> None:
+        if self.connection is not None:
+            return
+        self.connection = connect_duckdb(self.settings.paths.duckdb_path, read_only=False)
+        bootstrap_core_tables(self.connection)
+
+    def _close_connection(self) -> None:
+        if self.connection is None:
+            return
+        try:
+            self.connection.close()
+        finally:
+            self.connection = None
 
     @property
     def run_id(self) -> str:
@@ -371,7 +386,63 @@ class JobRunContext:
             self.mark_degraded(f"Optional step failed: {step_name}")
             return None
 
+    def run_detached_step(
+        self,
+        step_name: str,
+        func: Callable[..., Any],
+        *args: Any,
+        critical: bool = True,
+        notes: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        self._step_count += 1
+        step_run_id = f"{self.run_context.run_id}:{self._step_count:02d}:{step_name}"
+        started_at = utc_now()
+        record_step_run_start(
+            self.connection,
+            step_run_id=step_run_id,
+            job_run_id=self.run_context.run_id,
+            step_name=step_name,
+            step_order=self._step_count,
+            started_at=started_at,
+            critical_flag=critical,
+            notes=notes,
+        )
+        self._close_connection()
+        try:
+            result = func(*args, **kwargs)
+        except Exception as exc:
+            self._ensure_connection()
+            record_step_run_finish(
+                self.connection,
+                step_run_id=step_run_id,
+                finished_at=utc_now(),
+                status=JobStatus.FAILED,
+                notes=notes,
+                error_message=str(exc),
+                details=None,
+            )
+            self._failed_step_count += 1
+            if critical:
+                raise
+            self.mark_degraded(f"Optional step failed: {step_name}")
+            return None
+        self._ensure_connection()
+        record_step_run_finish(
+            self.connection,
+            step_run_id=step_run_id,
+            finished_at=utc_now(),
+            status=JobStatus.SUCCESS,
+            notes=notes,
+            error_message=None,
+            details=None,
+        )
+        if hasattr(result, "artifact_paths"):
+            self.extend_artifacts(list(result.artifact_paths))
+        return result
+
     def __exit__(self, exc_type, exc, tb) -> bool:
+        self._ensure_connection()
         finished_at = utc_now()
         if self._lock_acquired:
             LockManager(self.connection).release(

@@ -1103,7 +1103,7 @@ def run_news_sync_bundle(
             root_run_id=root_run_id,
             recovery_of_run_id=recovery_of_run_id,
             policy_config_path=policy_config_path,
-            lock_name=SCHEDULER_GLOBAL_LOCK,
+            lock_name=f"news_sync:{profile.strip().lower()}",
             notes=f"Scheduler news sync bundle profile={profile} for {requested_date.isoformat()}",
             details={
                 "bundle_phase": "news_sync",
@@ -1132,7 +1132,7 @@ def run_news_sync_bundle(
                 )
             else:
                 for index, signal_date in enumerate(collection_dates, start=1):
-                    job.run_step(
+                    job.run_detached_step(
                         f"sync_news_metadata_{index:02d}",
                         sync_news_metadata,
                         settings,
@@ -1152,14 +1152,14 @@ def run_news_sync_bundle(
                 _refresh_release_views(
                     job,
                     settings=settings,
-                    connection=connection,
+                    connection=job.connection,
                     as_of_date=requested_date,
                 )
                 job.run_step(
                     "materialize_health_snapshots",
                     materialize_health_snapshots,
                     settings,
-                    connection=connection,
+                    connection=job.connection,
                     as_of_date=requested_date,
                     job_run_id=job.run_id,
                     policy_config_path=policy_config_path,
