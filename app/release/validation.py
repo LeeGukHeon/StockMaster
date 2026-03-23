@@ -211,8 +211,8 @@ def validate_release_candidate(
     bot_refresh_row = connection.execute(
         """
         SELECT COUNT(*)
-        FROM fact_job_run
-        WHERE job_name = 'materialize_discord_bot_read_store'
+        FROM fact_job_step_run
+        WHERE step_name = 'materialize_discord_bot_read_store'
           AND status IN ('SUCCESS', 'DEGRADED_SUCCESS')
         """
     ).fetchone()

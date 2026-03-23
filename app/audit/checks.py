@@ -20,6 +20,13 @@ from app.settings import Settings
 PASS = "PASS"
 WARN = "WARN"
 FAIL = "FAIL"
+CORE_REPORT_TYPES: tuple[str, ...] = (
+    "daily_research_report",
+    "portfolio_report",
+    "evaluation_report",
+    "intraday_summary_report",
+    "release_candidate_checklist",
+)
 PSEUDO_SYMBOLS_BY_TABLE: dict[str, tuple[str, ...]] = {
     "fact_portfolio_target_book": ("__CASH__",),
     "fact_portfolio_rebalance_plan": ("__CASH__",),
@@ -578,6 +585,11 @@ def run_artifact_reference_checks(
     ).fetchall()
     protected_paths = _latest_referenced_artifact_paths(connection, settings)
     for report_type, artifact_path, summary_json, status, run_id in rows:
+        report_type_text = str(report_type)
+        artifact_path_text = str(artifact_path or "")
+        cleanup_safe_required = report_type_text in CORE_REPORT_TYPES or any(
+            token in artifact_path_text for token in CORE_REPORT_TYPES
+        )
         resolved_preview_path = resolve_artifact_path(settings, artifact_path)
         preview_exists = resolved_preview_path is not None
         payload_path = _report_payload_path(summary_json)
@@ -599,9 +611,9 @@ def run_artifact_reference_checks(
             relative_payload is None or relative_payload in protected_paths
         )
         if not preview_exists or not payload_exists:
-            result_status = FAIL
-            priority = "P0"
-        elif not cleanup_safe:
+            result_status = FAIL if cleanup_safe_required else WARN
+            priority = "P0" if cleanup_safe_required else "P1"
+        elif cleanup_safe_required and not cleanup_safe:
             result_status = WARN
             priority = "P1"
         else:
@@ -620,6 +632,7 @@ def run_artifact_reference_checks(
                     "run_id": run_id,
                     "status": status,
                     "cleanup_safe": cleanup_safe,
+                    "cleanup_safe_required": cleanup_safe_required,
                 },
                 remediation=(
                     "누락된 preview/payload artifact를 다시 렌더링하세요."
