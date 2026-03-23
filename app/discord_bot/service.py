@@ -74,6 +74,9 @@ def build_discord_bot(settings: Settings):
     if not settings.discord.bot_token:
         raise DiscordBotConfigError("DISCORD_BOT_TOKEN is not configured.")
 
+    globals()["discord"] = discord
+    globals()["app_commands"] = app_commands
+
     intents = discord.Intents.none()
 
     class StockMasterDiscordBot(discord.Client):
