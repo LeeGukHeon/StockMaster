@@ -2328,9 +2328,10 @@ def run_daily_audit_lite_bundle(
                 "date_semantics": "calendar_day",
             },
         ) as job:
-            completed = _skip_if_already_completed(job, bundle_phase="daily_audit_lite")
-            if completed is not None and not force:
-                return completed
+            if not force:
+                completed = _skip_if_already_completed(job, bundle_phase="daily_audit_lite")
+                if completed is not None:
+                    return completed
             if dry_run:
                 job.skip("Dry-run: daily audit-lite bundle skipped.")
             else:
