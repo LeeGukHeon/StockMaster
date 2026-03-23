@@ -8,10 +8,12 @@ if TYPE_CHECKING:
 
 
 ARTIFACT_PATH_MARKERS: tuple[str, ...] = (
+    "/workspace/data/artifacts/",
     "/runtime/data/artifacts/",
     "/data/artifacts/",
     "/runtime/artifacts/",
     "/artifacts/",
+    "workspace/data/artifacts/",
     "runtime/data/artifacts/",
     "data/artifacts/",
     "runtime/artifacts/",

@@ -390,6 +390,10 @@ def materialize_health_snapshots(
             FROM fact_job_run
             WHERE status = 'FAILED'
               AND started_at >= NOW() - INTERVAL '24 hours'
+              AND NOT regexp_matches(
+                  COALESCE(details_json, ''),
+                  '"cleanup_recovered"\\s*:\\s*true'
+              )
             """,
         )
         or 0
@@ -402,6 +406,10 @@ def materialize_health_snapshots(
             FROM fact_job_run
             WHERE status = 'FAILED'
               AND started_at >= NOW() - INTERVAL '7 days'
+              AND NOT regexp_matches(
+                  COALESCE(details_json, ''),
+                  '"cleanup_recovered"\\s*:\\s*true'
+              )
             """,
         )
         or 0

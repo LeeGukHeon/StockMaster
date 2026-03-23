@@ -50,3 +50,16 @@ def test_artifact_candidate_paths_include_runtime_target_for_host_path(tmp_path)
     )
 
     assert (settings.paths.artifacts_dir / "models" / "meta" / "model.pkl").resolve() in candidates
+
+
+def test_resolve_artifact_path_maps_workspace_artifact_path(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    runtime_artifact = settings.paths.artifacts_dir / "reports" / "preview.md"
+    runtime_artifact.parent.mkdir(parents=True, exist_ok=True)
+    runtime_artifact.write_text("preview", encoding="utf-8")
+
+    workspace_path = "/workspace/data/artifacts/reports/preview.md"
+
+    resolved = resolve_artifact_path(settings, workspace_path)
+
+    assert resolved == runtime_artifact.resolve()

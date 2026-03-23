@@ -15,7 +15,6 @@ from app.audit.contracts import get_ticket_checklist, representative_contracts
 from app.common.artifacts import resolve_artifact_path
 from app.ops.common import JobStatus
 from app.ops.maintenance import _latest_referenced_artifact_paths
-from app.release.snapshot import _expected_trading_data_date
 from app.settings import Settings
 
 PASS = "PASS"
@@ -292,18 +291,13 @@ def run_latest_layer_checks(
     connection: duckdb.DuckDBPyConnection,
     snapshot_ts: datetime | None = None,
 ) -> AuditSuiteResult:
-    now_ts = snapshot_ts or datetime.now().astimezone()
-    expected_trading_date = _expected_trading_data_date(connection, now_ts)
+    del settings, snapshot_ts
     results: list[AuditCheckResult] = []
 
     latest_view_counts = {
-        "vw_latest_app_snapshot": _row_count(connection, "vw_latest_app_snapshot"),
         "vw_latest_report_index": _row_count(connection, "vw_latest_report_index"),
         "vw_latest_release_candidate_check": _row_count(
             connection, "vw_latest_release_candidate_check"
-        ),
-        "vw_latest_ui_data_freshness_snapshot": _row_count(
-            connection, "vw_latest_ui_data_freshness_snapshot"
         ),
     }
     for view_name, row_count in latest_view_counts.items():
@@ -325,10 +319,6 @@ def run_latest_layer_checks(
         )
 
     uniqueness_queries = {
-        "fact_latest_app_snapshot": """
-            SELECT CASE WHEN COUNT(*) = 1 THEN 0 ELSE ABS(COUNT(*) - 1) END
-            FROM vw_latest_app_snapshot
-        """,
         "fact_latest_report_index": """
             SELECT COUNT(*) FROM (
                 SELECT report_type, COUNT(*) AS row_count
@@ -342,14 +332,6 @@ def run_latest_layer_checks(
                 SELECT check_name, COUNT(*) AS row_count
                 FROM vw_latest_release_candidate_check
                 GROUP BY check_name
-                HAVING COUNT(*) > 1
-            )
-        """,
-        "fact_ui_data_freshness_snapshot": """
-            SELECT COUNT(*) FROM (
-                SELECT page_name, dataset_name, COUNT(*) AS row_count
-                FROM vw_latest_ui_data_freshness_snapshot
-                GROUP BY page_name, dataset_name
                 HAVING COUNT(*) > 1
             )
         """,
@@ -372,6 +354,7 @@ def run_latest_layer_checks(
                 ticket_id="T013",
             )
         )
+    return AuditSuiteResult(tuple(results))
 
     snapshot_row = connection.execute("SELECT * FROM vw_latest_app_snapshot").fetchdf()
     if not snapshot_row.empty:

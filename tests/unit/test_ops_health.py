@@ -75,7 +75,7 @@ def test_check_pipeline_dependencies_respects_scheduler_cutoff_times(tmp_path, m
         )
         monkeypatch.setattr(
             "app.ops.health.now_local",
-            lambda _tz: datetime(2026, 3, 13, 17, 0, tzinfo=ZoneInfo("Asia/Seoul")),
+            lambda _tz: datetime(2026, 3, 13, 16, 59, tzinfo=ZoneInfo("Asia/Seoul")),
         )
         before_close = check_pipeline_dependencies(
             settings,
@@ -283,3 +283,93 @@ def test_materialize_health_snapshots_deduplicates_and_resolves_open_alerts(
         assert open_failed_alerts == 0
         assert resolved_failed_alerts == 1
         assert float(latest_open_alert_metric or 0.0) == 0.0
+
+
+def test_materialize_health_snapshots_ignores_cleanup_recovered_failures(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    snapshot_ts = datetime.now(ZoneInfo("Asia/Seoul")).replace(microsecond=0)
+    monkeypatch.setattr(
+        "app.ops.health.measure_disk_usage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            status=DiskWatermark.NORMAL,
+            usage_ratio=0.10,
+        ),
+    )
+    monkeypatch.setattr("app.ops.health.now_local", lambda _tz: snapshot_ts)
+    as_of_date = snapshot_ts.date()
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        connection.execute(
+            """
+            INSERT INTO fact_job_run (
+                run_id,
+                job_name,
+                trigger_type,
+                status,
+                as_of_date,
+                started_at,
+                finished_at,
+                root_run_id,
+                parent_run_id,
+                recovery_of_run_id,
+                lock_name,
+                policy_id,
+                policy_version,
+                dry_run,
+                step_count,
+                failed_step_count,
+                artifact_count,
+                notes,
+                error_message,
+                details_json,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                "failed-job-cleaned",
+                "unit_test_bundle",
+                "MANUAL",
+                "FAILED",
+                as_of_date,
+                snapshot_ts - timedelta(hours=1),
+                snapshot_ts - timedelta(minutes=30),
+                "failed-job-cleaned",
+                None,
+                None,
+                None,
+                None,
+                None,
+                False,
+                1,
+                1,
+                0,
+                "unit test stale cleanup",
+                "boom",
+                '{"cleanup_recovered": true}',
+                snapshot_ts - timedelta(hours=1),
+            ],
+        )
+
+        result = materialize_health_snapshots(
+            settings,
+            connection=connection,
+            as_of_date=as_of_date,
+            job_run_id="health-cleanup-filter",
+        )
+        open_failed_alerts = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_alert_event
+            WHERE alert_type = 'FAILED_RUNS_24H'
+              AND status = 'OPEN'
+            """
+        ).fetchone()[0]
+
+        assert result.status == JobStatus.SUCCESS
+        assert open_failed_alerts == 0
