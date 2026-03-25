@@ -193,10 +193,22 @@ def _load_top_outcomes(
         FROM fact_selection_outcome AS outcome
         JOIN dim_symbol AS meta
           ON outcome.symbol = meta.symbol
+        LEFT JOIN fact_forward_return_label AS label
+          ON outcome.selection_date = label.as_of_date
+         AND outcome.symbol = label.symbol
+         AND outcome.horizon = label.horizon
+        LEFT JOIN fact_daily_ohlcv AS entry_day
+          ON label.symbol = entry_day.symbol
+         AND label.entry_date = entry_day.trading_date
+        LEFT JOIN fact_daily_ohlcv AS exit_day
+          ON label.symbol = exit_day.symbol
+         AND label.exit_date = exit_day.trading_date
         WHERE outcome.evaluation_date = ?
           AND outcome.horizon = ?
           AND outcome.outcome_status = 'matured'
           AND outcome.ranking_version = ?
+          AND COALESCE(entry_day.volume, 0) > 0
+          AND COALESCE(exit_day.volume, 0) > 0
         ORDER BY outcome.realized_excess_return DESC, outcome.symbol
         LIMIT ?
         """,
