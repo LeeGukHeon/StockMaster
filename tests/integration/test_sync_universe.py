@@ -85,7 +85,7 @@ def test_sync_universe_populates_dimension_and_view(tmp_path):
         [
             {
                 "symbol": "005930",
-                "company_name": "삼성전자",
+                "company_name": "SamsungElec",
                 "market": "KOSPI",
                 "group_code": "ST",
                 "sector_code": "0027",
@@ -103,7 +103,7 @@ def test_sync_universe_populates_dimension_and_view(tmp_path):
             },
             {
                 "symbol": "005935",
-                "company_name": "삼성전자우",
+                "company_name": "SamsungElecPref",
                 "market": "KOSPI",
                 "group_code": "ST",
                 "sector_code": "0027",
@@ -137,13 +137,31 @@ def test_sync_universe_populates_dimension_and_view(tmp_path):
                 "preferred_flag_raw": "0",
                 "source_file": "kospi_code.mst",
             },
+            {
+                "symbol": "008110",
+                "company_name": "DaedongElec",
+                "market": "KOSPI",
+                "group_code": "ST",
+                "sector_code": "0000",
+                "industry_code": "0000",
+                "subindustry_code": "0000",
+                "etp_flag_raw": "",
+                "spac_flag_raw": "N",
+                "trading_halt_flag_raw": "Y",
+                "liquidation_flag_raw": "N",
+                "management_flag_raw": "N",
+                "market_warning_flag_raw": "N",
+                "listing_date_raw": "19721014",
+                "preferred_flag_raw": "0",
+                "source_file": "kospi_code.mst",
+            },
         ]
     )
     corp_codes = pd.DataFrame(
         [
             {
                 "corp_code": "00126380",
-                "corp_name": "삼성전자",
+                "corp_name": "SamsungElec",
                 "stock_code": "005930",
                 "modify_date": pd.Timestamp("2024-01-01").date(),
             }
@@ -157,7 +175,14 @@ def test_sync_universe_populates_dimension_and_view(tmp_path):
                 "industry": "Semiconductors",
                 "market_segment": "KOSPI",
                 "source_note": "test",
-            }
+            },
+            {
+                "symbol": "005935",
+                "sector": "제조/산업재",
+                "industry": "전기전자/반도체",
+                "market_segment": "KOSPI",
+                "source_note": "test",
+            },
         ]
     )
 
@@ -168,7 +193,7 @@ def test_sync_universe_populates_dimension_and_view(tmp_path):
         krx_adapter=FakeKrxAdapter(seed),
     )
 
-    assert result.row_count == 3
+    assert result.row_count == 4
     assert result.active_common_stock_count == 1
     assert result.dart_mapped_count == 1
 
@@ -179,11 +204,13 @@ def test_sync_universe_populates_dimension_and_view(tmp_path):
             FROM dim_symbol
             """
         ).fetchone()
-        assert counts == (3, 1)
+        assert counts == (4, 1)
+
         active_common_count = connection.execute(
             "SELECT COUNT(*) FROM vw_universe_active_common_stock"
         ).fetchone()[0]
         assert active_common_count == 1
+
         samsung_row = connection.execute(
             """
             SELECT sector, industry, sector_code, industry_code, subindustry_code, dart_corp_code
@@ -197,6 +224,7 @@ def test_sync_universe_populates_dimension_and_view(tmp_path):
         assert samsung_row[3] == "0013"
         assert samsung_row[4] is None
         assert samsung_row[5] == "00126380"
+
         preferred_row = connection.execute(
             """
             SELECT sector, industry
@@ -205,3 +233,21 @@ def test_sync_universe_populates_dimension_and_view(tmp_path):
             """
         ).fetchone()
         assert preferred_row == ("제조/산업재", "전기전자/반도체")
+
+        halted_row = connection.execute(
+            """
+            SELECT is_common_stock, is_trading_halt
+            FROM dim_symbol
+            WHERE symbol = '008110'
+            """
+        ).fetchone()
+        assert halted_row == (True, True)
+
+        halted_active_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM vw_universe_active_common_stock
+            WHERE symbol = '008110'
+            """
+        ).fetchone()[0]
+        assert halted_active_count == 0

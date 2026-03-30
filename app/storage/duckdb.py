@@ -2097,6 +2097,7 @@ CORE_VIEW_DDL: tuple[str, ...] = (
       AND NOT COALESCE(is_spac, FALSE)
       AND NOT COALESCE(is_reit, FALSE)
       AND NOT COALESCE(is_delisted, FALSE)
+      AND NOT COALESCE(is_trading_halt, FALSE)
     """,
     """
     CREATE OR REPLACE VIEW vw_latest_daily_ohlcv AS
