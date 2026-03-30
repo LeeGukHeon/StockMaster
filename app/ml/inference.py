@@ -112,6 +112,16 @@ def _normalise_prediction_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return working
 
 
+def _prepare_prediction_frame_for_parquet(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    working = frame.copy()
+    for column in ("as_of_date", "calibration_start_date", "calibration_end_date", "created_at"):
+        if column in working.columns:
+            working[column] = pd.to_datetime(working[column], errors="coerce")
+    return working
+
+
 def upsert_predictions(connection, frame: pd.DataFrame) -> None:
     if frame.empty:
         return
@@ -703,7 +713,7 @@ def materialize_alpha_predictions_v1(
                     artifact_paths.append(
                         str(
                             write_parquet(
-                                combined_predictions,
+                                _prepare_prediction_frame_for_parquet(combined_predictions),
                                 base_dir=settings.paths.curated_dir,
                                 dataset="prediction",
                                 partitions={

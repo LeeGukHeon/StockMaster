@@ -257,6 +257,130 @@ def test_materialize_alpha_predictions_and_selection_engine_v2(tmp_path):
     assert '"alpha_core_score"' in ranking_row[0]
 
 
+def test_materialize_alpha_predictions_handles_mixed_model_and_proxy_frames(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+    train_alpha_model_v1(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        horizons=[1],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+    )
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO fact_prediction (
+                run_id,
+                as_of_date,
+                symbol,
+                horizon,
+                market,
+                ranking_version,
+                prediction_version,
+                expected_excess_return,
+                lower_band,
+                median_band,
+                upper_band,
+                calibration_start_date,
+                calibration_end_date,
+                calibration_bucket,
+                calibration_sample_size,
+                model_version,
+                training_run_id,
+                model_spec_id,
+                active_alpha_model_id,
+                uncertainty_score,
+                disagreement_score,
+                fallback_flag,
+                fallback_reason,
+                member_count,
+                ensemble_weight_json,
+                source_notes_json,
+                created_at
+            )
+            WITH selected_symbols AS (
+                SELECT DISTINCT symbol
+                FROM fact_feature_snapshot
+                WHERE as_of_date = ?
+                ORDER BY symbol
+                LIMIT 4
+            )
+            SELECT
+                'proxy-seed',
+                ?,
+                selected.symbol,
+                5,
+                symbol.market,
+                'selection_engine_v1',
+                'proxy_prediction_band_v1',
+                0.001,
+                -0.002,
+                0.001,
+                0.003,
+                DATE '2026-03-02',
+                DATE '2026-03-06',
+                'decile_01',
+                10,
+                'selection_engine_v1_proxy',
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                TRUE,
+                'seeded_proxy_for_test',
+                0,
+                '{}',
+                '{}',
+                now()
+            FROM selected_symbols AS selected
+            JOIN dim_symbol AS symbol
+              ON selected.symbol = symbol.symbol
+            """,
+            [date(2026, 3, 6), date(2026, 3, 6)],
+        )
+        proxy_seed_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_prediction
+            WHERE as_of_date = ?
+              AND horizon = 5
+              AND prediction_version = 'proxy_prediction_band_v1'
+              AND ranking_version = 'selection_engine_v1'
+            """,
+            [date(2026, 3, 6)],
+        ).fetchone()[0]
+
+    assert int(proxy_seed_count or 0) == 4
+
+    prediction_result = materialize_alpha_predictions_v1(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        limit_symbols=4,
+    )
+
+    assert prediction_result.row_count == 8
+    assert prediction_result.artifact_paths
+    assert all(Path(path).exists() for path in prediction_result.artifact_paths)
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        fallback_rows = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_prediction
+            WHERE as_of_date = ?
+              AND prediction_version = ?
+              AND horizon = 5
+              AND fallback_reason = 'use_proxy_prediction_band_v1'
+            """,
+            [date(2026, 3, 6), PREDICTION_VERSION],
+        ).fetchone()[0]
+
+    assert int(fallback_rows or 0) == 4
+
+
 def test_backfill_validate_compare_and_render_diagnostic(tmp_path):
     settings = _prepare_ticket006_data(tmp_path)
 
