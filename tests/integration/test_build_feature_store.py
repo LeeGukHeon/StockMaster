@@ -6,6 +6,7 @@ from app.features.constants import FEATURE_NAMES, FEATURE_VERSION
 from app.features.feature_store import build_feature_store
 from app.storage.duckdb import duckdb_connection
 from tests._ticket003_support import build_test_settings, seed_ticket003_data
+import pytest
 
 
 def test_build_feature_store_populates_snapshot_and_manifest(tmp_path):
@@ -41,3 +42,27 @@ def test_build_feature_store_populates_snapshot_and_manifest(tmp_path):
         ).fetchone()
         assert row_count == 4 * len(FEATURE_NAMES)
         assert latest_manifest == ("build_feature_store", "success", FEATURE_VERSION)
+
+
+def test_build_feature_store_fails_when_trading_day_has_no_same_day_ohlcv(tmp_path):
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        connection.execute(
+            """
+            DELETE FROM fact_daily_ohlcv
+            WHERE trading_date = ?
+            """,
+            [date(2026, 3, 6)],
+        )
+
+    with pytest.raises(
+        RuntimeError,
+        match="same-day OHLCV is missing for trading date 2026-03-06",
+    ):
+        build_feature_store(
+            settings,
+            as_of_date=date(2026, 3, 6),
+            limit_symbols=4,
+        )

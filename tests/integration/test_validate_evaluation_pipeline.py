@@ -5,6 +5,7 @@ from datetime import date
 from app.evaluation.calibration_diagnostics import materialize_calibration_diagnostics
 from app.evaluation.summary import materialize_prediction_evaluation
 from app.evaluation.validation import validate_evaluation_pipeline
+from app.ml.training import train_alpha_model_v1
 from tests._ticket003_support import (
     build_test_settings,
     seed_ticket003_data,
@@ -18,6 +19,14 @@ def test_validate_evaluation_pipeline_passes_on_consistent_data(tmp_path):
     seed_ticket003_data(settings)
     seed_ticket004_flow_data(settings)
     seed_ticket005_selection_history(settings)
+    train_alpha_model_v1(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+    )
 
     materialize_prediction_evaluation(
         settings,

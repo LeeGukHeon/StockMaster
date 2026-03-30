@@ -208,6 +208,20 @@ def _is_optional_calibration_error(exc: RuntimeError) -> bool:
     )
 
 
+def _count_same_day_ohlcv_rows(settings: Settings, *, trading_date: date) -> int:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        bootstrap_core_tables(connection)
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_daily_ohlcv
+            WHERE trading_date = ?
+            """,
+            [trading_date],
+        ).fetchone()
+    return 0 if row is None else int(row[0] or 0)
+
+
 def run_daily_pipeline_job(
     settings: Settings,
     *,
@@ -261,6 +275,15 @@ def run_daily_pipeline_job(
             )
         try:
             ohlcv_result = sync_daily_ohlcv(settings, trading_date=pipeline_date)
+            same_day_ohlcv_count = _count_same_day_ohlcv_rows(
+                settings,
+                trading_date=pipeline_date,
+            )
+            if same_day_ohlcv_count <= 0:
+                raise RuntimeError(
+                    "Daily pipeline aborted because same-day OHLCV is empty after sync_daily_ohlcv. "
+                    f"trading_date={pipeline_date.isoformat()}"
+                )
             fundamentals_result = sync_fundamentals_snapshot(
                 settings,
                 as_of_date=pipeline_date,

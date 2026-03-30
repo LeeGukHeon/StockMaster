@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date
 
 from app.evaluation.calibration_diagnostics import materialize_calibration_diagnostics
+from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
+from app.ml.training import train_alpha_model_v1
 from app.storage.duckdb import duckdb_connection
 from tests._ticket003_support import (
     build_test_settings,
@@ -17,6 +19,14 @@ def test_materialize_calibration_diagnostics_writes_rows(tmp_path):
     seed_ticket003_data(settings)
     seed_ticket004_flow_data(settings)
     seed_ticket005_selection_history(settings)
+    train_alpha_model_v1(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+    )
 
     result = materialize_calibration_diagnostics(
         settings,
@@ -39,5 +49,14 @@ def test_materialize_calibration_diagnostics_writes_rows(tmp_path):
             LIMIT 1
             """
         ).fetchone()
+        v2_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_calibration_diagnostic
+            WHERE ranking_version = ?
+            """,
+            [SELECTION_ENGINE_V2_VERSION],
+        ).fetchone()[0]
         assert row[0] in {"overall", "expected_return_bin"}
         assert row[1] in {"ok", "low_sample", "coverage_drift"}
+        assert int(v2_count or 0) > 0

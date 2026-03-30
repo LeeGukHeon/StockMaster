@@ -72,6 +72,19 @@ def _load_feature_symbol_frame(
     if not frame.empty:
         frame["symbol"] = frame["symbol"].astype(str).str.zfill(6)
         return frame.reset_index(drop=True)
+    calendar_row = connection.execute(
+        """
+        SELECT is_trading_day
+        FROM dim_trading_calendar
+        WHERE trading_date = ?
+        """,
+        [as_of_date],
+    ).fetchone()
+    if calendar_row is not None and bool(calendar_row[0]):
+        raise RuntimeError(
+            "Feature store cannot build a market-wide snapshot because same-day OHLCV "
+            f"is missing for trading date {as_of_date.isoformat()}."
+        )
     return load_symbol_frame(connection, market=market, limit_symbols=limit_symbols)
 
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from app.common.paths import project_root
 from app.features.feature_store import FeatureStoreBuildResult
 from app.ml.inference import AlphaPredictionMaterializationResult
@@ -291,6 +293,7 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr("app.scheduler.jobs.sync_daily_ohlcv", fake_sync_daily_ohlcv)
+    monkeypatch.setattr("app.scheduler.jobs._count_same_day_ohlcv_rows", lambda *a, **k: 8)
     monkeypatch.setattr(
         "app.scheduler.jobs.sync_fundamentals_snapshot",
         fake_sync_fundamentals_snapshot,
@@ -621,6 +624,7 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
         )
 
     monkeypatch.setattr("app.scheduler.jobs.sync_daily_ohlcv", fake_sync_daily_ohlcv)
+    monkeypatch.setattr("app.scheduler.jobs._count_same_day_ohlcv_rows", lambda *a, **k: 8)
     monkeypatch.setattr(
         "app.scheduler.jobs.sync_fundamentals_snapshot",
         fake_sync_fundamentals_snapshot,
@@ -683,3 +687,81 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
     assert "selection_v2_rows=20" in result.notes
     assert "prediction_rows=0" in result.notes
     assert "calibration_skipped=" in result.notes
+
+
+def test_run_daily_pipeline_job_fails_when_same_day_ohlcv_is_missing(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    duckdb_path = data_dir / "marts" / "integration.duckdb"
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                f"APP_DATA_DIR={data_dir.as_posix()}",
+                f"APP_DUCKDB_PATH={duckdb_path.as_posix()}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(project_root=project_root(), env_file=env_file)
+    bootstrap_storage(settings)
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO dim_trading_calendar (
+                trading_date,
+                is_trading_day,
+                market_session_type,
+                weekday,
+                is_weekend,
+                is_public_holiday,
+                source,
+                source_confidence,
+                is_override,
+                updated_at
+            )
+            VALUES (?, TRUE, 'regular', 4, FALSE, FALSE, 'test', 'high', FALSE, now())
+            """,
+            [date(2026, 3, 6)],
+        )
+
+    def fake_sync_daily_ohlcv(settings_arg, *, trading_date, **kwargs):
+        return DailyOhlcvSyncResult(
+            run_id="ohlcv-run",
+            trading_date=trading_date,
+            requested_symbol_count=10,
+            row_count=0,
+            skipped_symbol_count=10,
+            failed_symbol_count=0,
+            artifact_paths=[],
+            notes="same-day ohlcv missing",
+        )
+
+    monkeypatch.setattr("app.scheduler.jobs.sync_daily_ohlcv", fake_sync_daily_ohlcv)
+    monkeypatch.setattr(
+        "app.scheduler.jobs.build_feature_store",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("build_feature_store should not run")),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="same-day OHLCV is empty after sync_daily_ohlcv",
+    ):
+        run_daily_pipeline_job(settings)
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        manifest_row = connection.execute(
+            """
+            SELECT run_type, status, notes, error_message
+            FROM ops_run_manifest
+            WHERE run_type = 'daily_pipeline'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+    assert manifest_row[0] == "daily_pipeline"
+    assert manifest_row[1] == "failed"
+    assert manifest_row[2] == "Daily pipeline failed."
+    assert "same-day OHLCV is empty after sync_daily_ohlcv" in str(manifest_row[3])

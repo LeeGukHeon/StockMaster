@@ -36,7 +36,10 @@ def _fake_scalar_factory(
             ): latest_prediction,
             "SELECT MAX(as_of_date) FROM fact_portfolio_target_book": latest_portfolio_target,
             "SELECT MAX(snapshot_date) FROM fact_portfolio_nav_snapshot": latest_nav,
-            "SELECT MAX(summary_date) FROM fact_evaluation_summary": latest_evaluation,
+            (
+                "SELECT MAX(summary_date) FROM fact_evaluation_summary "
+                "WHERE ranking_version = 'selection_engine_v2'"
+            ): latest_evaluation,
         }
         for pattern, value in mapping.items():
             if normalized == pattern:

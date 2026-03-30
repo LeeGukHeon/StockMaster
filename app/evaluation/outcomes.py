@@ -26,6 +26,7 @@ from app.storage.manifests import record_run_finish, record_run_start
 from app.storage.parquet_io import write_parquet
 
 DEFAULT_RANKING_VERSIONS = (
+    SELECTION_ENGINE_V2_VERSION,
     SELECTION_ENGINE_VERSION,
     EXPLANATORY_RANKING_VERSION,
 )

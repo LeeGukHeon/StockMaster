@@ -8,8 +8,7 @@ import pandas as pd
 
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
-from app.evaluation.outcomes import materialize_selection_outcomes
-from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
+from app.evaluation.outcomes import DEFAULT_RANKING_VERSIONS, materialize_selection_outcomes
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -176,15 +175,17 @@ def materialize_calibration_diagnostics(
     horizons: list[int],
     bin_count: int,
     limit_symbols: int | None = None,
+    ranking_versions: list[str] | None = None,
 ) -> CalibrationDiagnosticResult:
     ensure_storage_layout(settings)
+    ranking_versions = list(ranking_versions or DEFAULT_RANKING_VERSIONS)
     materialize_selection_outcomes(
         settings,
         start_selection_date=start_selection_date,
         end_selection_date=end_selection_date,
         horizons=horizons,
         limit_symbols=limit_symbols,
-        ranking_versions=[SELECTION_ENGINE_VERSION],
+        ranking_versions=ranking_versions,
     )
 
     with activate_run_context(
@@ -204,15 +205,16 @@ def materialize_calibration_diagnostics(
                     "Build calibration diagnostics from frozen prediction bands. "
                     f"range={start_selection_date.isoformat()}..{end_selection_date.isoformat()}"
                 ),
-                ranking_version=SELECTION_ENGINE_VERSION,
+                ranking_version=",".join(ranking_versions),
             )
             try:
                 horizon_placeholders = ",".join("?" for _ in horizons)
+                version_placeholders = ",".join("?" for _ in ranking_versions)
                 params: list[object] = [
                     start_selection_date,
                     end_selection_date,
                     *horizons,
-                    SELECTION_ENGINE_VERSION,
+                    *ranking_versions,
                 ]
                 limit_clause = ""
                 if limit_symbols is not None and limit_symbols > 0:
@@ -228,11 +230,11 @@ def materialize_calibration_diagnostics(
                     FROM fact_selection_outcome
                     WHERE selection_date BETWEEN ? AND ?
                       AND horizon IN ({horizon_placeholders})
-                      AND ranking_version = ?
+                      AND ranking_version IN ({version_placeholders})
                       AND outcome_status = 'matured'
                       AND band_available_flag
                     {limit_clause}
-                    ORDER BY selection_date, horizon, symbol
+                    ORDER BY selection_date, ranking_version, horizon, symbol
                     """,
                     params,
                 ).fetchdf()
@@ -249,7 +251,7 @@ def materialize_calibration_diagnostics(
                         status="success",
                         output_artifacts=[],
                         notes=notes,
-                        ranking_version=SELECTION_ENGINE_VERSION,
+                        ranking_version=",".join(ranking_versions),
                     )
                     return CalibrationDiagnosticResult(
                         run_id=run_context.run_id,
@@ -405,7 +407,7 @@ def materialize_calibration_diagnostics(
                     status="success",
                     output_artifacts=artifact_paths,
                     notes=notes,
-                    ranking_version=SELECTION_ENGINE_VERSION,
+                    ranking_version=",".join(ranking_versions),
                 )
                 return CalibrationDiagnosticResult(
                     run_id=run_context.run_id,
@@ -427,6 +429,6 @@ def materialize_calibration_diagnostics(
                         f"range={start_selection_date.isoformat()}..{end_selection_date.isoformat()}"
                     ),
                     error_message=str(exc),
-                    ranking_version=SELECTION_ENGINE_VERSION,
+                    ranking_version=",".join(ranking_versions),
                 )
                 raise

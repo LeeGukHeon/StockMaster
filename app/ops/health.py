@@ -130,7 +130,11 @@ def check_pipeline_dependencies(
     )
     latest_evaluation = _scalar(
         connection,
-        "SELECT MAX(summary_date) FROM fact_evaluation_summary",
+        """
+        SELECT MAX(summary_date)
+        FROM fact_evaluation_summary
+        WHERE ranking_version = 'selection_engine_v2'
+        """,
     )
     calendar_status, calendar_ready, calendar_observed_state, calendar_details = _date_dependency_status(
         latest_date=latest_calendar,
@@ -465,7 +469,11 @@ def materialize_health_snapshots(
     )
     latest_evaluation_date = _scalar(
         connection,
-        "SELECT MAX(summary_date) FROM fact_evaluation_summary",
+        """
+        SELECT MAX(summary_date)
+        FROM fact_evaluation_summary
+        WHERE ranking_version = 'selection_engine_v2'
+        """,
     )
     latest_target_date = _scalar(
         connection,
