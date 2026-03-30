@@ -159,3 +159,35 @@ def test_sync_investor_flow_uses_concurrent_fetch_workers(tmp_path) -> None:
 
     assert result.row_count == 4
     assert provider.max_active_calls >= 2
+
+
+def test_sync_investor_flow_filters_future_listings(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO dim_symbol (
+                symbol,
+                company_name,
+                market,
+                is_common_stock,
+                listing_date,
+                source,
+                updated_at
+            )
+            VALUES ('394420', 'RecentListing', 'KOSDAQ', TRUE, DATE '2026-03-31', 'test', now())
+            """
+        )
+
+    provider = _StubKisProvider()
+    result = sync_investor_flow(
+        settings,
+        trading_date=date(2026, 3, 11),
+        flush_batch_size=2,
+        kis_provider=provider,
+    )
+
+    assert result.requested_symbol_count == 4
+    assert result.row_count == 4
+    assert "394420" not in provider.calls

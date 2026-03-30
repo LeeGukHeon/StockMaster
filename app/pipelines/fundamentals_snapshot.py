@@ -137,6 +137,7 @@ def sync_fundamentals_snapshot(
                     connection,
                     symbols=symbols,
                     limit_symbols=limit_symbols,
+                    as_of_date=as_of_date,
                 )
                 requested_symbol_count = len(symbol_frame)
                 unmatched_corp_code_count = 0

@@ -48,6 +48,7 @@ def _load_feature_symbol_frame(
             symbols=symbols,
             market=market,
             limit_symbols=limit_symbols,
+            as_of_date=as_of_date,
         )
 
     frame = connection.execute(
@@ -85,7 +86,12 @@ def _load_feature_symbol_frame(
             "Feature store cannot build a market-wide snapshot because same-day OHLCV "
             f"is missing for trading date {as_of_date.isoformat()}."
         )
-    return load_symbol_frame(connection, market=market, limit_symbols=limit_symbols)
+    return load_symbol_frame(
+        connection,
+        market=market,
+        limit_symbols=limit_symbols,
+        as_of_date=as_of_date,
+    )
 
 
 def _register_symbol_stage(connection, symbol_frame: pd.DataFrame) -> None:
@@ -262,6 +268,7 @@ def load_feature_matrix(
         symbols=symbols,
         market=market,
         limit_symbols=limit_symbols,
+        as_of_date=as_of_date,
     )
     if symbol_frame.empty:
         symbol_frame = connection.execute(

@@ -41,16 +41,17 @@ def load_symbol_frame(
     market: str = "ALL",
     limit_symbols: int | None = None,
     require_dart: bool = False,
+    as_of_date: date | None = None,
 ) -> pd.DataFrame:
     explicit_symbols = [symbol.zfill(6) for symbol in symbols or []]
     query = (
         """
-        SELECT symbol, company_name, market, dart_corp_code
+        SELECT symbol, company_name, market, dart_corp_code, listing_date
         FROM dim_symbol
     """
         if explicit_symbols
         else """
-        SELECT symbol, company_name, market, dart_corp_code
+        SELECT symbol, company_name, market, dart_corp_code, listing_date
         FROM vw_universe_active_common_stock
     """
     )
@@ -72,6 +73,12 @@ def load_symbol_frame(
     if market_filter != "ALL":
         frame = frame.loc[frame["market"].astype(str).str.upper() == market_filter]
 
+    if as_of_date is not None and "listing_date" in frame.columns:
+        listing_dates = pd.to_datetime(frame["listing_date"], errors="coerce")
+        frame = frame.loc[
+            listing_dates.isna() | listing_dates.le(pd.Timestamp(as_of_date))
+        ].copy()
+
     if require_dart:
         frame = frame.loc[
             frame["dart_corp_code"].notna() & frame["dart_corp_code"].astype(str).ne("")
@@ -80,4 +87,4 @@ def load_symbol_frame(
     if limit_symbols is not None and limit_symbols > 0:
         frame = frame.head(limit_symbols)
 
-    return frame.reset_index(drop=True)
+    return frame.drop(columns=["listing_date"], errors="ignore").reset_index(drop=True)

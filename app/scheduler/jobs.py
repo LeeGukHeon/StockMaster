@@ -407,6 +407,9 @@ def run_daily_pipeline_job(
             notes = (
                 f"Daily pipeline completed for {pipeline_date.isoformat()}. "
                 f"ohlcv_rows={ohlcv_result.row_count}, "
+                f"ohlcv_eligible_symbols={getattr(ohlcv_result, 'eligible_symbol_count', ohlcv_result.requested_symbol_count)}, "
+                f"ohlcv_provider_empty={getattr(ohlcv_result, 'provider_empty_symbol_count', 0)}, "
+                f"ohlcv_provider_error={getattr(ohlcv_result, 'provider_error_symbol_count', 0)}, "
                 f"fundamentals_rows={fundamentals_result.row_count}, "
                 f"news_rows={news_result.deduped_row_count}, "
                 f"flow_rows={flow_result.row_count}, "

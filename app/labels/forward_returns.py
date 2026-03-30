@@ -105,7 +105,11 @@ def _load_label_symbol_frame(
 ) -> pd.DataFrame:
     if symbols:
         return load_symbol_frame(
-            connection, symbols=symbols, market=market, limit_symbols=limit_symbols
+            connection,
+            symbols=symbols,
+            market=market,
+            limit_symbols=limit_symbols,
+            as_of_date=end_date,
         )
 
     frame = connection.execute(
@@ -130,7 +134,12 @@ def _load_label_symbol_frame(
     if not frame.empty:
         frame["symbol"] = frame["symbol"].astype(str).str.zfill(6)
         return frame.reset_index(drop=True)
-    return load_symbol_frame(connection, market=market, limit_symbols=limit_symbols)
+    return load_symbol_frame(
+        connection,
+        market=market,
+        limit_symbols=limit_symbols,
+        as_of_date=end_date,
+    )
 
 
 def upsert_forward_labels(connection, frame: pd.DataFrame) -> None:

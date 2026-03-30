@@ -29,6 +29,9 @@ class DailyOhlcvSyncResult:
     failed_symbol_count: int
     artifact_paths: list[str]
     notes: str
+    eligible_symbol_count: int = 0
+    provider_empty_symbol_count: int = 0
+    provider_error_symbol_count: int = 0
 
 
 def _normalize_daily_ohlcv(symbol: str, trading_date: date, frame: pd.DataFrame) -> pd.DataFrame:
@@ -181,6 +184,7 @@ def sync_daily_ohlcv(
                     symbols=symbols,
                     market=market,
                     limit_symbols=limit_symbols,
+                    as_of_date=trading_date,
                 )
                 requested_symbol_count = len(symbol_frame)
 
@@ -198,9 +202,12 @@ def sync_daily_ohlcv(
                         run_id=run_context.run_id,
                         trading_date=trading_date,
                         requested_symbol_count=requested_symbol_count,
+                        eligible_symbol_count=requested_symbol_count,
                         row_count=0,
                         skipped_symbol_count=requested_symbol_count,
                         failed_symbol_count=0,
+                        provider_empty_symbol_count=0,
+                        provider_error_symbol_count=0,
                         artifact_paths=[],
                         notes=notes,
                     )
@@ -232,9 +239,12 @@ def sync_daily_ohlcv(
                         run_id=run_context.run_id,
                         trading_date=trading_date,
                         requested_symbol_count=requested_symbol_count,
+                        eligible_symbol_count=requested_symbol_count,
                         row_count=0,
                         skipped_symbol_count=len(existing_symbols),
                         failed_symbol_count=0,
+                        provider_empty_symbol_count=0,
+                        provider_error_symbol_count=0,
                         artifact_paths=[],
                         notes=notes,
                     )
@@ -243,6 +253,8 @@ def sync_daily_ohlcv(
                 artifact_paths: list[str] = []
                 skipped_symbol_count = 0
                 failed_symbol_count = 0
+                provider_empty_symbol_count = 0
+                provider_error_symbol_count = 0
                 failed_symbols: list[str] = []
 
                 for row in symbol_frame.itertuples(index=False):
@@ -269,10 +281,12 @@ def sync_daily_ohlcv(
                         normalized = _normalize_daily_ohlcv(symbol, trading_date, probe.frame)
                         if normalized.empty:
                             skipped_symbol_count += 1
+                            provider_empty_symbol_count += 1
                             continue
                         output_frames.append(normalized)
                     except Exception:
                         failed_symbol_count += 1
+                        provider_error_symbol_count += 1
                         failed_symbols.append(symbol)
 
                 combined = (
@@ -314,8 +328,10 @@ def sync_daily_ohlcv(
 
                 notes = (
                     f"OHLCV sync completed. trading_date={trading_date.isoformat()}, "
-                    f"rows={len(combined)}, requested_symbols={requested_symbol_count}, "
-                    f"skipped={skipped_symbol_count}, failed={failed_symbol_count}"
+                    f"rows={len(combined)}, eligible_symbols={requested_symbol_count}, "
+                    f"skipped={skipped_symbol_count}, failed={failed_symbol_count}, "
+                    f"provider_empty={provider_empty_symbol_count}, "
+                    f"provider_error={provider_error_symbol_count}"
                 )
                 record_run_finish(
                     connection,
@@ -329,9 +345,12 @@ def sync_daily_ohlcv(
                     run_id=run_context.run_id,
                     trading_date=trading_date,
                     requested_symbol_count=requested_symbol_count,
+                    eligible_symbol_count=requested_symbol_count,
                     row_count=len(combined),
                     skipped_symbol_count=skipped_symbol_count,
                     failed_symbol_count=failed_symbol_count,
+                    provider_empty_symbol_count=provider_empty_symbol_count,
+                    provider_error_symbol_count=provider_error_symbol_count,
                     artifact_paths=artifact_paths,
                     notes=notes,
                 )

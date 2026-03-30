@@ -61,6 +61,7 @@ def _resolve_candidate_dates(
         symbols=symbols,
         market=market,
         limit_symbols=limit_symbols,
+        as_of_date=train_end_date,
     )
     if symbol_frame.empty:
         return []
@@ -131,6 +132,7 @@ def _load_dataset_frame(
         symbols=symbols,
         market=market,
         limit_symbols=limit_symbols,
+        as_of_date=train_end_date,
     )
     if symbol_frame.empty:
         return pd.DataFrame()

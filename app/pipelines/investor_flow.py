@@ -258,6 +258,7 @@ def _load_sync_inputs(
             symbols=symbols,
             market=market,
             limit_symbols=limit_symbols,
+            as_of_date=trading_date,
         )
         requested_symbol_count = len(symbol_frame)
         existing_symbols: set[str] = set()

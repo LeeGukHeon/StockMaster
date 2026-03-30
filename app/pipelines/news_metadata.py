@@ -176,6 +176,7 @@ def sync_news_metadata(
                     connection,
                     symbols=symbols,
                     limit_symbols=effective_limit,
+                    as_of_date=signal_date,
                 )
                 query_tasks = build_query_plan(
                     project_root=settings.paths.project_root,
