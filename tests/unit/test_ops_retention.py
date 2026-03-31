@@ -147,8 +147,9 @@ def test_cleanup_docker_build_cache_skips_when_docker_missing(monkeypatch, tmp_p
     assert "Docker CLI is not available" in result.notes
 
 
-def test_cleanup_docker_build_cache_dry_run_writes_artifact(tmp_path) -> None:
+def test_cleanup_docker_build_cache_dry_run_writes_artifact(monkeypatch, tmp_path) -> None:
     settings = build_test_settings(tmp_path)
+    monkeypatch.setattr("app.ops.maintenance.shutil.which", lambda _name: "/usr/bin/docker")
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
         result = cleanup_docker_build_cache(
