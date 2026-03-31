@@ -113,6 +113,8 @@ def _build_settings(tmp_path):
         encoding="utf-8",
     )
     settings = load_settings(project_root=project_root(), env_file=env_file)
+    settings.paths.raw_dir = settings.paths.data_dir / "raw"
+    settings.paths.curated_dir = settings.paths.data_dir / "curated"
     bootstrap_storage(settings)
     return settings
 
