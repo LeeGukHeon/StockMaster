@@ -866,6 +866,34 @@ def reset_open_recovery_actions(
     )
 
 
+def _suppressed_recovery_reason(
+    *,
+    job_name: str,
+    status: str,
+    recovery_of_run_id: object,
+    notes: object,
+    error_message: object,
+) -> str | None:
+    if str(job_name) == "run_ops_maintenance_bundle":
+        return "ops_maintenance_self_recovery_disabled"
+    if recovery_of_run_id not in (None, "") and not pd.isna(recovery_of_run_id):
+        return "recovery_attempt_not_requeued"
+
+    combined_text = " ".join(
+        str(part)
+        for part in (notes, error_message)
+        if part not in (None, "") and not pd.isna(part)
+    )
+    lowered = combined_text.lower()
+    if "active lock already exists" in lowered or "blocked by active lock" in lowered:
+        return "lock_conflict_not_requeued"
+    if "cleared as stale before new run start" in lowered or "cleared as stale during ops maintenance" in lowered:
+        return "stale_cleanup_not_requeued"
+    if str(status).upper() == JobStatus.BLOCKED and "serial lock occupied" in lowered:
+        return "serial_lock_not_requeued"
+    return None
+
+
 def reconcile_failed_runs(
     settings: Settings,
     *,
@@ -876,7 +904,7 @@ def reconcile_failed_runs(
     bootstrap_core_tables(connection)
     rows = connection.execute(
         """
-        SELECT run_id, job_name, status, started_at, root_run_id
+        SELECT run_id, job_name, status, started_at, root_run_id, recovery_of_run_id, notes, error_message
         FROM fact_job_run
         WHERE status IN ('FAILED', 'BLOCKED')
         ORDER BY started_at DESC
@@ -885,7 +913,8 @@ def reconcile_failed_runs(
         [limit],
     ).fetchall()
     queued = 0
-    for run_id, job_name, status, started_at, root_run_id in rows:
+    skipped = 0
+    for run_id, job_name, status, started_at, root_run_id, recovery_of_run_id, notes, error_message in rows:
         exists = connection.execute(
             """
             SELECT COUNT(*)
@@ -895,6 +924,38 @@ def reconcile_failed_runs(
             [run_id],
         ).fetchone()[0]
         if exists:
+            continue
+        suppression_reason = _suppressed_recovery_reason(
+            job_name=str(job_name),
+            status=str(status),
+            recovery_of_run_id=recovery_of_run_id,
+            notes=notes,
+            error_message=error_message,
+        )
+        if suppression_reason is not None:
+            insert_recovery_action(
+                connection,
+                recovery_action_id=(
+                    f"recovery-skip-{run_id}-{utc_now().strftime('%Y%m%dT%H%M%S%f')}"
+                ),
+                created_at=utc_now(),
+                action_type="QUEUE_RECOVERY",
+                status=RecoveryStatus.SKIPPED,
+                target_job_run_id=str(run_id),
+                triggered_by_run_id=job_run_id,
+                recovery_run_id=None,
+                lock_name=str(job_name),
+                notes=f"Recovery suppressed: {suppression_reason}.",
+                details={
+                    "job_name": job_name,
+                    "target_status": status,
+                    "root_run_id": root_run_id,
+                    "started_at": started_at,
+                    "suppression_reason": suppression_reason,
+                },
+                finished_at=utc_now(),
+            )
+            skipped += 1
             continue
         insert_recovery_action(
             connection,
@@ -921,7 +982,7 @@ def reconcile_failed_runs(
         run_id=job_run_id or "embedded",
         job_name="reconcile_failed_runs",
         status=JobStatus.SUCCESS,
-        notes=f"Recovery queue reconciled. queued={queued}",
+        notes=f"Recovery queue reconciled. queued={queued} skipped={skipped}",
         row_count=queued,
     )
 

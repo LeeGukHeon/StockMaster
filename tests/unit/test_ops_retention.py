@@ -206,6 +206,102 @@ def test_reconcile_failed_runs_does_not_requeue_targets_with_prior_recovery_acti
     assert count == 1
 
 
+def test_reconcile_failed_runs_suppresses_ops_maintenance_and_recovery_attempts(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        connection.execute(
+            """
+            INSERT INTO fact_job_run (
+                run_id, job_name, trigger_type, status, as_of_date, started_at, finished_at,
+                root_run_id, parent_run_id, recovery_of_run_id, lock_name, policy_id,
+                policy_version, dry_run, step_count, failed_step_count, artifact_count,
+                notes, error_message, details_json, created_at
+            ) VALUES
+            (
+                'failed-maint-1', 'run_ops_maintenance_bundle', 'SCHEDULED', 'BLOCKED', DATE '2026-04-01',
+                now(), now(), 'failed-maint-1', NULL, NULL, 'run_ops_maintenance_bundle', NULL, NULL,
+                FALSE, 0, 0, 0, 'Blocked by active lock: run_ops_maintenance_bundle', 'Active lock already exists for run_ops_maintenance_bundle.', '{}', now()
+            ),
+            (
+                'failed-recovery-1', 'run_evaluation_bundle', 'RECOVERY', 'BLOCKED', DATE '2026-04-03',
+                now(), now(), 'root-eval-1', NULL, 'prior-run-1', 'run_evaluation_bundle', NULL, NULL,
+                FALSE, 0, 0, 0, 'required snapshot is stale', NULL, '{}', now()
+            )
+            """
+        )
+        result = reconcile_failed_runs(
+            settings,
+            connection=connection,
+            job_run_id="test-job",
+            limit=20,
+        )
+        rows = connection.execute(
+            """
+            SELECT target_job_run_id, status, notes, details_json
+            FROM fact_recovery_action
+            ORDER BY target_job_run_id
+            """
+        ).fetchall()
+
+    assert result.row_count == 0
+    assert len(rows) == 2
+    assert rows[0][0] == "failed-maint-1"
+    assert rows[0][1] == "SKIPPED"
+    assert "ops_maintenance_self_recovery_disabled" in str(rows[0][3])
+    assert rows[1][0] == "failed-recovery-1"
+    assert rows[1][1] == "SKIPPED"
+    assert "recovery_attempt_not_requeued" in str(rows[1][3])
+
+
+def test_reconcile_failed_runs_suppresses_lock_and_stale_cleanup_failures(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        connection.execute(
+            """
+            INSERT INTO fact_job_run (
+                run_id, job_name, trigger_type, status, as_of_date, started_at, finished_at,
+                root_run_id, parent_run_id, recovery_of_run_id, lock_name, policy_id,
+                policy_version, dry_run, step_count, failed_step_count, artifact_count,
+                notes, error_message, details_json, created_at
+            ) VALUES
+            (
+                'failed-lock-1', 'run_daily_close_bundle', 'SCHEDULED', 'BLOCKED', DATE '2026-04-03',
+                now(), now(), 'failed-lock-1', NULL, NULL, 'scheduler_global_write', NULL, NULL,
+                FALSE, 0, 0, 0, 'Blocked by active lock: run_daily_close_bundle', 'Active lock already exists for scheduler_global_write.', '{}', now()
+            ),
+            (
+                'failed-stale-1', 'run_daily_close_bundle', 'SCHEDULED', 'FAILED', DATE '2026-04-03',
+                now(), now(), 'failed-stale-1', NULL, NULL, 'scheduler_global_write', NULL, NULL,
+                FALSE, 0, 0, 0, 'Cleared as stale before new run start.', 'Marked failed after stale running state cleanup.', '{}', now()
+            )
+            """
+        )
+        result = reconcile_failed_runs(
+            settings,
+            connection=connection,
+            job_run_id="test-job",
+            limit=20,
+        )
+        rows = connection.execute(
+            """
+            SELECT target_job_run_id, status, details_json
+            FROM fact_recovery_action
+            ORDER BY target_job_run_id
+            """
+        ).fetchall()
+
+    assert result.row_count == 0
+    assert len(rows) == 2
+    assert rows[0][0] == "failed-lock-1"
+    assert rows[0][1] == "SKIPPED"
+    assert "lock_conflict_not_requeued" in str(rows[0][2])
+    assert rows[1][0] == "failed-stale-1"
+    assert rows[1][1] == "SKIPPED"
+    assert "stale_cleanup_not_requeued" in str(rows[1][2])
+
+
 def test_reset_open_recovery_actions_closes_existing_open_queue(tmp_path) -> None:
     settings = build_test_settings(tmp_path)
     now = datetime.now(tz=timezone.utc)
