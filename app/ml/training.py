@@ -80,13 +80,17 @@ def _metric_rows(
     split_name: str,
     actual: pd.Series,
     predicted: pd.Series,
+    as_of_dates: pd.Series | None = None,
 ) -> list[dict[str, object]]:
     pair = pd.DataFrame(
         {
             "actual": pd.to_numeric(actual, errors="coerce"),
             "predicted": pd.to_numeric(predicted, errors="coerce"),
         }
-    ).dropna()
+    )
+    if as_of_dates is not None:
+        pair["as_of_date"] = pd.to_datetime(as_of_dates, errors="coerce").dt.date
+    pair = pair.dropna(subset=["actual", "predicted"])
     if pair.empty:
         values = {
             "mae": None,
@@ -106,12 +110,31 @@ def _metric_rows(
             corr = None
         else:
             corr = pair["actual"].corr(pair["predicted"])
-        ordered = pair.sort_values("predicted", ascending=False)
-        top10 = ordered.head(min(10, len(ordered)))
-        top20 = ordered.head(min(20, len(ordered)))
         actual_rank = pair["actual"].rank(method="average")
         predicted_rank = pair["predicted"].rank(method="average")
         rank_ic = actual_rank.corr(predicted_rank) if len(pair) >= 2 else None
+
+        if "as_of_date" in pair.columns and pair["as_of_date"].notna().any():
+            cohort_top10_returns: list[float] = []
+            cohort_top20_returns: list[float] = []
+            for _, group in pair.dropna(subset=["as_of_date"]).groupby("as_of_date", sort=True):
+                ordered = group.sort_values("predicted", ascending=False)
+                top10 = ordered.head(min(10, len(ordered)))
+                top20 = ordered.head(min(20, len(ordered)))
+                cohort_top10_returns.append(float(top10["actual"].mean()))
+                cohort_top20_returns.append(float(top20["actual"].mean()))
+            top10_mean_excess_return = (
+                float(np.mean(cohort_top10_returns)) if cohort_top10_returns else None
+            )
+            top20_mean_excess_return = (
+                float(np.mean(cohort_top20_returns)) if cohort_top20_returns else None
+            )
+        else:
+            ordered = pair.sort_values("predicted", ascending=False)
+            top10 = ordered.head(min(10, len(ordered)))
+            top20 = ordered.head(min(20, len(ordered)))
+            top10_mean_excess_return = float(top10["actual"].mean())
+            top20_mean_excess_return = float(top20["actual"].mean())
         values = {
             "mae": float(mean_absolute_error(pair["actual"], pair["predicted"])),
             "rmse": float(math.sqrt(mean_squared_error(pair["actual"], pair["predicted"]))),
@@ -120,8 +143,8 @@ def _metric_rows(
             "directional_hit_rate": float(
                 (np.sign(pair["actual"]) == np.sign(pair["predicted"])).mean()
             ),
-            "top10_mean_excess_return": float(top10["actual"].mean()),
-            "top20_mean_excess_return": float(top20["actual"].mean()),
+            "top10_mean_excess_return": top10_mean_excess_return,
+            "top20_mean_excess_return": top20_mean_excess_return,
         }
     created_at = pd.Timestamp.utcnow()
     return [
@@ -512,6 +535,7 @@ def _train_single_horizon(
                 split_name="train",
                 actual=y_train,
                 predicted=train_pred,
+                as_of_dates=train_frame["as_of_date"],
             )
         )
         metric_rows.extend(
@@ -522,6 +546,7 @@ def _train_single_horizon(
                 split_name="validation",
                 actual=y_validation,
                 predicted=valid_pred,
+                as_of_dates=validation_frame["as_of_date"],
             )
         )
         validation_metric_subset = {
@@ -532,6 +557,7 @@ def _train_single_horizon(
         metric_summary[member_name] = {
             "mae": validation_metric_subset.get("mae"),
             "corr": validation_metric_subset.get("corr"),
+            "rank_ic": validation_metric_subset.get("rank_ic"),
             "top10_mean_excess_return": validation_metric_subset.get("top10_mean_excess_return"),
             "top20_mean_excess_return": validation_metric_subset.get("top20_mean_excess_return"),
         }
@@ -571,6 +597,7 @@ def _train_single_horizon(
             split_name="validation",
             actual=y_validation,
             predicted=ensemble_validation,
+            as_of_dates=validation_frame["as_of_date"],
         )
     )
     member_prediction_rows.extend(

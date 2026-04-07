@@ -6,7 +6,9 @@ from app.ml.constants import (
     resolve_feature_columns_for_spec,
     resolve_member_names_for_spec,
 )
-from app.ml.training import _normalise_weights
+import pandas as pd
+
+from app.ml.training import _metric_rows, _normalise_weights
 
 
 def test_challenger_specs_use_distinct_feature_profiles() -> None:
@@ -92,3 +94,50 @@ def test_normalise_weights_falls_back_to_equal_when_all_metrics_missing() -> Non
     )
 
     assert weights == {"member_a": 0.5, "member_b": 0.5}
+
+
+def test_metric_rows_topk_is_cohort_averaged_by_date() -> None:
+    actual = pd.Series(([0.0] * 10) + [10.0] + ([1.0] * 10) + [11.0])
+    predicted = pd.Series(
+        [
+            200,
+            199,
+            198,
+            197,
+            196,
+            195,
+            194,
+            193,
+            192,
+            191,
+            1,
+            100,
+            99,
+            98,
+            97,
+            96,
+            95,
+            94,
+            93,
+            92,
+            91,
+            2,
+        ]
+    )
+    as_of_dates = pd.Series(
+        [pd.Timestamp("2026-03-01").date()] * 11
+        + [pd.Timestamp("2026-03-02").date()] * 11
+    )
+    rows = _metric_rows(
+        training_run_id="run-1",
+        horizon=1,
+        member_name="ensemble",
+        split_name="validation",
+        actual=actual,
+        predicted=predicted,
+        as_of_dates=as_of_dates,
+    )
+    payload = {row["metric_name"]: row["metric_value"] for row in rows}
+
+    assert payload["top10_mean_excess_return"] == 0.5
+    assert payload["top20_mean_excess_return"] == 1.4090909090909092
