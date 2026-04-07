@@ -39,6 +39,9 @@ from app.storage.bootstrap import ensure_storage_layout, log_disk_usage
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from app.storage.manifests import record_run_finish, record_run_start
 
+DAILY_PIPELINE_INVESTOR_FLOW_FLUSH_BATCH_SIZE = 25
+DAILY_PIPELINE_INVESTOR_FLOW_MAX_WORKERS = 1
+
 
 @dataclass(slots=True)
 class JobExecutionResult:
@@ -296,6 +299,8 @@ def run_daily_pipeline_job(
             flow_result = sync_investor_flow(
                 settings,
                 trading_date=pipeline_date,
+                flush_batch_size=DAILY_PIPELINE_INVESTOR_FLOW_FLUSH_BATCH_SIZE,
+                max_workers=DAILY_PIPELINE_INVESTOR_FLOW_MAX_WORKERS,
             )
             feature_result = build_feature_store(
                 settings,
