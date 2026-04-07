@@ -110,9 +110,7 @@ def _metric_rows(
             corr = None
         else:
             corr = pair["actual"].corr(pair["predicted"])
-        actual_rank = pair["actual"].rank(method="average")
-        predicted_rank = pair["predicted"].rank(method="average")
-        rank_ic = actual_rank.corr(predicted_rank) if len(pair) >= 2 else None
+        cohort_rank_ics: list[float] = []
 
         if "as_of_date" in pair.columns and pair["as_of_date"].notna().any():
             cohort_top10_returns: list[float] = []
@@ -123,18 +121,28 @@ def _metric_rows(
                 top20 = ordered.head(min(20, len(ordered)))
                 cohort_top10_returns.append(float(top10["actual"].mean()))
                 cohort_top20_returns.append(float(top20["actual"].mean()))
+                if len(group) >= 2:
+                    group_actual_rank = group["actual"].rank(method="average")
+                    group_predicted_rank = group["predicted"].rank(method="average")
+                    group_rank_ic = group_actual_rank.corr(group_predicted_rank)
+                    if not pd.isna(group_rank_ic):
+                        cohort_rank_ics.append(float(group_rank_ic))
             top10_mean_excess_return = (
                 float(np.mean(cohort_top10_returns)) if cohort_top10_returns else None
             )
             top20_mean_excess_return = (
                 float(np.mean(cohort_top20_returns)) if cohort_top20_returns else None
             )
+            rank_ic = float(np.mean(cohort_rank_ics)) if cohort_rank_ics else None
         else:
             ordered = pair.sort_values("predicted", ascending=False)
             top10 = ordered.head(min(10, len(ordered)))
             top20 = ordered.head(min(20, len(ordered)))
             top10_mean_excess_return = float(top10["actual"].mean())
             top20_mean_excess_return = float(top20["actual"].mean())
+            actual_rank = pair["actual"].rank(method="average")
+            predicted_rank = pair["predicted"].rank(method="average")
+            rank_ic = actual_rank.corr(predicted_rank) if len(pair) >= 2 else None
         values = {
             "mae": float(mean_absolute_error(pair["actual"], pair["predicted"])),
             "rmse": float(math.sqrt(mean_squared_error(pair["actual"], pair["predicted"]))),
@@ -430,6 +438,8 @@ def _train_single_horizon(
     )
     training_run_id = f"{run_id}-{model_spec.model_spec_id}-h{int(horizon)}"
     if training_frame.empty:
+        spec_feature_columns = list(resolve_feature_columns_for_spec(model_spec))
+        spec_member_names = list(resolve_member_names_for_spec(model_spec))
         row = {
             "training_run_id": training_run_id,
             "run_id": run_id,
@@ -446,10 +456,14 @@ def _train_single_horizon(
             "validation_window_end": None,
             "train_row_count": 0,
             "validation_row_count": 0,
-            "feature_count": len(TRAINING_FEATURE_COLUMNS),
+            "feature_count": len(spec_feature_columns),
             "ensemble_weight_json": json.dumps({}, ensure_ascii=False),
             "model_family_json": json.dumps(
-                {"members": list(MODEL_MEMBER_NAMES)}, ensure_ascii=False
+                {
+                    "members": spec_member_names,
+                    "feature_groups": list(model_spec.feature_groups or ()),
+                },
+                ensure_ascii=False,
             ),
             "fallback_flag": True,
             "fallback_reason": "empty_dataset",

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+from datetime import date
+from pathlib import Path
+
 from app.ml.constants import (
     CHALLENGER_ALPHA_MODEL_SPECS,
     DEFAULT_ALPHA_MODEL_SPEC,
@@ -8,7 +12,7 @@ from app.ml.constants import (
 )
 import pandas as pd
 
-from app.ml.training import _metric_rows, _normalise_weights
+from app.ml.training import _metric_rows, _normalise_weights, _train_single_horizon
 
 
 def test_challenger_specs_use_distinct_feature_profiles() -> None:
@@ -141,3 +145,29 @@ def test_metric_rows_topk_is_cohort_averaged_by_date() -> None:
 
     assert payload["top10_mean_excess_return"] == 0.5
     assert payload["top20_mean_excess_return"] == 1.4090909090909092
+    assert payload["rank_ic"] == -0.5
+
+
+def test_train_single_horizon_empty_dataset_keeps_spec_metadata(tmp_path) -> None:
+    model_spec = CHALLENGER_ALPHA_MODEL_SPECS[0]
+    row, member_predictions, metric_frame, artifact_path = _train_single_horizon(
+        pd.DataFrame(columns=["as_of_date", "symbol", "target_h1"]),
+        run_id="run-empty",
+        train_end_date=date(2026, 4, 8),
+        horizon=1,
+        min_train_days=5,
+        validation_days=2,
+        artifact_root=Path(tmp_path),
+        model_spec=model_spec,
+    )
+
+    model_family = json.loads(row["model_family_json"])
+
+    assert row["model_spec_id"] == model_spec.model_spec_id
+    assert row["feature_count"] == len(resolve_feature_columns_for_spec(model_spec))
+    assert model_family["members"] == list(resolve_member_names_for_spec(model_spec))
+    assert model_family["feature_groups"] == list(model_spec.feature_groups or ())
+    assert row["fallback_reason"] == "empty_dataset"
+    assert member_predictions.empty
+    assert metric_frame.empty
+    assert artifact_path is None
