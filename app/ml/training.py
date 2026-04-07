@@ -30,6 +30,8 @@ from app.ml.constants import (
     MODEL_VERSION,
     SELECTION_ENGINE_VERSION,
     AlphaModelSpec,
+    resolve_feature_columns_for_spec,
+    resolve_member_names_for_spec,
 )
 from app.ml.dataset import (
     TRAINING_FEATURE_COLUMNS,
@@ -90,7 +92,10 @@ def _metric_rows(
             "mae": None,
             "rmse": None,
             "corr": None,
+            "rank_ic": None,
             "directional_hit_rate": None,
+            "top10_mean_excess_return": None,
+            "top20_mean_excess_return": None,
         }
     else:
         if (
@@ -101,13 +106,22 @@ def _metric_rows(
             corr = None
         else:
             corr = pair["actual"].corr(pair["predicted"])
+        ordered = pair.sort_values("predicted", ascending=False)
+        top10 = ordered.head(min(10, len(ordered)))
+        top20 = ordered.head(min(20, len(ordered)))
+        actual_rank = pair["actual"].rank(method="average")
+        predicted_rank = pair["predicted"].rank(method="average")
+        rank_ic = actual_rank.corr(predicted_rank) if len(pair) >= 2 else None
         values = {
             "mae": float(mean_absolute_error(pair["actual"], pair["predicted"])),
             "rmse": float(math.sqrt(mean_squared_error(pair["actual"], pair["predicted"]))),
             "corr": None if pd.isna(corr) else float(corr),
+            "rank_ic": None if pd.isna(rank_ic) else float(rank_ic),
             "directional_hit_rate": float(
                 (np.sign(pair["actual"]) == np.sign(pair["predicted"])).mean()
             ),
+            "top10_mean_excess_return": float(top10["actual"].mean()),
+            "top20_mean_excess_return": float(top20["actual"].mean()),
         }
     created_at = pd.Timestamp.utcnow()
     return [
@@ -209,6 +223,20 @@ def _make_model_builders(train_dates: list[date]) -> dict[str, Any]:
             ]
         ),
     }
+
+
+def _select_model_builders(
+    train_dates: list[date],
+    *,
+    member_names: tuple[str, ...],
+) -> dict[str, Any]:
+    all_builders = _make_model_builders(train_dates)
+    selected = {
+        member_name: all_builders[member_name]
+        for member_name in member_names
+        if member_name in all_builders
+    }
+    return selected or all_builders
 
 
 def _normalise_weights(metrics: dict[str, dict[str, float | None]]) -> dict[str, float]:
@@ -318,6 +346,8 @@ def _filter_training_frame_for_spec(
 
 
 def _model_spec_registry_row(model_spec: AlphaModelSpec) -> dict[str, object]:
+    member_names = list(resolve_member_names_for_spec(model_spec))
+    feature_columns = list(resolve_feature_columns_for_spec(model_spec))
     return {
         "model_spec_id": model_spec.model_spec_id,
         "model_domain": MODEL_DOMAIN,
@@ -328,7 +358,11 @@ def _model_spec_registry_row(model_spec: AlphaModelSpec) -> dict[str, object]:
         "label_version": LABEL_VERSION,
         "selection_engine_version": SELECTION_ENGINE_VERSION,
         "spec_payload_json": json.dumps(
-            {"member_names": list(MODEL_MEMBER_NAMES)},
+            {
+                "member_names": member_names,
+                "feature_groups": list(model_spec.feature_groups or ()),
+                "feature_columns": feature_columns,
+            },
             ensure_ascii=False,
             sort_keys=True,
         ),
@@ -407,10 +441,12 @@ def _train_single_horizon(
         )
 
     active_feature_columns = [
-        column for column in TRAINING_FEATURE_COLUMNS if train_frame[column].notna().any()
+        column
+        for column in resolve_feature_columns_for_spec(model_spec)
+        if column in train_frame.columns and train_frame[column].notna().any()
     ]
     if not active_feature_columns:
-        active_feature_columns = list(TRAINING_FEATURE_COLUMNS)
+        active_feature_columns = list(resolve_feature_columns_for_spec(model_spec))
 
     X_train = train_frame[active_feature_columns].apply(pd.to_numeric, errors="coerce")
     y_train = pd.to_numeric(train_frame["target"], errors="coerce")
@@ -420,7 +456,10 @@ def _train_single_horizon(
     )
     y_validation = pd.to_numeric(validation_frame["target"], errors="coerce")
 
-    model_builders = _make_model_builders(sorted(dict.fromkeys(train_dates)))
+    model_builders = _select_model_builders(
+        sorted(dict.fromkeys(train_dates)),
+        member_names=resolve_member_names_for_spec(model_spec),
+    )
     artifact_payload: dict[str, Any] = {
         "model_version": MODEL_VERSION,
         "training_run_id": training_run_id,
@@ -477,6 +516,8 @@ def _train_single_horizon(
         metric_summary[member_name] = {
             "mae": validation_metric_subset.get("mae"),
             "corr": validation_metric_subset.get("corr"),
+            "top10_mean_excess_return": validation_metric_subset.get("top10_mean_excess_return"),
+            "top20_mean_excess_return": validation_metric_subset.get("top20_mean_excess_return"),
         }
         member_prediction_rows.extend(
             {
@@ -573,7 +614,10 @@ def _train_single_horizon(
         "feature_count": len(active_feature_columns),
         "ensemble_weight_json": json.dumps(ensemble_weights, ensure_ascii=False, sort_keys=True),
         "model_family_json": json.dumps(
-            {"members": list(model_builders.keys())},
+            {
+                "members": list(model_builders.keys()),
+                "feature_groups": list(model_spec.feature_groups or ()),
+            },
             ensure_ascii=False,
             sort_keys=True,
         ),
