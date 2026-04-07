@@ -6,6 +6,7 @@ from app.ml.constants import (
     resolve_feature_columns_for_spec,
     resolve_member_names_for_spec,
 )
+from app.ml.training import _normalise_weights
 
 
 def test_challenger_specs_use_distinct_feature_profiles() -> None:
@@ -34,3 +35,60 @@ def test_default_spec_keeps_full_feature_space_and_members() -> None:
     assert "elasticnet" in member_names
     assert "hist_gbm" in member_names
     assert "extra_trees" in member_names
+
+
+def test_normalise_weights_prioritizes_topk_returns_over_small_mae_gap() -> None:
+    weights = _normalise_weights(
+        {
+            "steady": {
+                "mae": 0.0200,
+                "corr": 0.06,
+                "rank_ic": 0.03,
+                "top10_mean_excess_return": -0.0005,
+                "top20_mean_excess_return": 0.0001,
+            },
+            "alpha": {
+                "mae": 0.0208,
+                "corr": 0.05,
+                "rank_ic": 0.05,
+                "top10_mean_excess_return": 0.0025,
+                "top20_mean_excess_return": 0.0015,
+            },
+        }
+    )
+
+    assert weights["alpha"] > weights["steady"]
+
+
+def test_normalise_weights_uses_rank_metrics_as_tiebreakers() -> None:
+    weights = _normalise_weights(
+        {
+            "member_a": {
+                "mae": 0.025,
+                "corr": 0.03,
+                "rank_ic": 0.01,
+                "top10_mean_excess_return": 0.0010,
+                "top20_mean_excess_return": 0.0008,
+            },
+            "member_b": {
+                "mae": 0.025,
+                "corr": 0.07,
+                "rank_ic": 0.06,
+                "top10_mean_excess_return": 0.0010,
+                "top20_mean_excess_return": 0.0008,
+            },
+        }
+    )
+
+    assert weights["member_b"] > weights["member_a"]
+
+
+def test_normalise_weights_falls_back_to_equal_when_all_metrics_missing() -> None:
+    weights = _normalise_weights(
+        {
+            "member_a": {"mae": None, "corr": None},
+            "member_b": {"mae": None, "corr": None},
+        }
+    )
+
+    assert weights == {"member_a": 0.5, "member_b": 0.5}

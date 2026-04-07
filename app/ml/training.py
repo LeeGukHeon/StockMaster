@@ -240,17 +240,33 @@ def _select_model_builders(
 
 
 def _normalise_weights(metrics: dict[str, dict[str, float | None]]) -> dict[str, float]:
-    raw_weights: dict[str, float] = {}
-    for member_name, member_metrics in metrics.items():
-        mae = member_metrics.get("mae")
-        corr = member_metrics.get("corr")
-        if mae is None:
-            raw_weights[member_name] = 0.0
+    if not metrics:
+        return {}
+
+    metric_weights = {
+        "top10_mean_excess_return": 4.0,
+        "top20_mean_excess_return": 2.0,
+        "rank_ic": 2.0,
+        "corr": 1.0,
+        "mae": 1.0,
+    }
+    lower_is_better = {"mae"}
+
+    score_frame = pd.DataFrame.from_dict(metrics, orient="index")
+    raw_weights = {member_name: 0.0 for member_name in metrics}
+
+    for metric_name, importance in metric_weights.items():
+        if metric_name not in score_frame.columns:
             continue
-        raw = 1.0 / max(float(mae), 1e-6)
-        if corr is not None:
-            raw *= max(float(corr), 0.05)
-        raw_weights[member_name] = raw
+        values = pd.to_numeric(score_frame[metric_name], errors="coerce")
+        available = values.dropna()
+        if available.empty:
+            continue
+        comparable = -available if metric_name in lower_is_better else available
+        ranked = comparable.rank(method="average", pct=True)
+        for member_name, ranked_value in ranked.items():
+            raw_weights[str(member_name)] += float(ranked_value) * float(importance)
+
     positive_total = sum(value for value in raw_weights.values() if value > 0)
     if positive_total <= 0:
         equal_weight = 1.0 / len(raw_weights) if raw_weights else 0.0
