@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
-from app.ml.constants import MODEL_VERSION, PREDICTION_VERSION
+from app.ml.constants import MODEL_SPEC_ID, MODEL_VERSION, PREDICTION_VERSION
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -21,6 +21,60 @@ class AlphaModelValidationResult:
     row_count: int
     artifact_paths: list[str]
     notes: str
+
+
+def _validation_reference_runs_sql(horizon_array_sql: str) -> str:
+    return f"""
+        WITH required_horizons AS (
+            SELECT UNNEST([{horizon_array_sql}]) AS horizon
+        ),
+        active_runs AS (
+            SELECT horizon, training_run_id
+            FROM (
+                SELECT
+                    horizon,
+                    training_run_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY horizon
+                        ORDER BY effective_from_date DESC, created_at DESC, active_alpha_model_id DESC
+                    ) AS row_number
+                FROM fact_alpha_active_model
+                WHERE model_version = ?
+                  AND effective_from_date <= ?
+                  AND (effective_to_date IS NULL OR effective_to_date >= ?)
+                  AND active_flag = TRUE
+            )
+            WHERE row_number = 1
+        ),
+        latest_default_runs AS (
+            SELECT horizon, training_run_id
+            FROM (
+                SELECT
+                    horizon,
+                    training_run_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY horizon
+                        ORDER BY train_end_date DESC, created_at DESC, training_run_id DESC
+                    ) AS row_number
+                FROM fact_model_training_run
+                WHERE model_version = ?
+                  AND model_spec_id = ?
+                  AND train_end_date <= ?
+                  AND status = 'success'
+            )
+            WHERE row_number = 1
+        ),
+        reference_runs AS (
+            SELECT
+                required_horizons.horizon,
+                COALESCE(active_runs.training_run_id, latest_default_runs.training_run_id) AS training_run_id
+            FROM required_horizons
+            LEFT JOIN active_runs
+              ON active_runs.horizon = required_horizons.horizon
+            LEFT JOIN latest_default_runs
+              ON latest_default_runs.horizon = required_horizons.horizon
+        )
+    """
 
 
 def _write_validation_artifacts(
@@ -89,24 +143,23 @@ def validate_alpha_model_v1(
                     f"'{metric_name}'" for metric_name in required_validation_metrics
                 )
                 checks: list[dict[str, object]] = []
+                reference_runs_sql = _validation_reference_runs_sql(horizon_array_sql)
+                validation_reference_params = [
+                    MODEL_VERSION,
+                    as_of_date,
+                    as_of_date,
+                    MODEL_VERSION,
+                    MODEL_SPEC_ID,
+                    as_of_date,
+                ]
                 missing_training_runs = connection.execute(
-                    f"""
-                    WITH required AS (
-                        SELECT UNNEST([{horizon_array_sql}]) AS horizon
-                    )
+                    reference_runs_sql
+                    + """
                     SELECT COUNT(*)
-                    FROM required
-                    LEFT JOIN (
-                        SELECT DISTINCT horizon
-                        FROM fact_model_training_run
-                        WHERE model_version = ?
-                          AND train_end_date <= ?
-                          AND status = 'success'
-                    ) AS existing
-                      ON required.horizon = existing.horizon
-                    WHERE existing.horizon IS NULL
+                    FROM reference_runs
+                    WHERE training_run_id IS NULL
                     """,
-                    [MODEL_VERSION, as_of_date],
+                    validation_reference_params,
                 ).fetchone()[0]
                 checks.append(
                     {
@@ -115,41 +168,20 @@ def validate_alpha_model_v1(
                         "value": int(missing_training_runs or 0),
                         "threshold": 0,
                         "detail": (
-                            "Successful alpha training run should exist for each requested horizon."
+                            "An active-model run or latest default-spec run should exist for each requested horizon."
                         ),
                     }
                 )
 
                 missing_validation_metrics = connection.execute(
-                    f"""
-                    WITH required_horizons AS (
-                        SELECT UNNEST([{horizon_array_sql}]) AS horizon
-                    ),
+                    reference_runs_sql
+                    + f""",
                     required_metrics AS (
                         SELECT UNNEST([{metric_name_array_sql}]) AS metric_name
-                    ),
-                    latest_runs AS (
-                        SELECT horizon, training_run_id
-                        FROM (
-                            SELECT
-                                horizon,
-                                training_run_id,
-                                ROW_NUMBER() OVER (
-                                    PARTITION BY horizon
-                                    ORDER BY train_end_date DESC, created_at DESC, training_run_id DESC
-                                ) AS row_number
-                            FROM fact_model_training_run
-                            WHERE model_version = ?
-                              AND train_end_date <= ?
-                              AND status = 'success'
-                        )
-                        WHERE row_number = 1
                     )
                     SELECT COUNT(*)
-                    FROM required_horizons
+                    FROM reference_runs
                     CROSS JOIN required_metrics
-                    LEFT JOIN latest_runs
-                      ON latest_runs.horizon = required_horizons.horizon
                     LEFT JOIN (
                         SELECT DISTINCT training_run_id, metric_name
                         FROM fact_model_metric_summary
@@ -157,12 +189,12 @@ def validate_alpha_model_v1(
                           AND member_name = 'ensemble'
                           AND split_name = 'validation'
                     ) AS existing
-                      ON latest_runs.training_run_id = existing.training_run_id
+                      ON reference_runs.training_run_id = existing.training_run_id
                      AND required_metrics.metric_name = existing.metric_name
-                    WHERE latest_runs.training_run_id IS NULL
+                    WHERE reference_runs.training_run_id IS NULL
                        OR existing.metric_name IS NULL
                     """,
-                    [MODEL_VERSION, as_of_date, MODEL_VERSION],
+                    [*validation_reference_params, MODEL_VERSION],
                 ).fetchone()[0]
                 checks.append(
                     {
@@ -178,31 +210,15 @@ def validate_alpha_model_v1(
                 )
 
                 latest_metric_rows = connection.execute(
-                    f"""
-                    WITH latest_runs AS (
-                        SELECT horizon, training_run_id
-                        FROM (
-                            SELECT
-                                horizon,
-                                training_run_id,
-                                ROW_NUMBER() OVER (
-                                    PARTITION BY horizon
-                                    ORDER BY train_end_date DESC, created_at DESC, training_run_id DESC
-                                ) AS row_number
-                            FROM fact_model_training_run
-                            WHERE model_version = ?
-                              AND train_end_date <= ?
-                              AND status = 'success'
-                        )
-                        WHERE row_number = 1
-                    )
+                    reference_runs_sql
+                    + """
                     SELECT
-                        latest_runs.horizon,
+                        reference_runs.horizon,
                         metric.metric_name,
                         metric.metric_value
-                    FROM latest_runs
+                    FROM reference_runs
                     LEFT JOIN fact_model_metric_summary AS metric
-                      ON latest_runs.training_run_id = metric.training_run_id
+                      ON reference_runs.training_run_id = metric.training_run_id
                      AND metric.model_version = ?
                      AND metric.member_name = 'ensemble'
                      AND metric.split_name = 'validation'
@@ -211,9 +227,9 @@ def validate_alpha_model_v1(
                         'top20_mean_excess_return',
                         'rank_ic'
                      )
-                    ORDER BY latest_runs.horizon, metric.metric_name
+                    ORDER BY reference_runs.horizon, metric.metric_name
                     """,
-                    [MODEL_VERSION, as_of_date, MODEL_VERSION],
+                    [*validation_reference_params, MODEL_VERSION],
                 ).fetchall()
                 metric_lookup = {
                     (int(horizon), str(metric_name)): None if metric_value is None else float(metric_value)

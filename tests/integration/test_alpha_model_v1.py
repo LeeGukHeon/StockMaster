@@ -17,9 +17,10 @@ from app.ml.inference import materialize_alpha_predictions_v1
 from app.ml.training import (
     backfill_alpha_oof_predictions,
     build_model_training_dataset,
+    train_alpha_candidate_models,
     train_alpha_model_v1,
 )
-from app.ml.validation import validate_alpha_model_v1
+from app.ml.validation import _validation_reference_runs_sql, validate_alpha_model_v1
 from app.selection.engine_v2 import materialize_selection_engine_v2
 from app.storage.duckdb import duckdb_connection
 from tests._ticket003_support import (
@@ -460,3 +461,68 @@ def test_backfill_validate_compare_and_render_diagnostic(tmp_path):
 
     assert comparison_rows > 0
     assert latest_training_rows >= 2
+
+
+def test_validate_alpha_model_prefers_active_model_lineage_over_newer_challengers(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+
+    train_alpha_model_v1(
+        settings,
+        train_end_date=date(2026, 3, 5),
+        horizons=[1],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+    )
+    freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        source="test_suite",
+        note="freeze active default before challenger run",
+        horizons=[1],
+        train_end_date=date(2026, 3, 5),
+    )
+    train_alpha_candidate_models(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        horizons=[1],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+    )
+
+    reference_runs_sql = _validation_reference_runs_sql("1")
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        active_training_run_id = connection.execute(
+            """
+            SELECT training_run_id
+            FROM fact_alpha_active_model
+            WHERE horizon = 1
+              AND effective_from_date <= ?
+              AND (effective_to_date IS NULL OR effective_to_date >= ?)
+              AND active_flag = TRUE
+            ORDER BY effective_from_date DESC, created_at DESC
+            LIMIT 1
+            """,
+            [date(2026, 3, 6), date(2026, 3, 6)],
+        ).fetchone()[0]
+        latest_challenger_training_run_id = connection.execute(
+            """
+            SELECT training_run_id
+            FROM fact_model_training_run
+            WHERE horizon = 1
+              AND train_end_date <= ?
+              AND model_spec_id <> ?
+              AND status = 'success'
+            ORDER BY train_end_date DESC, created_at DESC, training_run_id DESC
+            LIMIT 1
+            """,
+            [date(2026, 3, 6), MODEL_SPEC_ID],
+        ).fetchone()[0]
+        reference_training_run_id = connection.execute(
+            reference_runs_sql + " SELECT training_run_id FROM reference_runs WHERE horizon = 1",
+            [MODEL_VERSION, date(2026, 3, 6), date(2026, 3, 6), MODEL_VERSION, MODEL_SPEC_ID, date(2026, 3, 6)],
+        ).fetchone()[0]
+
+    assert reference_training_run_id == active_training_run_id
+    assert reference_training_run_id != latest_challenger_training_run_id
