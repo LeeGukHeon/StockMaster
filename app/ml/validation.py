@@ -78,6 +78,16 @@ def validate_alpha_model_v1(
             try:
                 horizon_placeholders = ",".join("?" for _ in horizons)
                 horizon_array_sql = ",".join(str(int(value)) for value in horizons)
+                required_validation_metrics = (
+                    "mae",
+                    "corr",
+                    "rank_ic",
+                    "top10_mean_excess_return",
+                    "top20_mean_excess_return",
+                )
+                metric_name_array_sql = ",".join(
+                    f"'{metric_name}'" for metric_name in required_validation_metrics
+                )
                 checks: list[dict[str, object]] = []
                 missing_training_runs = connection.execute(
                     f"""
@@ -112,22 +122,47 @@ def validate_alpha_model_v1(
 
                 missing_validation_metrics = connection.execute(
                     f"""
-                    WITH required AS (
+                    WITH required_horizons AS (
                         SELECT UNNEST([{horizon_array_sql}]) AS horizon
+                    ),
+                    required_metrics AS (
+                        SELECT UNNEST([{metric_name_array_sql}]) AS metric_name
+                    ),
+                    latest_runs AS (
+                        SELECT horizon, training_run_id
+                        FROM (
+                            SELECT
+                                horizon,
+                                training_run_id,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY horizon
+                                    ORDER BY train_end_date DESC, created_at DESC, training_run_id DESC
+                                ) AS row_number
+                            FROM fact_model_training_run
+                            WHERE model_version = ?
+                              AND train_end_date <= ?
+                              AND status = 'success'
+                        )
+                        WHERE row_number = 1
                     )
                     SELECT COUNT(*)
-                    FROM required
+                    FROM required_horizons
+                    CROSS JOIN required_metrics
+                    LEFT JOIN latest_runs
+                      ON latest_runs.horizon = required_horizons.horizon
                     LEFT JOIN (
-                        SELECT DISTINCT horizon
+                        SELECT DISTINCT training_run_id, metric_name
                         FROM fact_model_metric_summary
                         WHERE model_version = ?
                           AND member_name = 'ensemble'
                           AND split_name = 'validation'
                     ) AS existing
-                      ON required.horizon = existing.horizon
-                    WHERE existing.horizon IS NULL
+                      ON latest_runs.training_run_id = existing.training_run_id
+                     AND required_metrics.metric_name = existing.metric_name
+                    WHERE latest_runs.training_run_id IS NULL
+                       OR existing.metric_name IS NULL
                     """,
-                    [MODEL_VERSION],
+                    [MODEL_VERSION, as_of_date, MODEL_VERSION],
                 ).fetchone()[0]
                 checks.append(
                     {
@@ -135,9 +170,75 @@ def validate_alpha_model_v1(
                         "status": "pass" if int(missing_validation_metrics or 0) == 0 else "warn",
                         "value": int(missing_validation_metrics or 0),
                         "threshold": 0,
-                        "detail": "Validation metrics should exist for the ensemble member.",
+                        "detail": (
+                            "Latest ensemble validation metrics should include "
+                            "mae/corr/rank_ic/top10/top20 for each requested horizon."
+                        ),
                     }
                 )
+
+                latest_metric_rows = connection.execute(
+                    f"""
+                    WITH latest_runs AS (
+                        SELECT horizon, training_run_id
+                        FROM (
+                            SELECT
+                                horizon,
+                                training_run_id,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY horizon
+                                    ORDER BY train_end_date DESC, created_at DESC, training_run_id DESC
+                                ) AS row_number
+                            FROM fact_model_training_run
+                            WHERE model_version = ?
+                              AND train_end_date <= ?
+                              AND status = 'success'
+                        )
+                        WHERE row_number = 1
+                    )
+                    SELECT
+                        latest_runs.horizon,
+                        metric.metric_name,
+                        metric.metric_value
+                    FROM latest_runs
+                    LEFT JOIN fact_model_metric_summary AS metric
+                      ON latest_runs.training_run_id = metric.training_run_id
+                     AND metric.model_version = ?
+                     AND metric.member_name = 'ensemble'
+                     AND metric.split_name = 'validation'
+                     AND metric.metric_name IN (
+                        'top10_mean_excess_return',
+                        'top20_mean_excess_return',
+                        'rank_ic'
+                     )
+                    ORDER BY latest_runs.horizon, metric.metric_name
+                    """,
+                    [MODEL_VERSION, as_of_date, MODEL_VERSION],
+                ).fetchall()
+                metric_lookup = {
+                    (int(horizon), str(metric_name)): None if metric_value is None else float(metric_value)
+                    for horizon, metric_name, metric_value in latest_metric_rows
+                    if metric_name is not None
+                }
+                for horizon in horizons:
+                    horizon_int = int(horizon)
+                    for metric_name in (
+                        "top10_mean_excess_return",
+                        "top20_mean_excess_return",
+                        "rank_ic",
+                    ):
+                        metric_value = metric_lookup.get((horizon_int, metric_name))
+                        checks.append(
+                            {
+                                "check_name": f"{metric_name}_h{horizon_int}",
+                                "status": "pass" if metric_value is not None else "warn",
+                                "value": "" if metric_value is None else round(metric_value, 6),
+                                "threshold": "present",
+                                "detail": (
+                                    "Latest ensemble validation metric should be available for this horizon."
+                                ),
+                            }
+                        )
 
                 inference_gaps = connection.execute(
                     f"""

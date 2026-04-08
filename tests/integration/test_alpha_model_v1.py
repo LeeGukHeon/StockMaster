@@ -426,11 +426,18 @@ def test_backfill_validate_compare_and_render_diagnostic(tmp_path):
     )
 
     assert backfill_result.run_count == 3
-    assert validation_result.row_count == 5
+    assert validation_result.row_count == 11
     assert comparison_result.row_count > 0
     assert diagnostic_result.artifact_paths
     assert all(Path(path).exists() for path in validation_result.artifact_paths)
     assert all(Path(path).exists() for path in diagnostic_result.artifact_paths)
+    validation_markdown = next(
+        path for path in validation_result.artifact_paths if path.endswith(".md")
+    )
+    validation_text = Path(validation_markdown).read_text(encoding="utf-8")
+    assert "top10_mean_excess_return_h1" in validation_text
+    assert "top20_mean_excess_return_h5" in validation_text
+    assert "rank_ic_h1" in validation_text
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         comparison_rows = connection.execute(
