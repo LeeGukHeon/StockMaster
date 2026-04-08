@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -54,6 +55,7 @@ INDIVIDUAL_NET_VALUE_KEYS = (
 )
 DEFAULT_INVESTOR_FLOW_FLUSH_BATCH_SIZE = 100
 DEFAULT_INVESTOR_FLOW_MAX_WORKERS = 4
+DEFAULT_INVESTOR_FLOW_PROVIDER_RECYCLE_INTERVAL = 100
 
 
 @dataclass(slots=True)
@@ -335,6 +337,19 @@ def _fetch_investor_flow_result(
     )
 
 
+def _recycle_provider(
+    settings: Settings,
+    *,
+    provider: KISProvider,
+) -> KISProvider:
+    provider.close()
+    gc.collect()
+    refreshed = KISProvider(settings)
+    if hasattr(refreshed, "get_access_token"):
+        refreshed.get_access_token()
+    return refreshed
+
+
 def _load_persisted_investor_flow_frame(settings: Settings, *, trading_date: date) -> pd.DataFrame:
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
         return connection.execute(
@@ -397,6 +412,7 @@ def sync_investor_flow(
     persist_probe_artifacts: bool = False,
     flush_batch_size: int = DEFAULT_INVESTOR_FLOW_FLUSH_BATCH_SIZE,
     max_workers: int = DEFAULT_INVESTOR_FLOW_MAX_WORKERS,
+    provider_recycle_interval: int = DEFAULT_INVESTOR_FLOW_PROVIDER_RECYCLE_INTERVAL,
     kis_provider: KISProvider | None = None,
 ) -> InvestorFlowSyncResult:
     ensure_storage_layout(settings)
@@ -404,6 +420,7 @@ def sync_investor_flow(
     provider = kis_provider or KISProvider(settings)
     effective_flush_batch_size = max(1, int(flush_batch_size))
     effective_max_workers = max(1, int(max_workers))
+    effective_provider_recycle_interval = max(0, int(provider_recycle_interval))
 
     with activate_run_context("sync_investor_flow", as_of_date=trading_date) as run_context:
         with duckdb_connection(settings.paths.duckdb_path) as connection:
@@ -503,6 +520,7 @@ def sync_investor_flow(
                 provider.get_access_token()
 
             fetch_started_at = perf_counter()
+            completed_fetches = 0
             if effective_max_workers == 1 or len(fetch_targets) <= 1:
                 for symbol, market_name in fetch_targets:
                     try:
@@ -517,18 +535,35 @@ def sync_investor_flow(
                             persist_probe_artifacts=persist_probe_artifacts,
                         )
                         artifact_paths.extend(result.artifact_paths)
+                        completed_fetches += 1
                         if result.normalized.empty:
                             skipped_symbol_count += 1
-                            continue
-                        output_frames.append(result.normalized)
-                        if len(output_frames) >= effective_flush_batch_size:
-                            persisted_row_count += _flush_investor_flow_batch(
-                                settings,
-                                run_id=run_context.run_id,
-                                rows=output_frames,
-                            )
-                            flush_count += 1
-                            output_frames.clear()
+                        else:
+                            output_frames.append(result.normalized)
+                            if len(output_frames) >= effective_flush_batch_size:
+                                persisted_row_count += _flush_investor_flow_batch(
+                                    settings,
+                                    run_id=run_context.run_id,
+                                    rows=output_frames,
+                                )
+                                flush_count += 1
+                                output_frames.clear()
+                        del result
+                        if (
+                            owns_provider
+                            and effective_provider_recycle_interval > 0
+                            and completed_fetches < len(fetch_targets)
+                            and completed_fetches % effective_provider_recycle_interval == 0
+                        ):
+                            if output_frames:
+                                persisted_row_count += _flush_investor_flow_batch(
+                                    settings,
+                                    run_id=run_context.run_id,
+                                    rows=output_frames,
+                                )
+                                flush_count += 1
+                                output_frames.clear()
+                            provider = _recycle_provider(settings, provider=provider)
                     except Exception:
                         failed_symbol_count += 1
                         failed_symbols.append(symbol)
@@ -559,18 +594,20 @@ def sync_investor_flow(
                             failed_symbols.append(symbol)
                             continue
                         artifact_paths.extend(result.artifact_paths)
+                        completed_fetches += 1
                         if result.normalized.empty:
                             skipped_symbol_count += 1
-                            continue
-                        output_frames.append(result.normalized)
-                        if len(output_frames) >= effective_flush_batch_size:
-                            persisted_row_count += _flush_investor_flow_batch(
-                                settings,
-                                run_id=run_context.run_id,
-                                rows=output_frames,
-                            )
-                            flush_count += 1
-                            output_frames.clear()
+                        else:
+                            output_frames.append(result.normalized)
+                            if len(output_frames) >= effective_flush_batch_size:
+                                persisted_row_count += _flush_investor_flow_batch(
+                                    settings,
+                                    run_id=run_context.run_id,
+                                    rows=output_frames,
+                                )
+                                flush_count += 1
+                                output_frames.clear()
+                        del result
             fetch_elapsed_seconds = perf_counter() - fetch_started_at
 
             if output_frames:
@@ -608,6 +645,7 @@ def sync_investor_flow(
                 f"skipped={skipped_symbol_count}, failed={failed_symbol_count}, "
                 f"flushes={flush_count}, flush_batch_size={effective_flush_batch_size}, "
                 f"max_workers={effective_max_workers}, "
+                f"provider_recycle_interval={effective_provider_recycle_interval}, "
                 f"fetch_seconds={fetch_elapsed_seconds:.2f}"
             )
             _record_investor_flow_finish(

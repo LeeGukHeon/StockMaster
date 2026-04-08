@@ -108,6 +108,9 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
 
     def fake_sync_investor_flow(settings_arg, *, trading_date, **kwargs):
         observed_dates.append(trading_date)
+        assert kwargs["flush_batch_size"] == 10
+        assert kwargs["max_workers"] == 1
+        assert kwargs["provider_recycle_interval"] == 25
         return InvestorFlowSyncResult(
             run_id="flow-run",
             trading_date=trading_date,

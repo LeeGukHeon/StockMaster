@@ -108,6 +108,61 @@ class _ConcurrentStubKisProvider:
         return None
 
 
+class _RecyclingStubKisProvider:
+    created_instance_ids: list[int] = []
+    closed_instance_ids: list[int] = []
+    fetch_instance_ids: list[int] = []
+    token_call_count = 0
+
+    def __init__(self, settings) -> None:
+        del settings
+        self.instance_id = len(type(self).created_instance_ids) + 1
+        type(self).created_instance_ids.append(self.instance_id)
+
+    def get_access_token(self) -> None:
+        type(self).token_call_count += 1
+
+    def fetch_investor_flow(
+        self,
+        *,
+        symbol: str,
+        trading_date=None,
+        market_code: str = "J",
+        adjusted_price_flag: str = "",
+        extra_class_code: str = "",
+        persist_probe_artifacts: bool = False,
+    ):
+        del symbol, trading_date, market_code, adjusted_price_flag, extra_class_code
+        del persist_probe_artifacts
+        type(self).fetch_instance_ids.append(self.instance_id)
+        frame = pd.DataFrame(
+            [
+                {
+                    "stck_bsop_date": date(2026, 3, 11).strftime("%Y%m%d"),
+                    "frgn_ntby_qty": 100,
+                    "orgn_ntby_qty": 50,
+                    "prsn_ntby_qty": -150,
+                    "frgn_ntby_tr_pbmn": 1000,
+                    "orgn_ntby_tr_pbmn": 500,
+                    "prsn_ntby_tr_pbmn": -1500,
+                }
+            ]
+        )
+        return type(
+            "Probe",
+            (),
+            {
+                "frame": frame,
+                "payload": {"ok": True},
+                "raw_json_path": None,
+                "raw_parquet_path": None,
+            },
+        )()
+
+    def close(self) -> None:
+        type(self).closed_instance_ids.append(self.instance_id)
+
+
 def test_sync_investor_flow_flushes_batches_and_resume_skips_existing(tmp_path) -> None:
     settings = build_test_settings(tmp_path)
     seed_ticket003_data(settings)
@@ -191,3 +246,32 @@ def test_sync_investor_flow_filters_future_listings(tmp_path) -> None:
     assert result.requested_symbol_count == 4
     assert result.row_count == 4
     assert "394420" not in provider.calls
+
+
+def test_sync_investor_flow_recycles_owned_provider_instances(tmp_path, monkeypatch) -> None:
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    _RecyclingStubKisProvider.created_instance_ids = []
+    _RecyclingStubKisProvider.closed_instance_ids = []
+    _RecyclingStubKisProvider.fetch_instance_ids = []
+    _RecyclingStubKisProvider.token_call_count = 0
+
+    monkeypatch.setattr(
+        "app.pipelines.investor_flow.KISProvider",
+        _RecyclingStubKisProvider,
+    )
+
+    result = sync_investor_flow(
+        settings,
+        trading_date=date(2026, 3, 11),
+        flush_batch_size=2,
+        max_workers=1,
+        provider_recycle_interval=2,
+    )
+
+    assert result.row_count == 4
+    assert _RecyclingStubKisProvider.created_instance_ids == [1, 2]
+    assert _RecyclingStubKisProvider.closed_instance_ids == [1, 2]
+    assert _RecyclingStubKisProvider.fetch_instance_ids == [1, 1, 2, 2]
+    assert _RecyclingStubKisProvider.token_call_count >= 2
+    assert "provider_recycle_interval=2" in result.notes
