@@ -577,7 +577,7 @@ def fetch_discord_bot_snapshot_rows(
             snapshot_ts
         FROM {BOT_SNAPSHOT_TABLE}
         WHERE {" AND ".join(where)}
-        ORDER BY sort_order NULLS LAST, snapshot_key
+        ORDER BY snapshot_ts DESC, sort_order NULLS LAST, snapshot_key
         LIMIT ?
     """
     return fetchdf_postgres_sql(settings, sql, params)
@@ -602,6 +602,9 @@ def fetch_active_job_runs(
             step.started_at AS step_started_at,
             ROUND(EXTRACT(EPOCH FROM (NOW() - step.started_at)))::BIGINT AS step_running_seconds
         FROM fact_job_run AS job
+        JOIN fact_active_lock AS active_lock
+          ON active_lock.owner_run_id = job.run_id
+         AND active_lock.released_at IS NULL
         LEFT JOIN LATERAL (
             SELECT
                 step_name,
