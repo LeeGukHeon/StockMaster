@@ -6,7 +6,7 @@ from datetime import date
 
 import pandas as pd
 
-from app.pipelines.investor_flow import sync_investor_flow
+from app.pipelines.investor_flow import _normalize_investor_flow, sync_investor_flow
 from app.storage.duckdb import duckdb_connection
 from tests._ticket003_support import build_test_settings, seed_ticket003_data
 
@@ -52,6 +52,43 @@ class _StubKisProvider:
 
     def close(self) -> None:  # pragma: no cover - compatibility hook
         return None
+
+
+def test_normalize_investor_flow_keeps_only_requested_date_row() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "stck_bsop_date": "20260310",
+                "frgn_ntby_qty": 10,
+                "orgn_ntby_qty": 5,
+                "prsn_ntby_qty": -15,
+                "frgn_ntby_tr_pbmn": 100,
+                "orgn_ntby_tr_pbmn": 50,
+                "prsn_ntby_tr_pbmn": -150,
+            },
+            {
+                "stck_bsop_date": "20260311",
+                "frgn_ntby_qty": 100,
+                "orgn_ntby_qty": 50,
+                "prsn_ntby_qty": -150,
+                "frgn_ntby_tr_pbmn": 1000,
+                "orgn_ntby_tr_pbmn": 500,
+                "prsn_ntby_tr_pbmn": -1500,
+            },
+        ]
+    )
+
+    normalized = _normalize_investor_flow(
+        symbol="005930",
+        market="KOSPI",
+        trading_date=date(2026, 3, 11),
+        frame=frame,
+    )
+
+    assert len(normalized) == 1
+    row = normalized.iloc[0]
+    assert row["trading_date"] == date(2026, 3, 11)
+    assert row["foreign_net_volume"] == 100
 
 
 class _ConcurrentStubKisProvider:

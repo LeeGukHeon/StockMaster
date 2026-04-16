@@ -15,6 +15,7 @@ from .auth import KisTokenManager
 
 INVESTOR_FLOW_TR_ID = "FHPTJ04160001"
 INVESTOR_FLOW_ENDPOINT = "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily"
+INVESTOR_FLOW_DATE_KEYS = ("stck_bsop_date", "bsop_date", "base_dt", "date")
 
 
 @dataclass(slots=True)
@@ -23,6 +24,58 @@ class InvestorFlowProbe:
     payload: dict[str, Any]
     raw_json_path: str | None
     raw_parquet_path: str | None
+
+
+def _coerce_probe_rows(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [row for row in value if isinstance(row, dict)]
+    if isinstance(value, dict):
+        return [value]
+    return []
+
+
+def _row_date_token(row: dict[str, Any]) -> str | None:
+    for key in INVESTOR_FLOW_DATE_KEYS:
+        raw_value = row.get(key)
+        if raw_value in {None, ""}:
+            continue
+        if isinstance(raw_value, date):
+            return raw_value.strftime("%Y%m%d")
+        token = str(raw_value).strip()
+        if len(token) == 8 and token.isdigit():
+            return token
+        digits = "".join(ch for ch in token if ch.isdigit())
+        if len(digits) >= 8:
+            return digits[:8]
+    return None
+
+
+def _select_requested_probe_rows(payload: dict[str, Any], *, requested_date: date) -> list[dict[str, Any]]:
+    requested_token = requested_date.strftime("%Y%m%d")
+    for output_key in ("output2", "output1"):
+        rows = _coerce_probe_rows(payload.get(output_key))
+        if not rows:
+            continue
+        date_tokens = [_row_date_token(row) for row in rows]
+        if any(token is not None for token in date_tokens):
+            return [
+                row
+                for row, token in zip(rows, date_tokens, strict=False)
+                if token == requested_token
+            ]
+        return rows[-1:]
+    return []
+
+
+def _build_probe_frame(payload: dict[str, Any]) -> pd.DataFrame:
+    rows = []
+    for output_key in ("output2", "output1"):
+        rows = _coerce_probe_rows(payload.get(output_key))
+        if rows:
+            break
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
 
 
 class KisInvestorFlowClient:
@@ -90,22 +143,13 @@ class KisInvestorFlowClient:
         payload["_response_headers"] = dict(response.headers)
         self._ensure_ok(payload, endpoint=INVESTOR_FLOW_ENDPOINT)
 
-        output2 = payload.get("output2")
-        output1 = payload.get("output1")
-        if isinstance(output2, list) and output2:
-            frame = pd.DataFrame(output2)
-        elif isinstance(output2, dict):
-            frame = pd.DataFrame([output2])
-        elif isinstance(output1, list) and output1:
-            frame = pd.DataFrame(output1)
-        elif isinstance(output1, dict):
-            frame = pd.DataFrame([output1])
-        else:
-            frame = pd.DataFrame()
+        selected_rows = _select_requested_probe_rows(payload, requested_date=requested_date)
+        frame = pd.DataFrame(selected_rows) if selected_rows else pd.DataFrame()
 
         raw_json_path = None
         raw_parquet_path = None
         if persist_probe_artifacts:
+            full_probe_frame = _build_probe_frame(payload)
             raw_dir = (
                 self.settings.paths.raw_dir
                 / "kis"
@@ -121,7 +165,7 @@ class KisInvestorFlowClient:
             )
 
             raw_parquet_path = raw_dir / "payload.parquet"
-            frame.to_parquet(raw_parquet_path, index=False)
+            full_probe_frame.to_parquet(raw_parquet_path, index=False)
 
         return InvestorFlowProbe(
             frame=frame,

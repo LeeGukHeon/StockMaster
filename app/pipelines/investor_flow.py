@@ -103,31 +103,6 @@ def _normalize_investor_flow(
     if frame.empty:
         return pd.DataFrame()
 
-    normalized = frame.copy()
-    normalized["trading_date"] = _pick_date(normalized, DATE_KEYS, fallback=trading_date)
-    normalized = normalized.loc[normalized["trading_date"] == trading_date].copy()
-    if normalized.empty:
-        return normalized
-
-    normalized["symbol"] = symbol
-    normalized["market"] = market
-    normalized["foreign_net_volume"] = _pick_numeric(normalized, FOREIGN_NET_VOLUME_KEYS)
-    normalized["institution_net_volume"] = _pick_numeric(normalized, INSTITUTION_NET_VOLUME_KEYS)
-    normalized["individual_net_volume"] = _pick_numeric(normalized, INDIVIDUAL_NET_VOLUME_KEYS)
-    normalized["foreign_net_value"] = _pick_numeric(normalized, FOREIGN_NET_VALUE_KEYS)
-    normalized["institution_net_value"] = _pick_numeric(normalized, INSTITUTION_NET_VALUE_KEYS)
-    normalized["individual_net_value"] = _pick_numeric(normalized, INDIVIDUAL_NET_VALUE_KEYS)
-    numeric_columns = [
-        "foreign_net_volume",
-        "institution_net_volume",
-        "individual_net_volume",
-        "foreign_net_value",
-        "institution_net_value",
-        "individual_net_value",
-    ]
-    if normalized[numeric_columns].isna().all(axis=None):
-        return pd.DataFrame()
-
     matched_fields = {
         "foreign_net_volume": next(
             (key for key in FOREIGN_NET_VOLUME_KEYS if key in frame.columns),
@@ -154,6 +129,33 @@ def _normalize_investor_flow(
             None,
         ),
     }
+
+    trading_dates = _pick_date(frame, DATE_KEYS, fallback=trading_date)
+    matching_mask = trading_dates == trading_date
+    if not matching_mask.any():
+        return pd.DataFrame()
+    normalized = frame.loc[matching_mask].copy()
+    normalized["trading_date"] = trading_dates.loc[matching_mask]
+
+    normalized["symbol"] = symbol
+    normalized["market"] = market
+    normalized["foreign_net_volume"] = _pick_numeric(normalized, FOREIGN_NET_VOLUME_KEYS)
+    normalized["institution_net_volume"] = _pick_numeric(normalized, INSTITUTION_NET_VOLUME_KEYS)
+    normalized["individual_net_volume"] = _pick_numeric(normalized, INDIVIDUAL_NET_VOLUME_KEYS)
+    normalized["foreign_net_value"] = _pick_numeric(normalized, FOREIGN_NET_VALUE_KEYS)
+    normalized["institution_net_value"] = _pick_numeric(normalized, INSTITUTION_NET_VALUE_KEYS)
+    normalized["individual_net_value"] = _pick_numeric(normalized, INDIVIDUAL_NET_VALUE_KEYS)
+    numeric_columns = [
+        "foreign_net_volume",
+        "institution_net_volume",
+        "individual_net_volume",
+        "foreign_net_value",
+        "institution_net_value",
+        "individual_net_value",
+    ]
+    if normalized[numeric_columns].isna().all(axis=None):
+        return pd.DataFrame()
+
     normalized["source"] = "kis_investor_flow_daily"
     normalized["source_notes_json"] = json.dumps(
         {
