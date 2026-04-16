@@ -75,7 +75,7 @@ def _ensure_feature_snapshot(settings: Settings, *, as_of_date: date) -> None:
             [as_of_date],
         ).fetchone()
     if row is None or int(row[0] or 0) == 0:
-        build_feature_store(settings, as_of_date=as_of_date)
+        build_feature_store(settings, as_of_date=as_of_date, cutoff_time="17:30")
 
 
 def _load_regime_map(connection, *, as_of_date: date) -> dict[str, dict[str, object]]:

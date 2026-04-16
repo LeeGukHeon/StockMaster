@@ -96,6 +96,33 @@ def test_train_alpha_model_v1_persists_registry_and_metrics(tmp_path):
     assert validation_prediction_count > 0
 
 
+def test_train_alpha_model_v1_excludes_labels_not_available_by_train_end_date(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+
+    train_alpha_model_v1(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+    )
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        overlap_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_model_training_run
+            WHERE model_version = ?
+              AND train_end_date = ?
+              AND COALESCE(validation_window_end, training_window_end) >= train_end_date
+            """,
+            [MODEL_VERSION, date(2026, 3, 6)],
+        ).fetchone()[0]
+
+    assert overlap_count == 0
+
+
 def test_freeze_active_alpha_model_controls_inference_and_outcome_lineage(tmp_path):
     settings = _prepare_ticket006_data(tmp_path)
     train_alpha_model_v1(

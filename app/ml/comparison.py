@@ -96,6 +96,7 @@ def compare_selection_engines(
                 settings,
                 as_of_date=selection_date,
                 limit_symbols=limit_symbols,
+                cutoff_time="17:30",
             )
             build_market_regime_snapshot(settings, as_of_date=selection_date)
             materialize_selection_engine_v2(

@@ -307,6 +307,7 @@ def run_daily_pipeline_job(
             feature_result = build_feature_store(
                 settings,
                 as_of_date=pipeline_date,
+                cutoff_time="17:30",
             )
             regime_result = build_market_regime_snapshot(
                 settings,

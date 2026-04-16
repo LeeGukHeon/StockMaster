@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pandas as pd
 
@@ -32,6 +32,9 @@ class FeatureStoreBuildResult:
     artifact_paths: list[str]
     notes: str
     feature_version: str
+
+
+DEFAULT_DAILY_FEATURE_CUTOFF_TIME = "17:30"
 
 
 def _load_feature_symbol_frame(
@@ -131,19 +134,35 @@ def _load_ohlcv_history(connection, *, as_of_date: date) -> pd.DataFrame:
     ).fetchdf()
 
 
-def _load_latest_fundamentals(connection, *, as_of_date: date) -> pd.DataFrame:
-    return connection.execute(
+def _load_latest_fundamentals(
+    connection,
+    *,
+    as_of_date: date,
+    cutoff_time: str | None = None,
+) -> pd.DataFrame:
+    params: list[object] = [as_of_date]
+    cutoff_filter = ""
+    if cutoff_time:
+        cutoff_filter = """
+          AND (
+              disclosed_at IS NULL
+              OR CAST(disclosed_at AT TIME ZONE 'Asia/Seoul' AS TIMESTAMP) <= ?
+          )
         """
+        params.append(datetime.combine(as_of_date, time.fromisoformat(cutoff_time)))
+    return connection.execute(
+        f"""
         SELECT *
         FROM fact_fundamentals_snapshot
         WHERE symbol IN (SELECT symbol FROM feature_symbol_stage)
           AND as_of_date <= ?
+          {cutoff_filter}
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY symbol
             ORDER BY as_of_date DESC, disclosed_at DESC NULLS LAST, ingested_at DESC
         ) = 1
         """,
-        [as_of_date],
+        params,
     ).fetchdf()
 
 
@@ -169,10 +188,25 @@ def _load_investor_flow_history(connection, *, as_of_date: date) -> pd.DataFrame
     ).fetchdf()
 
 
-def _load_recent_news(connection, *, as_of_date: date) -> pd.DataFrame:
+def _load_recent_news(
+    connection,
+    *,
+    as_of_date: date,
+    cutoff_time: str | None = None,
+) -> pd.DataFrame:
     start_date = as_of_date - timedelta(days=4)
-    return connection.execute(
+    params: list[object] = [start_date, as_of_date]
+    cutoff_filter = ""
+    if cutoff_time:
+        cutoff_filter = """
+          AND (
+              published_at IS NULL
+              OR CAST(published_at AT TIME ZONE 'Asia/Seoul' AS TIMESTAMP) <= ?
+          )
         """
+        params.append(datetime.combine(as_of_date, time.fromisoformat(cutoff_time)))
+    return connection.execute(
+        f"""
         SELECT
             signal_date,
             published_at,
@@ -184,9 +218,10 @@ def _load_recent_news(connection, *, as_of_date: date) -> pd.DataFrame:
         FROM fact_news_item
         WHERE signal_date BETWEEN ? AND ?
           AND COALESCE(symbol_candidates, '[]') <> '[]'
+          {cutoff_filter}
         ORDER BY published_at DESC
         """,
-        [start_date, as_of_date],
+        params,
     ).fetchdf()
 
 
@@ -275,11 +310,21 @@ def load_feature_matrix(
     if symbol_frame.empty:
         symbol_frame = connection.execute(
             """
-            SELECT symbol, company_name, market, dart_corp_code
+            SELECT symbol, company_name, market, dart_corp_code, listing_date
             FROM dim_symbol
             """
         ).fetchdf()
+        listing_dates = pd.to_datetime(symbol_frame.get("listing_date"), errors="coerce")
+        if not symbol_frame.empty:
+            symbol_frame = symbol_frame.loc[
+                listing_dates.isna() | listing_dates.le(pd.Timestamp(as_of_date))
+            ].copy()
+        if market.upper() != "ALL":
+            symbol_frame = symbol_frame.loc[
+                symbol_frame["market"].astype(str).str.upper() == market.upper()
+            ].copy()
         symbol_frame["symbol"] = symbol_frame["symbol"].astype(str).str.zfill(6)
+        symbol_frame = symbol_frame.drop(columns=["listing_date"], errors="ignore")
     if symbols:
         requested = [symbol.zfill(6) for symbol in symbols]
         symbol_frame = symbol_frame.loc[symbol_frame["symbol"].isin(requested)]
@@ -332,6 +377,7 @@ def build_feature_store(
     market: str = "ALL",
     force: bool = False,
     dry_run: bool = False,
+    cutoff_time: str | None = None,
 ) -> FeatureStoreBuildResult:
     ensure_storage_layout(settings)
 
@@ -401,13 +447,19 @@ def build_feature_store(
                 try:
                     ohlcv_history = _load_ohlcv_history(connection, as_of_date=as_of_date)
                     latest_fundamentals = _load_latest_fundamentals(
-                        connection, as_of_date=as_of_date
+                        connection,
+                        as_of_date=as_of_date,
+                        cutoff_time=cutoff_time,
                     )
                     investor_flow_history = _load_investor_flow_history(
                         connection,
                         as_of_date=as_of_date,
                     )
-                    recent_news = _load_recent_news(connection, as_of_date=as_of_date)
+                    recent_news = _load_recent_news(
+                        connection,
+                        as_of_date=as_of_date,
+                        cutoff_time=cutoff_time,
+                    )
                 finally:
                     _unregister_symbol_stage(connection)
 
@@ -442,7 +494,11 @@ def build_feature_store(
                     ohlcv_history=ohlcv_history,
                     as_of_date=as_of_date,
                 )
-                news_features = build_news_feature_frame(recent_news, as_of_date=as_of_date)
+                news_features = build_news_feature_frame(
+                    recent_news,
+                    as_of_date=as_of_date,
+                    cutoff_time=cutoff_time,
+                )
 
                 feature_matrix = (
                     symbol_frame[["symbol", "company_name", "market"]]

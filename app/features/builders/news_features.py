@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pandas as pd
 
@@ -38,6 +38,7 @@ def build_news_feature_frame(
     recent_news: pd.DataFrame,
     *,
     as_of_date: date,
+    cutoff_time: str | None = None,
 ) -> pd.DataFrame:
     exploded = _explode_news_frame(recent_news)
     if exploded.empty:
@@ -46,7 +47,16 @@ def build_news_feature_frame(
     published = pd.to_datetime(exploded["published_at"], utc=True, errors="coerce")
     published = published.dt.tz_convert("Asia/Seoul")
     exploded["published_at"] = published
-    cutoff_end = pd.Timestamp(as_of_date).tz_localize("Asia/Seoul") + pd.Timedelta(days=1)
+    if cutoff_time:
+        cutoff_end = pd.Timestamp(
+            datetime.combine(as_of_date, time.fromisoformat(cutoff_time)),
+            tz="Asia/Seoul",
+        )
+    else:
+        cutoff_end = pd.Timestamp(as_of_date).tz_localize("Asia/Seoul") + pd.Timedelta(days=1)
+    exploded = exploded.loc[exploded["published_at"].le(cutoff_end)].copy()
+    if exploded.empty:
+        return pd.DataFrame(columns=["symbol"])
     exploded["age_hours"] = (cutoff_end - exploded["published_at"]).dt.total_seconds() / 3600.0
     exploded["published_date"] = exploded["published_at"].dt.date
     exploded["positive_catalyst_flag"] = exploded["catalyst_score"].fillna(0.0).gt(0).astype(int)

@@ -75,10 +75,11 @@ def _resolve_candidate_dates(
             WHERE as_of_date <= ?
               AND horizon IN ({placeholders})
               AND label_available_flag
+              AND exit_date <= ?
               AND symbol IN (SELECT symbol FROM model_training_symbol_stage)
             ORDER BY as_of_date
             """,
-            [train_end_date, *horizons],
+            [train_end_date, *horizons, train_end_date],
         ).fetchall()
     finally:
         connection.unregister("model_training_symbol_stage")
@@ -114,6 +115,7 @@ def _ensure_feature_snapshots(
             symbols=symbols,
             limit_symbols=limit_symbols,
             market=market,
+            cutoff_time="17:30",
         )
     return missing_dates
 
@@ -151,10 +153,11 @@ def _load_dataset_frame(
             WHERE as_of_date <= ?
               AND horizon IN ({horizon_placeholders})
               AND label_available_flag
+              AND exit_date <= ?
               AND symbol IN (SELECT symbol FROM model_training_symbol_stage)
             ORDER BY as_of_date, symbol, horizon
             """,
-            [train_end_date, *horizons],
+            [train_end_date, *horizons, train_end_date],
         ).fetchdf()
         if label_rows.empty:
             return pd.DataFrame()
@@ -173,12 +176,13 @@ def _load_dataset_frame(
                 WHERE as_of_date <= ?
                   AND horizon IN ({horizon_placeholders})
                   AND label_available_flag
+                  AND exit_date <= ?
                   AND symbol IN (SELECT symbol FROM model_training_symbol_stage)
             )
               AND snapshot.symbol IN (SELECT symbol FROM model_training_symbol_stage)
             ORDER BY snapshot.as_of_date, snapshot.symbol, snapshot.feature_name
             """,
-            [train_end_date, *horizons],
+            [train_end_date, *horizons, train_end_date],
         ).fetchdf()
     finally:
         connection.unregister("model_training_symbol_stage")
