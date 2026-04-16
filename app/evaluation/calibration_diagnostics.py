@@ -176,17 +176,19 @@ def materialize_calibration_diagnostics(
     bin_count: int,
     limit_symbols: int | None = None,
     ranking_versions: list[str] | None = None,
+    ensure_selection_outcomes: bool = True,
 ) -> CalibrationDiagnosticResult:
     ensure_storage_layout(settings)
     ranking_versions = list(ranking_versions or DEFAULT_RANKING_VERSIONS)
-    materialize_selection_outcomes(
-        settings,
-        start_selection_date=start_selection_date,
-        end_selection_date=end_selection_date,
-        horizons=horizons,
-        limit_symbols=limit_symbols,
-        ranking_versions=ranking_versions,
-    )
+    if ensure_selection_outcomes:
+        materialize_selection_outcomes(
+            settings,
+            start_selection_date=start_selection_date,
+            end_selection_date=end_selection_date,
+            horizons=horizons,
+            limit_symbols=limit_symbols,
+            ranking_versions=ranking_versions,
+        )
 
     with activate_run_context(
         "materialize_calibration_diagnostics",

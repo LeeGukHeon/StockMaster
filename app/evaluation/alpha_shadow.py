@@ -592,16 +592,18 @@ def materialize_alpha_shadow_evaluation_summary(
     horizons: list[int],
     model_spec_ids: list[str] | None = None,
     rolling_windows: list[int] | None = None,
+    ensure_shadow_selection_outcomes: bool = True,
 ) -> AlphaShadowEvaluationSummaryResult:
     ensure_storage_layout(settings)
     rolling_windows = list(rolling_windows or [20, 60])
-    materialize_alpha_shadow_selection_outcomes(
-        settings,
-        start_selection_date=start_selection_date,
-        end_selection_date=end_selection_date,
-        horizons=horizons,
-        model_spec_ids=model_spec_ids,
-    )
+    if ensure_shadow_selection_outcomes:
+        materialize_alpha_shadow_selection_outcomes(
+            settings,
+            start_selection_date=start_selection_date,
+            end_selection_date=end_selection_date,
+            horizons=horizons,
+            model_spec_ids=model_spec_ids,
+        )
 
     with activate_run_context(
         "materialize_alpha_shadow_evaluation_summary",

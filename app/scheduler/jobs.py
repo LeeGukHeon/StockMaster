@@ -543,6 +543,7 @@ def run_evaluation_job(
                 end_selection_date=selection_end_date,
                 horizons=[1, 5],
                 rolling_windows=[20, 60],
+                ensure_selection_outcomes=False,
             )
             shadow_summary_result = materialize_alpha_shadow_evaluation_summary(
                 settings,
@@ -550,6 +551,7 @@ def run_evaluation_job(
                 end_selection_date=selection_end_date,
                 horizons=[1, 5],
                 rolling_windows=[20, 60],
+                ensure_shadow_selection_outcomes=False,
             )
             diagnostic_result = materialize_calibration_diagnostics(
                 settings,
@@ -557,6 +559,7 @@ def run_evaluation_job(
                 end_selection_date=selection_end_date,
                 horizons=[1, 5],
                 bin_count=10,
+                ensure_selection_outcomes=False,
             )
             evaluation_date = (
                 _resolve_latest_matured_evaluation_date(
