@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 from dataclasses import dataclass
 from datetime import date
@@ -293,6 +294,218 @@ def _parse_score_payload(value: object) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _prediction_version_for_ranking(ranking_version: str) -> str | None:
+    if ranking_version == SELECTION_ENGINE_VERSION:
+        return PREDICTION_VERSION
+    if ranking_version == SELECTION_ENGINE_V2_VERSION:
+        return ALPHA_PREDICTION_VERSION
+    return None
+
+
+def _load_joined_outcome_partition(
+    connection,
+    *,
+    selection_date: date,
+    ranking_version: str,
+    horizon: int,
+    symbols: list[str],
+) -> pd.DataFrame:
+    if not symbols:
+        return pd.DataFrame()
+    symbol_placeholders = ",".join("?" for _ in symbols)
+    prediction_version = _prediction_version_for_ranking(ranking_version)
+    return connection.execute(
+        f"""
+        SELECT
+            ranking.as_of_date AS selection_date,
+            label.exit_date AS evaluation_date,
+            ranking.symbol,
+            symbol_meta.market,
+            ranking.horizon,
+            ranking.ranking_version,
+            ranking.grade,
+            ranking.eligible_flag,
+            ranking.final_selection_value,
+            ranking.final_selection_rank_pct AS selection_percentile,
+            ranking.explanatory_score_json,
+            ranking.top_reason_tags_json,
+            ranking.risk_flags_json,
+            ranking.eligibility_notes_json,
+            ranking.regime_state,
+            prediction.prediction_version AS prediction_version_at_selection,
+            prediction.expected_excess_return AS expected_excess_return_at_selection,
+            prediction.lower_band AS lower_band_at_selection,
+            prediction.median_band AS median_band_at_selection,
+            prediction.upper_band AS upper_band_at_selection,
+            prediction.uncertainty_score AS uncertainty_score_at_selection,
+            prediction.disagreement_score AS disagreement_score_at_selection,
+            prediction.fallback_flag AS fallback_flag_at_selection,
+            prediction.fallback_reason AS fallback_reason_at_selection,
+            prediction.training_run_id AS training_run_id_at_selection,
+            prediction.model_spec_id AS model_spec_id_at_selection,
+            prediction.active_alpha_model_id AS active_alpha_model_id_at_selection,
+            label.entry_date AS entry_trade_date,
+            label.exit_date AS exit_trade_date,
+            label.gross_forward_return AS realized_return,
+            label.excess_forward_return AS realized_excess_return,
+            label.label_available_flag,
+            label.exclusion_reason
+        FROM fact_ranking AS ranking
+        JOIN dim_symbol AS symbol_meta
+          ON ranking.symbol = symbol_meta.symbol
+        LEFT JOIN fact_prediction AS prediction
+          ON ranking.as_of_date = prediction.as_of_date
+         AND ranking.symbol = prediction.symbol
+         AND ranking.horizon = prediction.horizon
+         AND ranking.ranking_version = prediction.ranking_version
+         AND prediction.prediction_version = ?
+        LEFT JOIN fact_forward_return_label AS label
+          ON ranking.as_of_date = label.as_of_date
+         AND ranking.symbol = label.symbol
+         AND ranking.horizon = label.horizon
+        WHERE ranking.as_of_date = ?
+          AND ranking.ranking_version = ?
+          AND ranking.horizon = ?
+          AND ranking.symbol IN ({symbol_placeholders})
+        ORDER BY ranking.symbol
+        """,
+        [prediction_version, selection_date, ranking_version, horizon, *symbols],
+    ).fetchdf()
+
+
+def _build_outcome_frame(joined: pd.DataFrame, *, evaluation_run_id: str) -> pd.DataFrame:
+    if joined.empty:
+        return pd.DataFrame()
+
+    score_payloads = joined["explanatory_score_json"].map(_parse_score_payload)
+    joined["selection_engine_version"] = joined["ranking_version"]
+    joined["grade_detail"] = joined["eligibility_notes_json"]
+    joined["report_candidate_flag"] = joined["eligible_flag"].fillna(False).astype(
+        bool
+    ) & joined["selection_percentile"].fillna(0.0).ge(0.85)
+    missing_uncertainty = joined["uncertainty_score_at_selection"].isna()
+    joined.loc[missing_uncertainty, "uncertainty_score_at_selection"] = pd.to_numeric(
+        score_payloads.loc[missing_uncertainty].map(
+            lambda payload: payload.get("uncertainty_proxy_score")
+        ),
+        errors="coerce",
+    )
+    joined["implementation_penalty_at_selection"] = score_payloads.map(
+        lambda payload: payload.get("implementation_penalty_score")
+    )
+    joined["regime_label_at_selection"] = joined["regime_state"]
+    joined["prediction_error"] = (
+        joined["realized_excess_return"] - joined["expected_excess_return_at_selection"]
+    )
+    expected_positive = joined["expected_excess_return_at_selection"].gt(0)
+    realized_positive = joined["realized_excess_return"].gt(0)
+    joined["direction_hit_flag"] = (
+        joined["expected_excess_return_at_selection"].notna()
+        & joined["realized_excess_return"].notna()
+        & (expected_positive == realized_positive)
+    )
+    joined["direction_hit_flag"] = joined["direction_hit_flag"].where(
+        joined["expected_excess_return_at_selection"].notna()
+        & joined["realized_excess_return"].notna(),
+        pd.NA,
+    )
+    joined["raw_positive_flag"] = joined["realized_return"].gt(0)
+    joined["raw_positive_flag"] = joined["raw_positive_flag"].where(
+        joined["realized_return"].notna(),
+        pd.NA,
+    )
+    joined["band_available_flag"] = (
+        joined["lower_band_at_selection"].notna()
+        & joined["upper_band_at_selection"].notna()
+    )
+    joined["in_band_flag"] = (
+        joined["band_available_flag"]
+        & joined["realized_excess_return"].notna()
+        & joined["realized_excess_return"].ge(joined["lower_band_at_selection"])
+        & joined["realized_excess_return"].le(joined["upper_band_at_selection"])
+    )
+    joined["above_upper_flag"] = (
+        joined["band_available_flag"]
+        & joined["realized_excess_return"].notna()
+        & joined["realized_excess_return"].gt(joined["upper_band_at_selection"])
+    )
+    joined["below_lower_flag"] = (
+        joined["band_available_flag"]
+        & joined["realized_excess_return"].notna()
+        & joined["realized_excess_return"].lt(joined["lower_band_at_selection"])
+    )
+    joined["outcome_status"] = joined.apply(
+        lambda row: _derive_outcome_status(
+            row["label_available_flag"],
+            row["exclusion_reason"],
+        ),
+        axis=1,
+    )
+    joined["band_status"] = "band_missing"
+    joined.loc[joined["outcome_status"] == "pending", "band_status"] = "label_pending"
+    joined.loc[
+        joined["outcome_status"] == "unavailable",
+        "band_status",
+    ] = "label_unavailable"
+    joined.loc[joined["in_band_flag"], "band_status"] = "in_band"
+    joined.loc[joined["above_upper_flag"], "band_status"] = "above_upper"
+    joined.loc[joined["below_lower_flag"], "band_status"] = "below_lower"
+    joined["source_label_version"] = LABEL_VERSION
+    joined["evaluation_run_id"] = evaluation_run_id
+    joined["created_at"] = pd.Timestamp.utcnow()
+    joined["updated_at"] = joined["created_at"]
+    return joined[
+        [
+            "selection_date",
+            "evaluation_date",
+            "symbol",
+            "market",
+            "horizon",
+            "ranking_version",
+            "selection_engine_version",
+            "grade",
+            "grade_detail",
+            "report_candidate_flag",
+            "eligible_flag",
+            "final_selection_value",
+            "selection_percentile",
+            "expected_excess_return_at_selection",
+            "lower_band_at_selection",
+            "median_band_at_selection",
+            "upper_band_at_selection",
+            "uncertainty_score_at_selection",
+            "disagreement_score_at_selection",
+            "implementation_penalty_at_selection",
+            "fallback_flag_at_selection",
+            "fallback_reason_at_selection",
+            "prediction_version_at_selection",
+            "training_run_id_at_selection",
+            "model_spec_id_at_selection",
+            "active_alpha_model_id_at_selection",
+            "regime_label_at_selection",
+            "top_reason_tags_json",
+            "risk_flags_json",
+            "entry_trade_date",
+            "exit_trade_date",
+            "realized_return",
+            "realized_excess_return",
+            "prediction_error",
+            "direction_hit_flag",
+            "raw_positive_flag",
+            "band_available_flag",
+            "band_status",
+            "in_band_flag",
+            "above_upper_flag",
+            "below_lower_flag",
+            "outcome_status",
+            "source_label_version",
+            "evaluation_run_id",
+            "created_at",
+            "updated_at",
+        ]
+    ].copy()
+
+
 def _derive_outcome_status(label_available: object, exclusion_reason: object) -> str:
     if pd.notna(label_available) and bool(label_available):
         return "matured"
@@ -554,99 +767,66 @@ def materialize_selection_outcomes(
                         notes=notes,
                     )
 
-                horizon_placeholders = ",".join("?" for _ in horizons)
-                version_placeholders = ",".join("?" for _ in ranking_versions)
-                params: list[object] = [
-                    SELECTION_ENGINE_VERSION,
-                    PREDICTION_VERSION,
-                    SELECTION_ENGINE_V2_VERSION,
-                    ALPHA_PREDICTION_VERSION,
-                    start_dt,
-                    end_dt,
-                    *horizons,
-                    *ranking_versions,
-                ]
-                symbol_clause = ""
-                if target_symbols:
-                    symbol_placeholders = ",".join("?" for _ in target_symbols)
-                    symbol_clause = f" AND ranking.symbol IN ({symbol_placeholders})"
-                    params.extend(target_symbols)
-                limit_clause = ""
-                if limit_symbols is not None and limit_symbols > 0:
-                    limit_clause = (
-                        "QUALIFY ROW_NUMBER() OVER ("
-                        "PARTITION BY ranking.as_of_date, ranking.horizon, ranking.ranking_version "
-                        "ORDER BY ranking.final_selection_value DESC, ranking.symbol"
-                        f") <= {int(limit_symbols)}"
-                    )
+                artifact_paths: list[str] = []
+                total_row_count = 0
+                matured_row_count = 0
+                pending_row_count = 0
 
-                joined = connection.execute(
-                    f"""
-                    SELECT
-                        ranking.as_of_date AS selection_date,
-                        label.exit_date AS evaluation_date,
-                        ranking.symbol,
-                        symbol_meta.market,
-                        ranking.horizon,
-                        ranking.ranking_version,
-                        ranking.grade,
-                        ranking.eligible_flag,
-                        ranking.final_selection_value,
-                        ranking.final_selection_rank_pct AS selection_percentile,
-                        ranking.explanatory_score_json,
-                        ranking.top_reason_tags_json,
-                        ranking.risk_flags_json,
-                        ranking.eligibility_notes_json,
-                        ranking.regime_state,
-                        prediction.prediction_version AS prediction_version_at_selection,
-                        prediction.expected_excess_return AS expected_excess_return_at_selection,
-                        prediction.lower_band AS lower_band_at_selection,
-                        prediction.median_band AS median_band_at_selection,
-                        prediction.upper_band AS upper_band_at_selection,
-                        prediction.uncertainty_score AS uncertainty_score_at_selection,
-                        prediction.disagreement_score AS disagreement_score_at_selection,
-                        prediction.fallback_flag AS fallback_flag_at_selection,
-                        prediction.fallback_reason AS fallback_reason_at_selection,
-                        prediction.training_run_id AS training_run_id_at_selection,
-                        prediction.model_spec_id AS model_spec_id_at_selection,
-                        prediction.active_alpha_model_id AS active_alpha_model_id_at_selection,
-                        label.entry_date AS entry_trade_date,
-                        label.exit_date AS exit_trade_date,
-                        label.gross_forward_return AS realized_return,
-                        label.excess_forward_return AS realized_excess_return,
-                        label.label_available_flag,
-                        label.exclusion_reason
-                    FROM fact_ranking AS ranking
-                    JOIN dim_symbol AS symbol_meta
-                      ON ranking.symbol = symbol_meta.symbol
-                    LEFT JOIN fact_prediction AS prediction
-                      ON ranking.as_of_date = prediction.as_of_date
-                     AND ranking.symbol = prediction.symbol
-                     AND ranking.horizon = prediction.horizon
-                     AND ranking.ranking_version = prediction.ranking_version
-                     AND prediction.prediction_version = CASE
-                        WHEN ranking.ranking_version = ? THEN ?
-                        WHEN ranking.ranking_version = ? THEN ?
-                        ELSE NULL
-                     END
-                    LEFT JOIN fact_forward_return_label AS label
-                      ON ranking.as_of_date = label.as_of_date
-                     AND ranking.symbol = label.symbol
-                     AND ranking.horizon = label.horizon
-                    WHERE ranking.as_of_date BETWEEN ? AND ?
-                      AND ranking.horizon IN ({horizon_placeholders})
-                      AND ranking.ranking_version IN ({version_placeholders})
-                      {symbol_clause}
-                    {limit_clause}
-                    ORDER BY
-                        ranking.as_of_date,
-                        ranking.ranking_version,
-                        ranking.horizon,
-                        ranking.symbol
-                    """,
-                    params,
-                ).fetchdf()
-                if joined.empty:
+                for (
+                    selection_dt,
+                    partition_ranking_version,
+                    partition_horizon,
+                ), partition_candidates in candidate_rows.groupby(
+                    ["selection_date", "ranking_version", "horizon"],
+                    sort=True,
+                ):
+                    partition_symbols = sorted(
+                        partition_candidates["symbol"]
+                        .astype(str)
+                        .str.zfill(6)
+                        .drop_duplicates()
+                        .tolist()
+                    )
+                    joined = _load_joined_outcome_partition(
+                        connection,
+                        selection_date=pd.Timestamp(selection_dt).date(),
+                        ranking_version=str(partition_ranking_version),
+                        horizon=int(partition_horizon),
+                        symbols=partition_symbols,
+                    )
+                    if joined.empty:
+                        continue
+
+                    outcome_frame = _build_outcome_frame(
+                        joined,
+                        evaluation_run_id=run_context.run_id,
+                    )
+                    if outcome_frame.empty:
+                        continue
+
+                    upsert_selection_outcomes(connection, outcome_frame)
+                    artifact_paths.append(
+                        str(
+                            write_parquet(
+                                outcome_frame,
+                                base_dir=settings.paths.curated_dir,
+                                dataset="evaluation/selection_outcomes",
+                                partitions={
+                                    "selection_date": pd.Timestamp(selection_dt).date().isoformat(),
+                                    "ranking_version": str(partition_ranking_version),
+                                    "horizon": str(int(partition_horizon)),
+                                },
+                                filename="selection_outcomes.parquet",
+                            )
+                        )
+                    )
+                    total_row_count += int(len(outcome_frame))
+                    matured_row_count += int(outcome_frame["outcome_status"].eq("matured").sum())
+                    pending_row_count += int(outcome_frame["outcome_status"].eq("pending").sum())
+                    del joined, outcome_frame
+                    gc.collect()
+
+                if total_row_count == 0:
                     notes = (
                         "No joined ranking/label rows were available for selection outcomes. "
                         f"range={start_dt.isoformat()}..{end_dt.isoformat()}"
@@ -670,169 +850,10 @@ def materialize_selection_outcomes(
                         artifact_paths=[],
                         notes=notes,
                     )
-
-                score_payloads = joined["explanatory_score_json"].map(_parse_score_payload)
-                joined["selection_engine_version"] = joined["ranking_version"]
-                joined["grade_detail"] = joined["eligibility_notes_json"]
-                joined["report_candidate_flag"] = joined["eligible_flag"].fillna(False).astype(
-                    bool
-                ) & joined["selection_percentile"].fillna(0.0).ge(0.85)
-                missing_uncertainty = joined["uncertainty_score_at_selection"].isna()
-                joined.loc[missing_uncertainty, "uncertainty_score_at_selection"] = (
-                    pd.to_numeric(
-                        score_payloads.loc[missing_uncertainty].map(
-                            lambda payload: payload.get("uncertainty_proxy_score")
-                        ),
-                        errors="coerce",
-                    )
-                )
-                joined["implementation_penalty_at_selection"] = score_payloads.map(
-                    lambda payload: payload.get("implementation_penalty_score")
-                )
-                joined["regime_label_at_selection"] = joined["regime_state"]
-                joined["prediction_error"] = (
-                    joined["realized_excess_return"] - joined["expected_excess_return_at_selection"]
-                )
-                expected_positive = joined["expected_excess_return_at_selection"].gt(0)
-                realized_positive = joined["realized_excess_return"].gt(0)
-                joined["direction_hit_flag"] = (
-                    joined["expected_excess_return_at_selection"].notna()
-                    & joined["realized_excess_return"].notna()
-                    & (expected_positive == realized_positive)
-                )
-                joined["direction_hit_flag"] = joined["direction_hit_flag"].where(
-                    joined["expected_excess_return_at_selection"].notna()
-                    & joined["realized_excess_return"].notna(),
-                    pd.NA,
-                )
-                joined["raw_positive_flag"] = joined["realized_return"].gt(0)
-                joined["raw_positive_flag"] = joined["raw_positive_flag"].where(
-                    joined["realized_return"].notna(),
-                    pd.NA,
-                )
-                joined["band_available_flag"] = (
-                    joined["lower_band_at_selection"].notna()
-                    & joined["upper_band_at_selection"].notna()
-                )
-                joined["in_band_flag"] = (
-                    joined["band_available_flag"]
-                    & joined["realized_excess_return"].notna()
-                    & joined["realized_excess_return"].ge(joined["lower_band_at_selection"])
-                    & joined["realized_excess_return"].le(joined["upper_band_at_selection"])
-                )
-                joined["above_upper_flag"] = (
-                    joined["band_available_flag"]
-                    & joined["realized_excess_return"].notna()
-                    & joined["realized_excess_return"].gt(joined["upper_band_at_selection"])
-                )
-                joined["below_lower_flag"] = (
-                    joined["band_available_flag"]
-                    & joined["realized_excess_return"].notna()
-                    & joined["realized_excess_return"].lt(joined["lower_band_at_selection"])
-                )
-                joined["outcome_status"] = joined.apply(
-                    lambda row: _derive_outcome_status(
-                        row["label_available_flag"],
-                        row["exclusion_reason"],
-                    ),
-                    axis=1,
-                )
-                joined["band_status"] = "band_missing"
-                joined.loc[joined["outcome_status"] == "pending", "band_status"] = "label_pending"
-                joined.loc[
-                    joined["outcome_status"] == "unavailable",
-                    "band_status",
-                ] = "label_unavailable"
-                joined.loc[joined["in_band_flag"], "band_status"] = "in_band"
-                joined.loc[joined["above_upper_flag"], "band_status"] = "above_upper"
-                joined.loc[joined["below_lower_flag"], "band_status"] = "below_lower"
-                joined["source_label_version"] = LABEL_VERSION
-                joined["evaluation_run_id"] = run_context.run_id
-                joined["created_at"] = pd.Timestamp.utcnow()
-                joined["updated_at"] = joined["created_at"]
-                outcome_frame = joined[
-                    [
-                        "selection_date",
-                        "evaluation_date",
-                        "symbol",
-                        "market",
-                        "horizon",
-                        "ranking_version",
-                        "selection_engine_version",
-                        "grade",
-                        "grade_detail",
-                        "report_candidate_flag",
-                        "eligible_flag",
-                        "final_selection_value",
-                        "selection_percentile",
-                        "expected_excess_return_at_selection",
-                        "lower_band_at_selection",
-                        "median_band_at_selection",
-                        "upper_band_at_selection",
-                        "uncertainty_score_at_selection",
-                        "disagreement_score_at_selection",
-                        "implementation_penalty_at_selection",
-                        "fallback_flag_at_selection",
-                        "fallback_reason_at_selection",
-                        "prediction_version_at_selection",
-                        "training_run_id_at_selection",
-                        "model_spec_id_at_selection",
-                        "active_alpha_model_id_at_selection",
-                        "regime_label_at_selection",
-                        "top_reason_tags_json",
-                        "risk_flags_json",
-                        "entry_trade_date",
-                        "exit_trade_date",
-                        "realized_return",
-                        "realized_excess_return",
-                        "prediction_error",
-                        "direction_hit_flag",
-                        "raw_positive_flag",
-                        "band_available_flag",
-                        "band_status",
-                        "in_band_flag",
-                        "above_upper_flag",
-                        "below_lower_flag",
-                        "outcome_status",
-                        "source_label_version",
-                        "evaluation_run_id",
-                        "created_at",
-                        "updated_at",
-                    ]
-                ].copy()
-                upsert_selection_outcomes(connection, outcome_frame)
-
-                artifact_paths: list[str] = []
-                for (
-                    selection_dt,
-                    ranking_version,
-                    horizon,
-                ), partition_frame in outcome_frame.groupby(
-                    ["selection_date", "ranking_version", "horizon"],
-                    sort=True,
-                ):
-                    artifact_paths.append(
-                        str(
-                            write_parquet(
-                                partition_frame,
-                                base_dir=settings.paths.curated_dir,
-                                dataset="evaluation/selection_outcomes",
-                                partitions={
-                                    "selection_date": pd.Timestamp(selection_dt).date().isoformat(),
-                                    "ranking_version": str(ranking_version),
-                                    "horizon": str(int(horizon)),
-                                },
-                                filename="selection_outcomes.parquet",
-                            )
-                        )
-                    )
-
-                matured_row_count = int(outcome_frame["outcome_status"].eq("matured").sum())
-                pending_row_count = int(outcome_frame["outcome_status"].eq("pending").sum())
                 notes = (
                     "Selection outcomes materialized. "
                     f"range={start_dt.isoformat()}..{end_dt.isoformat()}, "
-                    f"rows={len(outcome_frame)}, matured={matured_row_count}, "
+                    f"rows={total_row_count}, matured={matured_row_count}, "
                     f"pending={pending_row_count}"
                 )
                 record_run_finish(
@@ -848,7 +869,7 @@ def materialize_selection_outcomes(
                     run_id=run_context.run_id,
                     start_selection_date=start_dt,
                     end_selection_date=end_dt,
-                    row_count=len(outcome_frame),
+                    row_count=total_row_count,
                     matured_row_count=matured_row_count,
                     pending_row_count=pending_row_count,
                     artifact_paths=artifact_paths,
