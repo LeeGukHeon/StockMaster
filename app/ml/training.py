@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -40,6 +41,7 @@ from app.ml.dataset import (
     load_training_dataset,
 )
 from app.ml.registry import (
+    clear_training_run_artifact_uris,
     upsert_alpha_model_specs,
     upsert_model_member_predictions,
     upsert_model_metric_summary,
@@ -71,6 +73,70 @@ class AlphaOOFBackfillResult:
     run_count: int
     artifact_paths: list[str]
     notes: str
+
+
+@dataclass(slots=True)
+class AlphaTrainingArtifactPruneResult:
+    run_id: str
+    pruned_artifact_uri_count: int
+    removed_root_count: int
+    removed_roots: list[str]
+    notes: str
+
+
+def _resolve_training_artifact_root(path: Path) -> Path:
+    if path.name == "alpha_model_v1.pkl" and len(path.parents) >= 3:
+        return path.parents[2]
+    if path.name == "training_summary.json":
+        return path.parent
+    return path.parent
+
+
+def _resolve_training_artifact_roots(artifact_paths: list[str]) -> list[Path]:
+    roots = sorted(
+        {_resolve_training_artifact_root(Path(artifact_path)) for artifact_path in artifact_paths},
+        key=lambda value: len(value.parts),
+    )
+    deduped: list[Path] = []
+    for root in roots:
+        if any(existing == root or existing in root.parents for existing in deduped):
+            continue
+        deduped.append(root)
+    return deduped
+
+
+def prune_training_result_artifacts(
+    settings: Settings,
+    *,
+    training_result: AlphaTrainingResult,
+) -> AlphaTrainingArtifactPruneResult:
+    removed_roots: list[str] = []
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        pruned_artifact_uri_count = clear_training_run_artifact_uris(
+            connection,
+            run_id=training_result.run_id,
+        )
+
+    for root in _resolve_training_artifact_roots(training_result.artifact_paths):
+        if not root.exists():
+            continue
+        shutil.rmtree(root)
+        removed_roots.append(str(root))
+
+    notes = (
+        "Alpha training artifacts pruned after shadow materialization. "
+        f"run_id={training_result.run_id} "
+        f"artifact_uris={pruned_artifact_uri_count} "
+        f"removed_roots={len(removed_roots)}"
+    )
+    return AlphaTrainingArtifactPruneResult(
+        run_id=training_result.run_id,
+        pruned_artifact_uri_count=pruned_artifact_uri_count,
+        removed_root_count=len(removed_roots),
+        removed_roots=removed_roots,
+        notes=notes,
+    )
 
 
 def _metric_rows(

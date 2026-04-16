@@ -541,6 +541,7 @@ def load_latest_training_run(
         "AND model_version = ?",
         "AND train_end_date <= ?",
         "AND status = 'success'",
+        "AND NULLIF(TRIM(COALESCE(artifact_uri, '')), '') IS NOT NULL",
     ]
     parameters: list[Any] = [horizon, model_version, train_end_date]
     if model_domain is not None:
@@ -557,6 +558,32 @@ def load_latest_training_run(
     if row is None:
         return None
     return _deserialize_training_run_row(row)
+
+
+def clear_training_run_artifact_uris(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    run_id: str,
+) -> int:
+    row = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM fact_model_training_run
+        WHERE run_id = ?
+          AND NULLIF(TRIM(COALESCE(artifact_uri, '')), '') IS NOT NULL
+        """,
+        [run_id],
+    ).fetchone()
+    artifact_count = int(row[0] or 0) if row is not None else 0
+    connection.execute(
+        """
+        UPDATE fact_model_training_run
+        SET artifact_uri = NULL
+        WHERE run_id = ?
+        """,
+        [run_id],
+    )
+    return artifact_count
 
 
 def load_training_run_by_id(
