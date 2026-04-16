@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import gc
 import json
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from app.common.artifacts import resolve_artifact_path
@@ -354,15 +356,15 @@ def build_prediction_frame_from_training_run(
         return pd.DataFrame(columns=PREDICTION_OUTPUT_COLUMNS), []
 
     artifact_payload = load_model_artifact(Path(str(training_run["artifact_uri"])))
-    working = feature_frame.copy()
     feature_columns = list(artifact_payload.get("feature_columns", list(TRAINING_FEATURE_COLUMNS)))
-    for column in feature_columns:
-        if column not in working.columns:
-            working[column] = pd.NA
-    X_inference = working[feature_columns].apply(
+    inference_features = feature_frame.reindex(columns=feature_columns)
+    X_inference = inference_features.apply(
         pd.to_numeric,
         errors="coerce",
     )
+    base_index = feature_frame.index
+    base_symbols = feature_frame["symbol"]
+    base_markets = feature_frame["market"]
     member_predictions: dict[str, pd.Series] = {}
     for member_name in artifact_payload.get("member_order", []):
         model = artifact_payload["members"].get(member_name)
@@ -370,7 +372,7 @@ def build_prediction_frame_from_training_run(
             continue
         member_predictions[member_name] = pd.Series(
             model.predict(X_inference),
-            index=working.index,
+            index=base_index,
             dtype="float64",
         )
 
@@ -389,7 +391,21 @@ def build_prediction_frame_from_training_run(
         member_predictions[member_name] * weight
         for member_name, weight in ensemble_weights.items()
     )
-    disagreement_raw = pd.concat(member_predictions.values(), axis=1).std(axis=1, ddof=0)
+    if len(member_predictions) == 1:
+        disagreement_raw = pd.Series(0.0, index=base_index, dtype="float64")
+    else:
+        sum_values = np.zeros(len(base_index), dtype="float64")
+        sum_squares = np.zeros(len(base_index), dtype="float64")
+        for member_prediction in member_predictions.values():
+            values = member_prediction.to_numpy(dtype="float64", copy=False)
+            sum_values += values
+            sum_squares += values * values
+        mean_values = sum_values / float(len(member_predictions))
+        variance = np.maximum(
+            (sum_squares / float(len(member_predictions))) - np.square(mean_values),
+            0.0,
+        )
+        disagreement_raw = pd.Series(np.sqrt(variance), index=base_index, dtype="float64")
     disagreement_score = disagreement_raw.rank(pct=True).mul(100.0)
     calibration_rows = artifact_payload.get("calibration", [])
     bucket_records = [
@@ -400,9 +416,9 @@ def build_prediction_frame_from_training_run(
         {
             "run_id": run_id,
             "as_of_date": as_of_date,
-            "symbol": working["symbol"],
+            "symbol": base_symbols,
             "horizon": int(horizon),
-            "market": working["market"],
+            "market": base_markets,
             "ranking_version": ranking_version,
             "prediction_version": prediction_version,
             "expected_excess_return": ensemble_prediction,
@@ -453,7 +469,7 @@ def build_prediction_frame_from_training_run(
                     sort_keys=True,
                 )
             ]
-            * len(working),
+            * len(feature_frame),
             "created_at": pd.Timestamp.utcnow(),
         }
     )
@@ -471,7 +487,7 @@ def build_prediction_frame_from_training_run(
                     {
                         "training_run_id": training_run["training_run_id"],
                         "as_of_date": as_of_date,
-                        "symbol": working["symbol"],
+                        "symbol": base_symbols,
                         "horizon": int(horizon),
                         "model_version": MODEL_VERSION,
                         "prediction_role": "inference",
@@ -490,7 +506,7 @@ def build_prediction_frame_from_training_run(
                 {
                     "training_run_id": training_run["training_run_id"],
                     "as_of_date": as_of_date,
-                    "symbol": working["symbol"],
+                    "symbol": base_symbols,
                     "horizon": int(horizon),
                     "model_version": MODEL_VERSION,
                     "prediction_role": "inference",
@@ -505,6 +521,7 @@ def build_prediction_frame_from_training_run(
             )
         )
 
+    del inference_features, X_inference, artifact_payload
     return _normalise_prediction_frame(result_frame), member_prediction_frames
 
 
@@ -548,6 +565,8 @@ def materialize_alpha_predictions_v1(
                     symbols=symbols,
                     limit_symbols=limit_symbols,
                     market=market,
+                    include_rank_features=False,
+                    include_zscore_features=False,
                 )
                 if feature_frame.empty:
                     raise RuntimeError(
@@ -693,6 +712,8 @@ def materialize_alpha_predictions_v1(
                         continue
                     prediction_frames.append(result_frame)
                     member_prediction_frames.extend(member_frames)
+                    del result_frame, member_frames, resolved_training_run
+                    gc.collect()
 
                 non_empty_prediction_frames = [
                     frame for frame in prediction_frames if not frame.empty

@@ -245,6 +245,8 @@ def load_feature_matrix(
     symbols: list[str] | None = None,
     limit_symbols: int | None = None,
     market: str = "ALL",
+    include_rank_features: bool = True,
+    include_zscore_features: bool = True,
 ) -> pd.DataFrame:
     feature_rows = connection.execute(
         """
@@ -288,25 +290,35 @@ def load_feature_matrix(
     selected_symbols = set(symbol_frame["symbol"].astype(str))
     feature_rows = feature_rows.loc[feature_rows["symbol"].isin(selected_symbols)].copy()
 
-    value_matrix = feature_rows.pivot(
-        index="symbol", columns="feature_name", values="feature_value"
-    )
-    rank_matrix = feature_rows.pivot(
-        index="symbol", columns="feature_name", values="feature_rank_pct"
-    )
-    zscore_matrix = feature_rows.pivot(
-        index="symbol", columns="feature_name", values="feature_zscore"
-    )
-    rank_matrix = rank_matrix.rename(
-        columns={column: f"{column}_rank_pct" for column in rank_matrix.columns}
-    )
-    zscore_matrix = zscore_matrix.rename(
-        columns={column: f"{column}_zscore" for column in zscore_matrix.columns}
-    )
+    matrices: list[pd.DataFrame] = [
+        feature_rows.pivot(
+            index="symbol",
+            columns="feature_name",
+            values="feature_value",
+        )
+    ]
+    if include_rank_features:
+        rank_matrix = feature_rows.pivot(
+            index="symbol",
+            columns="feature_name",
+            values="feature_rank_pct",
+        )
+        rank_matrix = rank_matrix.rename(
+            columns={column: f"{column}_rank_pct" for column in rank_matrix.columns}
+        )
+        matrices.append(rank_matrix)
+    if include_zscore_features:
+        zscore_matrix = feature_rows.pivot(
+            index="symbol",
+            columns="feature_name",
+            values="feature_zscore",
+        )
+        zscore_matrix = zscore_matrix.rename(
+            columns={column: f"{column}_zscore" for column in zscore_matrix.columns}
+        )
+        matrices.append(zscore_matrix)
 
-    combined = symbol_frame.set_index("symbol").join(
-        [value_matrix, rank_matrix, zscore_matrix], how="left"
-    )
+    combined = symbol_frame.set_index("symbol").join(matrices, how="left")
     combined.insert(0, "as_of_date", as_of_date)
     return combined.reset_index()
 
