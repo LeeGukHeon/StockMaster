@@ -53,12 +53,12 @@ def _phase0_artifact_dir(
     return path
 
 
-def _source_contains_explicit_cutoff(source_path: Path, token: str) -> bool:
+def _source_contains_explicit_cutoff(source_path: Path, *tokens: str) -> bool:
     try:
         text = source_path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return False
-    return token in text
+    return any(token in text for token in tokens)
 
 
 def run_pit_checks(
@@ -135,14 +135,14 @@ def run_pit_checks(
 
     news_loader_has_cutoff = _source_contains_explicit_cutoff(
         settings.paths.project_root / "app" / "features" / "feature_store.py",
-        "published_at <=",
+        "published_at AT TIME ZONE 'Asia/Seoul'",
     ) or _source_contains_explicit_cutoff(
         settings.paths.project_root / "app" / "features" / "builders" / "news_features.py",
-        "published_at <=",
+        ".le(cutoff_end)",
     )
     fundamentals_loader_has_cutoff = _source_contains_explicit_cutoff(
         settings.paths.project_root / "app" / "features" / "feature_store.py",
-        "disclosed_at <=",
+        "disclosed_at AT TIME ZONE 'Asia/Seoul'",
     )
 
     rows = [
