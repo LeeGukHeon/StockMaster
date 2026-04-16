@@ -36,11 +36,13 @@ SPEC_BASE_RETURNS = {
     MODEL_SPEC_ID: [0.005, -0.002, 0.003, 0.000, -0.004, 0.001, -0.003],
     "alpha_rolling_120_v1": [0.030, 0.024, 0.028, 0.021, 0.026, 0.019, 0.023],
     "alpha_rolling_250_v1": [-0.012, -0.018, -0.010, -0.022, -0.016, -0.020, -0.014],
+    "alpha_rank_rolling_120_v1": [0.027, 0.022, 0.026, 0.019, 0.024, 0.018, 0.021],
 }
 SPEC_BASE_ERRORS = {
     MODEL_SPEC_ID: [0.018, 0.015, 0.017, 0.014, 0.016, 0.015, 0.017],
     "alpha_rolling_120_v1": [0.004, 0.005, 0.003, 0.004, 0.005, 0.004, 0.003],
     "alpha_rolling_250_v1": [0.026, 0.024, 0.028, 0.025, 0.027, 0.026, 0.029],
+    "alpha_rank_rolling_120_v1": [0.005, 0.006, 0.004, 0.005, 0.006, 0.005, 0.004],
 }
 SYMBOL_RETURN_ADJUSTMENTS = [0.006, 0.002, -0.002, -0.006]
 SYMBOL_ERROR_ADJUSTMENTS = [0.0015, -0.0010, 0.0005, -0.0005]
@@ -59,7 +61,7 @@ def _seed_alpha_model_registry(settings) -> None:
             "label_version": "forward_return_v1",
             "selection_engine_version": "selection_engine_v2",
             "spec_payload_json": "{}",
-            "active_candidate_flag": True,
+            "active_candidate_flag": bool(spec.active_candidate_flag),
             "created_at": created_at,
             "updated_at": created_at,
         }
@@ -100,6 +102,11 @@ def _seed_alpha_model_registry(settings) -> None:
                     "created_at": created_at,
                 }
             )
+    for row in training_rows:
+        artifact_path = settings.paths.artifacts_dir / str(row["artifact_uri"])
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text("seed artifact", encoding="utf-8")
+
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
         upsert_alpha_model_specs(connection, pd.DataFrame(spec_rows))

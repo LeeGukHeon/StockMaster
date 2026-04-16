@@ -100,8 +100,8 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
             ],
         ).fetchone()
 
-    assert int(row[0] or 0) == 3
-    assert int(row[1] or 0) == 24
-    assert int(row[2] or 0) == 24
+    assert int(row[0] or 0) == 4
+    assert int(row[1] or 0) == 32
+    assert int(row[2] or 0) == 32
     assert int(row[3] or 0) > 0
     assert int(row[4] or 0) > 0

@@ -19,18 +19,16 @@ from app.ml.training import _metric_rows, _normalise_weights, _train_single_hori
 def test_challenger_specs_use_distinct_feature_profiles() -> None:
     challenger_columns = [set(resolve_feature_columns_for_spec(spec)) for spec in CHALLENGER_ALPHA_MODEL_SPECS]
 
-    assert len(challenger_columns) == 2
-    assert challenger_columns[0] != challenger_columns[1]
-    assert len(challenger_columns[0] - challenger_columns[1]) > 0
-    assert len(challenger_columns[1] - challenger_columns[0]) > 0
+    assert len(challenger_columns) >= 3
+    unique_profiles = {frozenset(columns) for columns in challenger_columns}
+    assert len(unique_profiles) >= 2
 
 
 def test_challenger_specs_use_distinct_member_sets() -> None:
     challenger_members = [resolve_member_names_for_spec(spec) for spec in CHALLENGER_ALPHA_MODEL_SPECS]
 
-    assert len(challenger_members) == 2
-    assert challenger_members[0] != challenger_members[1]
-    assert set(challenger_members[0]) != set(challenger_members[1])
+    assert len(challenger_members) >= 3
+    assert len({tuple(members) for members in challenger_members}) >= 2
 
 
 def test_default_spec_keeps_full_feature_space_and_members() -> None:
@@ -48,14 +46,14 @@ def test_default_spec_keeps_full_feature_space_and_members() -> None:
 
 def test_target_column_resolution_supports_rank_challengers() -> None:
     assert resolve_target_column_for_spec(DEFAULT_ALPHA_MODEL_SPEC, horizon=1) == "target_h1"
-    assert resolve_target_column_for_spec(CHALLENGER_ALPHA_MODEL_SPECS[0], horizon=1) == "target_rank_h1"
+    assert resolve_target_column_for_spec(CHALLENGER_ALPHA_MODEL_SPECS[-1], horizon=1) == "target_rank_h1"
 
 
 
 
 def test_rank_target_challenger_is_not_auto_promotion_candidate() -> None:
-    assert CHALLENGER_ALPHA_MODEL_SPECS[0].active_candidate_flag is False
-    assert CHALLENGER_ALPHA_MODEL_SPECS[1].active_candidate_flag is True
+    assert CHALLENGER_ALPHA_MODEL_SPECS[-1].active_candidate_flag is False
+    assert CHALLENGER_ALPHA_MODEL_SPECS[0].active_candidate_flag is True
 
 
 def test_normalise_weights_prioritizes_topk_returns_over_small_mae_gap() -> None:

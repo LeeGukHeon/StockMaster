@@ -105,7 +105,7 @@ def _load_candidate_specs(connection) -> list[dict[str, object]]:
     specs = load_alpha_model_specs(
         connection,
         model_domain=MODEL_DOMAIN,
-        active_only=True,
+        active_only=False,
     )
     if specs:
         return specs

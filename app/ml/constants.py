@@ -43,8 +43,6 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
             "data_quality",
         ),
         member_names=("hist_gbm", "extra_trees"),
-        active_candidate_flag=False,
-        target_variant="rank_pct",
     ),
     AlphaModelSpec(
         model_spec_id="alpha_rolling_250_v1",
@@ -58,6 +56,22 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
             "data_quality",
         ),
         member_names=("elasticnet", "hist_gbm"),
+    ),
+    AlphaModelSpec(
+        model_spec_id="alpha_rank_rolling_120_v1",
+        estimation_scheme="rolling",
+        rolling_window_days=120,
+        active_candidate_flag=False,
+        feature_groups=(
+            "price_trend",
+            "volatility_risk",
+            "liquidity_turnover",
+            "investor_flow",
+            "news_catalyst",
+            "data_quality",
+        ),
+        member_names=("hist_gbm", "extra_trees"),
+        target_variant="rank_pct",
     ),
 )
 ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
