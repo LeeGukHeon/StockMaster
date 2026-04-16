@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -14,6 +15,16 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.audit.alpha_phase0 import run_alpha_phase0_audit
 from app.logging import configure_logging, get_logger
 from app.settings import load_settings
+
+
+def _apply_host_runtime_overrides() -> None:
+    runtime_root = Path(os.environ.get("STOCKMASTER_RUNTIME_ROOT", "/opt/stockmaster/runtime"))
+    host_duckdb = runtime_root / "data" / "marts" / "main.duckdb"
+    current_duckdb = os.environ.get("APP_DUCKDB_PATH", "")
+    if current_duckdb.startswith("/workspace/") and host_duckdb.exists():
+        os.environ["APP_DATA_DIR"] = str(runtime_root / "data")
+        os.environ["APP_DUCKDB_PATH"] = str(host_duckdb)
+        os.environ["APP_ARTIFACTS_DIR"] = str(runtime_root / "artifacts")
 
 
 def _parse_date(value: str) -> date:
@@ -32,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    _apply_host_runtime_overrides()
     settings = load_settings(project_root=PROJECT_ROOT)
     configure_logging(settings)
     logger = get_logger(__name__)
