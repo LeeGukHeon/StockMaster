@@ -20,6 +20,14 @@ def build_price_feature_frame(
     for window in (3, 5, 10, 20, 60):
         history[f"ret_{window}d"] = group["close"].pct_change(periods=window)
 
+    for window in (3, 5, 10):
+        history[f"market_ret_{window}d_median"] = history.groupby(
+            ["trading_date", "market"], dropna=False
+        )[f"ret_{window}d"].transform("median")
+        history[f"residual_ret_{window}d"] = (
+            history[f"ret_{window}d"] - history[f"market_ret_{window}d_median"]
+        )
+
     for window in (5, 20, 60):
         history[f"ma_{window}"] = group["close"].transform(
             lambda series, w=window: series.rolling(w, min_periods=w).mean()
@@ -97,6 +105,9 @@ def build_price_feature_frame(
             "ret_3d",
             "ret_5d",
             "ret_10d",
+            "residual_ret_3d",
+            "residual_ret_5d",
+            "residual_ret_10d",
             "ret_20d",
             "ret_60d",
             "ma_5",

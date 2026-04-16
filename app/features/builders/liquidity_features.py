@@ -36,6 +36,10 @@ def build_liquidity_feature_frame(
     history["turnover_z_5_20"] = (
         history["turnover_effective"] - history["turnover_value_ma_20"]
     ) / history["turnover_std_20"].replace(0, pd.NA)
+    history["turnover_burst_flag"] = history["turnover_z_5_20"].gt(1.0).astype(float)
+    history["turnover_burst_persistence_5d"] = group["turnover_burst_flag"].transform(
+        lambda series: series.rolling(5, min_periods=5).mean()
+    )
     history["adv_20"] = history["turnover_value_ma_20"]
     history["adv_60"] = group["turnover_effective"].transform(
         lambda series: series.rolling(60, min_periods=60).mean()
@@ -52,6 +56,7 @@ def build_liquidity_feature_frame(
             "turnover_value_ma_5",
             "turnover_value_ma_20",
             "turnover_z_5_20",
+            "turnover_burst_persistence_5d",
             "adv_20",
             "adv_60",
         ]

@@ -71,13 +71,20 @@ def build_news_feature_frame(
         five_day = group["published_date"].ge(as_of_date - timedelta(days=4))
         within_three = group.loc[three_day]
         latest_age = group["age_hours"].min() if not group["age_hours"].isna().all() else None
+        news_count_1d = float(one_day.sum())
+        news_count_3d = float(three_day.sum())
+        news_count_5d = float(five_day.sum())
+        burst_share = (news_count_1d / news_count_5d) if news_count_5d >= 2 else pd.NA
+        drift_persistence = (1.0 - burst_share) if pd.notna(burst_share) else pd.NA
         return {
             "symbol": symbol,
-            "news_count_1d": float(one_day.sum()),
-            "news_count_3d": float(three_day.sum()),
-            "news_count_5d": float(five_day.sum()),
+            "news_count_1d": news_count_1d,
+            "news_count_3d": news_count_3d,
+            "news_count_5d": news_count_5d,
             "distinct_publishers_3d": float(within_three["publisher"].dropna().nunique()),
             "latest_news_age_hours": latest_age,
+            "news_burst_share_1d": burst_share,
+            "news_drift_persistence_score": drift_persistence,
             "fresh_news_flag": float(latest_age is not None and latest_age <= 24.0),
             "positive_catalyst_count_3d": float(within_three["positive_catalyst_flag"].sum()),
             "negative_catalyst_count_3d": float(within_three["negative_catalyst_flag"].sum()),

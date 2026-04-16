@@ -95,6 +95,14 @@ def build_flow_feature_frame(
         flow_alignment_score = (
             float(alignment_frame.mean()) if alignment_frame.notna().any() else pd.NA
         )
+        foreign_flow_persistence_5d = float(trailing_5["foreign_net_value"].gt(0).mean()) if len(trailing_5) >= 5 else pd.NA
+        institution_flow_persistence_5d = float(trailing_5["institution_net_value"].gt(0).mean()) if len(trailing_5) >= 5 else pd.NA
+        sign_values = pd.Series(
+            [foreign_5d, institution_5d, individual_5d], dtype="float64"
+        ).dropna().map(lambda value: 1.0 if value > 0 else (-1.0 if value < 0 else 0.0))
+        flow_disagreement_score = (
+            float(sign_values.std(ddof=0) / 0.9428090415820634) if len(sign_values) >= 2 else pd.NA
+        )
 
         rows.append(
             {
@@ -108,6 +116,9 @@ def build_flow_feature_frame(
                 "individual_net_value_ratio_5d": _safe_ratio(individual_5d, turnover_5d),
                 "smart_money_flow_ratio_5d": _safe_ratio(smart_money_5d, turnover_5d),
                 "smart_money_flow_ratio_20d": _safe_ratio(smart_money_20d, turnover_20d),
+                "foreign_flow_persistence_5d": foreign_flow_persistence_5d,
+                "institution_flow_persistence_5d": institution_flow_persistence_5d,
+                "flow_disagreement_score": flow_disagreement_score,
                 "flow_alignment_score": flow_alignment_score,
                 "flow_coverage_flag": 1.0,
             }

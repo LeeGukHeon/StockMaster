@@ -7,11 +7,11 @@ import pandas as pd
 
 def build_reason_tags(row: pd.Series) -> list[str]:
     tags: list[str] = []
-    if row.get("trend_momentum_score", 0) >= 65:
+    if row.get("trend_momentum_score", 0) >= 65 and row.get("crowding_penalty_score", 0) < 65:
         tags.append("short_term_momentum_strong")
-    if pd.notna(row.get("dist_from_20d_high")) and row.get("dist_from_20d_high", -1) >= -0.05:
+    if pd.notna(row.get("dist_from_20d_high")) and row.get("dist_from_20d_high", -1) >= -0.05 and row.get("crowding_penalty_score", 0) < 70:
         tags.append("breakout_near_20d_high")
-    if row.get("turnover_participation_score", 0) >= 65:
+    if row.get("turnover_participation_score", 0) >= 65 and row.get("crowding_penalty_score", 0) < 70:
         tags.append("turnover_surge")
     if row.get("fresh_news_flag", 0) >= 1 or row.get("news_catalyst_score", 0) >= 65:
         tags.append("fresh_news_catalyst")

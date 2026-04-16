@@ -17,6 +17,7 @@ from app.ml.inference import materialize_alpha_predictions_v1
 from app.ml.training import (
     backfill_alpha_oof_predictions,
     build_model_training_dataset,
+    load_training_dataset,
     train_alpha_candidate_models,
     train_alpha_model_v1,
 )
@@ -94,6 +95,20 @@ def test_train_alpha_model_v1_persists_registry_and_metrics(tmp_path):
     assert registry_count == 2
     assert metric_count >= 8
     assert validation_prediction_count > 0
+
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        dataset_frame = load_training_dataset(
+            connection,
+            train_end_date=date(2026, 3, 6),
+            horizons=[1, 5],
+            limit_symbols=4,
+        )
+
+    assert dataset_frame["target_rank_h1"].dropna().between(0.0, 1.0, inclusive="both").all()
+    assert dataset_frame["target_rank_h5"].dropna().between(0.0, 1.0, inclusive="both").all()
+    assert dataset_frame["target_rank_h1"].notna().any()
+    assert dataset_frame["target_rank_h5"].notna().any()
 
 
 def test_train_alpha_model_v1_excludes_labels_not_available_by_train_end_date(tmp_path):

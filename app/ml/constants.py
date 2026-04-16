@@ -12,6 +12,7 @@ class AlphaModelSpec:
     active_candidate_flag: bool = True
     feature_groups: tuple[str, ...] | None = None
     member_names: tuple[str, ...] | None = None
+    target_variant: str = "excess_return"
 
 
 MODEL_DATASET_VERSION = "alpha_training_dataset_v1"
@@ -42,6 +43,8 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
             "data_quality",
         ),
         member_names=("hist_gbm", "extra_trees"),
+        active_candidate_flag=False,
+        target_variant="rank_pct",
     ),
     AlphaModelSpec(
         model_spec_id="alpha_rolling_250_v1",
@@ -105,3 +108,9 @@ def get_alpha_model_spec(model_spec_id: str) -> AlphaModelSpec:
         if spec.model_spec_id == model_spec_id:
             return spec
     raise KeyError(f"Unknown alpha model spec: {model_spec_id}")
+
+
+def resolve_target_column_for_spec(model_spec: AlphaModelSpec, *, horizon: int) -> str:
+    if model_spec.target_variant == "rank_pct":
+        return f"target_rank_h{int(horizon)}"
+    return f"target_h{int(horizon)}"

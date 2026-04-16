@@ -32,6 +32,7 @@ from app.ml.constants import (
     AlphaModelSpec,
     resolve_feature_columns_for_spec,
     resolve_member_names_for_spec,
+    resolve_target_column_for_spec,
 )
 from app.ml.dataset import (
     TRAINING_FEATURE_COLUMNS,
@@ -361,9 +362,18 @@ def _calibration_payload(validation_frame: pd.DataFrame) -> list[dict[str, objec
     return payload
 
 
-def _prepare_feature_frame(dataset: pd.DataFrame, *, horizon: int) -> pd.DataFrame:
+def _prepare_feature_frame(
+    dataset: pd.DataFrame,
+    *,
+    horizon: int,
+    model_spec: AlphaModelSpec,
+) -> pd.DataFrame:
     working = dataset.copy()
-    working = working.rename(columns={f"target_h{int(horizon)}": "target"})
+    target_column = resolve_target_column_for_spec(model_spec, horizon=horizon)
+    if target_column in working.columns:
+        working = working.rename(columns={target_column: "target"})
+    else:
+        working["target"] = pd.NA
     working = working.dropna(subset=["target"]).copy()
     if working.empty:
         return working
@@ -409,6 +419,7 @@ def _model_spec_registry_row(model_spec: AlphaModelSpec) -> dict[str, object]:
                 "member_names": member_names,
                 "feature_groups": list(model_spec.feature_groups or ()),
                 "feature_columns": feature_columns,
+                "target_variant": model_spec.target_variant,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -430,7 +441,7 @@ def _train_single_horizon(
     artifact_root: Path,
     model_spec: AlphaModelSpec,
 ) -> tuple[dict[str, object], pd.DataFrame, pd.DataFrame, Path | None]:
-    training_frame = _prepare_feature_frame(dataset, horizon=horizon)
+    training_frame = _prepare_feature_frame(dataset, horizon=horizon, model_spec=model_spec)
     training_frame = _filter_training_frame_for_spec(
         training_frame,
         model_spec=model_spec,
@@ -462,6 +473,7 @@ def _train_single_horizon(
                 {
                     "members": spec_member_names,
                     "feature_groups": list(model_spec.feature_groups or ()),
+                    "target_variant": model_spec.target_variant,
                 },
                 ensure_ascii=False,
             ),
@@ -674,6 +686,7 @@ def _train_single_horizon(
             {
                 "members": list(model_builders.keys()),
                 "feature_groups": list(model_spec.feature_groups or ()),
+                "target_variant": model_spec.target_variant,
             },
             ensure_ascii=False,
             sort_keys=True,

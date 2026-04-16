@@ -147,6 +147,7 @@ def _load_dataset_frame(
             SELECT
                 as_of_date,
                 symbol,
+                market,
                 horizon,
                 excess_forward_return
             FROM fact_forward_return_label
@@ -161,6 +162,11 @@ def _load_dataset_frame(
         ).fetchdf()
         if label_rows.empty:
             return pd.DataFrame()
+
+        label_rows["target_rank"] = (
+            label_rows.groupby(["as_of_date", "horizon", "market"])["excess_forward_return"]
+            .rank(method="average", pct=True)
+        )
 
         feature_rows = connection.execute(
             f"""
@@ -206,7 +212,19 @@ def _load_dataset_frame(
         )
         .reset_index()
     )
+    rank_label_matrix = (
+        label_rows.assign(
+            target_name=label_rows["horizon"].map(lambda value: f"target_rank_h{int(value)}")
+        )
+        .pivot(
+            index=["as_of_date", "symbol"],
+            columns="target_name",
+            values="target_rank",
+        )
+        .reset_index()
+    )
     dataset = feature_matrix.merge(label_matrix, on=["as_of_date", "symbol"], how="inner")
+    dataset = dataset.merge(rank_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(
         symbol_frame[["symbol", "company_name", "market"]],
         on="symbol",
@@ -221,6 +239,9 @@ def _load_dataset_frame(
     for target_name in [f"target_h{int(horizon)}" for horizon in horizons]:
         if target_name not in dataset.columns:
             dataset[target_name] = pd.NA
+    for target_name in [f"target_rank_h{int(horizon)}" for horizon in horizons]:
+        if target_name not in dataset.columns:
+            dataset[target_name] = pd.NA
     ordered_columns = [
         "as_of_date",
         "symbol",
@@ -228,6 +249,7 @@ def _load_dataset_frame(
         "market",
         *TRAINING_FEATURE_COLUMNS,
         *[f"target_h{int(horizon)}" for horizon in horizons],
+        *[f"target_rank_h{int(horizon)}" for horizon in horizons],
     ]
     return dataset[ordered_columns].sort_values(["as_of_date", "symbol"]).reset_index(drop=True)
 

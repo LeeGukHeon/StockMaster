@@ -9,6 +9,7 @@ from app.ml.constants import (
     DEFAULT_ALPHA_MODEL_SPEC,
     resolve_feature_columns_for_spec,
     resolve_member_names_for_spec,
+    resolve_target_column_for_spec,
 )
 import pandas as pd
 
@@ -41,6 +42,20 @@ def test_default_spec_keeps_full_feature_space_and_members() -> None:
     assert "elasticnet" in member_names
     assert "hist_gbm" in member_names
     assert "extra_trees" in member_names
+
+
+
+
+def test_target_column_resolution_supports_rank_challengers() -> None:
+    assert resolve_target_column_for_spec(DEFAULT_ALPHA_MODEL_SPEC, horizon=1) == "target_h1"
+    assert resolve_target_column_for_spec(CHALLENGER_ALPHA_MODEL_SPECS[0], horizon=1) == "target_rank_h1"
+
+
+
+
+def test_rank_target_challenger_is_not_auto_promotion_candidate() -> None:
+    assert CHALLENGER_ALPHA_MODEL_SPECS[0].active_candidate_flag is False
+    assert CHALLENGER_ALPHA_MODEL_SPECS[1].active_candidate_flag is True
 
 
 def test_normalise_weights_prioritizes_topk_returns_over_small_mae_gap() -> None:
