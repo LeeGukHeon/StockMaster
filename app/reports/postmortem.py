@@ -58,6 +58,20 @@ def _horizon_label(horizon: int) -> str:
     return f"{int(horizon)}거래일"
 
 
+def _build_postmortem_payload_messages(
+    *,
+    username: str,
+    evaluation_date: date,
+    content: str,
+) -> list[dict[str, str]]:
+    return _build_payload_messages(
+        username=username,
+        as_of_date=evaluation_date,
+        content=content,
+        continuation_title="StockMaster 사후 점검",
+    )
+
+
 def _window_label(window_type: str) -> str:
     mapping = {
         "rolling_20d": "최근 20거래일",
@@ -444,9 +458,9 @@ def render_postmortem_report(
                     calibration_summary=calibration_summary,
                     top_by_horizon=top_by_horizon,
                 )
-                messages = _build_payload_messages(
+                messages = _build_postmortem_payload_messages(
                     username=settings.discord.username,
-                    as_of_date=evaluation_date,
+                    evaluation_date=evaluation_date,
                     content=content,
                 )
                 payload = {

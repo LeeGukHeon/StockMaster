@@ -510,6 +510,7 @@ def run_evaluation_job(
                 started_at=run_context.started_at,
                 as_of_date=run_context.as_of_date,
                 input_sources=[
+                    "sync_daily_ohlcv",
                     "materialize_selection_outcomes",
                     "materialize_alpha_shadow_selection_outcomes",
                     "materialize_prediction_evaluation",
@@ -525,6 +526,26 @@ def run_evaluation_job(
                 ),
             )
         try:
+            same_day_ohlcv_count = _count_same_day_ohlcv_rows(
+                settings,
+                trading_date=selection_end_date,
+            )
+            ohlcv_sync_result = None
+            if same_day_ohlcv_count <= 0:
+                ohlcv_sync_result = sync_daily_ohlcv(
+                    settings,
+                    trading_date=selection_end_date,
+                )
+                same_day_ohlcv_count = _count_same_day_ohlcv_rows(
+                    settings,
+                    trading_date=selection_end_date,
+                )
+            if same_day_ohlcv_count <= 0:
+                raise RuntimeError(
+                    "Evaluation pipeline aborted because same-day OHLCV is empty after sync_daily_ohlcv. "
+                    f"trading_date={selection_end_date.isoformat()}"
+                )
+
             outcome_result = materialize_selection_outcomes(
                 settings,
                 start_selection_date=selection_start_date,
@@ -582,6 +603,8 @@ def run_evaluation_job(
                 horizons=[1, 5],
             )
 
+            if ohlcv_sync_result is not None:
+                artifact_paths.extend(ohlcv_sync_result.artifact_paths)
             artifact_paths.extend(outcome_result.artifact_paths)
             artifact_paths.extend(shadow_outcome_result.artifact_paths)
             artifact_paths.extend(summary_result.artifact_paths)
@@ -594,6 +617,7 @@ def run_evaluation_job(
                 "Evaluation pipeline completed. selection_range="
                 f"{selection_start_date.isoformat()}.."
                 f"{selection_end_date.isoformat()}, outcome_rows={outcome_result.row_count}, "
+                f"same_day_ohlcv_rows={same_day_ohlcv_count}, "
                 f"shadow_outcome_rows={shadow_outcome_result.row_count}, "
                 f"evaluation_rows={summary_result.row_count}, "
                 f"shadow_summary_rows={shadow_summary_result.row_count}, "

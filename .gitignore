@@ -81,3 +81,4 @@ artifacts/
 !README.md
 !*.md
 !config/*.yaml
+.omx/

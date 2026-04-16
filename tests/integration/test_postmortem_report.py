@@ -8,6 +8,7 @@ import pandas as pd
 from app.evaluation.calibration_diagnostics import materialize_calibration_diagnostics
 from app.evaluation.summary import materialize_prediction_evaluation
 from app.reports.postmortem import (
+    _build_postmortem_payload_messages,
     _build_report_content,
     _format_percent_text,
     _load_top_outcomes,
@@ -93,6 +94,21 @@ def test_postmortem_build_content_skips_zero_sample_rolling_rows():
 
     assert "nan%" not in content
     assert "최근 구간 요약이 아직 없습니다." in content
+
+
+def test_postmortem_payload_continuation_uses_postmortem_header():
+    long_line = " ".join(["postmortem"] * 900)
+
+    messages = _build_postmortem_payload_messages(
+        username="tester",
+        evaluation_date=date(2026, 3, 12),
+        content=long_line,
+    )
+
+    assert len(messages) > 1
+    assert messages[1]["content"].startswith(
+        "**StockMaster 사후 점검 | 2026-03-12 (계속 2/"
+    )
 
 
 def test_load_top_outcomes_excludes_zero_volume_entry_or_exit_rows():

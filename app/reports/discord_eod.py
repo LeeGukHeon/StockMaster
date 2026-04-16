@@ -635,6 +635,7 @@ def _build_payload_messages(
     username: str,
     as_of_date: date,
     content: str,
+    continuation_title: str = "StockMaster 장마감 요약",
 ) -> list[dict[str, str]]:
     raw_chunks = _chunk_content(content)
     if len(raw_chunks) <= 1:
@@ -647,7 +648,7 @@ def _build_payload_messages(
             content_text = chunk
         else:
             header = (
-                f"**StockMaster 장마감 요약 | {as_of_date.isoformat()} "
+                f"**{continuation_title} | {as_of_date.isoformat()} "
                 f"(계속 {index}/{total})**"
             )
             content_text = f"{header}\n\n{chunk}"
