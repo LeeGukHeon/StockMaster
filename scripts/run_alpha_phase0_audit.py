@@ -25,6 +25,19 @@ def _apply_host_runtime_overrides() -> None:
         os.environ["APP_DATA_DIR"] = str(runtime_root / "data")
         os.environ["APP_DUCKDB_PATH"] = str(host_duckdb)
         os.environ["APP_ARTIFACTS_DIR"] = str(runtime_root / "artifacts")
+    if (
+        os.environ.get("METADATA_DB_ENABLED", "false").lower() == "true"
+        and os.environ.get("METADATA_DB_BACKEND", "duckdb").lower() == "postgres"
+    ):
+        current_url = os.environ.get("METADATA_DB_URL", "")
+        if (not current_url) or ("@metadata_db" in current_url):
+            user = os.environ.get("METADATA_DB_POSTGRES_USER", "stockmaster")
+            password = os.environ.get("METADATA_DB_POSTGRES_PASSWORD", "change_me")
+            database = os.environ.get("METADATA_DB_POSTGRES_DB", "stockmaster_meta")
+            port = os.environ.get("METADATA_DB_HOST_PORT", "5433")
+            os.environ["METADATA_DB_URL"] = (
+                f"postgresql://{user}:{password}@127.0.0.1:{port}/{database}"
+            )
 
 
 def _parse_date(value: str) -> date:
