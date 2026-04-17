@@ -8,7 +8,10 @@ import pandas as pd
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.features.constants import FEATURE_NAMES
-from app.features.feature_store import build_feature_store
+from app.features.feature_store import (
+    build_feature_store,
+    feature_snapshot_has_required_quality_features,
+)
 from app.labels.forward_returns import build_forward_labels
 from app.ml.constants import MODEL_DATASET_VERSION
 from app.pipelines._helpers import load_symbol_frame
@@ -106,8 +109,14 @@ def _ensure_feature_snapshots(
             """,
             [min(candidate_dates), max(candidate_dates)],
         ).fetchall()
-    existing_dates = {pd.Timestamp(row[0]).date() for row in rows}
+        existing_dates = {pd.Timestamp(row[0]).date() for row in rows}
+        valid_dates = {
+            value
+            for value in existing_dates
+            if feature_snapshot_has_required_quality_features(connection, as_of_date=value)
+        }
     missing_dates = [value for value in candidate_dates if value not in existing_dates]
+    invalid_dates = [value for value in candidate_dates if value in existing_dates and value not in valid_dates]
     for missing_date in missing_dates:
         build_feature_store(
             settings,
@@ -117,7 +126,17 @@ def _ensure_feature_snapshots(
             market=market,
             cutoff_time="17:30",
         )
-    return missing_dates
+    for invalid_date in invalid_dates:
+        build_feature_store(
+            settings,
+            as_of_date=invalid_date,
+            symbols=symbols,
+            limit_symbols=limit_symbols,
+            market=market,
+            cutoff_time="17:30",
+            force=True,
+        )
+    return [*missing_dates, *invalid_dates]
 
 
 def _load_dataset_frame(

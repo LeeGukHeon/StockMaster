@@ -260,6 +260,7 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
     def fake_materialize_selection_engine_v2(settings_arg, *, as_of_date, horizons, **kwargs):
         observed_dates.append(as_of_date)
         assert horizons == [1, 5]
+        assert kwargs.get("ensure_predictions") is False
         return SelectionEngineV2Result(
             run_id="selection-v2-run",
             as_of_date=as_of_date,
@@ -601,6 +602,7 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
 
     def fake_materialize_selection_engine_v2(settings_arg, *, as_of_date, horizons, **kwargs):
         assert horizons == [1, 5]
+        assert kwargs.get("ensure_predictions") is False
         return SelectionEngineV2Result(
             run_id="selection-v2-run",
             as_of_date=as_of_date,

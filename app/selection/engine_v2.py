@@ -427,16 +427,18 @@ def materialize_selection_engine_v2(
     limit_symbols: int | None = None,
     market: str = "ALL",
     force: bool = False,
+    ensure_predictions: bool = True,
 ) -> SelectionEngineV2Result:
     ensure_storage_layout(settings)
-    materialize_alpha_predictions_v1(
-        settings,
-        as_of_date=as_of_date,
-        horizons=horizons,
-        symbols=symbols,
-        limit_symbols=limit_symbols,
-        market=market,
-    )
+    if ensure_predictions:
+        materialize_alpha_predictions_v1(
+            settings,
+            as_of_date=as_of_date,
+            horizons=horizons,
+            symbols=symbols,
+            limit_symbols=limit_symbols,
+            market=market,
+        )
 
     with activate_run_context(
         "materialize_selection_engine_v2", as_of_date=as_of_date

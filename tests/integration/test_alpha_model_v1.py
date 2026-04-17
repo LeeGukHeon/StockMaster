@@ -14,6 +14,8 @@ from app.ml.constants import (
 )
 from app.ml.diagnostics import render_model_diagnostic_report
 from app.ml.inference import materialize_alpha_predictions_v1
+from app.ml.dataset import _ensure_feature_snapshots
+from app.features.feature_store import load_feature_matrix
 from app.ml.training import (
     backfill_alpha_oof_predictions,
     build_model_training_dataset,
@@ -136,6 +138,58 @@ def test_train_alpha_model_v1_excludes_labels_not_available_by_train_end_date(tm
         ).fetchone()[0]
 
     assert overlap_count == 0
+
+
+def test_ensure_feature_snapshots_rebuilds_invalid_quality_features(tmp_path, monkeypatch):
+    settings = _prepare_ticket006_data(tmp_path)
+    rebuild_calls: list[tuple[date, bool]] = []
+
+    from app.features.feature_store import build_feature_store as real_build_feature_store
+
+    real_build_feature_store(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        limit_symbols=4,
+    )
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        connection.execute(
+            """
+            UPDATE fact_feature_snapshot
+            SET feature_value = NULL
+            WHERE as_of_date = ?
+              AND feature_name IN ('has_daily_ohlcv_flag', 'stale_price_flag', 'missing_key_feature_count')
+            """,
+            [date(2026, 3, 6)],
+        )
+
+    def _wrapped_build_feature_store(settings_arg, *, as_of_date, **kwargs):
+        rebuild_calls.append((as_of_date, bool(kwargs.get('force'))))
+        return real_build_feature_store(settings_arg, as_of_date=as_of_date, **kwargs)
+
+    monkeypatch.setattr('app.ml.dataset.build_feature_store', _wrapped_build_feature_store)
+
+    rebuilt_dates = _ensure_feature_snapshots(
+        settings,
+        candidate_dates=[date(2026, 3, 6)],
+        symbols=None,
+        limit_symbols=4,
+        market='ALL',
+    )
+
+    assert rebuilt_dates == [date(2026, 3, 6)]
+    assert rebuild_calls == [(date(2026, 3, 6), True)]
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        feature_frame = load_feature_matrix(
+            connection,
+            as_of_date=date(2026, 3, 6),
+            limit_symbols=4,
+        )
+
+    assert feature_frame['has_daily_ohlcv_flag'].notna().all()
+    assert feature_frame['stale_price_flag'].notna().all()
+    assert feature_frame['missing_key_feature_count'].notna().all()
 
 
 def test_freeze_active_alpha_model_controls_inference_and_outcome_lineage(tmp_path):

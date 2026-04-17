@@ -364,6 +364,7 @@ def run_daily_pipeline_job(
                 settings,
                 as_of_date=pipeline_date,
                 horizons=[1, 5],
+                ensure_predictions=False,
             )
             try:
                 calibration_result = calibrate_proxy_prediction_bands(
