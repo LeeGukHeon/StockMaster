@@ -13,6 +13,7 @@ from app.ml.registry import (
     upsert_alpha_model_specs,
     upsert_model_training_runs,
 )
+from app.ml.shadow import upsert_alpha_shadow_predictions, upsert_alpha_shadow_rankings
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from app.query_views import (
     latest_alpha_active_model_frame,
@@ -164,6 +165,61 @@ def _seed_shadow_outcomes(settings) -> None:
         upsert_alpha_shadow_selection_outcomes(connection, pd.DataFrame(rows))
 
 
+def _seed_shadow_prediction_and_ranking(
+    settings,
+    *,
+    model_spec_id: str,
+    training_run_prefix: str | None = None,
+) -> None:
+    created_at = pd.Timestamp("2026-03-10T00:00:00Z")
+    predictions: list[dict[str, object]] = []
+    rankings: list[dict[str, object]] = []
+    training_prefix = training_run_prefix or f"seed-{model_spec_id}"
+    for horizon in (1, 5):
+        training_run_id = f"{training_prefix}-h{int(horizon)}"
+        for selection_date in SELECTION_DATES:
+            for symbol_index, symbol in enumerate(SYMBOLS):
+                predictions.append(
+                    {
+                        "run_id": "seed-shadow",
+                        "selection_date": selection_date,
+                        "symbol": symbol,
+                        "horizon": int(horizon),
+                        "model_spec_id": model_spec_id,
+                        "training_run_id": training_run_id,
+                        "expected_excess_return": 0.01,
+                        "lower_band": -0.01,
+                        "median_band": 0.01,
+                        "upper_band": 0.03,
+                        "uncertainty_score": 0.1,
+                        "disagreement_score": 0.1,
+                        "fallback_flag": False,
+                        "fallback_reason": None,
+                        "created_at": created_at,
+                    }
+                )
+                rankings.append(
+                    {
+                        "run_id": "seed-shadow",
+                        "selection_date": selection_date,
+                        "symbol": symbol,
+                        "horizon": int(horizon),
+                        "model_spec_id": model_spec_id,
+                        "training_run_id": training_run_id,
+                        "final_selection_value": float(100 - symbol_index),
+                        "selection_percentile": 1.0 - (0.25 * symbol_index),
+                        "grade": ["A", "A", "B", "C"][symbol_index],
+                        "report_candidate_flag": symbol_index < 2,
+                        "eligible_flag": True,
+                        "created_at": created_at,
+                    }
+                )
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        upsert_alpha_shadow_predictions(connection, pd.DataFrame(predictions))
+        upsert_alpha_shadow_rankings(connection, pd.DataFrame(rankings))
+
+
 def _build_promotion_settings(tmp_path):
     settings = build_test_settings(tmp_path)
     _seed_alpha_model_registry(settings)
@@ -182,6 +238,7 @@ def test_run_alpha_auto_promotion_promotes_superior_challenger(tmp_path):
         model_spec_id=MODEL_SPEC_ID,
         train_end_date=date(2026, 3, 6),
     )
+    _seed_shadow_prediction_and_ranking(settings, model_spec_id="alpha_rolling_120_v1")
 
     result = run_alpha_auto_promotion(
         settings,
@@ -192,7 +249,7 @@ def test_run_alpha_auto_promotion_promotes_superior_challenger(tmp_path):
         block_length=1,
     )
 
-    assert result.row_count == 24
+    assert result.row_count == 32
     assert result.promoted_horizon_count == 2
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
@@ -226,8 +283,63 @@ def test_run_alpha_auto_promotion_promotes_superior_challenger(tmp_path):
     assert active_h1["promotion_type"] == "AUTO_PROMOTION"
     assert active_h1["source_type"] == "alpha_auto_promotion"
     assert "alpha_rolling_120_v1" in active_h1["promotion_report_json"]["superior_set"]
-    assert promotion_rows == 24
+    assert promotion_rows == 32
     assert decision_row == ("PROMOTE_CHALLENGER", True, False, len(SELECTION_DATES))
+
+
+def test_run_alpha_auto_promotion_blocks_lineage_mismatched_challenger(tmp_path):
+    settings = _build_promotion_settings(tmp_path)
+    freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        source="test_seed",
+        note="seed incumbent",
+        horizons=[1, 5],
+        model_spec_id=MODEL_SPEC_ID,
+        train_end_date=date(2026, 3, 6),
+    )
+    _seed_shadow_prediction_and_ranking(settings, model_spec_id="alpha_rolling_120_v1")
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        connection.execute(
+            """
+            UPDATE fact_alpha_shadow_selection_outcome
+            SET training_run_id = 'stale-alpha-rolling-120'
+            WHERE model_spec_id = 'alpha_rolling_120_v1'
+            """
+        )
+
+    result = run_alpha_auto_promotion(
+        settings,
+        as_of_date=date(2026, 3, 10),
+        horizons=[1, 5],
+        lookback_selection_dates=len(SELECTION_DATES),
+        bootstrap_reps=200,
+        block_length=1,
+    )
+
+    assert result.promoted_horizon_count == 0
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        active_h1 = load_active_alpha_model(connection, as_of_date=date(2026, 3, 10), horizon=1)
+        blocked_row = connection.execute(
+            """
+            SELECT decision, detail_json
+            FROM fact_alpha_promotion_test
+            WHERE promotion_date = ?
+              AND horizon = 1
+              AND challenger_model_spec_id = 'alpha_rolling_120_v1'
+              AND loss_name = 'loss_top10'
+            """,
+            [date(2026, 3, 10)],
+        ).fetchone()
+
+    assert active_h1 is not None
+    assert active_h1["model_spec_id"] == MODEL_SPEC_ID
+    assert blocked_row is not None
+    assert blocked_row[0] == "NO_AUTO_PROMOTION"
+    assert "shadow_validation_failed" in str(blocked_row[1])
 
 
 def test_rollback_alpha_active_model_is_noop_without_previous_and_restores_previous(tmp_path):

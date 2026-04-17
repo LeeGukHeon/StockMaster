@@ -9,6 +9,7 @@ import pandas as pd
 
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
+from app.features.feature_store import REQUIRED_QUALITY_FEATURE_NAMES
 from app.ml.active import freeze_alpha_active_model
 from app.ml.constants import (
     MCS_ALPHA,
@@ -36,6 +37,7 @@ MODEL_SPEC_LABELS: dict[str, str] = {
     MODEL_SPEC_ID: "recursive",
     "alpha_rolling_120_v1": "rolling 120d",
     "alpha_rolling_250_v1": "rolling 250d",
+    "alpha_rank_rolling_120_v1": "rank rolling 120d",
     "alpha_recursive_rolling_combo": "recursive+rolling combo",
 }
 DECISION_LABELS: dict[str, str] = {
@@ -50,6 +52,7 @@ DECISION_REASON_LABELS: dict[str, str] = {
     "ambiguous_superior_set": "multiple challengers survived without a clear winner",
     "no_matured_shadow_history": "matured shadow self-backtest history is not available",
     "no_complete_loss_matrix": "shadow self-backtest matrix is incomplete",
+    "shadow_validation_failed": "shadow validation failed for the promoted challenger",
 }
 
 
@@ -610,6 +613,143 @@ def _load_candidate_model_spec_ids(
     return sorted(model_spec_ids)
 
 
+def _validate_shadow_promotion_candidate(
+    connection,
+    *,
+    selection_dates: list[date],
+    horizon: int,
+    model_spec_id: str,
+) -> dict[str, object]:
+    if not selection_dates:
+        return {"ok": True, "reason": None, "checks": {}}
+
+    placeholders = ",".join("?" for _ in selection_dates)
+    common_params = [int(horizon), model_spec_id, *selection_dates]
+    counts_row = connection.execute(
+        f"""
+        WITH pred AS (
+            SELECT selection_date, symbol, training_run_id
+            FROM fact_alpha_shadow_prediction
+            WHERE horizon = ?
+              AND model_spec_id = ?
+              AND selection_date IN ({placeholders})
+        ),
+        rank_rows AS (
+            SELECT selection_date, symbol, training_run_id
+            FROM fact_alpha_shadow_ranking
+            WHERE horizon = ?
+              AND model_spec_id = ?
+              AND selection_date IN ({placeholders})
+        ),
+        outcome_rows AS (
+            SELECT selection_date, symbol, training_run_id
+            FROM fact_alpha_shadow_selection_outcome
+            WHERE horizon = ?
+              AND model_spec_id = ?
+              AND selection_date IN ({placeholders})
+        )
+        SELECT
+            (SELECT COUNT(*) FROM pred) AS prediction_rows,
+            (SELECT COUNT(*) FROM rank_rows) AS ranking_rows,
+            (SELECT COUNT(*) FROM outcome_rows) AS outcome_rows,
+            (
+                SELECT COUNT(*)
+                FROM outcome_rows AS outcome
+                LEFT JOIN pred
+                  ON outcome.selection_date = pred.selection_date
+                 AND outcome.symbol = pred.symbol
+                WHERE pred.symbol IS NULL
+            ) AS missing_prediction_rows,
+            (
+                SELECT COUNT(*)
+                FROM outcome_rows AS outcome
+                LEFT JOIN rank_rows AS ranking
+                  ON outcome.selection_date = ranking.selection_date
+                 AND outcome.symbol = ranking.symbol
+                WHERE ranking.symbol IS NULL
+            ) AS missing_ranking_rows,
+            (
+                SELECT COUNT(*)
+                FROM outcome_rows AS outcome
+                JOIN pred
+                  ON outcome.selection_date = pred.selection_date
+                 AND outcome.symbol = pred.symbol
+                JOIN rank_rows AS ranking
+                  ON outcome.selection_date = ranking.selection_date
+                 AND outcome.symbol = ranking.symbol
+                WHERE COALESCE(outcome.training_run_id, '') <> COALESCE(pred.training_run_id, '')
+                   OR COALESCE(outcome.training_run_id, '') <> COALESCE(ranking.training_run_id, '')
+                   OR COALESCE(pred.training_run_id, '') <> COALESCE(ranking.training_run_id, '')
+            ) AS lineage_mismatch_rows
+        """,
+        [
+            *common_params,
+            *common_params,
+            *common_params,
+        ],
+    ).fetchone()
+    (
+        prediction_rows,
+        ranking_rows,
+        outcome_rows,
+        missing_prediction_rows,
+        missing_ranking_rows,
+        lineage_mismatch_rows,
+    ) = (int(value or 0) for value in counts_row or (0, 0, 0, 0, 0, 0))
+
+    quality_row = connection.execute(
+        f"""
+        WITH quality AS (
+            SELECT
+                as_of_date,
+                COUNT(DISTINCT feature_name) AS feature_count,
+                SUM(CASE WHEN feature_value IS NULL THEN 1 ELSE 0 END) AS null_count
+            FROM fact_feature_snapshot
+            WHERE as_of_date IN ({placeholders})
+              AND feature_name IN ({", ".join("?" for _ in REQUIRED_QUALITY_FEATURE_NAMES)})
+            GROUP BY as_of_date
+        )
+        SELECT
+            COUNT(*) AS observed_feature_dates,
+            SUM(
+                CASE
+                    WHEN feature_count < {len(REQUIRED_QUALITY_FEATURE_NAMES)} OR null_count > 0
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS bad_feature_dates
+        FROM quality
+        """,
+        [*selection_dates, *REQUIRED_QUALITY_FEATURE_NAMES],
+    ).fetchone()
+    observed_feature_dates = int((quality_row or (0, 0))[0] or 0)
+    bad_feature_dates = int((quality_row or (0, 0))[1] or 0)
+
+    lineage_inputs_present = prediction_rows > 0 or ranking_rows > 0
+    ok = True
+    if lineage_inputs_present and (
+        missing_prediction_rows > 0 or missing_ranking_rows > 0 or lineage_mismatch_rows > 0
+    ):
+        ok = False
+    if observed_feature_dates > 0 and bad_feature_dates > 0:
+        ok = False
+
+    return {
+        "ok": ok,
+        "reason": None if ok else "shadow_validation_failed",
+        "checks": {
+            "prediction_rows": prediction_rows,
+            "ranking_rows": ranking_rows,
+            "outcome_rows": outcome_rows,
+            "missing_prediction_rows": missing_prediction_rows,
+            "missing_ranking_rows": missing_ranking_rows,
+            "lineage_mismatch_rows": lineage_mismatch_rows,
+            "observed_feature_dates": observed_feature_dates,
+            "bad_feature_dates": bad_feature_dates,
+        },
+    }
+
+
 def _load_promotion_loss_summary(
     connection,
     *,
@@ -839,6 +979,21 @@ def run_alpha_auto_promotion(
                             mcs_payload["incumbent_model_spec_id"] = incumbent_model_spec_id
                             mcs_payload["decision_reason"] = decision_reason
                             mcs_payload["chosen_model_spec_id"] = chosen_model_spec_id
+                            shadow_validation = None
+                            if decision == "PROMOTE_CHALLENGER" and chosen_model_spec_id:
+                                shadow_validation = _validate_shadow_promotion_candidate(
+                                    connection,
+                                    selection_dates=aligned_dates,
+                                    horizon=int(horizon),
+                                    model_spec_id=chosen_model_spec_id,
+                                )
+                                mcs_payload["shadow_validation"] = shadow_validation
+                                if not bool(shadow_validation.get("ok")):
+                                    decision = "NO_AUTO_PROMOTION"
+                                    chosen_model_spec_id = None
+                                    decision_reason = str(shadow_validation["reason"])
+                                    mcs_payload["decision_reason"] = decision_reason
+                                    mcs_payload["chosen_model_spec_id"] = None
 
                             should_freeze = False
                             freeze_source = "alpha_auto_promotion"
@@ -894,6 +1049,9 @@ def run_alpha_auto_promotion(
                                 if isinstance(mcs_payload, dict)
                                 else [],
                                 "pairwise_t_stats": mcs_payload.get("pairwise_t_stats", {})
+                                if isinstance(mcs_payload, dict)
+                                else {},
+                                "shadow_validation": mcs_payload.get("shadow_validation", {})
                                 if isinstance(mcs_payload, dict)
                                 else {},
                             }

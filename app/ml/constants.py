@@ -61,7 +61,7 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         model_spec_id="alpha_rank_rolling_120_v1",
         estimation_scheme="rolling",
         rolling_window_days=120,
-        active_candidate_flag=False,
+        active_candidate_flag=True,
         feature_groups=(
             "price_trend",
             "volatility_risk",
