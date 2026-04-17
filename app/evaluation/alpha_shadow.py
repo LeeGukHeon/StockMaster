@@ -8,6 +8,7 @@ import pandas as pd
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.labels.forward_returns import LABEL_VERSION, build_forward_labels
+from app.ml.constants import get_alpha_model_spec
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -63,6 +64,15 @@ def _derive_outcome_status(label_available: object, exclusion_reason: object) ->
     }:
         return "pending"
     return "unavailable"
+
+
+def _supports_point_loss(model_spec_id: object) -> bool:
+    if model_spec_id in (None, ""):
+        return True
+    try:
+        return get_alpha_model_spec(str(model_spec_id)).target_variant == "excess_return"
+    except KeyError:
+        return True
 
 
 def _mean_or_none(series: pd.Series) -> float | None:
@@ -365,8 +375,11 @@ def materialize_alpha_shadow_selection_outcomes(
                         notes=notes,
                     )
 
-                joined["prediction_error"] = (
-                    joined["realized_excess_return"] - joined["expected_excess_return_at_selection"]
+                joined["prediction_error"] = pd.Series(float("nan"), index=joined.index, dtype="float64")
+                point_loss_supported = joined["model_spec_id"].map(_supports_point_loss)
+                joined.loc[point_loss_supported, "prediction_error"] = (
+                    joined.loc[point_loss_supported, "realized_excess_return"]
+                    - joined.loc[point_loss_supported, "expected_excess_return_at_selection"]
                 )
                 joined["outcome_status"] = joined.apply(
                     lambda row: _derive_outcome_status(

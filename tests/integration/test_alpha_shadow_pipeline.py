@@ -6,7 +6,8 @@ from app.evaluation.alpha_shadow import (
     materialize_alpha_shadow_evaluation_summary,
     materialize_alpha_shadow_selection_outcomes,
 )
-from app.ml.shadow import materialize_alpha_shadow_candidates
+from app.features.feature_store import build_feature_store, load_feature_matrix
+from app.ml.shadow import _ensure_feature_snapshot, materialize_alpha_shadow_candidates
 from app.ml.training import train_alpha_candidate_models, train_alpha_model_v1
 from app.storage.duckdb import duckdb_connection
 from tests._ticket003_support import (
@@ -23,6 +24,46 @@ def _prepare_shadow_settings(tmp_path):
     seed_ticket004_flow_data(settings)
     seed_ticket005_selection_history(settings, limit_symbols=4)
     return settings
+
+
+def test_shadow_ensure_feature_snapshot_rebuilds_invalid_quality_features(tmp_path, monkeypatch):
+    settings = _prepare_shadow_settings(tmp_path)
+    rebuild_calls: list[bool] = []
+    real_build_feature_store = build_feature_store
+
+    real_build_feature_store(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        limit_symbols=4,
+    )
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        connection.execute(
+            """
+            UPDATE fact_feature_snapshot
+            SET feature_value = NULL
+            WHERE as_of_date = ?
+              AND feature_name IN ('has_daily_ohlcv_flag', 'stale_price_flag', 'missing_key_feature_count')
+            """,
+            [date(2026, 3, 6)],
+        )
+
+    def _wrapped_build_feature_store(settings_arg, *, as_of_date, **kwargs):
+        rebuild_calls.append(bool(kwargs.get("force")))
+        return real_build_feature_store(settings_arg, as_of_date=as_of_date, **kwargs)
+
+    monkeypatch.setattr("app.ml.shadow.build_feature_store", _wrapped_build_feature_store)
+
+    _ensure_feature_snapshot(settings, as_of_date=date(2026, 3, 6))
+
+    assert rebuild_calls == [True]
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        frame = load_feature_matrix(connection, as_of_date=date(2026, 3, 6))
+
+    assert frame["has_daily_ohlcv_flag"].notna().all()
+    assert frame["stale_price_flag"].notna().all()
+    assert frame["missing_key_feature_count"].notna().all()
 
 
 def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
@@ -88,13 +129,30 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
                  WHERE selection_date BETWEEN ? AND ?),
                 (SELECT COUNT(*)
                  FROM fact_alpha_shadow_evaluation_summary
-                 WHERE summary_date = ?)
+                 WHERE summary_date = ?),
+                (SELECT COUNT(*)
+                 FROM fact_alpha_shadow_evaluation_summary
+                 WHERE summary_date = ?
+                   AND model_spec_id = 'alpha_rank_rolling_120_v1'
+                   AND mean_point_loss IS NULL),
+                (SELECT COUNT(*)
+                 FROM fact_alpha_shadow_evaluation_summary
+                 WHERE summary_date = ?
+                   AND model_spec_id = 'alpha_rank_rolling_120_v1'),
+                (SELECT COUNT(*)
+                 FROM fact_alpha_shadow_evaluation_summary
+                 WHERE summary_date = ?
+                   AND model_spec_id = 'alpha_recursive_expanding_v1'
+                   AND mean_point_loss IS NOT NULL)
             """,
             [
                 date(2026, 3, 6),
                 date(2026, 3, 6),
                 date(2026, 3, 6),
                 date(2026, 3, 4),
+                date(2026, 3, 6),
+                date(2026, 3, 6),
+                date(2026, 3, 6),
                 date(2026, 3, 6),
                 date(2026, 3, 6),
             ],
@@ -105,3 +163,5 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
     assert int(row[2] or 0) == 32
     assert int(row[3] or 0) > 0
     assert int(row[4] or 0) > 0
+    assert int(row[5] or 0) == int(row[6] or 0) > 0
+    assert int(row[7] or 0) > 0

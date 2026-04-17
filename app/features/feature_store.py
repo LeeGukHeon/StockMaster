@@ -35,6 +35,11 @@ class FeatureStoreBuildResult:
 
 
 DEFAULT_DAILY_FEATURE_CUTOFF_TIME = "17:30"
+REQUIRED_QUALITY_FEATURE_NAMES: tuple[str, ...] = (
+    "has_daily_ohlcv_flag",
+    "stale_price_flag",
+    "missing_key_feature_count",
+)
 
 
 def _load_feature_symbol_frame(
@@ -106,6 +111,30 @@ def _unregister_symbol_stage(connection) -> None:
         connection.unregister("feature_symbol_stage")
     except Exception:
         pass
+
+
+def feature_snapshot_has_required_quality_features(connection, *, as_of_date: date) -> bool:
+    placeholders = ", ".join("?" for _ in REQUIRED_QUALITY_FEATURE_NAMES)
+    row = connection.execute(
+        f"""
+        SELECT
+            COUNT(*) AS row_count,
+            COUNT(DISTINCT feature_name) AS feature_count,
+            SUM(CASE WHEN feature_value IS NULL THEN 1 ELSE 0 END) AS null_value_count
+        FROM fact_feature_snapshot
+        WHERE as_of_date = ?
+          AND feature_name IN ({placeholders})
+        """,
+        [as_of_date, *REQUIRED_QUALITY_FEATURE_NAMES],
+    ).fetchone()
+    if row is None:
+        return False
+    row_count, feature_count, null_value_count = row
+    return (
+        int(row_count or 0) > 0
+        and int(feature_count or 0) == len(REQUIRED_QUALITY_FEATURE_NAMES)
+        and int(null_value_count or 0) == 0
+    )
 
 
 def _load_ohlcv_history(connection, *, as_of_date: date) -> pd.DataFrame:
@@ -539,12 +568,15 @@ def build_feature_store(
                 quality_features = build_data_quality_feature_frame(
                     feature_matrix, as_of_date=as_of_date
                 )
-                feature_matrix = feature_matrix.merge(
-                    quality_features, on="symbol", how="left", suffixes=("", "_dup")
-                )
+                quality_feature_columns = [
+                    column for column in quality_features.columns if column != "symbol"
+                ]
                 feature_matrix = feature_matrix.drop(
-                    columns=[column for column in feature_matrix.columns if column.endswith("_dup")]
+                    columns=[
+                        column for column in quality_feature_columns if column in feature_matrix.columns
+                    ]
                 )
+                feature_matrix = feature_matrix.merge(quality_features, on="symbol", how="left")
                 feature_matrix.insert(0, "as_of_date", as_of_date)
 
                 tall_snapshot = build_feature_snapshot_frame(

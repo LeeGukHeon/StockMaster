@@ -46,6 +46,26 @@ def test_build_feature_store_populates_snapshot_and_manifest(tmp_path):
         assert latest_manifest == ("build_feature_store", "success", FEATURE_VERSION)
 
 
+def test_build_feature_store_populates_quality_features_without_null_placeholders(tmp_path):
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+
+    build_feature_store(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        limit_symbols=4,
+    )
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        frame = load_feature_matrix(connection, as_of_date=date(2026, 3, 6))
+
+    assert frame["has_daily_ohlcv_flag"].notna().all()
+    assert frame["stale_price_flag"].notna().all()
+    assert frame["missing_key_feature_count"].notna().all()
+    assert frame["has_daily_ohlcv_flag"].eq(1.0).all()
+    assert frame["stale_price_flag"].eq(0.0).all()
+
+
 def test_build_feature_store_fails_when_trading_day_has_no_same_day_ohlcv(tmp_path):
     settings = build_test_settings(tmp_path)
     seed_ticket003_data(settings)

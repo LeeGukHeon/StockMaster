@@ -13,7 +13,11 @@ import pandas as pd
 from app.common.artifacts import resolve_artifact_path
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
-from app.features.feature_store import build_feature_store, load_feature_matrix
+from app.features.feature_store import (
+    build_feature_store,
+    feature_snapshot_has_required_quality_features,
+    load_feature_matrix,
+)
 from app.ml.constants import (
     MODEL_DOMAIN,
     MODEL_SPEC_ID,
@@ -217,8 +221,14 @@ def _ensure_feature_snapshot(settings: Settings, *, as_of_date: date) -> None:
             """,
             [as_of_date],
         ).fetchone()
+        has_required_quality_features = feature_snapshot_has_required_quality_features(
+            connection,
+            as_of_date=as_of_date,
+        )
     if row is None or int(row[0] or 0) == 0:
         build_feature_store(settings, as_of_date=as_of_date, cutoff_time="17:30")
+    elif not has_required_quality_features:
+        build_feature_store(settings, as_of_date=as_of_date, cutoff_time="17:30", force=True)
 
 
 def _bucket_from_calibration(
