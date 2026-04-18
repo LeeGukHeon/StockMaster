@@ -185,6 +185,7 @@ def sync_news_metadata(
                     pack_name=query_pack,
                 )
                 existing_news_ids: set[str] = set()
+                existing_news_count = 0
                 if not force:
                     existing_news_ids = {
                         str(row[0])
@@ -197,6 +198,7 @@ def sync_news_metadata(
                             [signal_date],
                         ).fetchall()
                     }
+                    existing_news_count = len(existing_news_ids)
 
             if dry_run:
                 notes = (
@@ -314,7 +316,9 @@ def sync_news_metadata(
                     deduped_frame["symbol_candidates"].map(lambda value: value == "[]").sum()
                 )
 
-            if len(query_tasks) > 0 and deduped_frame.empty:
+            if len(query_tasks) > 0 and deduped_frame.empty and not (
+                existing_news_count > 0 and not force
+            ):
                 raise RuntimeError(
                     "No news metadata rows were materialized for the requested signal date."
                 )
@@ -335,7 +339,8 @@ def sync_news_metadata(
             notes = (
                 f"News metadata sync completed. signal_date={signal_date.isoformat()}, "
                 f"queries={len(query_tasks)}, staged_rows={len(staged_frame)}, "
-                f"deduped_rows={len(deduped_frame)}, unmatched_symbols={unmatched_symbol_count}"
+                f"deduped_rows={len(deduped_frame)}, unmatched_symbols={unmatched_symbol_count}, "
+                f"existing_rows_reused={existing_news_count if deduped_frame.empty else 0}"
             )
             with duckdb_connection(settings.paths.duckdb_path) as connection:
                 bootstrap_core_tables(connection)
