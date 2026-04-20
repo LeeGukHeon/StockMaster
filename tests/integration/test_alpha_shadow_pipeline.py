@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from app.evaluation.alpha_shadow import (
+    resolve_alpha_shadow_db_only_windows,
     materialize_alpha_shadow_evaluation_summary,
     materialize_alpha_shadow_selection_outcomes,
 )
@@ -158,10 +159,94 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
             ],
         ).fetchone()
 
-    assert int(row[0] or 0) == 4
+    assert int(row[0] or 0) == 5
     assert int(row[1] or 0) == 32
     assert int(row[2] or 0) == 32
     assert int(row[3] or 0) > 0
     assert int(row[4] or 0) > 0
     assert int(row[5] or 0) == int(row[6] or 0) > 0
     assert int(row[7] or 0) > 0
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        routing = connection.execute(
+            """
+            SELECT model_spec_id, horizon, COUNT(*) AS row_count
+            FROM fact_alpha_shadow_prediction
+            WHERE selection_date = ?
+              AND model_spec_id IN ('alpha_rank_rolling_120_v1', 'alpha_topbucket_h1_rolling_120_v1')
+            GROUP BY model_spec_id, horizon
+            ORDER BY model_spec_id, horizon
+            """,
+            [date(2026, 3, 6)],
+        ).fetchall()
+
+    assert routing == [
+        ("alpha_rank_rolling_120_v1", 5, 4),
+        ("alpha_topbucket_h1_rolling_120_v1", 1, 4),
+    ]
+
+
+def test_resolve_alpha_shadow_db_only_windows_clips_to_candidate_and_market_range(tmp_path):
+    settings = _prepare_shadow_settings(tmp_path)
+
+    for train_end_date in [date(2026, 3, 4), date(2026, 3, 5), date(2026, 3, 6)]:
+        train_alpha_model_v1(
+            settings,
+            train_end_date=train_end_date,
+            horizons=[1, 5],
+            min_train_days=5,
+            validation_days=2,
+            limit_symbols=4,
+        )
+        train_alpha_candidate_models(
+            settings,
+            train_end_date=train_end_date,
+            horizons=[1, 5],
+            min_train_days=5,
+            validation_days=2,
+            limit_symbols=4,
+        )
+        materialize_alpha_shadow_candidates(
+            settings,
+            as_of_date=train_end_date,
+            horizons=[1, 5],
+            limit_symbols=4,
+        )
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        h5_windows = resolve_alpha_shadow_db_only_windows(
+            connection,
+            requested_start_selection_date=date(2026, 3, 4),
+            requested_end_selection_date=date(2026, 3, 10),
+            horizons=[1, 5],
+            model_spec_ids=["alpha_rank_rolling_120_v1"],
+        )
+        h1_windows = resolve_alpha_shadow_db_only_windows(
+            connection,
+            requested_start_selection_date=date(2026, 3, 4),
+            requested_end_selection_date=date(2026, 3, 10),
+            horizons=[1, 5],
+            model_spec_ids=["alpha_topbucket_h1_rolling_120_v1"],
+        )
+
+    h5_by_horizon = {window.horizon: window for window in h5_windows}
+    assert h5_by_horizon[1].candidate_min_selection_date is None
+    assert h5_by_horizon[1].candidate_max_selection_date is None
+    assert h5_by_horizon[1].effective_start_selection_date is None
+    assert h5_by_horizon[1].effective_end_selection_date is None
+
+    assert h5_by_horizon[5].candidate_min_selection_date == date(2026, 3, 5)
+    assert h5_by_horizon[5].candidate_max_selection_date == date(2026, 3, 6)
+    assert h5_by_horizon[5].effective_start_selection_date == date(2026, 3, 5)
+    assert h5_by_horizon[5].effective_end_selection_date == date(2026, 3, 6)
+
+    h1_by_horizon = {window.horizon: window for window in h1_windows}
+    assert h1_by_horizon[1].candidate_min_selection_date == date(2026, 3, 4)
+    assert h1_by_horizon[1].candidate_max_selection_date == date(2026, 3, 6)
+    assert h1_by_horizon[1].effective_start_selection_date == date(2026, 3, 4)
+    assert h1_by_horizon[1].effective_end_selection_date == date(2026, 3, 6)
+
+    assert h1_by_horizon[5].candidate_min_selection_date is None
+    assert h1_by_horizon[5].candidate_max_selection_date is None
+    assert h1_by_horizon[5].effective_start_selection_date is None
+    assert h1_by_horizon[5].effective_end_selection_date is None

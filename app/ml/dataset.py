@@ -186,6 +186,35 @@ def _load_dataset_frame(
             label_rows.groupby(["as_of_date", "horizon", "market"])["excess_forward_return"]
             .rank(method="average", pct=True)
         )
+        label_rows["target_top5"] = 0.0
+        top5_indices = (
+            label_rows.sort_values(
+                ["as_of_date", "horizon", "excess_forward_return", "symbol"],
+                ascending=[True, True, False, True],
+            )
+            .groupby(["as_of_date", "horizon"], sort=True, group_keys=False)
+            .head(5)
+            .index
+        )
+        label_rows.loc[top5_indices, "target_top5"] = 1.0
+        label_rows["target_topbucket"] = 0.0
+        ordered_rows = label_rows.sort_values(
+            ["as_of_date", "horizon", "excess_forward_return", "symbol"],
+            ascending=[True, True, False, True],
+        )
+        top20_indices = (
+            ordered_rows.groupby(["as_of_date", "horizon"], sort=True, group_keys=False)
+            .head(20)
+            .index
+        )
+        top10_indices = (
+            ordered_rows.groupby(["as_of_date", "horizon"], sort=True, group_keys=False)
+            .head(10)
+            .index
+        )
+        label_rows.loc[top20_indices, "target_topbucket"] = 0.25
+        label_rows.loc[top10_indices, "target_topbucket"] = 0.5
+        label_rows.loc[top5_indices, "target_topbucket"] = 1.0
 
         feature_rows = connection.execute(
             f"""
@@ -242,8 +271,32 @@ def _load_dataset_frame(
         )
         .reset_index()
     )
+    top5_label_matrix = (
+        label_rows.assign(
+            target_name=label_rows["horizon"].map(lambda value: f"target_top5_h{int(value)}")
+        )
+        .pivot(
+            index=["as_of_date", "symbol"],
+            columns="target_name",
+            values="target_top5",
+        )
+        .reset_index()
+    )
+    topbucket_label_matrix = (
+        label_rows.assign(
+            target_name=label_rows["horizon"].map(lambda value: f"target_topbucket_h{int(value)}")
+        )
+        .pivot(
+            index=["as_of_date", "symbol"],
+            columns="target_name",
+            values="target_topbucket",
+        )
+        .reset_index()
+    )
     dataset = feature_matrix.merge(label_matrix, on=["as_of_date", "symbol"], how="inner")
     dataset = dataset.merge(rank_label_matrix, on=["as_of_date", "symbol"], how="left")
+    dataset = dataset.merge(top5_label_matrix, on=["as_of_date", "symbol"], how="left")
+    dataset = dataset.merge(topbucket_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(
         symbol_frame[["symbol", "company_name", "market"]],
         on="symbol",
@@ -261,6 +314,12 @@ def _load_dataset_frame(
     for target_name in [f"target_rank_h{int(horizon)}" for horizon in horizons]:
         if target_name not in dataset.columns:
             dataset[target_name] = pd.NA
+    for target_name in [f"target_top5_h{int(horizon)}" for horizon in horizons]:
+        if target_name not in dataset.columns:
+            dataset[target_name] = pd.NA
+    for target_name in [f"target_topbucket_h{int(horizon)}" for horizon in horizons]:
+        if target_name not in dataset.columns:
+            dataset[target_name] = pd.NA
     ordered_columns = [
         "as_of_date",
         "symbol",
@@ -269,6 +328,8 @@ def _load_dataset_frame(
         *TRAINING_FEATURE_COLUMNS,
         *[f"target_h{int(horizon)}" for horizon in horizons],
         *[f"target_rank_h{int(horizon)}" for horizon in horizons],
+        *[f"target_top5_h{int(horizon)}" for horizon in horizons],
+        *[f"target_topbucket_h{int(horizon)}" for horizon in horizons],
     ]
     return dataset[ordered_columns].sort_values(["as_of_date", "symbol"]).reset_index(drop=True)
 

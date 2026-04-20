@@ -10,6 +10,7 @@ from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION
+from app.ml.constants import get_alpha_model_spec
 from app.ml.inference import materialize_alpha_predictions_v1
 from app.ranking.explanatory_score import (
     _component_score,
@@ -62,6 +63,82 @@ SELECTION_V2_WEIGHTS = {
         "implementation_penalty_score": -8,
         "crowding_penalty_score": -12,
         "fallback_penalty": -4,
+    },
+}
+
+SELECTION_V2_TOP5_FOCUS_WEIGHTS = {
+    1: {
+        "alpha_core_score": 52,
+        "relative_alpha_score": 10,
+        "flow_persistence_score": 8,
+        "flow_score": 8,
+        "trend_momentum_score": 2,
+        "news_catalyst_score": 2,
+        "news_drift_score": 5,
+        "quality_score": 3,
+        "regime_fit_score": 4,
+        "risk_penalty_score": -4,
+        "uncertainty_score": -6,
+        "disagreement_score": -5,
+        "implementation_penalty_score": -5,
+        "crowding_penalty_score": -8,
+        "fallback_penalty": -3,
+    },
+    5: {
+        "alpha_core_score": 50,
+        "relative_alpha_score": 12,
+        "flow_persistence_score": 8,
+        "flow_score": 8,
+        "trend_momentum_score": 2,
+        "quality_score": 5,
+        "value_safety_score": 5,
+        "news_catalyst_score": 1,
+        "news_drift_score": 3,
+        "regime_fit_score": 4,
+        "risk_penalty_score": -4,
+        "uncertainty_score": -6,
+        "disagreement_score": -6,
+        "implementation_penalty_score": -5,
+        "crowding_penalty_score": -8,
+        "fallback_penalty": -3,
+    },
+}
+
+SELECTION_V2_TOPBUCKET_WEIGHTS = {
+    1: {
+        "alpha_core_score": 46,
+        "relative_alpha_score": 12,
+        "flow_persistence_score": 9,
+        "flow_score": 8,
+        "trend_momentum_score": 2,
+        "news_catalyst_score": 2,
+        "news_drift_score": 6,
+        "quality_score": 4,
+        "regime_fit_score": 5,
+        "risk_penalty_score": -4,
+        "uncertainty_score": -5,
+        "disagreement_score": -4,
+        "implementation_penalty_score": -4,
+        "crowding_penalty_score": -7,
+        "fallback_penalty": -3,
+    },
+    5: {
+        "alpha_core_score": 44,
+        "relative_alpha_score": 12,
+        "flow_persistence_score": 8,
+        "flow_score": 8,
+        "trend_momentum_score": 3,
+        "quality_score": 6,
+        "value_safety_score": 6,
+        "news_catalyst_score": 2,
+        "news_drift_score": 4,
+        "regime_fit_score": 5,
+        "risk_penalty_score": -4,
+        "uncertainty_score": -5,
+        "disagreement_score": -5,
+        "implementation_penalty_score": -4,
+        "crowding_penalty_score": -7,
+        "fallback_penalty": -3,
     },
 }
 
@@ -228,6 +305,25 @@ def _score_selection_engine_v2_frame(
     scored["fallback_reason"] = scored["fallback_reason"].fillna("")
 
     weights = dict(SELECTION_V2_WEIGHTS[int(horizon)])
+    model_spec_ids = {
+        str(value)
+        for value in pd.Series(scored.get("model_spec_id")).dropna().astype(str).tolist()
+    }
+    top5_focus = False
+    topbucket_focus = False
+    if len(model_spec_ids) == 1:
+        model_spec_id = next(iter(model_spec_ids))
+        try:
+            target_variant = get_alpha_model_spec(model_spec_id).target_variant
+            top5_focus = target_variant == "top5_binary"
+            topbucket_focus = target_variant == "top20_weighted"
+        except KeyError:
+            top5_focus = False
+            topbucket_focus = False
+    if top5_focus:
+        weights = dict(SELECTION_V2_TOP5_FOCUS_WEIGHTS[int(horizon)])
+    elif topbucket_focus:
+        weights = dict(SELECTION_V2_TOPBUCKET_WEIGHTS[int(horizon)])
     alpha_positive_components = {key: value for key, value in weights.items() if value > 0}
     positive_score = sum(
         pd.to_numeric(scored[name], errors="coerce").fillna(50.0) * weight
@@ -296,9 +392,27 @@ def _score_selection_engine_v2_frame(
         )
     )
     scored["grade"] = assign_grades(scored)
-    scored["report_candidate_flag"] = scored["eligible_flag"].fillna(False).astype(bool) & scored[
-        "final_selection_rank_pct"
-    ].fillna(0.0).ge(0.85)
+    eligible_mask = scored["eligible_flag"].fillna(False).astype(bool)
+    if top5_focus:
+        scored["report_candidate_flag"] = False
+        top_candidate_indices = (
+            scored.loc[eligible_mask]
+            .sort_values(["final_selection_value", "symbol"], ascending=[False, True])
+            .head(5)
+            .index
+        )
+        scored.loc[top_candidate_indices, "report_candidate_flag"] = True
+    elif topbucket_focus:
+        scored["report_candidate_flag"] = False
+        top_candidate_indices = (
+            scored.loc[eligible_mask]
+            .sort_values(["final_selection_value", "symbol"], ascending=[False, True])
+            .head(10)
+            .index
+        )
+        scored.loc[top_candidate_indices, "report_candidate_flag"] = True
+    else:
+        scored["report_candidate_flag"] = eligible_mask & scored["final_selection_rank_pct"].fillna(0.0).ge(0.85)
     scored["risk_flags_json"] = risk_flags.map(
         lambda values: json.dumps(values, ensure_ascii=False)
     )
@@ -373,21 +487,43 @@ def build_selection_engine_v2_rankings(
     for horizon in horizons:
         base = _apply_selection_engine_v1(feature_with_regime, horizon=horizon, settings=settings)
         prediction_frame = prediction_frames_by_horizon.get(int(horizon), pd.DataFrame())
-        scored = _score_selection_engine_v2_frame(
-            base,
-            prediction_frame,
-            horizon=int(horizon),
-            settings=settings,
-        )
-        scored["run_id"] = run_id
-        scored["as_of_date"] = as_of_date
-        scored["ranking_version"] = ranking_version
-        scored["created_at"] = pd.Timestamp.utcnow()
-        scored["horizon"] = int(horizon)
-        for column in output_columns:
-            if column not in scored.columns:
-                scored[column] = pd.NA
-        ranking_frames.append(scored.loc[:, list(output_columns)].copy())
+        if (
+            not prediction_frame.empty
+            and "model_spec_id" in prediction_frame.columns
+            and prediction_frame["model_spec_id"].dropna().nunique() > 1
+        ):
+            for model_spec_id, spec_prediction_frame in prediction_frame.groupby("model_spec_id", dropna=False):
+                scored = _score_selection_engine_v2_frame(
+                    base,
+                    spec_prediction_frame.copy(),
+                    horizon=int(horizon),
+                    settings=settings,
+                )
+                scored["run_id"] = run_id
+                scored["as_of_date"] = as_of_date
+                scored["ranking_version"] = ranking_version
+                scored["created_at"] = pd.Timestamp.utcnow()
+                scored["horizon"] = int(horizon)
+                for column in output_columns:
+                    if column not in scored.columns:
+                        scored[column] = pd.NA
+                ranking_frames.append(scored.loc[:, list(output_columns)].copy())
+        else:
+            scored = _score_selection_engine_v2_frame(
+                base,
+                prediction_frame,
+                horizon=int(horizon),
+                settings=settings,
+            )
+            scored["run_id"] = run_id
+            scored["as_of_date"] = as_of_date
+            scored["ranking_version"] = ranking_version
+            scored["created_at"] = pd.Timestamp.utcnow()
+            scored["horizon"] = int(horizon)
+            for column in output_columns:
+                if column not in scored.columns:
+                    scored[column] = pd.NA
+            ranking_frames.append(scored.loc[:, list(output_columns)].copy())
     return ranking_frames
 
 
@@ -405,6 +541,8 @@ def _load_predictions(connection, *, as_of_date: date, horizon: int) -> pd.DataF
             fallback_flag,
             fallback_reason,
             prediction_version,
+            model_spec_id,
+            active_alpha_model_id,
             member_count,
             ensemble_weight_json,
             source_notes_json

@@ -34,6 +34,7 @@ from app.ml.constants import (
     resolve_feature_columns_for_spec,
     resolve_member_names_for_spec,
     resolve_target_column_for_spec,
+    supports_horizon_for_spec,
 )
 from app.ml.dataset import (
     TRAINING_FEATURE_COLUMNS,
@@ -165,6 +166,7 @@ def _metric_rows(
             "corr": None,
             "rank_ic": None,
             "directional_hit_rate": None,
+            "top5_mean_excess_return": None,
             "top10_mean_excess_return": None,
             "top20_mean_excess_return": None,
         }
@@ -180,12 +182,15 @@ def _metric_rows(
         cohort_rank_ics: list[float] = []
 
         if "as_of_date" in pair.columns and pair["as_of_date"].notna().any():
+            cohort_top5_returns: list[float] = []
             cohort_top10_returns: list[float] = []
             cohort_top20_returns: list[float] = []
             for _, group in pair.dropna(subset=["as_of_date"]).groupby("as_of_date", sort=True):
                 ordered = group.sort_values("predicted", ascending=False)
+                top5 = ordered.head(min(5, len(ordered)))
                 top10 = ordered.head(min(10, len(ordered)))
                 top20 = ordered.head(min(20, len(ordered)))
+                cohort_top5_returns.append(float(top5["actual"].mean()))
                 cohort_top10_returns.append(float(top10["actual"].mean()))
                 cohort_top20_returns.append(float(top20["actual"].mean()))
                 if len(group) >= 2:
@@ -194,6 +199,9 @@ def _metric_rows(
                     group_rank_ic = group_actual_rank.corr(group_predicted_rank)
                     if not pd.isna(group_rank_ic):
                         cohort_rank_ics.append(float(group_rank_ic))
+            top5_mean_excess_return = (
+                float(np.mean(cohort_top5_returns)) if cohort_top5_returns else None
+            )
             top10_mean_excess_return = (
                 float(np.mean(cohort_top10_returns)) if cohort_top10_returns else None
             )
@@ -203,8 +211,10 @@ def _metric_rows(
             rank_ic = float(np.mean(cohort_rank_ics)) if cohort_rank_ics else None
         else:
             ordered = pair.sort_values("predicted", ascending=False)
+            top5 = ordered.head(min(5, len(ordered)))
             top10 = ordered.head(min(10, len(ordered)))
             top20 = ordered.head(min(20, len(ordered)))
+            top5_mean_excess_return = float(top5["actual"].mean())
             top10_mean_excess_return = float(top10["actual"].mean())
             top20_mean_excess_return = float(top20["actual"].mean())
             actual_rank = pair["actual"].rank(method="average")
@@ -218,6 +228,7 @@ def _metric_rows(
             "directional_hit_rate": float(
                 (np.sign(pair["actual"]) == np.sign(pair["predicted"])).mean()
             ),
+            "top5_mean_excess_return": top5_mean_excess_return,
             "top10_mean_excess_return": top10_mean_excess_return,
             "top20_mean_excess_return": top20_mean_excess_return,
         }
@@ -337,17 +348,41 @@ def _select_model_builders(
     return selected or all_builders
 
 
-def _normalise_weights(metrics: dict[str, dict[str, float | None]]) -> dict[str, float]:
+def _normalise_weights(
+    metrics: dict[str, dict[str, float | None]],
+    *,
+    model_spec: AlphaModelSpec | None = None,
+) -> dict[str, float]:
     if not metrics:
         return {}
 
-    metric_weights = {
-        "top10_mean_excess_return": 4.0,
-        "top20_mean_excess_return": 2.0,
-        "rank_ic": 2.0,
-        "corr": 1.0,
-        "mae": 1.0,
-    }
+    if model_spec is not None and model_spec.target_variant == "top20_weighted":
+        metric_weights = {
+            "top10_mean_excess_return": 6.0,
+            "top20_mean_excess_return": 5.0,
+            "top5_mean_excess_return": 2.0,
+            "rank_ic": 1.0,
+            "corr": 0.5,
+            "mae": 0.5,
+        }
+    elif model_spec is not None and model_spec.target_variant == "top5_binary":
+        metric_weights = {
+            "top5_mean_excess_return": 6.0,
+            "top10_mean_excess_return": 4.0,
+            "top20_mean_excess_return": 2.0,
+            "rank_ic": 1.5,
+            "corr": 1.0,
+            "mae": 1.0,
+        }
+    else:
+        metric_weights = {
+            "top5_mean_excess_return": 6.0,
+            "top10_mean_excess_return": 4.0,
+            "top20_mean_excess_return": 2.0,
+            "rank_ic": 2.0,
+            "corr": 1.0,
+            "mae": 1.0,
+        }
     lower_is_better = {"mae"}
 
     score_frame = pd.DataFrame.from_dict(metrics, orient="index")
@@ -486,6 +521,7 @@ def _model_spec_registry_row(model_spec: AlphaModelSpec) -> dict[str, object]:
                 "feature_groups": list(model_spec.feature_groups or ()),
                 "feature_columns": feature_columns,
                 "target_variant": model_spec.target_variant,
+                "allowed_horizons": list(model_spec.allowed_horizons or ()),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -650,6 +686,7 @@ def _train_single_horizon(
             "mae": validation_metric_subset.get("mae"),
             "corr": validation_metric_subset.get("corr"),
             "rank_ic": validation_metric_subset.get("rank_ic"),
+            "top5_mean_excess_return": validation_metric_subset.get("top5_mean_excess_return"),
             "top10_mean_excess_return": validation_metric_subset.get("top10_mean_excess_return"),
             "top20_mean_excess_return": validation_metric_subset.get("top20_mean_excess_return"),
         }
@@ -672,7 +709,7 @@ def _train_single_horizon(
             for index, row in validation_frame.assign(target=y_validation).iterrows()
         )
 
-    ensemble_weights = _normalise_weights(metric_summary)
+    ensemble_weights = _normalise_weights(metric_summary, model_spec=model_spec)
     artifact_payload["ensemble_weights"] = ensemble_weights
     if validation_predictions:
         ensemble_validation = sum(
@@ -925,6 +962,8 @@ def _train_alpha_specs(
                 )
                 for model_spec in model_specs:
                     for horizon in horizons:
+                        if not supports_horizon_for_spec(model_spec, horizon=int(horizon)):
+                            continue
                         (
                             training_run_row,
                             member_predictions,

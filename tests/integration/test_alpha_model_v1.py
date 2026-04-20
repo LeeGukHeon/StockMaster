@@ -111,6 +111,12 @@ def test_train_alpha_model_v1_persists_registry_and_metrics(tmp_path):
     assert dataset_frame["target_rank_h5"].dropna().between(0.0, 1.0, inclusive="both").all()
     assert dataset_frame["target_rank_h1"].notna().any()
     assert dataset_frame["target_rank_h5"].notna().any()
+    assert dataset_frame["target_top5_h1"].dropna().isin([0.0, 1.0]).all()
+    assert dataset_frame["target_top5_h5"].dropna().isin([0.0, 1.0]).all()
+    assert dataset_frame["target_top5_h1"].notna().any()
+    assert dataset_frame["target_top5_h5"].notna().any()
+    assert dataset_frame["target_topbucket_h1"].dropna().between(0.0, 1.0, inclusive="both").all()
+    assert set(dataset_frame["target_topbucket_h1"].dropna().unique()).issubset({0.0, 0.25, 0.5, 1.0})
 
 
 def test_train_alpha_model_v1_excludes_labels_not_available_by_train_end_date(tmp_path):

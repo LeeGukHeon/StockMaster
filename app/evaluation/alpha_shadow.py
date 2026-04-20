@@ -38,6 +38,20 @@ class AlphaShadowEvaluationSummaryResult:
     notes: str
 
 
+@dataclass(slots=True)
+class AlphaShadowCoverageWindow:
+    horizon: int
+    requested_start_selection_date: date
+    requested_end_selection_date: date
+    candidate_min_selection_date: date | None
+    candidate_max_selection_date: date | None
+    stored_label_max_selection_date: date | None
+    stored_matured_max_selection_date: date | None
+    db_only_max_selection_date: date | None
+    effective_start_selection_date: date | None
+    effective_end_selection_date: date | None
+
+
 def _resolve_target_selection_dates(
     selection_date: date | None,
     start_selection_date: date | None,
@@ -52,6 +66,145 @@ def _resolve_target_selection_dates(
     if start_selection_date > end_selection_date:
         raise ValueError("start_selection_date must be on or before end_selection_date.")
     return start_selection_date, end_selection_date
+
+
+def _latest_selection_date_supported_by_current_market_data(
+    connection,
+    *,
+    horizon: int,
+) -> date | None:
+    latest_market_row = connection.execute(
+        """
+        SELECT MAX(trading_date)
+        FROM fact_daily_ohlcv
+        """
+    ).fetchone()
+    if latest_market_row is None or latest_market_row[0] is None:
+        return None
+    latest_market_date = pd.Timestamp(latest_market_row[0]).date()
+    trading_days = (
+        connection.execute(
+            """
+            SELECT trading_date
+            FROM dim_trading_calendar
+            WHERE is_trading_day
+              AND trading_date <= ?
+            ORDER BY trading_date
+            """,
+            [latest_market_date],
+        )
+        .fetchdf()["trading_date"]
+        .tolist()
+    )
+    trading_days = [pd.Timestamp(value).date() for value in trading_days]
+    offset = int(horizon) + 1
+    if len(trading_days) < offset:
+        return None
+    return trading_days[-offset]
+
+
+def resolve_alpha_shadow_db_only_windows(
+    connection,
+    *,
+    requested_start_selection_date: date,
+    requested_end_selection_date: date,
+    horizons: list[int],
+    model_spec_ids: list[str] | None = None,
+) -> list[AlphaShadowCoverageWindow]:
+    if requested_start_selection_date > requested_end_selection_date:
+        raise ValueError("requested_start_selection_date must be on or before requested_end_selection_date.")
+
+    model_spec_clause = ""
+    model_spec_params: list[object] = []
+    if model_spec_ids:
+        placeholders = ",".join("?" for _ in model_spec_ids)
+        model_spec_clause = f"AND model_spec_id IN ({placeholders})"
+        model_spec_params.extend(model_spec_ids)
+
+    windows: list[AlphaShadowCoverageWindow] = []
+    for horizon in sorted({int(value) for value in horizons}):
+        candidate_row = connection.execute(
+            f"""
+            SELECT MIN(selection_date), MAX(selection_date)
+            FROM fact_alpha_shadow_ranking
+            WHERE horizon = ?
+              {model_spec_clause}
+            """,
+            [horizon, *model_spec_params],
+        ).fetchone()
+        candidate_min = (
+            pd.Timestamp(candidate_row[0]).date()
+            if candidate_row is not None and candidate_row[0] is not None
+            else None
+        )
+        candidate_max = (
+            pd.Timestamp(candidate_row[1]).date()
+            if candidate_row is not None and candidate_row[1] is not None
+            else None
+        )
+        stored_label_row = connection.execute(
+            """
+            SELECT MAX(as_of_date)
+            FROM fact_forward_return_label
+            WHERE horizon = ?
+              AND label_available_flag
+            """,
+            [horizon],
+        ).fetchone()
+        stored_label_max = (
+            pd.Timestamp(stored_label_row[0]).date()
+            if stored_label_row is not None and stored_label_row[0] is not None
+            else None
+        )
+        stored_matured_row = connection.execute(
+            f"""
+            SELECT MAX(selection_date)
+            FROM fact_alpha_shadow_selection_outcome
+            WHERE horizon = ?
+              AND outcome_status = 'matured'
+              {model_spec_clause}
+            """,
+            [horizon, *model_spec_params],
+        ).fetchone()
+        stored_matured_max = (
+            pd.Timestamp(stored_matured_row[0]).date()
+            if stored_matured_row is not None and stored_matured_row[0] is not None
+            else None
+        )
+        market_supported_max = _latest_selection_date_supported_by_current_market_data(
+            connection,
+            horizon=horizon,
+        )
+
+        db_only_max = None
+        if candidate_max is not None and market_supported_max is not None:
+            db_only_max = min(candidate_max, market_supported_max, requested_end_selection_date)
+
+        effective_start = None
+        effective_end = None
+        if candidate_min is not None and db_only_max is not None:
+            effective_start = max(requested_start_selection_date, candidate_min)
+            if effective_start <= db_only_max:
+                effective_end = db_only_max
+            else:
+                effective_start = None
+                effective_end = None
+
+        windows.append(
+            AlphaShadowCoverageWindow(
+                horizon=horizon,
+                requested_start_selection_date=requested_start_selection_date,
+                requested_end_selection_date=requested_end_selection_date,
+                candidate_min_selection_date=candidate_min,
+                candidate_max_selection_date=candidate_max,
+                stored_label_max_selection_date=stored_label_max,
+                stored_matured_max_selection_date=stored_matured_max,
+                db_only_max_selection_date=db_only_max,
+                effective_start_selection_date=effective_start,
+                effective_end_selection_date=effective_end,
+            )
+        )
+    return windows
 
 
 def _derive_outcome_status(label_available: object, exclusion_reason: object) -> str:

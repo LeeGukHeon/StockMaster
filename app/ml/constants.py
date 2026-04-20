@@ -13,6 +13,7 @@ class AlphaModelSpec:
     feature_groups: tuple[str, ...] | None = None
     member_names: tuple[str, ...] | None = None
     target_variant: str = "excess_return"
+    allowed_horizons: tuple[int, ...] | None = None
 
 
 MODEL_DATASET_VERSION = "alpha_training_dataset_v1"
@@ -71,7 +72,25 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
             "data_quality",
         ),
         member_names=("hist_gbm", "extra_trees"),
-        target_variant="rank_pct",
+        target_variant="top5_binary",
+        allowed_horizons=(5,),
+    ),
+    AlphaModelSpec(
+        model_spec_id="alpha_topbucket_h1_rolling_120_v1",
+        estimation_scheme="rolling",
+        rolling_window_days=120,
+        active_candidate_flag=True,
+        feature_groups=(
+            "price_trend",
+            "volatility_risk",
+            "liquidity_turnover",
+            "investor_flow",
+            "news_catalyst",
+            "data_quality",
+        ),
+        member_names=("hist_gbm", "extra_trees"),
+        target_variant="top20_weighted",
+        allowed_horizons=(1,),
     ),
 )
 ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
@@ -127,4 +146,14 @@ def get_alpha_model_spec(model_spec_id: str) -> AlphaModelSpec:
 def resolve_target_column_for_spec(model_spec: AlphaModelSpec, *, horizon: int) -> str:
     if model_spec.target_variant == "rank_pct":
         return f"target_rank_h{int(horizon)}"
+    if model_spec.target_variant == "top5_binary":
+        return f"target_top5_h{int(horizon)}"
+    if model_spec.target_variant == "top20_weighted":
+        return f"target_topbucket_h{int(horizon)}"
     return f"target_h{int(horizon)}"
+
+
+def supports_horizon_for_spec(model_spec: AlphaModelSpec, *, horizon: int) -> bool:
+    if model_spec.allowed_horizons is None:
+        return True
+    return int(horizon) in {int(value) for value in model_spec.allowed_horizons}

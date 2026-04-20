@@ -13,7 +13,13 @@ from app.features.feature_store import (
     feature_snapshot_has_required_quality_features,
     load_feature_matrix,
 )
-from app.ml.constants import DEFAULT_ALPHA_MODEL_SPEC, MODEL_DOMAIN, MODEL_VERSION
+from app.ml.constants import (
+    DEFAULT_ALPHA_MODEL_SPEC,
+    MODEL_DOMAIN,
+    MODEL_VERSION,
+    get_alpha_model_spec,
+    supports_horizon_for_spec,
+)
 from app.ml.inference import build_prediction_frame_from_training_run
 from app.ml.registry import load_alpha_model_specs, load_latest_training_run
 from app.selection.engine_v2 import build_selection_engine_v2_rankings
@@ -287,6 +293,12 @@ def materialize_alpha_shadow_candidates(
                     model_spec_id = str(spec["model_spec_id"])
                     spec_count += 1
                     for horizon in horizons:
+                        try:
+                            spec_contract = get_alpha_model_spec(model_spec_id)
+                            if not supports_horizon_for_spec(spec_contract, horizon=int(horizon)):
+                                continue
+                        except KeyError:
+                            pass
                         training_run = load_latest_training_run(
                             connection,
                             horizon=int(horizon),

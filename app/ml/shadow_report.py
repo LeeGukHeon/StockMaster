@@ -67,6 +67,15 @@ def _load_shadow_summary(
     return _frame(
         connection,
         f"""
+        WITH latest_summary_dates AS (
+            SELECT
+                horizon,
+                MAX(summary_date) AS summary_date
+            FROM fact_alpha_shadow_evaluation_summary
+            WHERE summary_date <= ?
+              AND horizon IN ({placeholders})
+            GROUP BY horizon
+        )
         SELECT
             summary_date,
             window_type,
@@ -78,9 +87,11 @@ def _load_shadow_summary(
             mean_point_loss,
             rank_ic
         FROM fact_alpha_shadow_evaluation_summary
-        WHERE summary_date = ?
-          AND horizon IN ({placeholders})
-          AND segment_value IN ('all', 'top10', 'report_candidates')
+        WHERE (horizon, summary_date) IN (
+            SELECT horizon, summary_date
+            FROM latest_summary_dates
+        )
+          AND segment_value IN ('all', 'top5', 'top10', 'report_candidates')
         ORDER BY horizon, window_type, segment_value, model_spec_id
         """,
         [end_selection_date, *horizons],
