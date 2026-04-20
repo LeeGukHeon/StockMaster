@@ -6,7 +6,13 @@ import pandas as pd
 
 from app.evaluation.alpha_shadow import upsert_alpha_shadow_selection_outcomes
 from app.ml.active import freeze_alpha_active_model, rollback_alpha_active_model
-from app.ml.constants import ALPHA_CANDIDATE_MODEL_SPECS, MODEL_DOMAIN, MODEL_SPEC_ID, MODEL_VERSION
+from app.ml.constants import (
+    ALPHA_CANDIDATE_MODEL_SPECS,
+    MODEL_DOMAIN,
+    MODEL_SPEC_ID,
+    MODEL_VERSION,
+    supports_horizon_for_spec,
+)
 from app.ml.promotion import run_alpha_auto_promotion
 from app.ml.registry import (
     load_active_alpha_model,
@@ -38,12 +44,14 @@ SPEC_BASE_RETURNS = {
     "alpha_rolling_120_v1": [0.030, 0.024, 0.028, 0.021, 0.026, 0.019, 0.023],
     "alpha_rolling_250_v1": [-0.012, -0.018, -0.010, -0.022, -0.016, -0.020, -0.014],
     "alpha_rank_rolling_120_v1": [0.027, 0.022, 0.026, 0.019, 0.024, 0.018, 0.021],
+    "alpha_topbucket_h1_rolling_120_v1": [0.018, 0.016, 0.019, 0.015, 0.017, 0.014, 0.016],
 }
 SPEC_BASE_ERRORS = {
     MODEL_SPEC_ID: [0.018, 0.015, 0.017, 0.014, 0.016, 0.015, 0.017],
     "alpha_rolling_120_v1": [0.004, 0.005, 0.003, 0.004, 0.005, 0.004, 0.003],
     "alpha_rolling_250_v1": [0.026, 0.024, 0.028, 0.025, 0.027, 0.026, 0.029],
     "alpha_rank_rolling_120_v1": [0.005, 0.006, 0.004, 0.005, 0.006, 0.005, 0.004],
+    "alpha_topbucket_h1_rolling_120_v1": [0.007, 0.008, 0.006, 0.007, 0.008, 0.007, 0.006],
 }
 SYMBOL_RETURN_ADJUSTMENTS = [0.006, 0.002, -0.002, -0.006]
 SYMBOL_ERROR_ADJUSTMENTS = [0.0015, -0.0010, 0.0005, -0.0005]
@@ -71,6 +79,8 @@ def _seed_alpha_model_registry(settings) -> None:
     training_rows: list[dict[str, object]] = []
     for spec in ALPHA_CANDIDATE_MODEL_SPECS:
         for horizon in (1, 5):
+            if not supports_horizon_for_spec(spec, horizon=horizon):
+                continue
             training_rows.append(
                 {
                     "training_run_id": f"seed-{spec.model_spec_id}-h{int(horizon)}",
@@ -119,6 +129,8 @@ def _seed_shadow_outcomes(settings) -> None:
     rows: list[dict[str, object]] = []
     for horizon in (1, 5):
         for spec in ALPHA_CANDIDATE_MODEL_SPECS:
+            if not supports_horizon_for_spec(spec, horizon=horizon):
+                continue
             spec_id = spec.model_spec_id
             for date_index, selection_date in enumerate(SELECTION_DATES):
                 for symbol_index, symbol in enumerate(SYMBOLS):
@@ -176,6 +188,13 @@ def _seed_shadow_prediction_and_ranking(
     rankings: list[dict[str, object]] = []
     training_prefix = training_run_prefix or f"seed-{model_spec_id}"
     for horizon in (1, 5):
+        spec = next(
+            candidate
+            for candidate in ALPHA_CANDIDATE_MODEL_SPECS
+            if candidate.model_spec_id == model_spec_id
+        )
+        if not supports_horizon_for_spec(spec, horizon=horizon):
+            continue
         training_run_id = f"{training_prefix}-h{int(horizon)}"
         for selection_date in SELECTION_DATES:
             for symbol_index, symbol in enumerate(SYMBOLS):

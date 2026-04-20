@@ -7,7 +7,13 @@ from pathlib import Path
 
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
-from app.ml.constants import MODEL_SPEC_ID, MODEL_VERSION, PREDICTION_VERSION
+from app.ml.constants import (
+    MODEL_SPEC_ID,
+    MODEL_VERSION,
+    PREDICTION_VERSION,
+    get_alpha_model_spec,
+    resolve_validation_primary_metric_for_spec,
+)
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -103,6 +109,33 @@ def _write_validation_artifacts(
     return [str(json_path), str(markdown_path)]
 
 
+def _resolve_required_validation_metrics(
+    model_spec_id: str | None,
+    *,
+    horizon: int,
+) -> tuple[str, ...]:
+    if model_spec_id:
+        try:
+            model_spec = get_alpha_model_spec(str(model_spec_id))
+        except KeyError:
+            model_spec = None
+        if model_spec is not None:
+            return (
+                "mae",
+                "corr",
+                "rank_ic",
+                resolve_validation_primary_metric_for_spec(model_spec, horizon=horizon),
+                "top20_mean_excess_return",
+            )
+    return (
+        "mae",
+        "corr",
+        "rank_ic",
+        "top10_mean_excess_return",
+        "top20_mean_excess_return",
+    )
+
+
 def validate_alpha_model_v1(
     settings: Settings,
     *,
@@ -132,16 +165,6 @@ def validate_alpha_model_v1(
             try:
                 horizon_placeholders = ",".join("?" for _ in horizons)
                 horizon_array_sql = ",".join(str(int(value)) for value in horizons)
-                required_validation_metrics = (
-                    "mae",
-                    "corr",
-                    "rank_ic",
-                    "top10_mean_excess_return",
-                    "top20_mean_excess_return",
-                )
-                metric_name_array_sql = ",".join(
-                    f"'{metric_name}'" for metric_name in required_validation_metrics
-                )
                 checks: list[dict[str, object]] = []
                 reference_runs_sql = _validation_reference_runs_sql(horizon_array_sql)
                 validation_reference_params = [
@@ -152,15 +175,23 @@ def validate_alpha_model_v1(
                     MODEL_SPEC_ID,
                     as_of_date,
                 ]
-                missing_training_runs = connection.execute(
+                reference_run_rows = connection.execute(
                     reference_runs_sql
                     + """
-                    SELECT COUNT(*)
+                    SELECT
+                        reference_runs.horizon,
+                        reference_runs.training_run_id,
+                        training_run.model_spec_id
                     FROM reference_runs
-                    WHERE training_run_id IS NULL
+                    LEFT JOIN fact_model_training_run AS training_run
+                      ON reference_runs.training_run_id = training_run.training_run_id
+                    ORDER BY reference_runs.horizon
                     """,
                     validation_reference_params,
-                ).fetchone()[0]
+                ).fetchall()
+                missing_training_runs = sum(
+                    1 for _, training_run_id, _ in reference_run_rows if training_run_id is None
+                )
                 checks.append(
                     {
                         "check_name": "training_run_present",
@@ -173,29 +204,52 @@ def validate_alpha_model_v1(
                     }
                 )
 
-                missing_validation_metrics = connection.execute(
-                    reference_runs_sql
-                    + f""",
-                    required_metrics AS (
-                        SELECT UNNEST([{metric_name_array_sql}]) AS metric_name
-                    )
-                    SELECT COUNT(*)
-                    FROM reference_runs
-                    CROSS JOIN required_metrics
-                    LEFT JOIN (
-                        SELECT DISTINCT training_run_id, metric_name
+                training_run_ids = [
+                    str(training_run_id)
+                    for _, training_run_id, _ in reference_run_rows
+                    if training_run_id is not None
+                ]
+                metric_rows: list[tuple[str, str, object]] = []
+                if training_run_ids:
+                    metric_placeholders = ",".join("?" for _ in training_run_ids)
+                    metric_rows = connection.execute(
+                        f"""
+                        SELECT training_run_id, metric_name, metric_value
                         FROM fact_model_metric_summary
                         WHERE model_version = ?
                           AND member_name = 'ensemble'
                           AND split_name = 'validation'
-                    ) AS existing
-                      ON reference_runs.training_run_id = existing.training_run_id
-                     AND required_metrics.metric_name = existing.metric_name
-                    WHERE reference_runs.training_run_id IS NULL
-                       OR existing.metric_name IS NULL
-                    """,
-                    [*validation_reference_params, MODEL_VERSION],
-                ).fetchone()[0]
+                          AND training_run_id IN ({metric_placeholders})
+                        """,
+                        [MODEL_VERSION, *training_run_ids],
+                    ).fetchall()
+                metric_lookup = {
+                    (str(training_run_id), str(metric_name)): metric_value
+                    for training_run_id, metric_name, metric_value in metric_rows
+                }
+                missing_validation_metrics = 0
+                horizon_metric_map: dict[int, tuple[str, ...]] = {}
+                training_run_lookup: dict[int, str | None] = {}
+                model_spec_lookup: dict[int, str | None] = {}
+                for horizon, training_run_id, model_spec_id in reference_run_rows:
+                    horizon_int = int(horizon)
+                    horizon_metric_map[horizon_int] = _resolve_required_validation_metrics(
+                        None if model_spec_id in (None, "") else str(model_spec_id),
+                        horizon=horizon_int,
+                    )
+                    training_run_lookup[horizon_int] = (
+                        None if training_run_id in (None, "") else str(training_run_id)
+                    )
+                    model_spec_lookup[horizon_int] = (
+                        None if model_spec_id in (None, "") else str(model_spec_id)
+                    )
+                    if training_run_id is None:
+                        missing_validation_metrics += len(horizon_metric_map[horizon_int])
+                        continue
+                    missing_validation_metrics += sum(
+                        (str(training_run_id), metric_name) not in metric_lookup
+                        for metric_name in horizon_metric_map[horizon_int]
+                    )
                 checks.append(
                     {
                         "check_name": "validation_metrics_present",
@@ -209,41 +263,32 @@ def validate_alpha_model_v1(
                     }
                 )
 
-                latest_metric_rows = connection.execute(
-                    reference_runs_sql
-                    + """
-                    SELECT
-                        reference_runs.horizon,
-                        metric.metric_name,
-                        metric.metric_value
-                    FROM reference_runs
-                    LEFT JOIN fact_model_metric_summary AS metric
-                      ON reference_runs.training_run_id = metric.training_run_id
-                     AND metric.model_version = ?
-                     AND metric.member_name = 'ensemble'
-                     AND metric.split_name = 'validation'
-                     AND metric.metric_name IN (
-                        'top10_mean_excess_return',
-                        'top20_mean_excess_return',
-                        'rank_ic'
-                     )
-                    ORDER BY reference_runs.horizon, metric.metric_name
-                    """,
-                    [*validation_reference_params, MODEL_VERSION],
-                ).fetchall()
-                metric_lookup = {
-                    (int(horizon), str(metric_name)): None if metric_value is None else float(metric_value)
-                    for horizon, metric_name, metric_value in latest_metric_rows
-                    if metric_name is not None
-                }
                 for horizon in horizons:
                     horizon_int = int(horizon)
-                    for metric_name in (
-                        "top10_mean_excess_return",
-                        "top20_mean_excess_return",
-                        "rank_ic",
-                    ):
-                        metric_value = metric_lookup.get((horizon_int, metric_name))
+                    training_run_id = training_run_lookup.get(horizon_int)
+                    metric_names = horizon_metric_map.get(
+                        horizon_int,
+                        _resolve_required_validation_metrics(None, horizon=horizon_int),
+                    )
+                    display_metric_names = tuple(
+                        dict.fromkeys(
+                            metric_name
+                            for metric_name in (
+                                metric_names[-2] if len(metric_names) >= 2 else "top10_mean_excess_return",
+                                "top20_mean_excess_return",
+                                "rank_ic",
+                            )
+                        )
+                    )
+                    for metric_name in display_metric_names:
+                        raw_metric_value = (
+                            None
+                            if training_run_id is None
+                            else metric_lookup.get((training_run_id, metric_name))
+                        )
+                        metric_value = (
+                            None if raw_metric_value is None else float(raw_metric_value)
+                        )
                         checks.append(
                             {
                                 "check_name": f"{metric_name}_h{horizon_int}",
@@ -251,7 +296,9 @@ def validate_alpha_model_v1(
                                 "value": "" if metric_value is None else round(metric_value, 6),
                                 "threshold": "present",
                                 "detail": (
-                                    "Latest ensemble validation metric should be available for this horizon."
+                                    "Latest ensemble validation metric should be available for "
+                                    f"horizon={horizon_int} model_spec_id="
+                                    f"{model_spec_lookup.get(horizon_int) or MODEL_SPEC_ID}."
                                 ),
                             }
                         )

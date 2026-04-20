@@ -19,6 +19,8 @@ from app.ml.constants import (
     MODEL_SPEC_ID,
     MODEL_VERSION,
     PROMOTION_LOOKBACK_SELECTION_DATES,
+    get_alpha_model_spec,
+    resolve_promotion_primary_loss_for_spec,
 )
 from app.ml.registry import (
     load_active_alpha_model,
@@ -38,6 +40,7 @@ MODEL_SPEC_LABELS: dict[str, str] = {
     "alpha_rolling_120_v1": "rolling 120d",
     "alpha_rolling_250_v1": "rolling 250d",
     "alpha_rank_rolling_120_v1": "rank rolling 120d",
+    "alpha_topbucket_h1_rolling_120_v1": "topbucket h1 rolling 120d",
     "alpha_recursive_rolling_combo": "recursive+rolling combo",
 }
 DECISION_LABELS: dict[str, str] = {
@@ -114,13 +117,36 @@ def _loss_to_rank_ic(loss_value: object) -> float | None:
     return -value
 
 
+def _resolve_primary_loss_name_for_model(
+    model_spec_id: str | None,
+    *,
+    horizon: int,
+) -> str:
+    if model_spec_id in (None, ""):
+        return PRIMARY_LOSS_NAME
+    try:
+        model_spec = get_alpha_model_spec(str(model_spec_id))
+    except KeyError:
+        return PRIMARY_LOSS_NAME
+    return resolve_promotion_primary_loss_for_spec(model_spec, horizon=horizon)
+
+
+def _resolve_loss_names_for_model(
+    model_spec_id: str | None,
+    *,
+    horizon: int,
+) -> tuple[str, ...]:
+    primary_loss_name = _resolve_primary_loss_name_for_model(model_spec_id, horizon=horizon)
+    return (primary_loss_name, *AUDIT_LOSS_NAMES)
+
+
 def _load_latest_promotion_rows(
     connection,
     *,
     as_of_date: date | None = None,
 ) -> pd.DataFrame:
-    where_clause = "WHERE loss_name = ?"
-    params: list[object] = [PRIMARY_LOSS_NAME]
+    where_clause = "WHERE 1 = 1"
+    params: list[object] = []
     if as_of_date is not None:
         where_clause += " AND promotion_date <= ?"
         params.append(as_of_date)
@@ -190,10 +216,12 @@ def _load_active_alpha_registry_frame(
 
 def _best_comparison_spec_id(
     *,
+    horizon: int,
     incumbent_model_spec_id: str,
     active_model_spec_id: str,
     chosen_model_spec_id: str | None,
     mean_losses: dict[str, object],
+    primary_loss_name_by_model_spec: dict[str, str] | None = None,
 ) -> str | None:
     if (
         chosen_model_spec_id is not None
@@ -208,7 +236,11 @@ def _best_comparison_spec_id(
     for model_spec_id, loss_payload in mean_losses.items():
         if str(model_spec_id) == active_model_spec_id or not isinstance(loss_payload, dict):
             continue
-        loss_value = _float_or_none(loss_payload.get(PRIMARY_LOSS_NAME))
+        primary_loss_name = (
+            (primary_loss_name_by_model_spec or {}).get(str(model_spec_id))
+            or _resolve_primary_loss_name_for_model(str(model_spec_id), horizon=horizon)
+        )
+        loss_value = _float_or_none(loss_payload.get(primary_loss_name))
         if loss_value is None:
             continue
         candidates.append((loss_value, str(model_spec_id)))
@@ -244,6 +276,15 @@ def load_alpha_promotion_summary(
         parsed_rows: list[dict[str, object]] = []
         for row in horizon_group.itertuples(index=False):
             detail_payload = _safe_json_load(row.detail_json)
+            primary_loss_name = str(
+                detail_payload.get("primary_loss_name")
+                or _resolve_primary_loss_name_for_model(
+                    str(row.challenger_model_spec_id),
+                    horizon=int(horizon),
+                )
+            )
+            if str(row.loss_name) != primary_loss_name:
+                continue
             parsed_rows.append(
                 {
                     "row": row,
@@ -252,8 +293,16 @@ def load_alpha_promotion_summary(
                     "chosen_model_spec_id": detail_payload.get("chosen_model_spec_id"),
                     "decision_reason": detail_payload.get("decision_reason"),
                     "superior_set": detail_payload.get("superior_set", []),
+                    "primary_loss_name": primary_loss_name,
+                    "primary_loss_name_by_model_spec": detail_payload.get(
+                        "primary_loss_name_by_model_spec",
+                        {},
+                    ),
                 }
             )
+
+        if not parsed_rows:
+            continue
 
         first = parsed_rows[0]
         incumbent_model_spec_id = str(first["row"].incumbent_model_spec_id)
@@ -270,11 +319,18 @@ def load_alpha_promotion_summary(
         mean_losses = (
             first["mean_losses"] if isinstance(first["mean_losses"], dict) else {}
         )
+        primary_loss_name_by_model_spec = (
+            first["primary_loss_name_by_model_spec"]
+            if isinstance(first["primary_loss_name_by_model_spec"], dict)
+            else {}
+        )
         comparison_model_spec_id = _best_comparison_spec_id(
+            horizon=int(horizon),
             incumbent_model_spec_id=incumbent_model_spec_id,
             active_model_spec_id=active_model_spec_id,
             chosen_model_spec_id=chosen_model_spec_id,
             mean_losses=mean_losses,
+            primary_loss_name_by_model_spec=primary_loss_name_by_model_spec,
         )
         representative = next(
             (
@@ -287,6 +343,17 @@ def load_alpha_promotion_summary(
         )
         active_losses = mean_losses.get(active_model_spec_id, {})
         comparison_losses = mean_losses.get(comparison_model_spec_id, {})
+        active_primary_loss_name = (
+            primary_loss_name_by_model_spec.get(active_model_spec_id)
+            or _resolve_primary_loss_name_for_model(active_model_spec_id, horizon=int(horizon))
+        )
+        comparison_primary_loss_name = (
+            primary_loss_name_by_model_spec.get(str(comparison_model_spec_id))
+            or _resolve_primary_loss_name_for_model(
+                str(comparison_model_spec_id) if comparison_model_spec_id is not None else None,
+                horizon=int(horizon),
+            )
+        )
         if (
             comparison_model_spec_id == incumbent_model_spec_id
             and active_model_spec_id != incumbent_model_spec_id
@@ -301,6 +368,14 @@ def load_alpha_promotion_summary(
             format_alpha_model_spec_id(str(model_spec_id))
             for model_spec_id in first["superior_set"]
         ]
+        active_primary_return = _loss_to_return(
+            active_losses.get(active_primary_loss_name) if isinstance(active_losses, dict) else None
+        )
+        comparison_primary_return = _loss_to_return(
+            comparison_losses.get(comparison_primary_loss_name)
+            if isinstance(comparison_losses, dict)
+            else None
+        )
         active_top10 = _loss_to_return(
             active_losses.get(PRIMARY_LOSS_NAME) if isinstance(active_losses, dict) else None
         )
@@ -332,12 +407,20 @@ def load_alpha_promotion_summary(
                 "sample_count": int(representative["row"].sample_count or 0),
                 "p_value": _float_or_none(representative["row"].p_value),
                 "superior_set_label": ", ".join(superior_set) if superior_set else "-",
+                "active_primary_loss_name": active_primary_loss_name,
+                "comparison_primary_loss_name": comparison_primary_loss_name,
+                "active_primary_mean_excess_return": active_primary_return,
+                "comparison_primary_mean_excess_return": comparison_primary_return,
                 "active_top10_mean_excess_return": active_top10,
                 "comparison_top10_mean_excess_return": comparison_top10,
                 "promotion_gap": (
                     None
-                    if active_top10 is None or comparison_top10 is None
-                    else comparison_top10 - active_top10
+                    if (
+                        active_primary_return is None
+                        or comparison_primary_return is None
+                        or active_primary_loss_name != comparison_primary_loss_name
+                    )
+                    else comparison_primary_return - active_primary_return
                 ),
                 "active_top20_mean_excess_return": _loss_to_return(
                     active_losses.get("loss_top20") if isinstance(active_losses, dict) else None
@@ -791,6 +874,7 @@ def _load_promotion_loss_summary(
             ["final_selection_value", "symbol"],
             ascending=[False, True],
         )
+        top5 = ordered.head(5)
         top10 = ordered.head(10)
         top20 = ordered.head(20)
         rank_ic = pd.to_numeric(
@@ -801,6 +885,9 @@ def _load_promotion_loss_summary(
             {
                 "selection_date": pd.Timestamp(selection_date).date(),
                 "model_spec_id": str(model_spec_id),
+                "loss_top5": -float(
+                    pd.to_numeric(top5["realized_excess_return"], errors="coerce").mean()
+                ),
                 "loss_top10": -float(
                     pd.to_numeric(top10["realized_excess_return"], errors="coerce").mean()
                 ),
@@ -894,6 +981,13 @@ def run_alpha_auto_promotion(
                         horizon=int(horizon),
                         incumbent_model_spec_id=incumbent_model_spec_id,
                     )
+                    primary_loss_name_by_model_spec = {
+                        model_spec_id: _resolve_primary_loss_name_for_model(
+                            model_spec_id,
+                            horizon=int(horizon),
+                        )
+                        for model_spec_id in candidate_model_spec_ids
+                    }
                     loss_summary = _load_promotion_loss_summary(
                         connection,
                         as_of_date=as_of_date,
@@ -912,13 +1006,30 @@ def run_alpha_auto_promotion(
                         mcs_payload: dict[str, object] = {
                             "superior_set": superior_set,
                             "history": [],
+                            "primary_loss_name_by_model_spec": primary_loss_name_by_model_spec,
                         }
                     else:
+                        loss_summary = loss_summary.copy()
+                        loss_summary["primary_loss_name"] = loss_summary["model_spec_id"].map(
+                            primary_loss_name_by_model_spec
+                        )
+                        loss_summary["primary_loss"] = loss_summary.apply(
+                            lambda row: row[
+                                str(
+                                    row["primary_loss_name"]
+                                    or primary_loss_name_by_model_spec.get(
+                                        str(row["model_spec_id"]),
+                                        PRIMARY_LOSS_NAME,
+                                    )
+                                )
+                            ],
+                            axis=1,
+                        )
                         primary_loss_frame = (
                             loss_summary.pivot(
                                 index="selection_date",
                                 columns="model_spec_id",
-                                values=PRIMARY_LOSS_NAME,
+                                values="primary_loss",
                             )
                             .reindex(columns=candidate_model_spec_ids)
                             .dropna(axis=0, how="any")
@@ -936,6 +1047,7 @@ def run_alpha_auto_promotion(
                             mcs_payload = {
                                 "superior_set": superior_set,
                                 "history": [],
+                                "primary_loss_name_by_model_spec": primary_loss_name_by_model_spec,
                             }
                         else:
                             primary_loss_frame = primary_loss_frame.tail(
@@ -960,19 +1072,37 @@ def run_alpha_auto_promotion(
                             window_end = max(aligned_dates)
                             sample_count = int(len(aligned_dates))
                             primary_p_value = float(mcs_payload["p_value"])
-                            mean_losses = (
-                                aligned_summary.groupby("model_spec_id", sort=True)
-                                .agg(
-                                    {
-                                        PRIMARY_LOSS_NAME: "mean",
-                                        "loss_top20": "mean",
-                                        "loss_point": "mean",
-                                        "loss_rank": "mean",
-                                    }
+                            mean_losses: dict[str, dict[str, float | None]] = {}
+                            for model_spec_id, model_group in aligned_summary.groupby(
+                                "model_spec_id",
+                                sort=True,
+                            ):
+                                model_spec_id_str = str(model_spec_id)
+                                primary_loss_name = primary_loss_name_by_model_spec.get(
+                                    model_spec_id_str,
+                                    PRIMARY_LOSS_NAME,
                                 )
-                                .to_dict(orient="index")
-                            )
+                                mean_losses[model_spec_id_str] = {
+                                    primary_loss_name: _float_or_none(
+                                        model_group["primary_loss"].mean()
+                                    ),
+                                    PRIMARY_LOSS_NAME: _float_or_none(
+                                        model_group[PRIMARY_LOSS_NAME].mean()
+                                    ),
+                                    "loss_top20": _float_or_none(
+                                        model_group["loss_top20"].mean()
+                                    ),
+                                    "loss_point": _float_or_none(
+                                        model_group["loss_point"].mean()
+                                    ),
+                                    "loss_rank": _float_or_none(
+                                        model_group["loss_rank"].mean()
+                                    ),
+                                }
                             mcs_payload["mean_losses"] = mean_losses
+                            mcs_payload["primary_loss_name_by_model_spec"] = (
+                                primary_loss_name_by_model_spec
+                            )
                             mcs_payload["window_start"] = window_start.isoformat()
                             mcs_payload["window_end"] = window_end.isoformat()
                             mcs_payload["sample_count"] = sample_count
@@ -1028,6 +1158,10 @@ def run_alpha_auto_promotion(
 
                     challenger_ids = candidate_model_spec_ids or [incumbent_model_spec_id]
                     for challenger_model_spec_id in challenger_ids:
+                        primary_loss_name = _resolve_primary_loss_name_for_model(
+                            challenger_model_spec_id,
+                            horizon=int(horizon),
+                        )
                         challenger_losses = (
                             mcs_payload.get("mean_losses", {}).get(challenger_model_spec_id, {})
                             if isinstance(mcs_payload, dict)
@@ -1038,11 +1172,21 @@ def run_alpha_auto_promotion(
                             if isinstance(mcs_payload, dict)
                             else {}
                         )
-                        for loss_name in ALL_LOSS_NAMES:
+                        for loss_name in _resolve_loss_names_for_model(
+                            challenger_model_spec_id,
+                            horizon=int(horizon),
+                        ):
                             detail_payload = {
                                 "superior_set": superior_set,
                                 "chosen_model_spec_id": chosen_model_spec_id,
                                 "decision_reason": decision_reason,
+                                "primary_loss_name": primary_loss_name,
+                                "primary_loss_name_by_model_spec": mcs_payload.get(
+                                    "primary_loss_name_by_model_spec",
+                                    {},
+                                )
+                                if isinstance(mcs_payload, dict)
+                                else {},
                                 "incumbent_mean_losses": incumbent_losses,
                                 "challenger_mean_losses": challenger_losses,
                                 "mcs_history": mcs_payload.get("history", [])
@@ -1069,7 +1213,7 @@ def run_alpha_auto_promotion(
                                     "incumbent_mcs_member_flag": incumbent_model_spec_id
                                     in superior_set,
                                     "p_value": primary_p_value
-                                    if loss_name == PRIMARY_LOSS_NAME
+                                    if loss_name == primary_loss_name
                                     else None,
                                     "decision": decision,
                                     "detail_json": json.dumps(

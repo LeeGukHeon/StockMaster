@@ -54,7 +54,7 @@ def test_target_column_resolution_supports_split_h1_h5_specs() -> None:
     )
     assert (
         resolve_target_column_for_spec(get_alpha_model_spec("alpha_topbucket_h1_rolling_120_v1"), horizon=1)
-        == "target_topbucket_h1"
+        == "target_top5_h1"
     )
 
 

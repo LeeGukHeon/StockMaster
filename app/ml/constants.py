@@ -13,6 +13,9 @@ class AlphaModelSpec:
     feature_groups: tuple[str, ...] | None = None
     member_names: tuple[str, ...] | None = None
     target_variant: str = "excess_return"
+    training_target_variant: str | None = None
+    validation_primary_metric_name: str | None = None
+    promotion_primary_loss_name: str | None = None
     allowed_horizons: tuple[int, ...] | None = None
 
 
@@ -90,6 +93,9 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         ),
         member_names=("hist_gbm", "extra_trees"),
         target_variant="top20_weighted",
+        training_target_variant="top5_binary",
+        validation_primary_metric_name="top5_mean_excess_return",
+        promotion_primary_loss_name="loss_top5",
         allowed_horizons=(1,),
     ),
 )
@@ -143,14 +149,48 @@ def get_alpha_model_spec(model_spec_id: str) -> AlphaModelSpec:
     raise KeyError(f"Unknown alpha model spec: {model_spec_id}")
 
 
+def resolve_training_target_variant_for_spec(model_spec: AlphaModelSpec) -> str:
+    return str(model_spec.training_target_variant or model_spec.target_variant)
+
+
 def resolve_target_column_for_spec(model_spec: AlphaModelSpec, *, horizon: int) -> str:
-    if model_spec.target_variant == "rank_pct":
+    target_variant = resolve_training_target_variant_for_spec(model_spec)
+    if target_variant == "rank_pct":
         return f"target_rank_h{int(horizon)}"
-    if model_spec.target_variant == "top5_binary":
+    if target_variant == "top5_binary":
         return f"target_top5_h{int(horizon)}"
-    if model_spec.target_variant == "top20_weighted":
+    if target_variant == "top20_weighted":
         return f"target_topbucket_h{int(horizon)}"
     return f"target_h{int(horizon)}"
+
+
+def resolve_validation_primary_metric_for_spec(
+    model_spec: AlphaModelSpec,
+    *,
+    horizon: int,
+) -> str:
+    if model_spec.validation_primary_metric_name:
+        return str(model_spec.validation_primary_metric_name)
+    training_target_variant = resolve_training_target_variant_for_spec(model_spec)
+    if training_target_variant == "top5_binary":
+        return "top5_mean_excess_return"
+    return "top10_mean_excess_return"
+
+
+def resolve_promotion_primary_loss_for_spec(
+    model_spec: AlphaModelSpec,
+    *,
+    horizon: int,
+) -> str:
+    if model_spec.promotion_primary_loss_name:
+        return str(model_spec.promotion_primary_loss_name)
+    primary_metric_name = resolve_validation_primary_metric_for_spec(
+        model_spec,
+        horizon=horizon,
+    )
+    if primary_metric_name == "top5_mean_excess_return":
+        return "loss_top5"
+    return "loss_top10"
 
 
 def supports_horizon_for_spec(model_spec: AlphaModelSpec, *, horizon: int) -> bool:

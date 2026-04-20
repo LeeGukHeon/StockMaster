@@ -34,6 +34,7 @@ from app.ml.constants import (
     resolve_feature_columns_for_spec,
     resolve_member_names_for_spec,
     resolve_target_column_for_spec,
+    resolve_training_target_variant_for_spec,
     supports_horizon_for_spec,
 )
 from app.ml.dataset import (
@@ -356,7 +357,11 @@ def _normalise_weights(
     if not metrics:
         return {}
 
-    if model_spec is not None and model_spec.target_variant == "top20_weighted":
+    training_target_variant = (
+        resolve_training_target_variant_for_spec(model_spec) if model_spec is not None else None
+    )
+
+    if training_target_variant == "top20_weighted":
         metric_weights = {
             "top10_mean_excess_return": 6.0,
             "top20_mean_excess_return": 5.0,
@@ -365,7 +370,7 @@ def _normalise_weights(
             "corr": 0.5,
             "mae": 0.5,
         }
-    elif model_spec is not None and model_spec.target_variant == "top5_binary":
+    elif training_target_variant == "top5_binary":
         metric_weights = {
             "top5_mean_excess_return": 6.0,
             "top10_mean_excess_return": 4.0,
@@ -521,6 +526,9 @@ def _model_spec_registry_row(model_spec: AlphaModelSpec) -> dict[str, object]:
                 "feature_groups": list(model_spec.feature_groups or ()),
                 "feature_columns": feature_columns,
                 "target_variant": model_spec.target_variant,
+                "training_target_variant": resolve_training_target_variant_for_spec(model_spec),
+                "validation_primary_metric_name": model_spec.validation_primary_metric_name,
+                "promotion_primary_loss_name": model_spec.promotion_primary_loss_name,
                 "allowed_horizons": list(model_spec.allowed_horizons or ()),
             },
             ensure_ascii=False,
@@ -576,6 +584,7 @@ def _train_single_horizon(
                     "members": spec_member_names,
                     "feature_groups": list(model_spec.feature_groups or ()),
                     "target_variant": model_spec.target_variant,
+                    "training_target_variant": resolve_training_target_variant_for_spec(model_spec),
                 },
                 ensure_ascii=False,
             ),
@@ -759,6 +768,10 @@ def _train_single_horizon(
     artifact_payload["model_spec_id"] = model_spec.model_spec_id
     artifact_payload["estimation_scheme"] = model_spec.estimation_scheme
     artifact_payload["rolling_window_days"] = model_spec.rolling_window_days
+    artifact_payload["target_variant"] = model_spec.target_variant
+    artifact_payload["training_target_variant"] = resolve_training_target_variant_for_spec(
+        model_spec
+    )
 
     artifact_path = (
         artifact_root
@@ -790,6 +803,7 @@ def _train_single_horizon(
                 "members": list(model_builders.keys()),
                 "feature_groups": list(model_spec.feature_groups or ()),
                 "target_variant": model_spec.target_variant,
+                "training_target_variant": resolve_training_target_variant_for_spec(model_spec),
             },
             ensure_ascii=False,
             sort_keys=True,
