@@ -250,6 +250,38 @@ def _correlation_or_none(left: pd.Series, right: pd.Series) -> float | None:
     return float(value)
 
 
+def _resolve_report_candidate_limit(model_spec_id: object, *, horizon: int) -> int | None:
+    if model_spec_id in (None, ""):
+        return None
+    try:
+        target_variant = get_alpha_model_spec(str(model_spec_id)).target_variant
+    except KeyError:
+        return None
+    if target_variant == "top5_binary":
+        return 5
+    if str(model_spec_id) == "alpha_topbucket_h1_rolling_120_v1" and int(horizon) == 1:
+        return 5
+    if target_variant == "top20_weighted":
+        return 10
+    return None
+
+
+def _extract_report_candidate_frame(
+    frame: pd.DataFrame,
+    *,
+    horizon: int,
+    model_spec_id: str,
+) -> pd.DataFrame:
+    ordered = frame.sort_values(
+        ["selection_date", "final_selection_value", "symbol"],
+        ascending=[True, False, True],
+    )
+    candidate_limit = _resolve_report_candidate_limit(model_spec_id, horizon=horizon)
+    if candidate_limit is not None:
+        return ordered.groupby("selection_date", sort=True, group_keys=False).head(candidate_limit).copy()
+    return ordered.loc[ordered["report_candidate_flag"].fillna(False).astype(bool)].copy()
+
+
 def _load_shadow_candidate_rows(
     connection,
     *,
@@ -640,10 +672,20 @@ def materialize_alpha_shadow_selection_outcomes(
                 raise
 
 
-def _segment_frames(frame: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
+def _segment_frames(
+    frame: pd.DataFrame,
+    *,
+    horizon: int,
+    model_spec_id: str,
+) -> list[tuple[str, pd.DataFrame]]:
     ordered = frame.sort_values(
         ["selection_date", "final_selection_value", "symbol"],
         ascending=[True, False, True],
+    )
+    report_candidates = _extract_report_candidate_frame(
+        ordered,
+        horizon=horizon,
+        model_spec_id=model_spec_id,
     )
     return [
         ("all", ordered.copy()),
@@ -661,7 +703,7 @@ def _segment_frames(frame: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
         ),
         (
             "report_candidates",
-            ordered.loc[ordered["report_candidate_flag"].fillna(False).astype(bool)].copy(),
+            report_candidates,
         ),
     ]
 
@@ -836,7 +878,11 @@ def materialize_alpha_shadow_evaluation_summary(
                     sort=True,
                 ):
                     subset = subset.copy()
-                    for segment_value, segment_frame in _segment_frames(subset):
+                    for segment_value, segment_frame in _segment_frames(
+                        subset,
+                        horizon=int(horizon),
+                        model_spec_id=str(model_spec_id),
+                    ):
                         summary_rows.append(
                             _build_summary_row(
                                 segment_frame,
@@ -869,7 +915,11 @@ def materialize_alpha_shadow_evaluation_summary(
                         ].copy()
                         window_start = min(trailing_dates)
                         window_end = max(trailing_dates)
-                        for segment_value, segment_frame in _segment_frames(window_frame):
+                        for segment_value, segment_frame in _segment_frames(
+                            window_frame,
+                            horizon=int(horizon),
+                            model_spec_id=str(model_spec_id),
+                        ):
                             summary_rows.append(
                                 _build_summary_row(
                                     segment_frame,

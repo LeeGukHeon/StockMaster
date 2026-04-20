@@ -70,29 +70,31 @@ def _load_shadow_summary(
         WITH latest_summary_dates AS (
             SELECT
                 horizon,
+                model_spec_id,
                 MAX(summary_date) AS summary_date
             FROM fact_alpha_shadow_evaluation_summary
             WHERE summary_date <= ?
               AND horizon IN ({placeholders})
-            GROUP BY horizon
+            GROUP BY horizon, model_spec_id
         )
         SELECT
-            summary_date,
-            window_type,
-            horizon,
-            model_spec_id,
-            segment_value,
-            count_evaluated,
-            mean_realized_excess_return,
-            mean_point_loss,
-            rank_ic
-        FROM fact_alpha_shadow_evaluation_summary
-        WHERE (horizon, summary_date) IN (
-            SELECT horizon, summary_date
-            FROM latest_summary_dates
-        )
+            summary.summary_date,
+            summary.window_type,
+            summary.horizon,
+            summary.model_spec_id,
+            summary.segment_value,
+            summary.count_evaluated,
+            summary.mean_realized_excess_return,
+            summary.mean_point_loss,
+            summary.rank_ic
+        FROM fact_alpha_shadow_evaluation_summary AS summary
+        JOIN latest_summary_dates AS latest
+          ON summary.horizon = latest.horizon
+         AND summary.model_spec_id = latest.model_spec_id
+         AND summary.summary_date = latest.summary_date
+        WHERE 1 = 1
           AND segment_value IN ('all', 'top5', 'top10', 'report_candidates')
-        ORDER BY horizon, window_type, segment_value, model_spec_id
+        ORDER BY summary.horizon, summary.window_type, summary.segment_value, summary.model_spec_id
         """,
         [end_selection_date, *horizons],
     )

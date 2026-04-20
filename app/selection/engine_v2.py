@@ -173,6 +173,61 @@ SELECTION_V2_RANKING_OUTPUT_COLUMNS: tuple[str, ...] = (
 )
 
 
+def _resolve_model_spec_context(frame: pd.DataFrame) -> tuple[str | None, str | None]:
+    model_spec_ids = {
+        str(value)
+        for value in pd.Series(frame.get("model_spec_id")).dropna().astype(str).tolist()
+    }
+    if len(model_spec_ids) != 1:
+        return None, None
+    model_spec_id = next(iter(model_spec_ids))
+    try:
+        target_variant = get_alpha_model_spec(model_spec_id).target_variant
+    except KeyError:
+        target_variant = None
+    return model_spec_id, target_variant
+
+
+def _resolve_report_candidate_limit(
+    *,
+    model_spec_id: str | None,
+    target_variant: str | None,
+    horizon: int,
+) -> int | None:
+    if target_variant == "top5_binary":
+        return 5
+    if model_spec_id == "alpha_topbucket_h1_rolling_120_v1" and int(horizon) == 1:
+        return 5
+    if target_variant == "top20_weighted":
+        return 10
+    return None
+
+
+def _select_report_candidate_mask(
+    scored: pd.DataFrame,
+    *,
+    model_spec_id: str | None,
+    target_variant: str | None,
+    horizon: int,
+) -> pd.Series:
+    candidate_limit = _resolve_report_candidate_limit(
+        model_spec_id=model_spec_id,
+        target_variant=target_variant,
+        horizon=horizon,
+    )
+    if candidate_limit is None:
+        eligible_mask = scored["eligible_flag"].fillna(False).astype(bool)
+        return eligible_mask & scored["final_selection_rank_pct"].fillna(0.0).ge(0.85)
+    candidate_mask = pd.Series(False, index=scored.index)
+    top_candidate_indices = (
+        scored.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
+        .head(candidate_limit)
+        .index
+    )
+    candidate_mask.loc[top_candidate_indices] = True
+    return candidate_mask
+
+
 def _augment_reason_tags(row: pd.Series, tags: list[str]) -> list[str]:
     values = []
     if row.get("relative_alpha_score", 0) >= 60:
@@ -305,21 +360,9 @@ def _score_selection_engine_v2_frame(
     scored["fallback_reason"] = scored["fallback_reason"].fillna("")
 
     weights = dict(SELECTION_V2_WEIGHTS[int(horizon)])
-    model_spec_ids = {
-        str(value)
-        for value in pd.Series(scored.get("model_spec_id")).dropna().astype(str).tolist()
-    }
-    top5_focus = False
-    topbucket_focus = False
-    if len(model_spec_ids) == 1:
-        model_spec_id = next(iter(model_spec_ids))
-        try:
-            target_variant = get_alpha_model_spec(model_spec_id).target_variant
-            top5_focus = target_variant == "top5_binary"
-            topbucket_focus = target_variant == "top20_weighted"
-        except KeyError:
-            top5_focus = False
-            topbucket_focus = False
+    model_spec_id, target_variant = _resolve_model_spec_context(scored)
+    top5_focus = target_variant == "top5_binary"
+    topbucket_focus = target_variant == "top20_weighted"
     if top5_focus:
         weights = dict(SELECTION_V2_TOP5_FOCUS_WEIGHTS[int(horizon)])
     elif topbucket_focus:
@@ -392,27 +435,12 @@ def _score_selection_engine_v2_frame(
         )
     )
     scored["grade"] = assign_grades(scored)
-    eligible_mask = scored["eligible_flag"].fillna(False).astype(bool)
-    if top5_focus:
-        scored["report_candidate_flag"] = False
-        top_candidate_indices = (
-            scored.loc[eligible_mask]
-            .sort_values(["final_selection_value", "symbol"], ascending=[False, True])
-            .head(5)
-            .index
-        )
-        scored.loc[top_candidate_indices, "report_candidate_flag"] = True
-    elif topbucket_focus:
-        scored["report_candidate_flag"] = False
-        top_candidate_indices = (
-            scored.loc[eligible_mask]
-            .sort_values(["final_selection_value", "symbol"], ascending=[False, True])
-            .head(10)
-            .index
-        )
-        scored.loc[top_candidate_indices, "report_candidate_flag"] = True
-    else:
-        scored["report_candidate_flag"] = eligible_mask & scored["final_selection_rank_pct"].fillna(0.0).ge(0.85)
+    scored["report_candidate_flag"] = _select_report_candidate_mask(
+        scored,
+        model_spec_id=model_spec_id,
+        target_variant=target_variant,
+        horizon=int(horizon),
+    )
     scored["risk_flags_json"] = risk_flags.map(
         lambda values: json.dumps(values, ensure_ascii=False)
     )
