@@ -10,6 +10,8 @@ from app.evaluation.alpha_shadow import (
 )
 from app.ml.active import freeze_alpha_active_model
 from app.ml.constants import (
+    D5_PRIMARY_COMPARATOR_PAIRS,
+    D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
     MODEL_DOMAIN,
     MODEL_SPEC_ID,
     MODEL_VERSION,
@@ -143,16 +145,23 @@ def _detect_missing_snapshot_dates(
         return missing_dates
 
 
-def _ensure_baseline_training_run_for_horizon(
+def _resolve_bundle_focus_model_spec_id(model_spec_ids: list[str]) -> str | None:
+    if D5_PRIMARY_FOCUS_MODEL_SPEC_ID in {str(value) for value in model_spec_ids}:
+        return D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+    return None
+
+
+def _ensure_training_run_for_spec(
     settings: Settings,
     *,
     train_end_date: date,
     horizon: int,
+    model_spec_id: str,
     min_train_days: int,
     validation_days: int,
     limit_symbols: int | None,
     market: str,
-) -> None:
+) -> int:
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
         bootstrap_core_tables(connection)
         training_run = load_latest_training_run(
@@ -161,11 +170,22 @@ def _ensure_baseline_training_run_for_horizon(
             model_version=MODEL_VERSION,
             train_end_date=train_end_date,
             model_domain=MODEL_DOMAIN,
-            model_spec_id=MODEL_SPEC_ID,
+            model_spec_id=model_spec_id,
         )
     if training_run is not None and training_run.get("artifact_uri"):
-        return
-    train_alpha_model_v1(
+        return 0
+    if model_spec_id == MODEL_SPEC_ID:
+        result = train_alpha_model_v1(
+            settings,
+            train_end_date=train_end_date,
+            horizons=[int(horizon)],
+            min_train_days=min_train_days,
+            validation_days=validation_days,
+            limit_symbols=limit_symbols,
+            market=market,
+        )
+        return int(result.training_run_count)
+    result = train_alpha_candidate_models(
         settings,
         train_end_date=train_end_date,
         horizons=[int(horizon)],
@@ -173,7 +193,33 @@ def _ensure_baseline_training_run_for_horizon(
         validation_days=validation_days,
         limit_symbols=limit_symbols,
         market=market,
+        model_specs=(get_alpha_model_spec(model_spec_id),),
     )
+    return int(result.training_run_count)
+
+
+def _ensure_d5_primary_reference_training_runs(
+    settings: Settings,
+    *,
+    train_end_date: date,
+    min_train_days: int,
+    validation_days: int,
+    limit_symbols: int | None,
+    market: str,
+) -> int:
+    additional_training_runs = 0
+    for horizon, model_spec_id in D5_PRIMARY_COMPARATOR_PAIRS:
+        additional_training_runs += _ensure_training_run_for_spec(
+            settings,
+            train_end_date=train_end_date,
+            horizon=int(horizon),
+            model_spec_id=str(model_spec_id),
+            min_train_days=min_train_days,
+            validation_days=validation_days,
+            limit_symbols=limit_symbols,
+            market=market,
+        )
+    return additional_training_runs
 
 
 def _load_trading_dates(
