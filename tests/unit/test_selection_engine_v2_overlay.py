@@ -44,7 +44,7 @@ def test_reason_tags_prefer_relative_and_persistence_signals():
 def test_resolve_selection_v2_weights_uses_d5_primary_override_only_for_v2():
     assert hasattr(engine_v2, "SELECTION_V2_D5_PRIMARY_WEIGHTS")
 
-    weights = engine_v2._resolve_selection_v2_weights(
+    weights = engine_v2._resolve_selection_weights(
         horizon=5,
         model_spec_id="alpha_swing_d5_v2",
         target_variant="top5_binary",
@@ -55,7 +55,7 @@ def test_resolve_selection_v2_weights_uses_d5_primary_override_only_for_v2():
 
 
 def test_resolve_selection_v2_weights_keeps_generic_top5_focus_for_other_specs():
-    weights = engine_v2._resolve_selection_v2_weights(
+    weights = engine_v2._resolve_selection_weights(
         horizon=5,
         model_spec_id="alpha_swing_d5_v1",
         target_variant="top5_binary",
