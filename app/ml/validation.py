@@ -9,6 +9,8 @@ from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import (
     ALPHA_CANDIDATE_MODEL_SPECS,
+    D5_PRIMARY_BUCKET_SEGMENTS,
+    D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
     MODEL_SPEC_ID,
     MODEL_VERSION,
     PREDICTION_VERSION,
@@ -41,6 +43,13 @@ D1_LEAD_ROLLING20_SELECTED_TOP1_MINUS_MEDIAN_FAIL = 0.0416
 D1_LEAD_ROLLING20_RAW_EXTREME_COUNT_PASS = 70
 D1_LEAD_ROLLING20_RAW_EXTREME_COUNT_FAIL = 92
 D1_LEAD_ROLLING20_SELECTED_EXTREME_COUNT_PASS = 2
+D5_PRIMARY_TOP5_VS_SWING_V1_THRESHOLDS: dict[str, float] = {
+    "cohort": 0.0020,
+    "rolling_20": 0.0025,
+}
+D5_PRIMARY_TOP5_VS_RECURSIVE_H5_MIN_GAP = -0.0025
+D5_PRIMARY_BUCKET_DECISIVE_SELECTION_DATES = 3
+D5_PRIMARY_BUCKET_FAIL_GAP = -0.0025
 
 
 def _validation_reference_runs_sql(horizon_array_sql: str) -> str:
@@ -305,11 +314,256 @@ def _append_d1_concentration_checks(
         )
 
 
+def _load_shadow_comparison_row(
+    connection,
+    *,
+    as_of_date: date,
+    window_type: str,
+    horizon: int,
+    focus_model_spec_id: str,
+    comparator_model_spec_id: str,
+    segment_value: str,
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT
+            focus.summary_date,
+            focus.count_evaluated,
+            COALESCE(focus.matured_selection_date_count, 0),
+            focus.mean_realized_excess_return,
+            comparator.count_evaluated,
+            COALESCE(comparator.matured_selection_date_count, 0),
+            comparator.mean_realized_excess_return
+        FROM fact_alpha_shadow_evaluation_summary AS focus
+        JOIN fact_alpha_shadow_evaluation_summary AS comparator
+          ON focus.summary_date = comparator.summary_date
+         AND focus.window_type = comparator.window_type
+         AND focus.horizon = comparator.horizon
+         AND focus.segment_value = comparator.segment_value
+        WHERE focus.summary_date <= ?
+          AND focus.window_type = ?
+          AND focus.horizon = ?
+          AND focus.segment_value = ?
+          AND focus.model_spec_id = ?
+          AND comparator.model_spec_id = ?
+        ORDER BY focus.summary_date DESC
+        LIMIT 1
+        """,
+        [
+            as_of_date,
+            window_type,
+            int(horizon),
+            segment_value,
+            focus_model_spec_id,
+            comparator_model_spec_id,
+        ],
+    ).fetchone()
+    if row is None:
+        return None
+    keys = (
+        "summary_date",
+        "focus_count_evaluated",
+        "focus_matured_selection_date_count",
+        "focus_mean_realized_excess_return",
+        "comparator_count_evaluated",
+        "comparator_matured_selection_date_count",
+        "comparator_mean_realized_excess_return",
+    )
+    return dict(zip(keys, row, strict=True))
+
+
+def _append_d5_primary_checks(
+    connection,
+    *,
+    as_of_date: date,
+    checks: list[dict[str, object]],
+) -> None:
+    for window_type, threshold in D5_PRIMARY_TOP5_VS_SWING_V1_THRESHOLDS.items():
+        row = _load_shadow_comparison_row(
+            connection,
+            as_of_date=as_of_date,
+            window_type=window_type,
+            horizon=5,
+            focus_model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+            comparator_model_spec_id="alpha_swing_d5_v1",
+            segment_value="top5",
+        )
+        if row is None:
+            checks.append(
+                {
+                    "check_name": f"d5_primary_top5_vs_swing_v1_{window_type.replace('_', '')}",
+                    "status": "warn",
+                    "value": "",
+                    "threshold": threshold,
+                    "detail": (
+                        "Missing same-window D+5 top5 comparator row for "
+                        f"{D5_PRIMARY_FOCUS_MODEL_SPEC_ID} vs alpha_swing_d5_v1 at {window_type}."
+                    ),
+                }
+            )
+            continue
+        focus_return = row["focus_mean_realized_excess_return"]
+        comparator_return = row["comparator_mean_realized_excess_return"]
+        gap = (
+            None
+            if focus_return is None or comparator_return is None
+            else float(focus_return) - float(comparator_return)
+        )
+        checks.append(
+            {
+                "check_name": f"d5_primary_top5_vs_swing_v1_{window_type.replace('_', '')}",
+                "status": "pass" if gap is not None and gap >= threshold else "fail",
+                "value": "" if gap is None else round(gap, 6),
+                "threshold": threshold,
+                "detail": (
+                    f"D+5 top5 gap for {D5_PRIMARY_FOCUS_MODEL_SPEC_ID} vs alpha_swing_d5_v1 "
+                    f"at {window_type} on summary_date={row['summary_date']}."
+                ),
+            }
+        )
+
+    row = _load_shadow_comparison_row(
+        connection,
+        as_of_date=as_of_date,
+        window_type="cohort",
+        horizon=5,
+        focus_model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+        comparator_model_spec_id=MODEL_SPEC_ID,
+        segment_value="top5",
+    )
+    if row is None:
+        checks.append(
+            {
+                "check_name": "d5_primary_top5_vs_recursive_h5_cohort",
+                "status": "warn",
+                "value": "",
+                "threshold": D5_PRIMARY_TOP5_VS_RECURSIVE_H5_MIN_GAP,
+                "detail": (
+                    "Missing same-window D+5 non-inferiority row for "
+                    f"{D5_PRIMARY_FOCUS_MODEL_SPEC_ID} vs {MODEL_SPEC_ID}."
+                ),
+            }
+        )
+    else:
+        focus_return = row["focus_mean_realized_excess_return"]
+        comparator_return = row["comparator_mean_realized_excess_return"]
+        gap = (
+            None
+            if focus_return is None or comparator_return is None
+            else float(focus_return) - float(comparator_return)
+        )
+        checks.append(
+            {
+                "check_name": "d5_primary_top5_vs_recursive_h5_cohort",
+                "status": (
+                    "pass"
+                    if gap is not None and gap >= D5_PRIMARY_TOP5_VS_RECURSIVE_H5_MIN_GAP
+                    else "fail"
+                ),
+                "value": "" if gap is None else round(gap, 6),
+                "threshold": D5_PRIMARY_TOP5_VS_RECURSIVE_H5_MIN_GAP,
+                "detail": (
+                    f"D+5 cohort non-inferiority gap for {D5_PRIMARY_FOCUS_MODEL_SPEC_ID} vs "
+                    f"{MODEL_SPEC_ID} on summary_date={row['summary_date']}."
+                ),
+            }
+        )
+
+    bucket_win_count = 0
+    decisive_bucket_count = 0
+    catastrophic_bucket_loss = False
+    for segment_value in D5_PRIMARY_BUCKET_SEGMENTS:
+        row = _load_shadow_comparison_row(
+            connection,
+            as_of_date=as_of_date,
+            window_type="cohort",
+            horizon=5,
+            focus_model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+            comparator_model_spec_id="alpha_swing_d5_v1",
+            segment_value=segment_value,
+        )
+        if row is None:
+            checks.append(
+                {
+                    "check_name": f"d5_{segment_value}_vs_swing_v1",
+                    "status": "warn",
+                    "value": "",
+                    "threshold": f">= 0.0 with >= {D5_PRIMARY_BUCKET_DECISIVE_SELECTION_DATES} dates",
+                    "detail": (
+                        "Missing bucket comparator row for "
+                        f"{D5_PRIMARY_FOCUS_MODEL_SPEC_ID} vs alpha_swing_d5_v1 ({segment_value})."
+                    ),
+                }
+            )
+            continue
+        decisive_dates = min(
+            int(row["focus_matured_selection_date_count"] or 0),
+            int(row["comparator_matured_selection_date_count"] or 0),
+        )
+        focus_return = row["focus_mean_realized_excess_return"]
+        comparator_return = row["comparator_mean_realized_excess_return"]
+        gap = (
+            None
+            if focus_return is None or comparator_return is None
+            else float(focus_return) - float(comparator_return)
+        )
+        if decisive_dates < D5_PRIMARY_BUCKET_DECISIVE_SELECTION_DATES:
+            status = "warn"
+        elif gap is None:
+            status = "warn"
+        elif gap >= 0.0:
+            status = "pass"
+            bucket_win_count += 1
+            decisive_bucket_count += 1
+        elif gap < D5_PRIMARY_BUCKET_FAIL_GAP:
+            status = "fail"
+            decisive_bucket_count += 1
+            catastrophic_bucket_loss = True
+        else:
+            status = "warn"
+            decisive_bucket_count += 1
+        checks.append(
+            {
+                "check_name": f"d5_{segment_value}_vs_swing_v1",
+                "status": status,
+                "value": "" if gap is None else round(gap, 6),
+                "threshold": f">= 0.0 with >= {D5_PRIMARY_BUCKET_DECISIVE_SELECTION_DATES} dates",
+                "detail": (
+                    f"D+5 bucket gap for {segment_value} on summary_date={row['summary_date']} "
+                    f"(decisive_dates={decisive_dates})."
+                ),
+            }
+        )
+
+    bucket_threshold = ">= 2 wins across decisive D+5 buckets"
+    if decisive_bucket_count < len(D5_PRIMARY_BUCKET_SEGMENTS):
+        bucket_status = "warn"
+    elif catastrophic_bucket_loss:
+        bucket_status = "fail"
+    elif bucket_win_count >= 2:
+        bucket_status = "pass"
+    else:
+        bucket_status = "warn"
+    checks.append(
+        {
+            "check_name": "d5_bucket_win_count_vs_swing_v1",
+            "status": bucket_status,
+            "value": bucket_win_count,
+            "threshold": bucket_threshold,
+            "detail": (
+                f"Decisive bucket wins for {D5_PRIMARY_FOCUS_MODEL_SPEC_ID} vs alpha_swing_d5_v1: "
+                f"{bucket_win_count}/{len(D5_PRIMARY_BUCKET_SEGMENTS)}."
+            ),
+        }
+    )
+
+
 def validate_alpha_model_v1(
     settings: Settings,
     *,
     as_of_date: date,
     horizons: list[int],
+    focus_model_spec_id: str | None = None,
 ) -> AlphaModelValidationResult:
     ensure_storage_layout(settings)
     with activate_run_context("validate_alpha_model_v1", as_of_date=as_of_date) as run_context:
@@ -645,6 +899,12 @@ def validate_alpha_model_v1(
 
                 if 1 in {int(horizon) for horizon in horizons}:
                     _append_d1_concentration_checks(
+                        connection,
+                        as_of_date=as_of_date,
+                        checks=checks,
+                    )
+                if focus_model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID:
+                    _append_d5_primary_checks(
                         connection,
                         as_of_date=as_of_date,
                         checks=checks,
