@@ -8,6 +8,7 @@ import pandas as pd
 
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
+from app.ml.constants import D5_PRIMARY_FOCUS_MODEL_SPEC_ID
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION
 from app.ml.constants import get_alpha_model_spec
@@ -105,6 +106,27 @@ SELECTION_V2_TOP5_FOCUS_WEIGHTS = {
     },
 }
 
+SELECTION_V2_D5_PRIMARY_WEIGHTS = {
+    5: {
+        "alpha_core_score": 42,
+        "relative_alpha_score": 16,
+        "flow_persistence_score": 12,
+        "flow_score": 8,
+        "trend_momentum_score": 3,
+        "quality_score": 7,
+        "value_safety_score": 8,
+        "news_catalyst_score": 1,
+        "news_drift_score": 2,
+        "regime_fit_score": 6,
+        "risk_penalty_score": -5,
+        "uncertainty_score": -7,
+        "disagreement_score": -6,
+        "implementation_penalty_score": -5,
+        "crowding_penalty_score": -10,
+        "fallback_penalty": -3,
+    },
+}
+
 SELECTION_V2_TOPBUCKET_WEIGHTS = {
     1: {
         "alpha_core_score": 46,
@@ -142,6 +164,24 @@ SELECTION_V2_TOPBUCKET_WEIGHTS = {
         "fallback_penalty": -3,
     },
 }
+
+
+def _resolve_selection_weights(
+    *,
+    horizon: int,
+    model_spec_id: str | None,
+    target_variant: str | None,
+) -> dict[str, float]:
+    if (
+        model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+        and int(horizon) in SELECTION_V2_D5_PRIMARY_WEIGHTS
+    ):
+        return dict(SELECTION_V2_D5_PRIMARY_WEIGHTS[int(horizon)])
+    if target_variant == "top5_binary":
+        return dict(SELECTION_V2_TOP5_FOCUS_WEIGHTS[int(horizon)])
+    if target_variant == "top20_weighted":
+        return dict(SELECTION_V2_TOPBUCKET_WEIGHTS[int(horizon)])
+    return dict(SELECTION_V2_WEIGHTS[int(horizon)])
 
 
 @dataclass(slots=True)
@@ -360,14 +400,12 @@ def _score_selection_engine_v2_frame(
     scored["fallback_flag"] = scored["fallback_flag"].fillna(False).astype(bool)
     scored["fallback_reason"] = scored["fallback_reason"].fillna("")
 
-    weights = dict(SELECTION_V2_WEIGHTS[int(horizon)])
     model_spec_id, target_variant = _resolve_model_spec_context(scored)
-    top5_focus = target_variant == "top5_binary"
-    topbucket_focus = target_variant == "top20_weighted"
-    if top5_focus:
-        weights = dict(SELECTION_V2_TOP5_FOCUS_WEIGHTS[int(horizon)])
-    elif topbucket_focus:
-        weights = dict(SELECTION_V2_TOPBUCKET_WEIGHTS[int(horizon)])
+    weights = _resolve_selection_weights(
+        horizon=int(horizon),
+        model_spec_id=model_spec_id,
+        target_variant=target_variant,
+    )
     alpha_positive_components = {key: value for key, value in weights.items() if value > 0}
     positive_score = sum(
         pd.to_numeric(scored[name], errors="coerce").fillna(50.0) * weight

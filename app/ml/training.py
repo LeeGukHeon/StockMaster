@@ -26,6 +26,7 @@ from app.ml.constants import (
     ALPHA_CANDIDATE_MODEL_SPECS,
     CALIBRATION_BIN_COUNT,
     CHALLENGER_ALPHA_MODEL_SPECS,
+    DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS,
     MODEL_DOMAIN,
     MODEL_MEMBER_NAMES,
     MODEL_VERSION,
@@ -871,7 +872,7 @@ def train_alpha_candidate_models(
     symbols: list[str] | None = None,
     limit_symbols: int | None = None,
     market: str = "ALL",
-    model_specs: tuple[AlphaModelSpec, ...] = CHALLENGER_ALPHA_MODEL_SPECS,
+    model_specs: tuple[AlphaModelSpec, ...] = DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS,
 ) -> AlphaTrainingResult:
     return _train_alpha_specs(
         settings,

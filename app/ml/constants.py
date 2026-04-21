@@ -29,6 +29,18 @@ ESTIMATION_SCHEME = "recursive"
 ROLLING_WINDOW_DAYS: int | None = None
 PREDICTION_VERSION = "alpha_prediction_v1"
 SELECTION_ENGINE_VERSION = "selection_engine_v2"
+D5_PRIMARY_FOCUS_MODEL_SPEC_ID = "alpha_swing_d5_v2"
+D5_PRIMARY_BUCKET_SEGMENTS: tuple[str, ...] = (
+    "bucket_continuation",
+    "bucket_reversal_recovery",
+    "bucket_crowded_risk",
+)
+D5_PRIMARY_COMPARATOR_PAIRS: tuple[tuple[int, str], ...] = (
+    (5, "alpha_swing_d5_v1"),
+    (5, MODEL_SPEC_ID),
+    (1, MODEL_SPEC_ID),
+    (1, "alpha_topbucket_h1_rolling_120_v1"),
+)
 
 DEFAULT_ALPHA_MODEL_SPEC = AlphaModelSpec(
     model_spec_id=MODEL_SPEC_ID,
@@ -151,10 +163,38 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         promotion_primary_loss_name="loss_top5",
         allowed_horizons=(5,),
     ),
+    AlphaModelSpec(
+        model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+        estimation_scheme="rolling",
+        rolling_window_days=250,
+        active_candidate_flag=True,
+        lifecycle_role="active_candidate",
+        feature_groups=(
+            "price_trend",
+            "volatility_risk",
+            "liquidity_turnover",
+            "investor_flow",
+            "news_catalyst",
+            "fundamentals_quality",
+            "value_safety",
+            "data_quality",
+        ),
+        member_names=("elasticnet", "hist_gbm"),
+        target_variant="top5_binary",
+        training_target_variant="top5_binary",
+        validation_primary_metric_name="top5_mean_excess_return",
+        promotion_primary_loss_name="loss_top5",
+        allowed_horizons=(5,),
+    ),
 )
 ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
     DEFAULT_ALPHA_MODEL_SPEC,
     *CHALLENGER_ALPHA_MODEL_SPECS,
+)
+DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = tuple(
+    spec
+    for spec in CHALLENGER_ALPHA_MODEL_SPECS
+    if spec.model_spec_id != D5_PRIMARY_FOCUS_MODEL_SPEC_ID
 )
 
 MODEL_MEMBER_NAMES: tuple[str, ...] = (

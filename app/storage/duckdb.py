@@ -427,6 +427,7 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         model_spec_id VARCHAR NOT NULL,
         segment_value VARCHAR NOT NULL,
         count_evaluated BIGINT NOT NULL,
+        matured_selection_date_count BIGINT NOT NULL DEFAULT 0,
         mean_realized_excess_return DOUBLE,
         mean_point_loss DOUBLE,
         rank_ic DOUBLE,
@@ -2123,6 +2124,13 @@ PORTFOLIO_TARGET_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS action_stop_price DOUBLE",
 )
 
+EVALUATION_SUMMARY_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    (
+        "ALTER TABLE fact_alpha_shadow_evaluation_summary "
+        "ADD COLUMN IF NOT EXISTS matured_selection_date_count BIGINT DEFAULT 0"
+    ),
+)
+
 SELECTION_GAP_SCORECARD_COLUMN_MIGRATIONS: tuple[str, ...] = (
     (
         "ALTER TABLE fact_alpha_shadow_selection_gap_scorecard "
@@ -3337,6 +3345,9 @@ def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
             connection.execute(ddl)
 
         for ddl in PORTFOLIO_TARGET_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in EVALUATION_SUMMARY_COLUMN_MIGRATIONS:
             connection.execute(ddl)
 
         for ddl in SELECTION_GAP_SCORECARD_COLUMN_MIGRATIONS:
