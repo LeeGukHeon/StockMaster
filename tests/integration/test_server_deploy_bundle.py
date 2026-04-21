@@ -40,8 +40,10 @@ def test_run_indicator_product_bundle_host_targets_d5_v2_lane():
     )
 
     assert "--model-spec-ids alpha_swing_d5_v2" in script
-    assert "--require-comparator-model-spec-id alpha_recursive_expanding_v1" in script
-    assert "--require-comparator-model-spec-id alpha_topbucket_h1_rolling_120_v1" in script
+    assert "--require-comparator 5:alpha_swing_d5_v1" in script
+    assert "--require-comparator 5:alpha_recursive_expanding_v1" in script
+    assert "--require-comparator 1:alpha_recursive_expanding_v1" in script
+    assert "--require-comparator 1:alpha_topbucket_h1_rolling_120_v1" in script
 
 
 def test_verify_indicator_product_bundle_host_maps_recursive_comparator_to_h5():
@@ -49,7 +51,7 @@ def test_verify_indicator_product_bundle_host_maps_recursive_comparator_to_h5():
         encoding="utf-8"
     )
 
-    assert (
-        'expected_horizon = 1 if model_spec_id == "alpha_topbucket_h1_rolling_120_v1" else 5'
-        in script
-    )
+    assert "[--require-comparator H:MODEL_SPEC_ID]" in script
+    assert "REQUIRED_COMPARATOR_PAIRS=()" in script
+    assert 'horizon_text, model_spec_id = item.split(":", 1)' in script
+    assert "parsed_required_comparator_pairs.append((int(horizon_text), model_spec_id))" in script
