@@ -78,6 +78,35 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     assert supports_horizon_for_spec(d5_spec, horizon=1) is False
 
 
+def test_alpha_swing_d5_v2_matches_frozen_contract() -> None:
+    spec = get_alpha_model_spec("alpha_swing_d5_v2")
+
+    assert spec.estimation_scheme == "rolling"
+    assert spec.rolling_window_days == 250
+    assert spec.active_candidate_flag is True
+    assert spec.lifecycle_role == "active_candidate"
+    assert spec.lifecycle_fallback_flag is False
+    assert spec.feature_groups == (
+        "price_trend",
+        "volatility_risk",
+        "liquidity_turnover",
+        "investor_flow",
+        "news_catalyst",
+        "fundamentals_quality",
+        "value_safety",
+        "data_quality",
+    )
+    assert spec.member_names == ("elasticnet", "hist_gbm")
+    assert spec.target_variant == "top5_binary"
+    assert spec.training_target_variant == "top5_binary"
+    assert spec.validation_primary_metric_name == "top5_mean_excess_return"
+    assert spec.promotion_primary_loss_name == "loss_top5"
+    assert spec.allowed_horizons == (5,)
+    assert resolve_target_column_for_spec(spec, horizon=5) == "target_top5_h5"
+    assert supports_horizon_for_spec(spec, horizon=5) is True
+    assert supports_horizon_for_spec(spec, horizon=1) is False
+
+
 def test_normalise_weights_prioritizes_topk_returns_over_small_mae_gap() -> None:
     weights = _normalise_weights(
         {

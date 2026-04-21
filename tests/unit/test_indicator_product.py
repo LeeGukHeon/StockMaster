@@ -5,7 +5,9 @@ from datetime import date
 import pytest
 
 from app.labels.forward_returns import build_forward_labels
+from app.ml.constants import MODEL_SPEC_ID
 from app.ml.indicator_product import (
+    _analysis_model_spec_ids_for_bundle,
     inspect_alpha_indicator_product_readiness,
     run_alpha_indicator_product_bundle,
 )
@@ -76,3 +78,13 @@ def test_indicator_product_readiness_surfaces_spec_runnability(tmp_path) -> None
     spec_map = {row.model_spec_id: row for row in readiness.specs}
     assert spec_map["alpha_lead_d1_v1"].runnable_horizons == [1]
     assert spec_map["alpha_swing_d5_v1"].runnable_horizons == [5]
+
+
+def test_analysis_model_spec_ids_include_h5_comparator_for_d5_only_bundle() -> None:
+    assert _analysis_model_spec_ids_for_bundle(
+        model_spec_ids=["alpha_swing_d5_v2"],
+        horizons=[5],
+    ) == [
+        MODEL_SPEC_ID,
+        "alpha_swing_d5_v2",
+    ]

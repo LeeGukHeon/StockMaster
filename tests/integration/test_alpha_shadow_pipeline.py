@@ -9,6 +9,7 @@ from app.evaluation.alpha_shadow import (
     materialize_alpha_shadow_selection_outcomes,
 )
 from app.features.feature_store import build_feature_store, load_feature_matrix
+from app.ml.constants import get_alpha_model_spec
 from app.ml.shadow import _ensure_feature_snapshot, materialize_alpha_shadow_candidates
 from app.ml.training import train_alpha_candidate_models, train_alpha_model_v1
 from app.storage.duckdb import duckdb_connection
@@ -214,6 +215,76 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
     assert routing == [
         ("alpha_rank_rolling_120_v1", 5, 4),
         ("alpha_topbucket_h1_rolling_120_v1", 1, 4),
+    ]
+
+
+def test_materialize_alpha_shadow_evaluation_summary_emits_d5_bucket_rows_for_swing_v2(tmp_path):
+    settings = _prepare_shadow_settings(tmp_path)
+    d5_spec = get_alpha_model_spec("alpha_swing_d5_v2")
+
+    for train_end_date in [date(2026, 3, 4), date(2026, 3, 5), date(2026, 3, 6)]:
+        train_alpha_model_v1(
+            settings,
+            train_end_date=train_end_date,
+            horizons=[5],
+            min_train_days=5,
+            validation_days=2,
+            limit_symbols=4,
+        )
+        train_alpha_candidate_models(
+            settings,
+            train_end_date=train_end_date,
+            horizons=[5],
+            min_train_days=5,
+            validation_days=2,
+            limit_symbols=4,
+            model_specs=(d5_spec,),
+        )
+        materialize_alpha_shadow_candidates(
+            settings,
+            as_of_date=train_end_date,
+            horizons=[5],
+            limit_symbols=4,
+        )
+
+    materialize_alpha_shadow_selection_outcomes(
+        settings,
+        start_selection_date=date(2026, 3, 4),
+        end_selection_date=date(2026, 3, 6),
+        horizons=[5],
+    )
+    materialize_alpha_shadow_evaluation_summary(
+        settings,
+        start_selection_date=date(2026, 3, 4),
+        end_selection_date=date(2026, 3, 6),
+        horizons=[5],
+        model_spec_ids=["alpha_swing_d5_v2"],
+        rolling_windows=[2],
+    )
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bucket_rows = connection.execute(
+            """
+            SELECT segment_value
+            FROM fact_alpha_shadow_evaluation_summary
+            WHERE summary_date = ?
+              AND horizon = 5
+              AND model_spec_id = 'alpha_swing_d5_v2'
+              AND segment_value IN (
+                'bucket_continuation',
+                'bucket_reversal_recovery',
+                'bucket_crowded_risk'
+              )
+            GROUP BY segment_value
+            ORDER BY segment_value
+            """,
+            [date(2026, 3, 6)],
+        ).fetchall()
+
+    assert bucket_rows == [
+        ("bucket_continuation",),
+        ("bucket_crowded_risk",),
+        ("bucket_reversal_recovery",),
     ]
 
 
