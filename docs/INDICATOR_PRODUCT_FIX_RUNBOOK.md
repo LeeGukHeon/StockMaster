@@ -14,6 +14,8 @@ During the D+1 repair lane:
 - `alpha_lead_d1_v1` may remain blocked and D+1 can stay on the fallback baseline
 - `alpha_swing_d5_v1` is treated as a preserved D+5 control lane unless you explicitly widen `--freeze-horizons`
 
+For the tracked brownfield review / execution guardrails for the follow-up D+5-primary redesign lane, see [`docs/D5_CENTRIC_SINGLE_MODEL_REDESIGN_REVIEW.md`](D5_CENTRIC_SINGLE_MODEL_REDESIGN_REVIEW.md).
+
 ## Precondition
 
 Before running the bundle, the local/server DuckDB must have same-day OHLCV coverage for every training candidate date that the bundle will try to build feature snapshots for.
