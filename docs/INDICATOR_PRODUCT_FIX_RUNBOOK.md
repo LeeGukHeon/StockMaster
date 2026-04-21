@@ -6,13 +6,30 @@ Run the leading-indicator product path end to end for:
 - `/내일종목추천` D+1
 - `/내일종목추천` D+5
 
-The runbook targets these predictive specs:
+The runbook now covers two execution lanes:
+- **D+1 repair lane** — keep the original paired candidate set for next-day + control D+5 work
+- **D+5-centric challenger lane** — run the new H5 challenger while preserving D+1 as an auxiliary/baseline horizon
+
+Predictive specs used by the D+1 repair lane:
 - `alpha_lead_d1_v1`
 - `alpha_swing_d5_v1`
+
+Predictive specs used by the D+5-centric challenger lane:
+- `alpha_swing_d5_v2`
+- `alpha_swing_d5_v1`
+
+Comparator-only references that must remain available for the D+5-centric lane:
+- `alpha_recursive_expanding_v1` at H5 and H1
+- `alpha_topbucket_h1_rolling_120_v1` at H1
 
 During the D+1 repair lane:
 - `alpha_lead_d1_v1` may remain blocked and D+1 can stay on the fallback baseline
 - `alpha_swing_d5_v1` is treated as a preserved D+5 control lane unless you explicitly widen `--freeze-horizons`
+
+During the D+5-centric challenger lane:
+- `alpha_swing_d5_v2` is challenger-only and must **not** auto-freeze into serving
+- `alpha_swing_d5_v1` remains the locked primary D+5 comparator/control lane
+- D+1 remains auxiliary/baseline-only for interpretation and preserved-horizon checks
 
 For the tracked brownfield review / execution guardrails for the follow-up D+5-primary redesign lane, see [`docs/D5_CENTRIC_SINGLE_MODEL_REDESIGN_REVIEW.md`](D5_CENTRIC_SINGLE_MODEL_REDESIGN_REVIEW.md).
 
@@ -46,7 +63,7 @@ python3 scripts/materialize_alpha_model_specs.py
 
 Expected:
 - `dim_alpha_model_spec` contains lifecycle metadata
-- only `alpha_lead_d1_v1`, `alpha_swing_d5_v1` remain `active_candidate_flag=TRUE`
+- `alpha_lead_d1_v1`, `alpha_swing_d5_v1`, and `alpha_swing_d5_v2` are active candidates
 
 ## 2. Train only the new active predictive specs
 
@@ -55,6 +72,15 @@ python3 scripts/train_alpha_candidate_models.py \
   --train-end-date 2026-04-15 \
   --horizons 1 5 \
   --model-spec-ids alpha_lead_d1_v1 alpha_swing_d5_v1
+```
+
+D+5-centric challenger training:
+
+```bash
+python3 scripts/train_alpha_candidate_models.py \
+  --train-end-date 2026-04-15 \
+  --horizons 1 5 \
+  --model-spec-ids alpha_swing_d5_v2 alpha_swing_d5_v1
 ```
 
 Use shorter windows / limited symbols only for smoke work:
@@ -94,6 +120,26 @@ python3 scripts/run_alpha_indicator_product_bundle.py \
   --freeze-horizons 1
 ```
 
+For the D+5-centric challenger lane, use `--model-spec-ids alpha_swing_d5_v2 alpha_swing_d5_v1`
+and `--freeze-horizons 5` so that:
+- the H5 challenger is trained/shadowed/validated
+- H5 comparator evidence is materialized against `alpha_swing_d5_v1` and `alpha_recursive_expanding_v1`
+- D+1 stays preserved on the current baseline
+- serving does not silently switch to `alpha_swing_d5_v2`
+
+```bash
+python3 scripts/run_alpha_indicator_product_bundle.py \
+  --train-end-date 2026-04-15 \
+  --as-of-date 2026-04-15 \
+  --shadow-start-selection-date 2026-03-16 \
+  --shadow-end-selection-date 2026-04-15 \
+  --horizons 1 5 \
+  --model-spec-ids alpha_swing_d5_v2 alpha_swing_d5_v1 \
+  --backfill-shadow-history \
+  --rolling-windows 20 60 \
+  --freeze-horizons 5
+```
+
 Smoke variant:
 
 ```bash
@@ -126,6 +172,17 @@ Look for these checks in the validation markdown/json artifact:
 - `selection_gap_top5_drag_h5_rolling_20`
 - `selection_gap_top5_drag_h5_rolling_60`
 
+For the D+5-centric challenger lane, the **bundle-owned validation artifact** is the canonical source
+because it activates the explicit `focus_model_spec_id=alpha_swing_d5_v2` comparator-lock and bucket checks.
+Look for these additional checks there:
+- `d5_primary_top5_vs_swing_v1_cohort`
+- `d5_primary_top5_vs_swing_v1_rolling20`
+- `d5_primary_top5_vs_recursive_h5_cohort`
+- `d5_bucket_continuation_vs_swing_v1`
+- `d5_bucket_reversal_recovery_vs_swing_v1`
+- `d5_bucket_crowded_risk_vs_swing_v1`
+- `d5_bucket_win_count_vs_swing_v1`
+
 Interpretation:
 - `pass`: drag is inside the allowed degradation band
 - `warn`: missing scorecard row or insufficient matured history
@@ -147,6 +204,13 @@ python3 scripts/materialize_alpha_shadow_selection_gap_scorecard.py \
 
 Canonical source of truth:
 - table: `fact_alpha_shadow_selection_gap_scorecard`
+
+For D+5-centric robustness review, pair the scorecard with:
+- `fact_alpha_shadow_evaluation_summary`
+- bucket `segment_value` rows:
+  - `bucket_continuation`
+  - `bucket_reversal_recovery`
+  - `bucket_crowded_risk`
 
 Important encoded semantics:
 - raw top-slice source = shadow prediction expected-excess-return-desc top5 within `(selection_date, horizon, model_spec_id)`
@@ -242,9 +306,19 @@ To widen serving changes explicitly, pass extra horizons:
 scripts/server/run_indicator_product_bundle_host.sh 2026-04-15 2026-04-15 2026-03-16 2026-04-15 1 5
 ```
 
+Canonical D+5-centric host command:
+
+```bash
+scripts/server/run_indicator_product_bundle_host.sh 2026-04-15 2026-04-15 2026-03-16 2026-04-15 5
+```
+
 The host wrapper now also runs `scripts/server/verify_indicator_product_bundle_host.sh` automatically to:
 - prove preserved horizons (for the D+1 repair lane, D+5) did not drift
-- confirm same-window comparator evidence exists for `alpha_recursive_expanding_v1` and `alpha_topbucket_h1_rolling_120_v1`
+- confirm same-window comparator evidence via horizon-aware requirements such as:
+  - `5:alpha_swing_d5_v1`
+  - `5:alpha_recursive_expanding_v1`
+  - `1:alpha_recursive_expanding_v1`
+  - `1:alpha_topbucket_h1_rolling_120_v1`
 - surface the latest validation + report artifact directories
 
 If you are transporting local artifacts instead of pulling directly, apply them first:
@@ -260,7 +334,9 @@ scripts/server/apply_indicator_product_fix_artifacts.sh \
 Do not judge success from training completion alone. The minimum acceptance evidence is:
 - D+1 freeze was either explicitly blocked with fallback retained or explicitly allowed by gate
 - D+5 active serving state stayed unchanged during D+1-only repair mode
+- D+5 challenger mode preserved H5 serving on `alpha_swing_d5_v1` while still materializing challenger evidence for `alpha_swing_d5_v2`
 - shadow backfill actually covered the requested selection-date window (not just the terminal `as_of_date`)
 - selection-gap scorecard materialized
+- bucket rows materialized in `fact_alpha_shadow_evaluation_summary`
 - validation gate rows present
 - Discord/release reports show active/comparison/fallback roles
