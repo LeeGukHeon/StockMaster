@@ -81,6 +81,28 @@ PREDICTION_OUTPUT_COLUMNS: tuple[str, ...] = (
     "created_at",
 )
 
+D1_LEAD_PREDICTION_SQUASH_SCALE = 0.03
+D1_LEAD_PREDICTION_SQUASH_AMPLITUDE = 0.03
+D1_LEAD_EXPECTED_RETURN_CAP = 0.05
+
+
+def _apply_d1_lead_prediction_shape_control(
+    values: pd.Series | np.ndarray,
+) -> pd.Series:
+    working = pd.Series(values, copy=True, dtype="float64")
+    squashed = D1_LEAD_PREDICTION_SQUASH_AMPLITUDE * np.tanh(
+        working / D1_LEAD_PREDICTION_SQUASH_SCALE
+    )
+    return pd.Series(
+        np.clip(
+            squashed.to_numpy(dtype="float64", copy=False),
+            -D1_LEAD_EXPECTED_RETURN_CAP,
+            D1_LEAD_EXPECTED_RETURN_CAP,
+        ),
+        index=working.index,
+        dtype="float64",
+    )
+
 
 def _normalise_prediction_frame(frame: pd.DataFrame) -> pd.DataFrame:
     working = frame.reindex(columns=PREDICTION_OUTPUT_COLUMNS).copy()
@@ -417,11 +439,49 @@ def build_prediction_frame_from_training_run(
         )
         disagreement_raw = pd.Series(np.sqrt(variance), index=base_index, dtype="float64")
     disagreement_score = disagreement_raw.rank(pct=True).mul(100.0)
+    model_spec_id = (
+        training_run.get("model_spec_id")
+        or artifact_payload.get("model_spec_id")
+        or MODEL_SPEC_ID
+    )
     calibration_rows = artifact_payload.get("calibration", [])
+    raw_expected_excess_return = pd.Series(
+        ensemble_prediction,
+        index=base_index,
+        dtype="float64",
+    )
+    expected_excess_return = raw_expected_excess_return.copy()
+    if str(model_spec_id) == "alpha_lead_d1_v1" and int(horizon) == 1:
+        expected_excess_return = _apply_d1_lead_prediction_shape_control(
+            raw_expected_excess_return
+        )
     bucket_records = [
-        _bucket_from_calibration(calibration_rows, float(value)) for value in ensemble_prediction
+        _bucket_from_calibration(calibration_rows, float(value))
+        for value in raw_expected_excess_return
     ]
     band_frame = pd.DataFrame(bucket_records)
+    residual_q25 = pd.to_numeric(band_frame["residual_q25"], errors="coerce").fillna(0.0)
+    residual_median = pd.to_numeric(band_frame["residual_median"], errors="coerce").fillna(0.0)
+    residual_q75 = pd.to_numeric(band_frame["residual_q75"], errors="coerce").fillna(0.0)
+    expected_abs_error = pd.to_numeric(
+        band_frame["expected_abs_error"], errors="coerce"
+    ).fillna(0.0)
+    lower_band = pd.Series(
+        expected_excess_return + residual_q25,
+        index=base_index,
+        dtype="float64",
+    )
+    median_band = pd.Series(
+        expected_excess_return + residual_median,
+        index=base_index,
+        dtype="float64",
+    )
+    upper_band = pd.Series(
+        expected_excess_return + residual_q75,
+        index=base_index,
+        dtype="float64",
+    )
+    uncertainty_raw = expected_abs_error
     result_frame = pd.DataFrame(
         {
             "run_id": run_id,
@@ -431,27 +491,19 @@ def build_prediction_frame_from_training_run(
             "market": base_markets,
             "ranking_version": ranking_version,
             "prediction_version": prediction_version,
-            "expected_excess_return": ensemble_prediction,
-            "lower_band": ensemble_prediction
-            + pd.to_numeric(band_frame["residual_q25"], errors="coerce").fillna(0.0),
-            "median_band": ensemble_prediction
-            + pd.to_numeric(band_frame["residual_median"], errors="coerce").fillna(0.0),
-            "upper_band": ensemble_prediction
-            + pd.to_numeric(band_frame["residual_q75"], errors="coerce").fillna(0.0),
+            "expected_excess_return": expected_excess_return,
+            "lower_band": lower_band,
+            "median_band": median_band,
+            "upper_band": upper_band,
             "calibration_start_date": training_run.get("validation_window_start"),
             "calibration_end_date": training_run.get("validation_window_end"),
             "calibration_bucket": band_frame["bucket"],
             "calibration_sample_size": band_frame["sample_count"],
             "model_version": MODEL_VERSION,
             "training_run_id": training_run["training_run_id"],
-            "model_spec_id": training_run.get("model_spec_id")
-            or artifact_payload.get("model_spec_id")
-            or MODEL_SPEC_ID,
+            "model_spec_id": model_spec_id,
             "active_alpha_model_id": active_alpha_model_id,
-            "uncertainty_score": pd.to_numeric(
-                band_frame["expected_abs_error"],
-                errors="coerce",
-            ),
+            "uncertainty_score": uncertainty_raw,
             "disagreement_score": disagreement_score,
             "fallback_flag": bool(artifact_payload.get("fallback_flag", False)),
             "fallback_reason": artifact_payload.get("fallback_reason"),
@@ -466,11 +518,7 @@ def build_prediction_frame_from_training_run(
                     {
                         "training_run_id": training_run["training_run_id"],
                         "artifact_uri": training_run["artifact_uri"],
-                        "model_spec_id": (
-                            training_run.get("model_spec_id")
-                            or artifact_payload.get("model_spec_id")
-                            or MODEL_SPEC_ID
-                        ),
+                        "model_spec_id": model_spec_id,
                         "active_alpha_model_id": active_alpha_model_id,
                         "training_run_source": training_run_source,
                         "fallback_flag": bool(artifact_payload.get("fallback_flag", False)),
@@ -521,7 +569,7 @@ def build_prediction_frame_from_training_run(
                     "model_version": MODEL_VERSION,
                     "prediction_role": "inference",
                     "member_name": "ensemble",
-                    "predicted_excess_return": ensemble_prediction,
+                    "predicted_excess_return": expected_excess_return,
                     "actual_excess_return": pd.NA,
                     "residual": pd.NA,
                     "fallback_flag": bool(artifact_payload.get("fallback_flag", False)),

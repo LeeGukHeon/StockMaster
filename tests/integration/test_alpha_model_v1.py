@@ -3,19 +3,32 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 from app.evaluation.outcomes import materialize_selection_outcomes
+from app.features.feature_store import build_feature_store
 from app.ml.active import freeze_alpha_active_model
 from app.ml.comparison import compare_selection_engines
 from app.ml.constants import (
+    MODEL_DOMAIN,
     MODEL_SPEC_ID,
     MODEL_VERSION,
     PREDICTION_VERSION,
     SELECTION_ENGINE_VERSION,
+    get_alpha_model_spec,
 )
 from app.ml.diagnostics import render_model_diagnostic_report
-from app.ml.inference import materialize_alpha_predictions_v1
+from app.ml.inference import (
+    _apply_d1_lead_prediction_shape_control,
+    _bucket_from_calibration,
+    build_prediction_frame_from_training_run,
+    materialize_alpha_predictions_v1,
+    upsert_predictions,
+)
 from app.ml.dataset import _ensure_feature_snapshots
 from app.features.feature_store import load_feature_matrix
+from app.ml.indicator_product import run_alpha_indicator_product_bundle
+from app.ml.registry import load_latest_training_run, load_model_artifact
 from app.ml.training import (
     backfill_alpha_oof_predictions,
     build_model_training_dataset,
@@ -25,6 +38,7 @@ from app.ml.training import (
 )
 from app.ml.validation import _validation_reference_runs_sql, validate_alpha_model_v1
 from app.selection.engine_v2 import materialize_selection_engine_v2
+from app.regime.snapshot import build_market_regime_snapshot
 from app.storage.duckdb import duckdb_connection
 from tests._ticket003_support import (
     build_test_settings,
@@ -529,7 +543,7 @@ def test_backfill_validate_compare_and_render_diagnostic(tmp_path):
     )
 
     assert backfill_result.run_count == 3
-    assert validation_result.row_count == 11
+    assert validation_result.row_count >= 16
     assert comparison_result.row_count > 0
     assert diagnostic_result.artifact_paths
     assert all(Path(path).exists() for path in validation_result.artifact_paths)
@@ -541,6 +555,9 @@ def test_backfill_validate_compare_and_render_diagnostic(tmp_path):
     assert "top10_mean_excess_return_h1" in validation_text
     assert "top20_mean_excess_return_h5" in validation_text
     assert "rank_ic_h1" in validation_text
+    assert "selection_gap_top5_drag_alpha_lead_d1_v1_h1_rolling_20" in validation_text
+    assert "selection_gap_top5_drag_alpha_swing_d5_v1_h5_rolling_60" in validation_text
+    assert "d1_concentration_roll20" in validation_text
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         comparison_rows = connection.execute(
@@ -628,3 +645,560 @@ def test_validate_alpha_model_prefers_active_model_lineage_over_newer_challenger
 
     assert reference_training_run_id == active_training_run_id
     assert reference_training_run_id != latest_challenger_training_run_id
+
+
+def test_run_alpha_indicator_product_bundle_smoke(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+
+    result = run_alpha_indicator_product_bundle(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        as_of_date=date(2026, 3, 6),
+        shadow_start_selection_date=date(2026, 3, 6),
+        shadow_end_selection_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v1"],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+        market="ALL",
+        rolling_windows=[20, 60],
+        freeze_horizons=[1, 5],
+    )
+
+    assert result.training_run_count == 2
+    assert result.freeze_horizons == [1, 5]
+    assert result.freeze_row_count == 2
+    assert result.frozen_model_spec_ids == ["alpha_swing_d5_v1"]
+    assert result.blocked_freeze_model_spec_ids == ["alpha_lead_d1_v1"]
+    assert result.freeze_block_reasons["alpha_lead_d1_v1"][0].startswith(
+        "insufficient_matured_shadow_dates="
+    )
+    assert result.missing_training_model_spec_ids == []
+    assert result.active_model_spec_ids_by_horizon[1] == MODEL_SPEC_ID
+    assert result.active_model_spec_ids_by_horizon[5] == "alpha_swing_d5_v1"
+    assert result.prediction_row_count == 8
+    assert result.ranking_row_count == 8
+    assert result.shadow_prediction_row_count > 0
+    assert result.shadow_ranking_row_count > 0
+    assert result.gap_scorecard_row_count > 0
+    assert result.validation_check_count >= 15
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        active_h1 = connection.execute(
+            """
+            SELECT model_spec_id
+            FROM fact_alpha_active_model
+            WHERE horizon = 1
+              AND active_flag = TRUE
+            ORDER BY effective_from_date DESC, created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        active_h5 = connection.execute(
+            """
+            SELECT model_spec_id
+            FROM fact_alpha_active_model
+            WHERE horizon = 5
+              AND active_flag = TRUE
+            ORDER BY effective_from_date DESC, created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        gap_rows = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_alpha_shadow_selection_gap_scorecard
+            WHERE summary_date = ?
+              AND model_spec_id IN ('alpha_lead_d1_v1', 'alpha_swing_d5_v1')
+            """,
+            [date(2026, 3, 6)],
+        ).fetchone()[0]
+
+    assert active_h1[0] == MODEL_SPEC_ID
+    assert active_h5[0] == "alpha_swing_d5_v1"
+    assert int(gap_rows or 0) > 0
+
+
+def test_run_alpha_indicator_product_bundle_preserves_h5_when_freeze_horizon_is_d1_only(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+
+    train_alpha_model_v1(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+    )
+    freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        source="test-seed",
+        horizons=[5],
+        model_spec_id=MODEL_SPEC_ID,
+        train_end_date=date(2026, 3, 6),
+        promotion_type="MANUAL_FREEZE",
+    )
+
+    result = run_alpha_indicator_product_bundle(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        as_of_date=date(2026, 3, 6),
+        shadow_start_selection_date=date(2026, 3, 6),
+        shadow_end_selection_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v1"],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+        market="ALL",
+        rolling_windows=[20, 60],
+        freeze_horizons=[1],
+    )
+
+    assert result.freeze_horizons == [1]
+    assert result.frozen_model_spec_ids == []
+    assert result.blocked_freeze_model_spec_ids == ["alpha_lead_d1_v1"]
+    assert result.active_model_spec_ids_by_horizon[1] == MODEL_SPEC_ID
+    assert result.active_model_spec_ids_by_horizon[5] == MODEL_SPEC_ID
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        active_h5 = connection.execute(
+            """
+            SELECT model_spec_id
+            FROM fact_alpha_active_model
+            WHERE horizon = 5
+              AND active_flag = TRUE
+            ORDER BY effective_from_date DESC, created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+    assert active_h5[0] == MODEL_SPEC_ID
+
+
+def test_run_alpha_indicator_product_bundle_defaults_to_d1_only_freeze_when_h1_is_present(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+
+    train_alpha_model_v1(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+    )
+    freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        source="test-seed",
+        horizons=[5],
+        model_spec_id=MODEL_SPEC_ID,
+        train_end_date=date(2026, 3, 6),
+        promotion_type="MANUAL_FREEZE",
+    )
+
+    result = run_alpha_indicator_product_bundle(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        as_of_date=date(2026, 3, 6),
+        shadow_start_selection_date=date(2026, 3, 6),
+        shadow_end_selection_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v1"],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+        market="ALL",
+        rolling_windows=[20, 60],
+    )
+
+    assert result.freeze_horizons == [1]
+    assert result.frozen_model_spec_ids == []
+    assert result.blocked_freeze_model_spec_ids == ["alpha_lead_d1_v1"]
+    assert result.active_model_spec_ids_by_horizon[1] == MODEL_SPEC_ID
+    assert result.active_model_spec_ids_by_horizon[5] == MODEL_SPEC_ID
+
+
+def test_materialize_alpha_predictions_v1_applies_d1_shape_control_only(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+    build_feature_store(settings, as_of_date=date(2026, 3, 6), limit_symbols=4)
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        feature_frame = load_feature_matrix(
+            connection,
+            as_of_date=date(2026, 3, 6),
+            limit_symbols=4,
+            market="ALL",
+        )
+
+    train_alpha_candidate_models(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+        market="ALL",
+        model_specs=(
+            get_alpha_model_spec("alpha_lead_d1_v1"),
+            get_alpha_model_spec("alpha_swing_d5_v1"),
+        ),
+    )
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        lead_training_run = load_latest_training_run(
+            connection,
+            horizon=1,
+            model_version=MODEL_VERSION,
+            train_end_date=date(2026, 3, 6),
+            model_domain=MODEL_DOMAIN,
+            model_spec_id="alpha_lead_d1_v1",
+        )
+        swing_training_run = load_latest_training_run(
+            connection,
+            horizon=5,
+            model_version=MODEL_VERSION,
+            train_end_date=date(2026, 3, 6),
+            model_domain=MODEL_DOMAIN,
+            model_spec_id="alpha_swing_d5_v1",
+        )
+
+    lead_result, _ = build_prediction_frame_from_training_run(
+        run_id="test-lead-shape",
+        as_of_date=date(2026, 3, 6),
+        horizon=1,
+        feature_frame=feature_frame,
+        training_run=lead_training_run,
+        training_run_source="test",
+        active_alpha_model_id="test-active-lead",
+        persist_member_predictions=False,
+    )
+    swing_result, _ = build_prediction_frame_from_training_run(
+        run_id="test-swing-shape",
+        as_of_date=date(2026, 3, 6),
+        horizon=5,
+        feature_frame=feature_frame,
+        training_run=swing_training_run,
+        training_run_source="test",
+        active_alpha_model_id="test-active-swing",
+        persist_member_predictions=False,
+    )
+    lead_artifact = load_model_artifact(Path(str(lead_training_run["artifact_uri"])))
+    feature_columns = list(lead_artifact.get("feature_columns", []))
+    inference_features = feature_frame.reindex(columns=feature_columns).apply(
+        pd.to_numeric,
+        errors="coerce",
+    )
+    member_predictions = {}
+    for member_name in lead_artifact.get("member_order", []):
+        model = lead_artifact["members"].get(member_name)
+        if model is None:
+            continue
+        member_predictions[member_name] = pd.Series(
+            model.predict(inference_features),
+            index=feature_frame.index,
+            dtype="float64",
+        )
+    ensemble_weights = {
+        str(key): float(value)
+        for key, value in lead_artifact.get("ensemble_weights", {}).items()
+        if key in member_predictions
+    }
+    raw_ensemble = sum(
+        member_predictions[member_name] * weight
+        for member_name, weight in ensemble_weights.items()
+    )
+    expected_transformed = _apply_d1_lead_prediction_shape_control(raw_ensemble)
+    calibration_rows = lead_artifact.get("calibration", [])
+    assert not lead_result.empty
+    assert not swing_result.empty
+    assert lead_result["expected_excess_return"].abs().max() <= 0.05 + 1e-9
+    pd.testing.assert_series_equal(
+        lead_result["expected_excess_return"].reset_index(drop=True),
+        expected_transformed.reset_index(drop=True),
+        check_names=False,
+        atol=1e-12,
+        rtol=0.0,
+    )
+    assert lead_result["calibration_bucket"].nunique() >= 1
+    expected_buckets = [
+        _bucket_from_calibration(calibration_rows, float(value))["bucket"]
+        for value in raw_ensemble
+    ]
+    assert lead_result["calibration_bucket"].tolist() == expected_buckets
+    calibration_band_frame = pd.DataFrame(
+        [
+            _bucket_from_calibration(calibration_rows, float(value))
+            for value in raw_ensemble
+        ]
+    )
+    pd.testing.assert_series_equal(
+        lead_result["median_band"].reset_index(drop=True),
+        (
+            expected_transformed.reset_index(drop=True)
+            + pd.to_numeric(calibration_band_frame["residual_median"], errors="coerce")
+            .fillna(0.0)
+            .reset_index(drop=True)
+        ),
+        check_names=False,
+        atol=1e-12,
+        rtol=0.0,
+    )
+    assert swing_result["expected_excess_return"].abs().max() > 0.0
+
+
+def test_run_alpha_indicator_product_bundle_backfills_shadow_history_across_range(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+    legacy_h1_spec = get_alpha_model_spec("alpha_topbucket_h1_rolling_120_v1")
+
+    for train_end_date in [date(2026, 3, 4), date(2026, 3, 5), date(2026, 3, 6)]:
+        train_alpha_model_v1(
+            settings,
+            train_end_date=train_end_date,
+            horizons=[1],
+            min_train_days=5,
+            validation_days=2,
+            limit_symbols=4,
+        )
+        train_alpha_candidate_models(
+            settings,
+            train_end_date=train_end_date,
+            horizons=[1],
+            min_train_days=5,
+            validation_days=2,
+            limit_symbols=4,
+            market="ALL",
+            model_specs=(legacy_h1_spec,),
+        )
+
+    result = run_alpha_indicator_product_bundle(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        as_of_date=date(2026, 3, 6),
+        shadow_start_selection_date=date(2026, 3, 4),
+        shadow_end_selection_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v1"],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+        market="ALL",
+        rolling_windows=[20, 60],
+        freeze_horizons=[1],
+        backfill_shadow_history=True,
+    )
+
+    assert result.shadow_backfill_enabled is True
+    assert result.shadow_backfill_selection_date_count == 3
+    assert result.shadow_backfill_processed_selection_date_count == 3
+    assert result.shadow_backfill_skipped_selection_date_count == 0
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        lead_h1_dates = connection.execute(
+            """
+            SELECT COUNT(DISTINCT selection_date)
+            FROM fact_alpha_shadow_prediction
+            WHERE model_spec_id = 'alpha_lead_d1_v1'
+              AND horizon = 1
+              AND selection_date BETWEEN ? AND ?
+            """,
+            [date(2026, 3, 4), date(2026, 3, 6)],
+        ).fetchone()[0]
+        swing_h5_dates = connection.execute(
+            """
+            SELECT COUNT(DISTINCT selection_date)
+            FROM fact_alpha_shadow_prediction
+            WHERE model_spec_id = 'alpha_swing_d5_v1'
+              AND horizon = 5
+              AND selection_date BETWEEN ? AND ?
+            """,
+            [date(2026, 3, 4), date(2026, 3, 6)],
+        ).fetchone()[0]
+        gap_row = connection.execute(
+            """
+            SELECT matured_selection_date_count, insufficient_history_flag
+            FROM fact_alpha_shadow_selection_gap_scorecard
+            WHERE summary_date = ?
+              AND model_spec_id = 'alpha_lead_d1_v1'
+              AND horizon = 1
+              AND window_name = 'cohort'
+            """,
+            [date(2026, 3, 6)],
+        ).fetchone()
+        comparator_rows = connection.execute(
+            """
+            SELECT model_spec_id, horizon
+            FROM fact_alpha_shadow_evaluation_summary
+            WHERE summary_date = ?
+              AND segment_value = 'top5'
+              AND model_spec_id IN (
+                'alpha_lead_d1_v1',
+                'alpha_recursive_expanding_v1',
+                'alpha_topbucket_h1_rolling_120_v1'
+              )
+            GROUP BY model_spec_id, horizon
+            ORDER BY model_spec_id, horizon
+            """,
+            [date(2026, 3, 6)],
+        ).fetchall()
+
+    assert int(lead_h1_dates or 0) == 3
+    assert int(swing_h5_dates or 0) >= 2
+    assert int(gap_row[0] or 0) == 3
+    assert bool(gap_row[1]) is False
+    assert comparator_rows == [
+        ("alpha_lead_d1_v1", 1),
+        ("alpha_recursive_expanding_v1", 1),
+        ("alpha_topbucket_h1_rolling_120_v1", 1),
+    ]
+
+
+def test_validate_alpha_model_h5_only_omits_d1_concentration_checks(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+
+    train_alpha_model_v1(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        horizons=[5],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+    )
+    materialize_alpha_predictions_v1(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        horizons=[5],
+        limit_symbols=4,
+        market="ALL",
+    )
+    materialize_selection_engine_v2(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        horizons=[5],
+        limit_symbols=4,
+    )
+    validation_result = validate_alpha_model_v1(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        horizons=[5],
+    )
+
+    validation_markdown = next(
+        path for path in validation_result.artifact_paths if path.endswith(".md")
+    )
+    validation_text = Path(validation_markdown).read_text(encoding="utf-8")
+
+    assert "d1_concentration_roll20" not in validation_text
+    assert "d1_raw_top1_expected_return_share_roll20" not in validation_text
+
+
+def test_selection_engine_v2_filters_to_active_model_predictions(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+    build_feature_store(settings, as_of_date=date(2026, 3, 6), limit_symbols=4)
+    build_market_regime_snapshot(settings, as_of_date=date(2026, 3, 6))
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        symbols = (
+            connection.execute(
+                """
+                SELECT DISTINCT symbol
+                FROM fact_daily_ohlcv
+                WHERE trading_date = ?
+                ORDER BY symbol
+                LIMIT 4
+                """,
+                [date(2026, 3, 6)],
+            )
+            .fetchdf()["symbol"]
+            .astype(str)
+            .tolist()
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_alpha_active_model (
+                active_alpha_model_id,
+                horizon,
+                model_spec_id,
+                training_run_id,
+                model_version,
+                source_type,
+                promotion_type,
+                promotion_report_json,
+                effective_from_date,
+                effective_to_date,
+                active_flag,
+                rollback_of_active_alpha_model_id,
+                note,
+                created_at,
+                updated_at
+            ) VALUES (
+                'active-lead-h1', 1, 'alpha_lead_d1_v1', 'train-lead-h1', 'alpha_model_v1',
+                'test', 'MANUAL_FREEZE', NULL, ?, NULL, TRUE, NULL, 'seed', now(), now()
+            )
+            """,
+            [date(2026, 3, 6)],
+        )
+        rows = []
+        for index, symbol in enumerate(symbols):
+            if index < 2:
+                model_spec_id = "alpha_lead_d1_v1"
+                active_alpha_model_id = "active-lead-h1"
+            else:
+                model_spec_id = MODEL_SPEC_ID
+                active_alpha_model_id = "legacy-default-h1"
+            rows.append(
+                {
+                    "run_id": "seed-selection-v2",
+                    "as_of_date": date(2026, 3, 6),
+                    "symbol": symbol,
+                    "horizon": 1,
+                    "market": "KOSPI",
+                    "ranking_version": SELECTION_ENGINE_VERSION,
+                    "prediction_version": PREDICTION_VERSION,
+                    "expected_excess_return": 0.01 + (0.01 * index),
+                    "lower_band": -0.01,
+                    "median_band": 0.0,
+                    "upper_band": 0.02,
+                    "calibration_start_date": date(2026, 3, 1),
+                    "calibration_end_date": date(2026, 3, 5),
+                    "calibration_bucket": "bucket_01",
+                    "calibration_sample_size": 20,
+                    "model_version": MODEL_VERSION,
+                    "training_run_id": f"seed-train-{model_spec_id}",
+                    "model_spec_id": model_spec_id,
+                    "active_alpha_model_id": active_alpha_model_id,
+                    "uncertainty_score": 10.0,
+                    "disagreement_score": 5.0,
+                    "fallback_flag": False,
+                    "fallback_reason": None,
+                    "member_count": 3,
+                    "ensemble_weight_json": "{}",
+                    "source_notes_json": "{}",
+                    "created_at": pd.Timestamp.utcnow(),
+                }
+            )
+        upsert_predictions(connection, pd.DataFrame(rows))
+
+    selection_result = materialize_selection_engine_v2(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        horizons=[1],
+        limit_symbols=4,
+        ensure_predictions=False,
+    )
+
+    assert selection_result.row_count == 4
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        ranking_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_ranking
+            WHERE as_of_date = ?
+              AND horizon = 1
+              AND ranking_version = ?
+            """,
+            [date(2026, 3, 6), SELECTION_ENGINE_VERSION],
+        ).fetchone()[0]
+
+    assert int(ranking_count or 0) == 4
