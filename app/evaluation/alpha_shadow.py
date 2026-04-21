@@ -136,13 +136,18 @@ def _attach_bucket_features(connection, frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _bucket_masks(frame: pd.DataFrame) -> dict[str, pd.Series]:
-    ret_10d = pd.to_numeric(frame.get("ret_10d"), errors="coerce")
-    dist_from_20d_high = pd.to_numeric(frame.get("dist_from_20d_high"), errors="coerce")
-    drawdown_20d = pd.to_numeric(frame.get("drawdown_20d"), errors="coerce")
-    residual_ret_5d = pd.to_numeric(frame.get("residual_ret_5d"), errors="coerce")
-    turnover_z_5_20 = pd.to_numeric(frame.get("turnover_z_5_20"), errors="coerce")
-    news_burst_share_1d = pd.to_numeric(frame.get("news_burst_share_1d"), errors="coerce")
-    realized_vol_20d = pd.to_numeric(frame.get("realized_vol_20d"), errors="coerce")
+    def _series(column_name: str) -> pd.Series:
+        if column_name not in frame.columns:
+            return pd.Series(float("nan"), index=frame.index, dtype="float64")
+        return pd.to_numeric(frame[column_name], errors="coerce")
+
+    ret_10d = _series("ret_10d")
+    dist_from_20d_high = _series("dist_from_20d_high")
+    drawdown_20d = _series("drawdown_20d")
+    residual_ret_5d = _series("residual_ret_5d")
+    turnover_z_5_20 = _series("turnover_z_5_20")
+    news_burst_share_1d = _series("news_burst_share_1d")
+    realized_vol_20d = _series("realized_vol_20d")
     return {
         "bucket_continuation": ret_10d.gt(0.03) & dist_from_20d_high.le(0.15),
         "bucket_reversal_recovery": drawdown_20d.le(-0.08) & residual_ret_5d.gt(0.0),
