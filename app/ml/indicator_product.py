@@ -863,7 +863,7 @@ def run_alpha_indicator_product_bundle(
             )
 
     if any(model_spec.model_spec_id == "alpha_lead_d1_v1" for model_spec in model_specs):
-        additional_reference_training_runs += _ensure_training_run_for_spec(
+        _ensure_training_run_for_spec(
             settings,
             train_end_date=train_end_date,
             horizon=1,
