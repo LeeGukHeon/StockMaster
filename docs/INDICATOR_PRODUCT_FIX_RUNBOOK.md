@@ -26,11 +26,6 @@ During the D+1 repair lane:
 - `alpha_lead_d1_v1` may remain blocked and D+1 can stay on the fallback baseline
 - `alpha_swing_d5_v1` is treated as a preserved D+5 control lane unless you explicitly widen `--freeze-horizons`
 
-During the D+5-centric challenger lane:
-- `alpha_swing_d5_v2` is challenger-only and must **not** auto-freeze into serving
-- `alpha_swing_d5_v1` remains the locked primary D+5 comparator/control lane
-- D+1 remains auxiliary/baseline-only for interpretation and preserved-horizon checks
-
 For the tracked brownfield review / execution guardrails for the follow-up D+5-primary redesign lane, see [`docs/D5_CENTRIC_SINGLE_MODEL_REDESIGN_REVIEW.md`](D5_CENTRIC_SINGLE_MODEL_REDESIGN_REVIEW.md).
 
 ## Precondition
