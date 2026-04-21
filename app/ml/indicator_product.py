@@ -357,40 +357,62 @@ def _analysis_model_spec_ids_for_bundle(
     *,
     model_spec_ids: list[str],
     horizons: list[int],
+    focus_model_spec_id: str | None = None,
 ) -> list[str]:
     analysis_model_spec_ids = list(model_spec_ids)
-    if 1 in {int(horizon) for horizon in horizons}:
+    if focus_model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID:
+        analysis_model_spec_ids.extend(
+            model_spec_id for _, model_spec_id in D5_PRIMARY_COMPARATOR_PAIRS
+        )
+    elif 1 in {int(horizon) for horizon in horizons}:
         analysis_model_spec_ids.append(MODEL_SPEC_ID)
         analysis_model_spec_ids.append(LEGACY_H1_COMPARATOR_MODEL_SPEC_ID)
     return sorted(dict.fromkeys(str(value) for value in analysis_model_spec_ids))
+
+
+def _required_analysis_pairs_for_bundle(
+    *,
+    model_spec_ids: list[str],
+    horizons: list[int],
+    focus_model_spec_id: str | None = None,
+) -> list[tuple[int, str]]:
+    if focus_model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID:
+        return [
+            (5, D5_PRIMARY_FOCUS_MODEL_SPEC_ID),
+            *D5_PRIMARY_COMPARATOR_PAIRS,
+        ]
+    required_pairs: list[tuple[int, str]] = []
+    for model_spec_id in model_spec_ids:
+        try:
+            spec = get_alpha_model_spec(str(model_spec_id))
+            allowed_horizons = set(spec.allowed_horizons or horizons)
+        except KeyError:
+            allowed_horizons = set(int(horizon) for horizon in horizons)
+        for horizon in horizons:
+            if int(horizon) in allowed_horizons:
+                required_pairs.append((int(horizon), str(model_spec_id)))
+    if 1 in {int(horizon) for horizon in horizons}:
+        required_pairs.extend(
+            [
+                (1, MODEL_SPEC_ID),
+                (1, LEGACY_H1_COMPARATOR_MODEL_SPEC_ID),
+            ]
+        )
+    return sorted(dict.fromkeys(required_pairs))
 
 
 def _require_analysis_evidence_rows(
     connection,
     *,
     summary_date: date,
-    horizons: list[int],
-    required_model_spec_ids: list[str],
+    required_pairs: list[tuple[int, str]],
 ) -> None:
-    if not required_model_spec_ids:
-        return
-    required_pairs: set[tuple[str, int]] = set()
-    for model_spec_id in required_model_spec_ids:
-        try:
-            spec = get_alpha_model_spec(str(model_spec_id))
-            allowed_horizons = set(spec.allowed_horizons or horizons)
-        except KeyError:
-            allowed_horizons = set(int(horizon) for horizon in horizons)
-        if str(model_spec_id) in {MODEL_SPEC_ID, LEGACY_H1_COMPARATOR_MODEL_SPEC_ID}:
-            allowed_horizons = {1}
-        for horizon in horizons:
-            if int(horizon) not in allowed_horizons:
-                continue
-            required_pairs.add((str(model_spec_id), int(horizon)))
     if not required_pairs:
         return
-    model_spec_placeholders = ",".join("?" for _ in required_model_spec_ids)
-    horizon_values = sorted({int(horizon) for _, horizon in required_pairs})
+    required_pair_set = {(str(model_spec_id), int(horizon)) for horizon, model_spec_id in required_pairs}
+    model_spec_values = sorted({model_spec_id for model_spec_id, _ in required_pair_set})
+    model_spec_placeholders = ",".join("?" for _ in model_spec_values)
+    horizon_values = sorted({horizon for _, horizon in required_pair_set})
     horizon_placeholders = ",".join("?" for _ in horizon_values)
     rows = connection.execute(
         f"""
@@ -401,10 +423,10 @@ def _require_analysis_evidence_rows(
           AND horizon IN ({horizon_placeholders})
           AND segment_value = 'top5'
         """,
-        [summary_date, *required_model_spec_ids, *horizon_values],
+        [summary_date, *model_spec_values, *horizon_values],
     ).fetchall()
     found_pairs = {(str(model_spec_id), int(horizon)) for model_spec_id, horizon in rows}
-    missing_pairs = sorted(required_pairs - found_pairs)
+    missing_pairs = sorted(required_pair_set - found_pairs)
     if missing_pairs:
         missing_text = ", ".join(f"{model_spec_id}:h{horizon}" for model_spec_id, horizon in missing_pairs)
         raise RuntimeError(
@@ -706,9 +728,16 @@ def run_alpha_indicator_product_bundle(
     keep_shadow_training_artifacts: bool = False,
 ) -> AlphaIndicatorProductBundleResult:
     model_specs = _resolve_model_specs(model_spec_ids)
+    focus_model_spec_id = _resolve_bundle_focus_model_spec_id(model_spec_ids)
     analysis_model_spec_ids = _analysis_model_spec_ids_for_bundle(
         model_spec_ids=model_spec_ids,
         horizons=horizons,
+        focus_model_spec_id=focus_model_spec_id,
+    )
+    required_analysis_pairs = _required_analysis_pairs_for_bundle(
+        model_spec_ids=model_spec_ids,
+        horizons=horizons,
+        focus_model_spec_id=focus_model_spec_id,
     )
     target_freeze_horizons = list(
         dict.fromkeys(
@@ -750,6 +779,17 @@ def run_alpha_indicator_product_bundle(
                 f"{message} Missing feature-snapshot source dates for bundle: {missing_text or 'unknown'}."
             ) from exc
         raise
+
+    additional_reference_training_runs = 0
+    if focus_model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID:
+        additional_reference_training_runs += _ensure_d5_primary_reference_training_runs(
+            settings,
+            train_end_date=train_end_date,
+            min_train_days=min_train_days,
+            validation_days=validation_days,
+            limit_symbols=limit_symbols,
+            market=market,
+        )
 
     if backfill_shadow_history:
         shadow_backfill_result = _backfill_indicator_shadow_history(
@@ -808,15 +848,15 @@ def run_alpha_indicator_product_bundle(
             _require_analysis_evidence_rows(
                 connection,
                 summary_date=shadow_end_selection_date,
-                horizons=horizons,
-                required_model_spec_ids=analysis_model_spec_ids,
+                required_pairs=required_analysis_pairs,
             )
 
     if any(model_spec.model_spec_id == "alpha_lead_d1_v1" for model_spec in model_specs):
-        _ensure_baseline_training_run_for_horizon(
+        additional_reference_training_runs += _ensure_training_run_for_spec(
             settings,
             train_end_date=train_end_date,
             horizon=1,
+            model_spec_id=MODEL_SPEC_ID,
             min_train_days=min_train_days,
             validation_days=validation_days,
             limit_symbols=limit_symbols,
@@ -869,6 +909,13 @@ def run_alpha_indicator_product_bundle(
             ]
             if not runnable_horizons:
                 missing_training_model_spec_ids.append(model_spec.model_spec_id)
+                continue
+
+            if model_spec.model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID and freezeable_horizons:
+                blocked_freeze_model_spec_ids.append(model_spec.model_spec_id)
+                freeze_block_reasons[model_spec.model_spec_id] = [
+                    "challenger_only_no_auto_freeze"
+                ]
                 continue
 
             if model_spec.model_spec_id == "alpha_lead_d1_v1" and 1 in freezeable_horizons:
@@ -961,6 +1008,7 @@ def run_alpha_indicator_product_bundle(
         settings,
         as_of_date=as_of_date,
         horizons=horizons,
+        focus_model_spec_id=focus_model_spec_id,
     )
 
     notes = (
@@ -976,7 +1024,7 @@ def run_alpha_indicator_product_bundle(
         f"blocked_freeze={','.join(blocked_freeze_model_spec_ids) or '-'} "
         f"train_end_date={train_end_date.isoformat()} "
         f"as_of_date={as_of_date.isoformat()} "
-        f"training_runs={training_result.training_run_count} "
+        f"training_runs={int(training_result.training_run_count) + int(additional_reference_training_runs)} "
         f"freeze_rows={freeze_row_count} "
         f"prediction_rows={prediction_result.row_count} "
         f"ranking_rows={ranking_result.row_count} "
@@ -1004,7 +1052,7 @@ def run_alpha_indicator_product_bundle(
         freeze_block_reasons=freeze_block_reasons,
         active_model_spec_ids_by_horizon=active_model_spec_ids_by_horizon,
         registry_row_count=len(registry_frame),
-        training_run_count=int(training_result.training_run_count),
+        training_run_count=int(training_result.training_run_count) + int(additional_reference_training_runs),
         freeze_row_count=freeze_row_count,
         prediction_row_count=int(prediction_result.row_count),
         ranking_row_count=int(ranking_result.row_count),
