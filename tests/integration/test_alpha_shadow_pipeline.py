@@ -156,6 +156,14 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
                    AND model_spec_id = 'alpha_recursive_expanding_v1'
                    AND mean_point_loss IS NOT NULL),
                 (SELECT COUNT(*)
+                 FROM fact_alpha_shadow_evaluation_summary
+                 WHERE summary_date = ?
+                   AND segment_value IN (
+                     'bucket_continuation',
+                     'bucket_reversal_recovery',
+                     'bucket_crowded_risk'
+                   )),
+                (SELECT COUNT(*)
                  FROM fact_alpha_shadow_selection_gap_scorecard
                  WHERE summary_date = ?),
                 (SELECT COUNT(*)
@@ -185,6 +193,7 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
                 date(2026, 3, 6),
                 date(2026, 3, 6),
                 date(2026, 3, 6),
+                date(2026, 3, 6),
             ],
         ).fetchone()
 
@@ -198,6 +207,7 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
     assert int(row[8] or 0) > 0
     assert int(row[9] or 0) > 0
     assert int(row[10] or 0) > 0
+    assert int(row[11] or 0) > 0
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         routing = connection.execute(
