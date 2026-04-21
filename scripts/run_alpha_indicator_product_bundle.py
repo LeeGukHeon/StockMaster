@@ -30,14 +30,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model-spec-ids",
         nargs="+",
-        default=["alpha_lead_d1_v1", "alpha_swing_d5_v1"],
+        default=["alpha_swing_d5_v2", "alpha_swing_d5_v1"],
     )
     parser.add_argument("--min-train-days", type=int, default=120)
     parser.add_argument("--validation-days", type=int, default=20)
     parser.add_argument("--limit-symbols", type=int)
     parser.add_argument("--market", default="ALL", choices=["ALL", "KOSPI", "KOSDAQ"])
     parser.add_argument("--rolling-windows", nargs="+", type=int, default=[20, 60])
-    parser.add_argument("--freeze-horizons", nargs="+", type=int, default=[1])
+    parser.add_argument("--freeze-horizons", nargs="+", type=int, default=[5])
     parser.add_argument("--backfill-shadow-history", action="store_true")
     parser.add_argument(
         "--skip-completed-shadow-dates",

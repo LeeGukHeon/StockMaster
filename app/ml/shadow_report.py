@@ -235,6 +235,15 @@ def _format_metric(value: object, *, pct: bool = False, signed: bool = False) ->
     return format(numeric, "+.3f" if signed else ".3f")
 
 
+def _humanize_segment(segment_value: str) -> str:
+    mapping = {
+        "bucket_continuation": "Continuation",
+        "bucket_reversal_recovery": "Reversal / recovery",
+        "bucket_crowded_risk": "Crowded / high-risk",
+    }
+    return mapping.get(segment_value, segment_value)
+
+
 def _build_markdown(
     ledger: pd.DataFrame,
     *,
@@ -282,6 +291,119 @@ def _build_markdown(
     return "\n".join(lines).strip()
 
 
+def _build_d5_primary_markdown(
+    pairwise_ledger: pd.DataFrame,
+    *,
+    start_selection_date: date,
+    end_selection_date: date,
+    promotion_summary: pd.DataFrame,
+) -> str:
+    lines = [
+        "# Alpha Shadow Comparison Report",
+        "",
+        f"- Selection range: `{start_selection_date.isoformat()}..{end_selection_date.isoformat()}`",
+        f"- Focus model: `{D5_PRIMARY_FOCUS_MODEL_SPEC_ID}`",
+        "- Primary D+5 comparator: `alpha_swing_d5_v1`",
+        f"- Secondary D+5 comparator: `{MODEL_SPEC_ID}` (H5)",
+        f"- D+1 auxiliary comparators: `{MODEL_SPEC_ID}`, `alpha_topbucket_h1_rolling_120_v1`",
+        "",
+        "## D+5 overall comparator table",
+        "",
+    ]
+    overall_rows = pairwise_ledger.loc[
+        (pairwise_ledger["horizon"] == 5)
+        & (pairwise_ledger["segment_value"] == "top5")
+        & (
+            pairwise_ledger["comparator_model_spec_id"].isin(
+                ["alpha_swing_d5_v1", MODEL_SPEC_ID]
+            )
+        )
+        & (pairwise_ledger["window_type"].isin(["cohort", "rolling_20"]))
+    ].copy()
+    if overall_rows.empty:
+        lines.append("- D+5 comparator rows not available yet.")
+    else:
+        for row in overall_rows.itertuples(index=False):
+            lines.append(
+                "- {window} vs {comparator}: focus {focus_ret} | comparator {comp_ret} | gap {gap} | matured_dates={dates}".format(
+                    window=row.window_type,
+                    comparator=row.comparator_model_spec_id,
+                    focus_ret=_format_metric(
+                        row.mean_realized_excess_return_focus,
+                        pct=True,
+                        signed=True,
+                    ),
+                    comp_ret=_format_metric(
+                        row.mean_realized_excess_return_comparator,
+                        pct=True,
+                        signed=True,
+                    ),
+                    gap=_format_metric(row.return_gap_vs_comparator, pct=True, signed=True),
+                    dates=int(row.matured_selection_date_count_focus or 0),
+                )
+            )
+    lines.extend(["", "## D+5 robustness buckets vs alpha_swing_d5_v1", ""])
+    bucket_rows = pairwise_ledger.loc[
+        (pairwise_ledger["horizon"] == 5)
+        & (pairwise_ledger["window_type"] == "cohort")
+        & (pairwise_ledger["segment_value"].isin(D5_PRIMARY_BUCKET_SEGMENTS))
+        & (pairwise_ledger["comparator_model_spec_id"] == "alpha_swing_d5_v1")
+    ].copy()
+    if bucket_rows.empty:
+        lines.append("- Bucket rows not available yet.")
+    else:
+        for row in bucket_rows.itertuples(index=False):
+            lines.append(
+                "- {bucket}: focus {focus_ret} | comparator {comp_ret} | gap {gap} | matured_dates={dates}".format(
+                    bucket=_humanize_segment(str(row.segment_value)),
+                    focus_ret=_format_metric(
+                        row.mean_realized_excess_return_focus,
+                        pct=True,
+                        signed=True,
+                    ),
+                    comp_ret=_format_metric(
+                        row.mean_realized_excess_return_comparator,
+                        pct=True,
+                        signed=True,
+                    ),
+                    gap=_format_metric(row.return_gap_vs_comparator, pct=True, signed=True),
+                    dates=int(row.matured_selection_date_count_focus or 0),
+                )
+            )
+    lines.extend(["", "## D+1 auxiliary interpretation", ""])
+    d1_rows = pairwise_ledger.loc[
+        (pairwise_ledger["horizon"] == 1)
+        & (pairwise_ledger["segment_value"] == "top5")
+        & (pairwise_ledger["window_type"].isin(["cohort", "rolling_20"]))
+    ].copy()
+    if d1_rows.empty:
+        lines.append("- D+1 auxiliary comparator rows not available yet.")
+    else:
+        for row in d1_rows.itertuples(index=False):
+            lines.append(
+                "- {window} vs {comparator}: comparator {comp_ret} | auxiliary reference gap {gap}".format(
+                    window=row.window_type,
+                    comparator=row.comparator_model_spec_id,
+                    comp_ret=_format_metric(
+                        row.mean_realized_excess_return_comparator,
+                        pct=True,
+                        signed=True,
+                    ),
+                    gap=_format_metric(row.return_gap_vs_comparator, pct=True, signed=True),
+                )
+            )
+    lines.append("")
+    lines.append("## Latest promotion summary")
+    if promotion_summary.empty:
+        lines.append("- promotion summary 없음")
+    else:
+        for row in promotion_summary.itertuples(index=False):
+            lines.append(
+                f"- H{int(row.horizon)} | {row.decision_label} | active={row.active_model_label} | compare={row.comparison_model_label} | gap={_format_metric(row.promotion_gap, pct=True, signed=True)}"
+            )
+    return "\n".join(lines).strip()
+
+
 def render_alpha_shadow_comparison_report(
     settings: Settings,
     *,
@@ -317,7 +439,17 @@ def render_alpha_shadow_comparison_report(
                     end_selection_date=end_selection_date,
                     horizons=horizons,
                 )
-                ledger = _build_comparison_ledger(summary)
+                model_spec_ids = set(summary.get("model_spec_id", pd.Series(dtype="object")).astype(str))
+                d5_focus_enabled = D5_PRIMARY_FOCUS_MODEL_SPEC_ID in model_spec_ids
+                ledger = (
+                    _build_pairwise_ledger(
+                        summary,
+                        focus_model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+                        comparator_pairs=D5_PRIMARY_COMPARATOR_PAIRS,
+                    )
+                    if d5_focus_enabled
+                    else _build_comparison_ledger(summary)
+                )
                 promotion_summary = load_alpha_promotion_summary(
                     connection,
                     as_of_date=end_selection_date,
@@ -337,16 +469,26 @@ def render_alpha_shadow_comparison_report(
                             )
                         )
                     )
-                content = _build_markdown(
-                    ledger,
-                    start_selection_date=start_selection_date,
-                    end_selection_date=end_selection_date,
-                    promotion_summary=promotion_summary,
+                content = (
+                    _build_d5_primary_markdown(
+                        ledger,
+                        start_selection_date=start_selection_date,
+                        end_selection_date=end_selection_date,
+                        promotion_summary=promotion_summary,
+                    )
+                    if d5_focus_enabled
+                    else _build_markdown(
+                        ledger,
+                        start_selection_date=start_selection_date,
+                        end_selection_date=end_selection_date,
+                        promotion_summary=promotion_summary,
+                    )
                 )
                 payload = {
                     "report_type": "alpha_shadow_comparison_report",
                     "row_count": int(len(ledger)),
                     "baseline_model_spec_id": MODEL_SPEC_ID,
+                    "focus_model_spec_id": D5_PRIMARY_FOCUS_MODEL_SPEC_ID if d5_focus_enabled else None,
                 }
                 artifact_paths.extend(
                     _write_report_artifacts(
