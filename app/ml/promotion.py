@@ -41,6 +41,8 @@ MODEL_SPEC_LABELS: dict[str, str] = {
     "alpha_rolling_250_v1": "rolling 250d",
     "alpha_rank_rolling_120_v1": "rank rolling 120d",
     "alpha_topbucket_h1_rolling_120_v1": "topbucket h1 rolling 120d",
+    "alpha_lead_d1_v1": "lead d1 v1",
+    "alpha_swing_d5_v1": "swing d5 v1",
     "alpha_recursive_rolling_combo": "recursive+rolling combo",
 }
 DECISION_LABELS: dict[str, str] = {
@@ -395,13 +397,19 @@ def load_alpha_promotion_summary(
                 "decision_reason_label": format_alpha_promotion_reason(first["decision_reason"]),
                 "active_model_spec_id": active_model_spec_id,
                 "active_model_label": format_alpha_model_spec_id(active_model_spec_id),
+                "active_role_label": "active serving spec",
                 "comparison_model_spec_id": comparison_model_spec_id,
                 "comparison_model_label": format_alpha_model_spec_id(comparison_model_spec_id),
-                "comparison_role_label": comparison_role_label,
+                "comparison_role_label": "legacy comparison baseline"
+                if comparison_model_spec_id is not None
+                else comparison_role_label,
                 "incumbent_model_spec_id": incumbent_model_spec_id,
                 "incumbent_model_label": format_alpha_model_spec_id(incumbent_model_spec_id),
                 "chosen_model_spec_id": chosen_model_spec_id,
                 "chosen_model_label": format_alpha_model_spec_id(chosen_model_spec_id),
+                "fallback_model_spec_id": MODEL_SPEC_ID,
+                "fallback_model_label": format_alpha_model_spec_id(MODEL_SPEC_ID),
+                "fallback_role_label": "fallback baseline",
                 "window_start": representative["row"].window_start,
                 "window_end": representative["row"].window_end,
                 "sample_count": int(representative["row"].sample_count or 0),

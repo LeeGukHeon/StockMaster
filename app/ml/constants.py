@@ -10,6 +10,8 @@ class AlphaModelSpec:
     estimation_scheme: str
     rolling_window_days: int | None = None
     active_candidate_flag: bool = True
+    lifecycle_role: str = "active_candidate"
+    lifecycle_fallback_flag: bool = False
     feature_groups: tuple[str, ...] | None = None
     member_names: tuple[str, ...] | None = None
     target_variant: str = "excess_return"
@@ -32,12 +34,17 @@ DEFAULT_ALPHA_MODEL_SPEC = AlphaModelSpec(
     model_spec_id=MODEL_SPEC_ID,
     estimation_scheme=ESTIMATION_SCHEME,
     rolling_window_days=ROLLING_WINDOW_DAYS,
+    active_candidate_flag=False,
+    lifecycle_role="baseline_only",
+    lifecycle_fallback_flag=True,
 )
 CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
     AlphaModelSpec(
         model_spec_id="alpha_rolling_120_v1",
         estimation_scheme="rolling",
         rolling_window_days=120,
+        active_candidate_flag=False,
+        lifecycle_role="inactive_candidate",
         feature_groups=(
             "price_trend",
             "volatility_risk",
@@ -52,6 +59,8 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         model_spec_id="alpha_rolling_250_v1",
         estimation_scheme="rolling",
         rolling_window_days=250,
+        active_candidate_flag=False,
+        lifecycle_role="inactive_candidate",
         feature_groups=(
             "price_trend",
             "fundamentals_quality",
@@ -65,7 +74,8 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         model_spec_id="alpha_rank_rolling_120_v1",
         estimation_scheme="rolling",
         rolling_window_days=120,
-        active_candidate_flag=True,
+        active_candidate_flag=False,
+        lifecycle_role="baseline_only",
         feature_groups=(
             "price_trend",
             "volatility_risk",
@@ -82,7 +92,8 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         model_spec_id="alpha_topbucket_h1_rolling_120_v1",
         estimation_scheme="rolling",
         rolling_window_days=120,
-        active_candidate_flag=True,
+        active_candidate_flag=False,
+        lifecycle_role="inactive_candidate",
         feature_groups=(
             "price_trend",
             "volatility_risk",
@@ -97,6 +108,48 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         validation_primary_metric_name="top5_mean_excess_return",
         promotion_primary_loss_name="loss_top5",
         allowed_horizons=(1,),
+    ),
+    AlphaModelSpec(
+        model_spec_id="alpha_lead_d1_v1",
+        estimation_scheme="rolling",
+        rolling_window_days=120,
+        active_candidate_flag=True,
+        lifecycle_role="active_candidate",
+        feature_groups=(
+            "price_trend",
+            "liquidity_turnover",
+            "investor_flow",
+            "news_catalyst",
+            "data_quality",
+        ),
+        member_names=("hist_gbm", "extra_trees"),
+        target_variant="top5_binary",
+        training_target_variant="top5_binary",
+        validation_primary_metric_name="top5_mean_excess_return",
+        promotion_primary_loss_name="loss_top5",
+        allowed_horizons=(1,),
+    ),
+    AlphaModelSpec(
+        model_spec_id="alpha_swing_d5_v1",
+        estimation_scheme="rolling",
+        rolling_window_days=250,
+        active_candidate_flag=True,
+        lifecycle_role="active_candidate",
+        feature_groups=(
+            "price_trend",
+            "liquidity_turnover",
+            "investor_flow",
+            "news_catalyst",
+            "fundamentals_quality",
+            "value_safety",
+            "data_quality",
+        ),
+        member_names=("elasticnet", "hist_gbm"),
+        target_variant="top5_binary",
+        training_target_variant="top5_binary",
+        validation_primary_metric_name="top5_mean_excess_return",
+        promotion_primary_loss_name="loss_top5",
+        allowed_horizons=(5,),
     ),
 )
 ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (

@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
+import json
 
 import duckdb
 import pandas as pd
@@ -41,6 +42,169 @@ class LiveRecalcResult:
     frame: pd.DataFrame
     mode: str
     note: str | None = None
+
+
+def _json_list(value: object) -> list[str]:
+    if value in (None, "", "-"):
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if not isinstance(value, str):
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed if str(item).strip()]
+
+
+def _json_dict(value: object) -> dict[str, object]:
+    if value in (None, "", "-"):
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    if not isinstance(value, str):
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _derive_invalidation_conditions(risk_flags: list[str]) -> list[str]:
+    conditions: list[str] = []
+    for risk_flag in risk_flags:
+        if risk_flag == "high_realized_volatility":
+            conditions.append("변동성이 더 커지면 선행 신호보다 잡음이 커질 수 있습니다.")
+        elif risk_flag == "large_recent_drawdown":
+            conditions.append("최근 급락이 이어지면 반등 가설보다 추세 훼손 가능성을 우선 봐야 합니다.")
+        elif risk_flag == "model_uncertainty_high":
+            conditions.append("모델 불확실성이 높아 추가 확인 없이 공격적으로 진입하지 않습니다.")
+        elif risk_flag == "crowding_risk":
+            conditions.append("거래 과열이 심해지면 D+1 선행 우위가 빠르게 약해질 수 있습니다.")
+    if not conditions:
+        conditions.append("거래대금이 식거나 뉴스 재료가 소멸하면 즉시 재평가합니다.")
+    return conditions[:3]
+
+
+def build_live_analysis_payload(
+    snapshot_payload: dict[str, object],
+    live_result: LiveRecalcResult,
+    *,
+    quote_timestamp_or_basis: str,
+    news_basis: str,
+) -> dict[str, object]:
+    live_row = live_result.frame.iloc[0] if not live_result.frame.empty else None
+    source_precedence = (
+        ["live_recalc", "snapshot", "quote", "news"]
+        if live_row is not None
+        else ["snapshot", "quote", "news"]
+    )
+    degradation_mode = (
+        "none"
+        if live_result.mode == "live" and live_row is not None
+        else str(live_result.mode)
+    )
+    d1_grade = (
+        live_row.get("live_d1_selection_v2_grade")
+        if live_row is not None
+        else snapshot_payload.get("d1_grade")
+    )
+    d5_grade = (
+        live_row.get("live_d5_selection_v2_grade")
+        if live_row is not None
+        else snapshot_payload.get("d5_grade")
+    )
+    d5_expected = (
+        live_row.get("live_d5_expected_excess_return")
+        if live_row is not None
+        else snapshot_payload.get("d5_expected_excess_return")
+    )
+    d1_reasons = _json_list(
+        None if live_row is None else live_row.get("live_d1_top_reason_tags_json")
+    )
+    d5_reasons = _json_list(
+        None if live_row is None else live_row.get("live_d5_top_reason_tags_json")
+    )
+    risk_flags = list(
+        dict.fromkeys(
+            _json_list(None if live_row is None else live_row.get("live_d1_risk_flags_json"))
+            + _json_list(None if live_row is None else live_row.get("live_d5_risk_flags_json"))
+        )
+    )
+    d1_explanatory = _json_dict(
+        None if live_row is None else live_row.get("live_d1_explanatory_score_json")
+    )
+    d5_explanatory = _json_dict(
+        None if live_row is None else live_row.get("live_d5_explanatory_score_json")
+    )
+    why_reasons = d1_reasons[:1] + d5_reasons[:1]
+    if why_reasons:
+        why_now = " · ".join(why_reasons)
+    elif live_result.note:
+        why_now = str(live_result.note)
+    else:
+        why_now = "실시간 선행 신호는 제한적이며 최신 안정 스냅샷을 우선 참고합니다."
+    signal_decomposition = {
+        "price": {
+            "d1_trend_momentum_score": d1_explanatory.get("trend_momentum_score"),
+            "d5_trend_momentum_score": d5_explanatory.get("trend_momentum_score"),
+            "d1_relative_alpha_score": d1_explanatory.get("relative_alpha_score"),
+            "d5_relative_alpha_score": d5_explanatory.get("relative_alpha_score"),
+        },
+        "flow": {
+            "d1_flow_score": d1_explanatory.get("flow_score"),
+            "d5_flow_score": d5_explanatory.get("flow_score"),
+            "d5_flow_persistence_score": d5_explanatory.get("flow_persistence_score"),
+        },
+        "news": {
+            "d1_news_drift_score": d1_explanatory.get("news_drift_score"),
+            "d5_news_drift_score": d5_explanatory.get("news_drift_score"),
+        },
+        "crowding_risk": {
+            "d1_crowding_penalty_score": d1_explanatory.get("crowding_penalty_score"),
+            "d5_crowding_penalty_score": d5_explanatory.get("crowding_penalty_score"),
+            "d5_risk_penalty_score": d5_explanatory.get("risk_penalty_score"),
+        },
+    }
+    return {
+        "mode": live_result.mode,
+        "note": live_result.note,
+        "source_precedence": source_precedence,
+        "degradation_mode": degradation_mode,
+        "snapshot_reused_flag": live_row is None,
+        "d1_grade": d1_grade,
+        "d5_grade": d5_grade,
+        "d5_expected_excess_return": d5_expected,
+        "ret_5d": snapshot_payload.get("ret_5d"),
+        "d1_head_spec_id": (
+            None if live_row is None else live_row.get("live_d1_model_spec_id")
+        )
+        or snapshot_payload.get("d1_model_spec_id"),
+        "d5_head_spec_id": (
+            None if live_row is None else live_row.get("live_d5_model_spec_id")
+        )
+        or snapshot_payload.get("d5_model_spec_id"),
+        "d1_active_alpha_model_id": (
+            None if live_row is None else live_row.get("live_d1_active_alpha_model_id")
+        )
+        or snapshot_payload.get("d1_active_alpha_model_id"),
+        "d5_active_alpha_model_id": (
+            None if live_row is None else live_row.get("live_d5_active_alpha_model_id")
+        )
+        or snapshot_payload.get("d5_active_alpha_model_id"),
+        "why_now": why_now,
+        "signal_decomposition": signal_decomposition,
+        "risk_flags": risk_flags,
+        "invalidation_conditions": _derive_invalidation_conditions(risk_flags),
+        "quote_timestamp_or_basis": quote_timestamp_or_basis,
+        "news_basis": news_basis,
+        "d1_reason_tags": d1_reasons,
+        "d5_reason_tags": d5_reasons,
+    }
 
 
 def _is_read_only_conflict(exc: BaseException) -> bool:
@@ -357,6 +521,9 @@ def compute_live_stock_recommendation(
                 symbol=normalized_symbol,
                 as_of_date=as_of_date,
             )
+            d1_prediction_row = None
+            if 1 in live_prediction_rows and not live_prediction_rows[1].empty:
+                d1_prediction_row = live_prediction_rows[1].iloc[0]
             d5_prediction_row = None
             if 5 in live_prediction_rows and not live_prediction_rows[5].empty:
                 d5_prediction_row = live_prediction_rows[5].iloc[0]
@@ -388,10 +555,28 @@ def compute_live_stock_recommendation(
                         "live_d1_selection_v2_grade": ranking_by_horizon.get(1, {}).get("grade"),
                         "live_d1_eligible_flag": ranking_by_horizon.get(1, {}).get("eligible_flag"),
                         "live_d1_report_candidate_flag": ranking_by_horizon.get(1, {}).get("report_candidate_flag"),
+                        "live_d1_model_spec_id": None
+                        if d1_prediction_row is None
+                        else d1_prediction_row.get("model_spec_id"),
+                        "live_d1_active_alpha_model_id": None
+                        if d1_prediction_row is None
+                        else d1_prediction_row.get("active_alpha_model_id"),
+                        "live_d1_top_reason_tags_json": ranking_by_horizon.get(1, {}).get("top_reason_tags_json"),
+                        "live_d1_risk_flags_json": ranking_by_horizon.get(1, {}).get("risk_flags_json"),
+                        "live_d1_explanatory_score_json": ranking_by_horizon.get(1, {}).get("explanatory_score_json"),
                         "live_d5_selection_v2_value": ranking_by_horizon.get(5, {}).get("final_selection_value"),
                         "live_d5_selection_v2_grade": ranking_by_horizon.get(5, {}).get("grade"),
                         "live_d5_eligible_flag": ranking_by_horizon.get(5, {}).get("eligible_flag"),
                         "live_d5_report_candidate_flag": ranking_by_horizon.get(5, {}).get("report_candidate_flag"),
+                        "live_d5_model_spec_id": None
+                        if d5_prediction_row is None
+                        else d5_prediction_row.get("model_spec_id"),
+                        "live_d5_active_alpha_model_id": None
+                        if d5_prediction_row is None
+                        else d5_prediction_row.get("active_alpha_model_id"),
+                        "live_d5_top_reason_tags_json": ranking_by_horizon.get(5, {}).get("top_reason_tags_json"),
+                        "live_d5_risk_flags_json": ranking_by_horizon.get(5, {}).get("risk_flags_json"),
+                        "live_d5_explanatory_score_json": ranking_by_horizon.get(5, {}).get("explanatory_score_json"),
                         "live_d5_expected_excess_return": expected,
                         "live_d5_target_price": None
                         if reference_price is None or expected is None

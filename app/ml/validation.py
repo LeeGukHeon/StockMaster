@@ -8,6 +8,7 @@ from pathlib import Path
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import (
+    ALPHA_CANDIDATE_MODEL_SPECS,
     MODEL_SPEC_ID,
     MODEL_VERSION,
     PREDICTION_VERSION,
@@ -27,6 +28,19 @@ class AlphaModelValidationResult:
     row_count: int
     artifact_paths: list[str]
     notes: str
+
+
+D1_LEAD_ROLLING20_RAW_TOP1_SHARE_PASS = 0.015
+D1_LEAD_ROLLING20_RAW_TOP1_SHARE_FAIL = 0.0183
+D1_LEAD_ROLLING20_SELECTED_TOP1_SHARE_PASS = 0.025
+D1_LEAD_ROLLING20_SELECTED_TOP1_SHARE_FAIL = 0.0303
+D1_LEAD_ROLLING20_RAW_TOP1_MINUS_MEDIAN_PASS = 0.050
+D1_LEAD_ROLLING20_RAW_TOP1_MINUS_MEDIAN_FAIL = 0.0641
+D1_LEAD_ROLLING20_SELECTED_TOP1_MINUS_MEDIAN_PASS = 0.035
+D1_LEAD_ROLLING20_SELECTED_TOP1_MINUS_MEDIAN_FAIL = 0.0416
+D1_LEAD_ROLLING20_RAW_EXTREME_COUNT_PASS = 70
+D1_LEAD_ROLLING20_RAW_EXTREME_COUNT_FAIL = 92
+D1_LEAD_ROLLING20_SELECTED_EXTREME_COUNT_PASS = 2
 
 
 def _validation_reference_runs_sql(horizon_array_sql: str) -> str:
@@ -134,6 +148,161 @@ def _resolve_required_validation_metrics(
         "top10_mean_excess_return",
         "top20_mean_excess_return",
     )
+
+
+def _selection_gap_drag_threshold(*, horizon: int, window_name: str) -> float | None:
+    if int(horizon) == 1 and window_name == "rolling_20":
+        return -0.0010
+    if int(horizon) == 1 and window_name == "rolling_60":
+        return -0.0015
+    if int(horizon) == 5 and window_name == "rolling_20":
+        return -0.0015
+    if int(horizon) == 5 and window_name == "rolling_60":
+        return -0.0020
+    return None
+
+
+def _concentration_check_status(
+    value: float | int | None,
+    *,
+    pass_threshold: float,
+    fail_threshold: float | None = None,
+) -> str:
+    if value is None:
+        return "warn"
+    numeric_value = float(value)
+    if numeric_value <= float(pass_threshold):
+        return "pass"
+    if fail_threshold is None:
+        return "fail"
+    if numeric_value >= float(fail_threshold):
+        return "fail"
+    return "warn"
+
+
+def _append_d1_concentration_checks(
+    connection,
+    *,
+    as_of_date: date,
+    checks: list[dict[str, object]],
+) -> None:
+    row = connection.execute(
+        """
+        SELECT
+            summary_date,
+            insufficient_history_flag,
+            matured_selection_date_count,
+            required_selection_date_count,
+            raw_top5_top1_expected_return_share,
+            selected_top5_top1_expected_return_share,
+            raw_top5_top1_minus_median_expected_return,
+            selected_top5_top1_minus_median_expected_return,
+            raw_top5_extreme_expected_return_count,
+            selected_top5_extreme_expected_return_count
+        FROM fact_alpha_shadow_selection_gap_scorecard
+        WHERE summary_date <= ?
+          AND window_name = 'rolling_20'
+          AND horizon = 1
+          AND model_spec_id = 'alpha_lead_d1_v1'
+          AND segment_name = 'top5'
+        ORDER BY summary_date DESC
+        LIMIT 1
+        """,
+        [as_of_date],
+    ).fetchone()
+    if row is None:
+        checks.append(
+            {
+                "check_name": "d1_concentration_roll20",
+                "status": "warn",
+                "value": "",
+                "threshold": "row present",
+                "detail": "Missing rolling_20 D+1 lead scorecard row for concentration checks.",
+            }
+        )
+        return
+    (
+        summary_date,
+        insufficient_history,
+        matured_count,
+        required_count,
+        raw_top1_share,
+        selected_top1_share,
+        raw_top1_minus_median,
+        selected_top1_minus_median,
+        raw_extreme_count,
+        selected_extreme_count,
+    ) = row
+    if bool(insufficient_history):
+        checks.append(
+            {
+                "check_name": "d1_concentration_roll20",
+                "status": "warn",
+                "value": int(matured_count or 0),
+                "threshold": int(required_count or 20),
+                "detail": (
+                    "Insufficient matured selection dates for D+1 concentration checks "
+                    f"at summary_date={summary_date}."
+                ),
+            }
+        )
+        return
+    metric_specs = (
+        (
+            "d1_raw_top1_expected_return_share_roll20",
+            raw_top1_share,
+            D1_LEAD_ROLLING20_RAW_TOP1_SHARE_PASS,
+            D1_LEAD_ROLLING20_RAW_TOP1_SHARE_FAIL,
+        ),
+        (
+            "d1_selected_top1_expected_return_share_roll20",
+            selected_top1_share,
+            D1_LEAD_ROLLING20_SELECTED_TOP1_SHARE_PASS,
+            D1_LEAD_ROLLING20_SELECTED_TOP1_SHARE_FAIL,
+        ),
+        (
+            "d1_raw_top1_minus_median_expected_return_roll20",
+            raw_top1_minus_median,
+            D1_LEAD_ROLLING20_RAW_TOP1_MINUS_MEDIAN_PASS,
+            D1_LEAD_ROLLING20_RAW_TOP1_MINUS_MEDIAN_FAIL,
+        ),
+        (
+            "d1_selected_top1_minus_median_expected_return_roll20",
+            selected_top1_minus_median,
+            D1_LEAD_ROLLING20_SELECTED_TOP1_MINUS_MEDIAN_PASS,
+            D1_LEAD_ROLLING20_SELECTED_TOP1_MINUS_MEDIAN_FAIL,
+        ),
+        (
+            "d1_raw_extreme_expected_return_count_roll20",
+            raw_extreme_count,
+            D1_LEAD_ROLLING20_RAW_EXTREME_COUNT_PASS,
+            D1_LEAD_ROLLING20_RAW_EXTREME_COUNT_FAIL,
+        ),
+        (
+            "d1_selected_extreme_expected_return_count_roll20",
+            selected_extreme_count,
+            D1_LEAD_ROLLING20_SELECTED_EXTREME_COUNT_PASS,
+            None,
+        ),
+    )
+    for check_name, value, pass_threshold, fail_threshold in metric_specs:
+        status = _concentration_check_status(
+            None if value is None else float(value),
+            pass_threshold=float(pass_threshold),
+            fail_threshold=None if fail_threshold is None else float(fail_threshold),
+        )
+        checks.append(
+            {
+                "check_name": check_name,
+                "status": status,
+                "value": "" if value is None else round(float(value), 6),
+                "threshold": f"<= {pass_threshold}",
+                "detail": (
+                    "D+1 rolling_20 concentration control should improve this metric "
+                    "against the approved calibration lane thresholds."
+                ),
+            }
+        )
 
 
 def validate_alpha_model_v1(
@@ -373,6 +542,113 @@ def validate_alpha_model_v1(
                         "detail": "Disagreement score must be non-negative when populated.",
                     }
                 )
+
+                active_candidate_spec_ids = [
+                    spec.model_spec_id
+                    for spec in ALPHA_CANDIDATE_MODEL_SPECS
+                    if bool(spec.active_candidate_flag)
+                ]
+                for spec_id in active_candidate_spec_ids:
+                    try:
+                        spec = get_alpha_model_spec(spec_id)
+                    except KeyError:
+                        continue
+                    for horizon in horizons:
+                        horizon_int = int(horizon)
+                        if horizon_int not in set(spec.allowed_horizons or (horizon_int,)):
+                            continue
+                        for window_name in ("rolling_20", "rolling_60"):
+                            threshold = _selection_gap_drag_threshold(
+                                horizon=horizon_int,
+                                window_name=window_name,
+                            )
+                            if threshold is None:
+                                continue
+                            gap_row = connection.execute(
+                                """
+                                SELECT
+                                    summary_date,
+                                    drag_vs_raw_top5,
+                                    insufficient_history_flag,
+                                    matured_selection_date_count,
+                                    required_selection_date_count
+                                FROM fact_alpha_shadow_selection_gap_scorecard
+                                WHERE summary_date <= ?
+                                  AND window_name = ?
+                                  AND horizon = ?
+                                  AND model_spec_id = ?
+                                  AND segment_name = 'top5'
+                                ORDER BY summary_date DESC
+                                LIMIT 1
+                                """,
+                                [
+                                    as_of_date,
+                                    window_name,
+                                    horizon_int,
+                                    spec_id,
+                                ],
+                            ).fetchone()
+                            if gap_row is None:
+                                checks.append(
+                                    {
+                                        "check_name": (
+                                            f"selection_gap_top5_drag_{spec_id}_h{horizon_int}_{window_name}"
+                                        ),
+                                        "status": "warn",
+                                        "value": "",
+                                        "threshold": threshold,
+                                        "detail": (
+                                            f"Missing selection-gap row for {spec_id} "
+                                            f"horizon={horizon_int} window={window_name}."
+                                        ),
+                                    }
+                                )
+                                continue
+                            drag_value = None if gap_row[1] is None else float(gap_row[1])
+                            insufficient_history = bool(gap_row[2])
+                            matured_count = int(gap_row[3] or 0)
+                            required_count = int(gap_row[4] or 0)
+                            if insufficient_history:
+                                checks.append(
+                                    {
+                                        "check_name": (
+                                            f"selection_gap_top5_drag_{spec_id}_h{horizon_int}_{window_name}"
+                                        ),
+                                        "status": "warn",
+                                        "value": "" if drag_value is None else round(drag_value, 6),
+                                        "threshold": threshold,
+                                        "detail": (
+                                            f"Insufficient matured selection dates for {spec_id} "
+                                            f"({matured_count}/{required_count}) at summary_date={gap_row[0]}."
+                                        ),
+                                    }
+                                )
+                                continue
+                            checks.append(
+                                {
+                                    "check_name": (
+                                        f"selection_gap_top5_drag_{spec_id}_h{horizon_int}_{window_name}"
+                                    ),
+                                    "status": (
+                                        "pass"
+                                        if drag_value is not None and drag_value >= threshold
+                                        else "warn"
+                                    ),
+                                    "value": "" if drag_value is None else round(drag_value, 6),
+                                    "threshold": threshold,
+                                    "detail": (
+                                        f"Latest top5 drag for {spec_id} at {window_name} should stay "
+                                        "within the allowed degradation band."
+                                    ),
+                                }
+                            )
+
+                if 1 in {int(horizon) for horizon in horizons}:
+                    _append_d1_concentration_checks(
+                        connection,
+                        as_of_date=as_of_date,
+                        checks=checks,
+                    )
 
                 artifact_paths = _write_validation_artifacts(
                     settings.paths.artifacts_dir / "model_validation",

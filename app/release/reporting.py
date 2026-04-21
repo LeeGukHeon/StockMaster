@@ -9,6 +9,7 @@ from typing import Any
 
 import duckdb
 
+from app.ml.constants import MODEL_SPEC_ID
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ops.common import JobStatus, OpsJobResult
 from app.settings import Settings
@@ -17,6 +18,16 @@ from app.storage.duckdb import bootstrap_core_tables
 EXECUTION_MODE_LABELS = {
     "OPEN_ALL": "시가 일괄 진입",
     "TIMING_ASSISTED": "장중 보조 진입",
+}
+
+MODEL_SPEC_LABELS = {
+    "alpha_recursive_expanding_v1": "확장형 누적 학습",
+    "alpha_rolling_120_v1": "최근 120거래일 중심 학습",
+    "alpha_rolling_250_v1": "최근 250거래일 중심 학습",
+    "alpha_rank_rolling_120_v1": "5일 지속성 비교 기준",
+    "alpha_topbucket_h1_rolling_120_v1": "하루 선행 비교 기준",
+    "alpha_lead_d1_v1": "하루 선행 포착 v1",
+    "alpha_swing_d5_v1": "5일 지속 포착 v1",
 }
 
 
@@ -46,6 +57,11 @@ def _payload_messages(content: str) -> list[dict[str, str]]:
 def _json_object_value(payload: str | None, key: str) -> float | None:
     if not payload:
         return None
+
+
+def _translate_model_spec(model_spec_id: object) -> str:
+    text = str(model_spec_id or "-")
+    return MODEL_SPEC_LABELS.get(text, text)
     try:
         loaded = json.loads(payload)
     except json.JSONDecodeError:
@@ -428,6 +444,52 @@ def render_release_candidate_checklist(
             check_name
         """
     )
+    active_models = _frame(
+        connection,
+        """
+        SELECT
+            horizon,
+            model_spec_id,
+            active_alpha_model_id,
+            effective_from_date,
+            promotion_type
+        FROM fact_alpha_active_model
+        WHERE effective_from_date <= ?
+          AND (effective_to_date IS NULL OR effective_to_date >= ?)
+          AND active_flag = TRUE
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY horizon
+            ORDER BY effective_from_date DESC, created_at DESC, active_alpha_model_id DESC
+        ) = 1
+        ORDER BY horizon
+        """,
+        [as_of_date, as_of_date],
+    )
+    gap_rows = _frame(
+        connection,
+        """
+        SELECT
+            summary_date,
+            window_name,
+            horizon,
+            model_spec_id,
+            insufficient_history_flag,
+            matured_selection_date_count,
+            required_selection_date_count,
+            selected_top5_mean_realized_excess_return,
+            drag_vs_raw_top5
+        FROM fact_alpha_shadow_selection_gap_scorecard
+        WHERE summary_date = (
+            SELECT MAX(summary_date)
+            FROM fact_alpha_shadow_selection_gap_scorecard
+            WHERE summary_date <= ?
+        )
+          AND window_name = 'rolling_20'
+          AND segment_name = 'top5'
+        ORDER BY horizon, model_spec_id
+        """,
+        [as_of_date],
+    )
     lines = ["# Release Candidate Checklist", "", f"- as_of_date: {as_of_date.isoformat()}", ""]
     lines.append("## Checks")
     if checks.empty:
@@ -441,6 +503,36 @@ def render_release_candidate_checklist(
     lines.append("")
     lines.append("## Discord Bot Snapshot")
     lines.append("- Discord bot snapshot is managed in metadata Postgres, not in main DuckDB.")
+    lines.append("")
+    lines.append("## Alpha serving baseline")
+    if active_models.empty:
+        lines.append("- active serving spec 정보가 아직 없습니다.")
+    else:
+        for row in active_models.itertuples(index=False):
+            lines.append(
+                f"- D+{int(row.horizon)} | active serving spec {_translate_model_spec(row.model_spec_id)} "
+                f"| active_alpha_model_id={row.active_alpha_model_id} "
+                f"| effective_from={row.effective_from_date} "
+                f"| fallback baseline={_translate_model_spec(MODEL_SPEC_ID)}"
+            )
+    lines.append("")
+    lines.append("## Selection gap gate")
+    if gap_rows.empty:
+        lines.append("- selection gap scorecard가 아직 없습니다.")
+    else:
+        for row in gap_rows.itertuples(index=False):
+            if bool(row.insufficient_history_flag):
+                lines.append(
+                    f"- D+{int(row.horizon)} | {_translate_model_spec(row.model_spec_id)} | "
+                    f"insufficient history {int(row.matured_selection_date_count or 0)}/"
+                    f"{int(row.required_selection_date_count or 0)}"
+                )
+            else:
+                lines.append(
+                    f"- D+{int(row.horizon)} | {_translate_model_spec(row.model_spec_id)} | "
+                    f"selected_top5={float(row.selected_top5_mean_realized_excess_return or 0.0):+.2%} "
+                    f"| drag_vs_raw={float(row.drag_vs_raw_top5 or 0.0):+.2%}"
+                )
     rendered = _write_report_artifacts(
         settings,
         folder_name="release_candidate_checklist",

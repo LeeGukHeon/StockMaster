@@ -97,6 +97,9 @@ def test_compute_live_stock_recommendation_returns_on_demand_snapshot(
     assert not frame.empty
     assert frame.iloc[0]["symbol"] == "005930"
     assert frame.iloc[0]["live_d5_selection_v2_grade"] is not None
+    assert frame.iloc[0]["live_d1_model_spec_id"] == "alpha_recursive_expanding_v1"
+    assert frame.iloc[0]["live_d5_active_alpha_model_id"] == "active-h5"
+    assert frame.iloc[0]["live_d5_top_reason_tags_json"] is not None
     assert frame.iloc[0]["live_reference_price"] > 0
     assert frame.iloc[0]["live_d5_target_price"] > frame.iloc[0]["live_reference_price"]
 

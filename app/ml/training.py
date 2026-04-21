@@ -530,6 +530,8 @@ def _model_spec_registry_row(model_spec: AlphaModelSpec) -> dict[str, object]:
                 "validation_primary_metric_name": model_spec.validation_primary_metric_name,
                 "promotion_primary_loss_name": model_spec.promotion_primary_loss_name,
                 "allowed_horizons": list(model_spec.allowed_horizons or ()),
+                "lifecycle_role": model_spec.lifecycle_role,
+                "lifecycle_fallback_flag": bool(model_spec.lifecycle_fallback_flag),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -538,6 +540,12 @@ def _model_spec_registry_row(model_spec: AlphaModelSpec) -> dict[str, object]:
         "created_at": pd.Timestamp.utcnow(),
         "updated_at": pd.Timestamp.utcnow(),
     }
+
+
+def build_alpha_model_spec_registry_frame(
+    model_specs: tuple[AlphaModelSpec, ...] = ALPHA_CANDIDATE_MODEL_SPECS,
+) -> pd.DataFrame:
+    return pd.DataFrame([_model_spec_registry_row(spec) for spec in model_specs])
 
 
 def _train_single_horizon(
@@ -972,7 +980,7 @@ def _train_alpha_specs(
                 artifact_paths: list[str] = []
                 upsert_alpha_model_specs(
                     connection,
-                    pd.DataFrame([_model_spec_registry_row(spec) for spec in model_specs]),
+                    build_alpha_model_spec_registry_frame(model_specs),
                 )
                 for model_spec in model_specs:
                     for horizon in horizons:

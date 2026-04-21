@@ -363,6 +363,18 @@ def _build_stock_summary_rows(
         payload = {
             "d1_grade": d1_grade,
             "d5_grade": d5_grade,
+            "d1_model_spec_id": _safe_text(
+                getattr(live, "live_d1_model_spec_id", None) if live else None
+            ),
+            "d1_active_alpha_model_id": _safe_text(
+                getattr(live, "live_d1_active_alpha_model_id", None) if live else None
+            ),
+            "d5_model_spec_id": _safe_text(
+                getattr(live, "live_d5_model_spec_id", None) if live else None
+            ),
+            "d5_active_alpha_model_id": _safe_text(
+                getattr(live, "live_d5_active_alpha_model_id", None) if live else None
+            ),
             "d5_expected_excess_return": d5_expected,
             "ret_5d": getattr(item, "ret_5d", None),
             "ret_20d": getattr(item, "ret_20d", None),

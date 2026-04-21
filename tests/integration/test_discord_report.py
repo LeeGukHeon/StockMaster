@@ -116,6 +116,54 @@ def _seed_alpha_promotion_surface(settings) -> None:
                     detail_json,
                 ],
             )
+        connection.execute(
+            """
+            INSERT INTO fact_alpha_shadow_selection_gap_scorecard (
+                summary_date,
+                window_name,
+                window_start,
+                window_end,
+                horizon,
+                model_spec_id,
+                segment_name,
+                matured_selection_date_count,
+                required_selection_date_count,
+                insufficient_history_flag,
+                raw_top5_source,
+                hit_rate_formula,
+                raw_top5_mean_realized_excess_return,
+                selected_top5_mean_realized_excess_return,
+                report_candidates_mean_realized_excess_return,
+                raw_top5_hit_rate,
+                selected_top5_hit_rate,
+                report_candidates_hit_rate,
+                top5_overlap,
+                pred_only_top5_mean_realized_excess_return,
+                sel_only_top5_mean_realized_excess_return,
+                drag_vs_raw_top5,
+                evaluation_run_id,
+                created_at
+            ) VALUES
+            (
+                ?, 'rolling_20', ?, ?, 1, 'alpha_lead_d1_v1', 'top5',
+                20, 20, FALSE, 'prediction desc', 'realized_excess_return > 0',
+                0.020, 0.018, 0.017, 0.55, 0.53, 0.52, 0.60, 0.021, 0.015, -0.002, 'seed-gap', now()
+            ),
+            (
+                ?, 'rolling_20', ?, ?, 5, 'alpha_swing_d5_v1', 'top5',
+                20, 20, FALSE, 'prediction desc', 'realized_excess_return > 0',
+                0.016, 0.015, 0.014, 0.53, 0.52, 0.51, 0.58, 0.017, 0.013, -0.001, 'seed-gap', now()
+            )
+            """,
+            [
+                date(2026, 3, 5),
+                date(2026, 2, 14),
+                date(2026, 3, 5),
+                date(2026, 3, 5),
+                date(2026, 2, 14),
+                date(2026, 3, 5),
+            ],
+        )
 
 
 def _seed_ready_surface(settings) -> None:
@@ -182,6 +230,8 @@ def test_discord_report_render_and_publish_dry_run(tmp_path, monkeypatch):
     )
     assert "2026-03-05" in all_messages
     assert "message_count" not in all_messages
+    assert "선택 드래그 점검" in all_messages
+    assert "하루 선행 포착 v1" in all_messages
     assert render_result.payload["message_count"] >= 1
     assert len(render_result.payload["messages"]) == render_result.payload["message_count"]
     assert publish_result.published is False

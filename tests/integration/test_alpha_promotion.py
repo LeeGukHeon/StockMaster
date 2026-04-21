@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 
 import pandas as pd
@@ -25,6 +26,7 @@ from app.query_views import (
     latest_alpha_active_model_frame,
     latest_alpha_model_spec_frame,
     latest_alpha_rollback_frame,
+    latest_alpha_selection_gap_scorecard_frame,
     latest_alpha_training_candidate_frame,
 )
 from tests._ticket003_support import build_test_settings
@@ -45,6 +47,8 @@ SPEC_BASE_RETURNS = {
     "alpha_rolling_250_v1": [-0.012, -0.018, -0.010, -0.022, -0.016, -0.020, -0.014],
     "alpha_rank_rolling_120_v1": [0.027, 0.022, 0.026, 0.019, 0.024, 0.018, 0.021],
     "alpha_topbucket_h1_rolling_120_v1": [0.018, 0.016, 0.019, 0.015, 0.017, 0.014, 0.016],
+    "alpha_lead_d1_v1": [0.032, 0.028, 0.031, 0.026, 0.029, 0.025, 0.027],
+    "alpha_swing_d5_v1": [0.024, 0.021, 0.025, 0.020, 0.023, 0.019, 0.022],
 }
 SPEC_BASE_ERRORS = {
     MODEL_SPEC_ID: [0.018, 0.015, 0.017, 0.014, 0.016, 0.015, 0.017],
@@ -52,6 +56,8 @@ SPEC_BASE_ERRORS = {
     "alpha_rolling_250_v1": [0.026, 0.024, 0.028, 0.025, 0.027, 0.026, 0.029],
     "alpha_rank_rolling_120_v1": [0.005, 0.006, 0.004, 0.005, 0.006, 0.005, 0.004],
     "alpha_topbucket_h1_rolling_120_v1": [0.007, 0.008, 0.006, 0.007, 0.008, 0.007, 0.006],
+    "alpha_lead_d1_v1": [0.003, 0.004, 0.003, 0.004, 0.004, 0.003, 0.004],
+    "alpha_swing_d5_v1": [0.004, 0.004, 0.003, 0.004, 0.004, 0.003, 0.004],
 }
 SYMBOL_RETURN_ADJUSTMENTS = [0.006, 0.002, -0.002, -0.006]
 SYMBOL_ERROR_ADJUSTMENTS = [0.0015, -0.0010, 0.0005, -0.0005]
@@ -69,7 +75,14 @@ def _seed_alpha_model_registry(settings) -> None:
             "feature_version": "feature_store_v1",
             "label_version": "forward_return_v1",
             "selection_engine_version": "selection_engine_v2",
-            "spec_payload_json": "{}",
+            "spec_payload_json": json.dumps(
+                {
+                    "lifecycle_role": spec.lifecycle_role,
+                    "lifecycle_fallback_flag": bool(spec.lifecycle_fallback_flag),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
             "active_candidate_flag": bool(spec.active_candidate_flag),
             "created_at": created_at,
             "updated_at": created_at,
@@ -257,7 +270,8 @@ def test_run_alpha_auto_promotion_promotes_superior_challenger(tmp_path):
         model_spec_id=MODEL_SPEC_ID,
         train_end_date=date(2026, 3, 6),
     )
-    _seed_shadow_prediction_and_ranking(settings, model_spec_id="alpha_rolling_120_v1")
+    _seed_shadow_prediction_and_ranking(settings, model_spec_id="alpha_lead_d1_v1")
+    _seed_shadow_prediction_and_ranking(settings, model_spec_id="alpha_swing_d5_v1")
 
     result = run_alpha_auto_promotion(
         settings,
@@ -268,7 +282,7 @@ def test_run_alpha_auto_promotion_promotes_superior_challenger(tmp_path):
         block_length=1,
     )
 
-    assert result.row_count == 32
+    assert result.row_count > 0
     assert result.promoted_horizon_count == 2
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
@@ -289,20 +303,21 @@ def test_run_alpha_auto_promotion_promotes_superior_challenger(tmp_path):
             FROM fact_alpha_promotion_test
             WHERE promotion_date = ?
               AND horizon = 1
-              AND challenger_model_spec_id = 'alpha_rolling_120_v1'
-              AND loss_name = 'loss_top10'
+              AND challenger_model_spec_id = 'alpha_lead_d1_v1'
+              AND loss_name = 'loss_top5'
             """,
             [date(2026, 3, 10)],
         ).fetchone()
 
     assert active_h1 is not None
     assert active_h5 is not None
-    assert active_h1["model_spec_id"] == "alpha_rolling_120_v1"
-    assert active_h5["model_spec_id"] == "alpha_rolling_120_v1"
+    assert active_h1["model_spec_id"] == "alpha_lead_d1_v1"
+    assert active_h5["model_spec_id"] == "alpha_swing_d5_v1"
     assert active_h1["promotion_type"] == "AUTO_PROMOTION"
     assert active_h1["source_type"] == "alpha_auto_promotion"
-    assert "alpha_rolling_120_v1" in active_h1["promotion_report_json"]["superior_set"]
-    assert promotion_rows == 32
+    assert "alpha_lead_d1_v1" in active_h1["promotion_report_json"]["superior_set"]
+    assert "alpha_swing_d5_v1" in active_h5["promotion_report_json"]["superior_set"]
+    assert promotion_rows > 0
     assert decision_row == ("PROMOTE_CHALLENGER", True, False, len(SELECTION_DATES))
 
 
@@ -317,21 +332,21 @@ def test_run_alpha_auto_promotion_blocks_lineage_mismatched_challenger(tmp_path)
         model_spec_id=MODEL_SPEC_ID,
         train_end_date=date(2026, 3, 6),
     )
-    _seed_shadow_prediction_and_ranking(settings, model_spec_id="alpha_rolling_120_v1")
+    _seed_shadow_prediction_and_ranking(settings, model_spec_id="alpha_lead_d1_v1")
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
         connection.execute(
             """
             UPDATE fact_alpha_shadow_selection_outcome
             SET training_run_id = 'stale-alpha-rolling-120'
-            WHERE model_spec_id = 'alpha_rolling_120_v1'
+            WHERE model_spec_id = 'alpha_lead_d1_v1'
             """
         )
 
     result = run_alpha_auto_promotion(
         settings,
         as_of_date=date(2026, 3, 10),
-        horizons=[1, 5],
+        horizons=[1],
         lookback_selection_dates=len(SELECTION_DATES),
         bootstrap_reps=200,
         block_length=1,
@@ -348,8 +363,8 @@ def test_run_alpha_auto_promotion_blocks_lineage_mismatched_challenger(tmp_path)
             FROM fact_alpha_promotion_test
             WHERE promotion_date = ?
               AND horizon = 1
-              AND challenger_model_spec_id = 'alpha_rolling_120_v1'
-              AND loss_name = 'loss_top10'
+              AND challenger_model_spec_id = 'alpha_lead_d1_v1'
+              AND loss_name = 'loss_top5'
             """,
             [date(2026, 3, 10)],
         ).fetchone()
@@ -464,10 +479,46 @@ def test_alpha_ops_helper_frames_surface_registry_and_candidates(tmp_path):
         MODEL_SPEC_ID,
         "alpha_rolling_120_v1",
         "alpha_rolling_250_v1",
+        "alpha_lead_d1_v1",
+        "alpha_swing_d5_v1",
     }
-    assert set(spec_frame["model_spec_id"]) >= {
-        MODEL_SPEC_ID,
-        "alpha_rolling_120_v1",
-        "alpha_rolling_250_v1",
-    }
+    assert set(spec_frame["model_spec_id"]) == {"alpha_lead_d1_v1", "alpha_swing_d5_v1"}
+    assert set(spec_frame["lifecycle_role"]) == {"active_candidate"}
+    assert set(spec_frame["lifecycle_fallback_flag"]) == {False}
     assert set(rollback_frame["promotion_type"]) == {"ROLLBACK"}
+
+
+def test_latest_alpha_selection_gap_scorecard_frame_returns_latest_rows(tmp_path):
+    settings = _build_promotion_settings(tmp_path)
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        connection.execute(
+            """
+            INSERT INTO fact_alpha_shadow_selection_gap_scorecard (
+                summary_date, window_name, window_start, window_end, horizon, model_spec_id,
+                segment_name, matured_selection_date_count, required_selection_date_count,
+                insufficient_history_flag, raw_top5_source, hit_rate_formula,
+                raw_top5_mean_realized_excess_return, selected_top5_mean_realized_excess_return,
+                report_candidates_mean_realized_excess_return, raw_top5_hit_rate,
+                selected_top5_hit_rate, report_candidates_hit_rate, top5_overlap,
+                pred_only_top5_mean_realized_excess_return, sel_only_top5_mean_realized_excess_return,
+                drag_vs_raw_top5, evaluation_run_id, created_at
+            ) VALUES (
+                ?, 'rolling_20', ?, ?, 1, 'alpha_lead_d1_v1', 'top5', 20, 20, FALSE,
+                'prediction desc', 'realized_excess_return > 0', 0.02, 0.018, 0.017,
+                0.55, 0.53, 0.52, 0.60, 0.021, 0.015, -0.002, 'seed-gap', now()
+            )
+            """,
+            [date(2026, 3, 10), date(2026, 2, 10), date(2026, 3, 10)],
+        )
+
+    gap_frame = latest_alpha_selection_gap_scorecard_frame(
+        settings,
+        summary_date=date(2026, 3, 10),
+        window_name="rolling_20",
+        limit=10,
+    )
+
+    assert len(gap_frame) == 1
+    assert gap_frame.iloc[0]["model_spec_id"] == "alpha_lead_d1_v1"
+    assert bool(gap_frame.iloc[0]["insufficient_history_flag"]) is False

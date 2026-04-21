@@ -12,6 +12,7 @@ from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION
 from app.ml.constants import get_alpha_model_spec
 from app.ml.inference import materialize_alpha_predictions_v1
+from app.ml.registry import load_active_alpha_model
 from app.ranking.explanatory_score import (
     _component_score,
     _feature_inverse_rank,
@@ -556,8 +557,23 @@ def build_selection_engine_v2_rankings(
 
 
 def _load_predictions(connection, *, as_of_date: date, horizon: int) -> pd.DataFrame:
+    active_model = load_active_alpha_model(
+        connection,
+        as_of_date=as_of_date,
+        horizon=int(horizon),
+    )
+    parameters: list[object] = [
+        as_of_date,
+        int(horizon),
+        ALPHA_PREDICTION_VERSION,
+        SELECTION_ENGINE_VERSION,
+    ]
+    active_filter = ""
+    if active_model is not None and active_model.get("active_alpha_model_id") not in (None, ""):
+        active_filter = "AND active_alpha_model_id = ?"
+        parameters.append(str(active_model["active_alpha_model_id"]))
     return connection.execute(
-        """
+        f"""
         SELECT
             symbol,
             expected_excess_return,
@@ -579,8 +595,9 @@ def _load_predictions(connection, *, as_of_date: date, horizon: int) -> pd.DataF
           AND horizon = ?
           AND prediction_version = ?
           AND ranking_version = ?
+          {active_filter}
         """,
-        [as_of_date, horizon, ALPHA_PREDICTION_VERSION, SELECTION_ENGINE_VERSION],
+        parameters,
     ).fetchdf()
 
 

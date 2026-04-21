@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import date
 
+from app.ml.constants import CHALLENGER_ALPHA_MODEL_SPECS, get_alpha_model_spec
 from app.ml.training import train_alpha_candidate_models
 from app.settings import load_settings
 
@@ -15,6 +16,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--validation-days", type=int, default=20)
     parser.add_argument("--limit-symbols", type=int, default=None)
     parser.add_argument("--market", default="ALL")
+    parser.add_argument("--model-spec-ids", nargs="+", default=None)
     return parser.parse_args()
 
 
@@ -29,6 +31,11 @@ def main() -> None:
         validation_days=args.validation_days,
         limit_symbols=args.limit_symbols,
         market=args.market,
+        model_specs=(
+            tuple(get_alpha_model_spec(model_spec_id) for model_spec_id in args.model_spec_ids)
+            if args.model_spec_ids
+            else CHALLENGER_ALPHA_MODEL_SPECS
+        ),
     )
     print(result.notes)
 

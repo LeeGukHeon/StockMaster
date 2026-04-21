@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from app.evaluation.alpha_shadow import (
+    materialize_alpha_shadow_selection_gap_scorecard,
     resolve_alpha_shadow_db_only_windows,
     materialize_alpha_shadow_evaluation_summary,
     materialize_alpha_shadow_selection_outcomes,
@@ -107,10 +108,18 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
         horizons=[1, 5],
         rolling_windows=[2],
     )
+    gap_result = materialize_alpha_shadow_selection_gap_scorecard(
+        settings,
+        start_selection_date=date(2026, 3, 4),
+        end_selection_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        rolling_windows=[2, 5],
+    )
 
     assert outcome_result.row_count > 0
     assert outcome_result.matured_row_count > 0
     assert summary_result.row_count > 0
+    assert gap_result.row_count > 0
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         row = connection.execute(
@@ -144,7 +153,23 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
                  FROM fact_alpha_shadow_evaluation_summary
                  WHERE summary_date = ?
                    AND model_spec_id = 'alpha_recursive_expanding_v1'
-                   AND mean_point_loss IS NOT NULL)
+                   AND mean_point_loss IS NOT NULL),
+                (SELECT COUNT(*)
+                 FROM fact_alpha_shadow_selection_gap_scorecard
+                 WHERE summary_date = ?),
+                (SELECT COUNT(*)
+                 FROM fact_alpha_shadow_selection_gap_scorecard
+                 WHERE summary_date = ?
+                   AND window_name = 'rolling_5'
+                   AND insufficient_history_flag = TRUE),
+                (SELECT COUNT(*)
+                 FROM fact_alpha_shadow_selection_gap_scorecard
+                 WHERE summary_date = ?
+                   AND window_name = 'cohort'
+                   AND raw_top5_worst_realized_excess_return IS NOT NULL
+                   AND raw_top5_top1_expected_return_share IS NOT NULL
+                   AND raw_top5_top1_minus_median_expected_return IS NOT NULL
+                   AND extreme_expected_return_threshold IS NOT NULL)
             """,
             [
                 date(2026, 3, 6),
@@ -156,16 +181,22 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
                 date(2026, 3, 6),
                 date(2026, 3, 6),
                 date(2026, 3, 6),
+                date(2026, 3, 6),
+                date(2026, 3, 6),
+                date(2026, 3, 6),
             ],
         ).fetchone()
 
-    assert int(row[0] or 0) == 5
-    assert int(row[1] or 0) == 32
-    assert int(row[2] or 0) == 32
+    assert int(row[0] or 0) == 7
+    assert int(row[1] or 0) == 40
+    assert int(row[2] or 0) == 40
     assert int(row[3] or 0) > 0
     assert int(row[4] or 0) > 0
     assert int(row[5] or 0) == int(row[6] or 0) > 0
     assert int(row[7] or 0) > 0
+    assert int(row[8] or 0) > 0
+    assert int(row[9] or 0) > 0
+    assert int(row[10] or 0) > 0
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         routing = connection.execute(

@@ -436,6 +436,44 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_alpha_shadow_selection_gap_scorecard (
+        summary_date DATE NOT NULL,
+        window_name VARCHAR NOT NULL,
+        window_start DATE NOT NULL,
+        window_end DATE NOT NULL,
+        horizon INTEGER NOT NULL,
+        model_spec_id VARCHAR NOT NULL,
+        segment_name VARCHAR NOT NULL,
+        matured_selection_date_count BIGINT NOT NULL,
+        required_selection_date_count BIGINT NOT NULL,
+        insufficient_history_flag BOOLEAN NOT NULL,
+        raw_top5_source VARCHAR NOT NULL,
+        hit_rate_formula VARCHAR NOT NULL,
+        raw_top5_mean_realized_excess_return DOUBLE,
+        selected_top5_mean_realized_excess_return DOUBLE,
+        report_candidates_mean_realized_excess_return DOUBLE,
+        raw_top5_hit_rate DOUBLE,
+        selected_top5_hit_rate DOUBLE,
+        report_candidates_hit_rate DOUBLE,
+        top5_overlap DOUBLE,
+        pred_only_top5_mean_realized_excess_return DOUBLE,
+        sel_only_top5_mean_realized_excess_return DOUBLE,
+        raw_top5_worst_realized_excess_return DOUBLE,
+        selected_top5_worst_realized_excess_return DOUBLE,
+        raw_top5_top1_expected_return_share DOUBLE,
+        selected_top5_top1_expected_return_share DOUBLE,
+        raw_top5_top1_minus_median_expected_return DOUBLE,
+        selected_top5_top1_minus_median_expected_return DOUBLE,
+        extreme_expected_return_threshold DOUBLE,
+        raw_top5_extreme_expected_return_count BIGINT,
+        selected_top5_extreme_expected_return_count BIGINT,
+        drag_vs_raw_top5 DOUBLE,
+        evaluation_run_id VARCHAR NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (summary_date, window_name, horizon, model_spec_id, segment_name)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS fact_alpha_promotion_test (
         promotion_date DATE NOT NULL,
         horizon INTEGER NOT NULL,
@@ -2085,6 +2123,45 @@ PORTFOLIO_TARGET_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE fact_portfolio_target_book ADD COLUMN IF NOT EXISTS action_stop_price DOUBLE",
 )
 
+SELECTION_GAP_SCORECARD_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    (
+        "ALTER TABLE fact_alpha_shadow_selection_gap_scorecard "
+        "ADD COLUMN IF NOT EXISTS raw_top5_worst_realized_excess_return DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_alpha_shadow_selection_gap_scorecard "
+        "ADD COLUMN IF NOT EXISTS selected_top5_worst_realized_excess_return DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_alpha_shadow_selection_gap_scorecard "
+        "ADD COLUMN IF NOT EXISTS raw_top5_top1_expected_return_share DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_alpha_shadow_selection_gap_scorecard "
+        "ADD COLUMN IF NOT EXISTS selected_top5_top1_expected_return_share DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_alpha_shadow_selection_gap_scorecard "
+        "ADD COLUMN IF NOT EXISTS raw_top5_top1_minus_median_expected_return DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_alpha_shadow_selection_gap_scorecard "
+        "ADD COLUMN IF NOT EXISTS selected_top5_top1_minus_median_expected_return DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_alpha_shadow_selection_gap_scorecard "
+        "ADD COLUMN IF NOT EXISTS extreme_expected_return_threshold DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_alpha_shadow_selection_gap_scorecard "
+        "ADD COLUMN IF NOT EXISTS raw_top5_extreme_expected_return_count BIGINT"
+    ),
+    (
+        "ALTER TABLE fact_alpha_shadow_selection_gap_scorecard "
+        "ADD COLUMN IF NOT EXISTS selected_top5_extreme_expected_return_count BIGINT"
+    ),
+)
+
 CORE_VIEW_DDL: tuple[str, ...] = (
     """
     CREATE OR REPLACE VIEW vw_universe_active_common_stock AS
@@ -3260,6 +3337,9 @@ def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
             connection.execute(ddl)
 
         for ddl in PORTFOLIO_TARGET_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in SELECTION_GAP_SCORECARD_COLUMN_MIGRATIONS:
             connection.execute(ddl)
 
         for ddl in CORE_VIEW_DDL:

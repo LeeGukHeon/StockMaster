@@ -9,7 +9,7 @@ import duckdb
 import pandas as pd
 
 from app.common.paths import ensure_directory
-from app.ml.constants import MODEL_DOMAIN
+from app.ml.constants import MODEL_DOMAIN, MODEL_SPEC_ID
 
 
 def _json_or_none(value: Any) -> str | None:
@@ -548,8 +548,10 @@ def load_latest_training_run(
         where_clauses.append("AND COALESCE(model_domain, ?) = ?")
         parameters.extend([model_domain, model_domain])
     if model_spec_id is not None:
-        where_clauses.append("AND COALESCE(model_spec_id, ?) = ?")
-        parameters.extend([model_spec_id, model_spec_id])
+        where_clauses.append(
+            "AND (model_spec_id = ? OR (model_spec_id IS NULL AND ? = ?))"
+        )
+        parameters.extend([model_spec_id, model_spec_id, MODEL_SPEC_ID])
     query = (
         _training_run_select_sql(extra_where="\n        ".join(where_clauses))
         + "\n        ORDER BY train_end_date DESC, created_at DESC\n        LIMIT 1\n    "

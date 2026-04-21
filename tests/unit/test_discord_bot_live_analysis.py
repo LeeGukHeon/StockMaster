@@ -5,7 +5,7 @@ import json
 import pandas as pd
 
 from app.discord_bot.live_analysis import render_live_stock_analysis
-from app.discord_bot.live_recalc import LiveRecalcResult
+from app.discord_bot.live_recalc import LiveRecalcResult, build_live_analysis_payload
 
 
 class _FakeKISProvider:
@@ -97,8 +97,13 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
 
     assert "현재가 71,000원" in rendered
     assert "D1 A · D5 S" in rendered
+    assert "활성 head D1 -" in rendered
     assert "D5 예상 초과수익률 +2.10%" in rendered
     assert "최근 5일 수익률 +3.45%" in rendered
+    assert "왜 지금 보나:" in rendered
+    assert "신호 분해" in rendered
+    assert "시세 기준 KIS 실시간 시세 기준" in rendered
+    assert "뉴스 기준 Naver 최신 뉴스 2건 반영" in rendered
     assert "실시간 목표가 72,500원" in rendered
     assert "- 삼성전자 실적 개선" in rendered
 
@@ -120,3 +125,24 @@ def test_render_live_stock_analysis_returns_candidate_list_for_ambiguous_query(m
     assert "**종목 후보**" in rendered
     assert "005930 삼성전자" in rendered
     assert "005935 삼성전자우" in rendered
+
+
+def test_build_live_analysis_payload_marks_snapshot_reuse_for_busy_mode() -> None:
+    payload = build_live_analysis_payload(
+        {
+            "d1_grade": "B",
+            "d5_grade": "A",
+            "d1_model_spec_id": "alpha_snapshot_d1",
+            "d5_model_spec_id": "alpha_snapshot_d5",
+            "ret_5d": 0.015,
+        },
+        LiveRecalcResult(pd.DataFrame(), mode="busy", note="배치 점유"),
+        quote_timestamp_or_basis="snapshot quote",
+        news_basis="snapshot news",
+    )
+
+    assert payload["snapshot_reused_flag"] is True
+    assert payload["degradation_mode"] == "busy"
+    assert payload["source_precedence"] == ["snapshot", "quote", "news"]
+    assert payload["d1_head_spec_id"] == "alpha_snapshot_d1"
+    assert payload["d5_head_spec_id"] == "alpha_snapshot_d5"

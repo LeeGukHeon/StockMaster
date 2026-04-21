@@ -62,12 +62,20 @@ def test_target_column_resolution_supports_split_h1_h5_specs() -> None:
 def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     h5_spec = get_alpha_model_spec("alpha_rank_rolling_120_v1")
     h1_spec = get_alpha_model_spec("alpha_topbucket_h1_rolling_120_v1")
-    assert h5_spec.active_candidate_flag is True
-    assert h1_spec.active_candidate_flag is True
+    d1_spec = get_alpha_model_spec("alpha_lead_d1_v1")
+    d5_spec = get_alpha_model_spec("alpha_swing_d5_v1")
+    assert h5_spec.active_candidate_flag is False
+    assert h1_spec.active_candidate_flag is False
+    assert d1_spec.active_candidate_flag is True
+    assert d5_spec.active_candidate_flag is True
     assert supports_horizon_for_spec(h5_spec, horizon=5) is True
     assert supports_horizon_for_spec(h5_spec, horizon=1) is False
     assert supports_horizon_for_spec(h1_spec, horizon=1) is True
     assert supports_horizon_for_spec(h1_spec, horizon=5) is False
+    assert supports_horizon_for_spec(d1_spec, horizon=1) is True
+    assert supports_horizon_for_spec(d1_spec, horizon=5) is False
+    assert supports_horizon_for_spec(d5_spec, horizon=5) is True
+    assert supports_horizon_for_spec(d5_spec, horizon=1) is False
 
 
 def test_normalise_weights_prioritizes_topk_returns_over_small_mae_gap() -> None:

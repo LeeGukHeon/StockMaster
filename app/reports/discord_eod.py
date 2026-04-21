@@ -14,6 +14,7 @@ from app.common.discord import (
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.promotion import load_alpha_promotion_summary
+from app.ml.constants import MODEL_SPEC_ID
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.selection.sector_outlook import sector_outlook_frame
@@ -90,6 +91,10 @@ MODEL_SPEC_LABELS = {
     "alpha_recursive_expanding_v1": "확장형 누적 학습",
     "alpha_rolling_120_v1": "최근 120거래일 중심 학습",
     "alpha_rolling_250_v1": "최근 250거래일 중심 학습",
+    "alpha_rank_rolling_120_v1": "5일 지속성 비교 기준",
+    "alpha_topbucket_h1_rolling_120_v1": "하루 선행 비교 기준",
+    "alpha_lead_d1_v1": "하루 선행 포착 v1",
+    "alpha_swing_d5_v1": "5일 지속 포착 v1",
     "alpha_recursive_rolling_combo": "누적+최근 구간 혼합",
     "recursive": "확장형 누적 학습",
     "rolling 120d": "최근 120거래일 중심 학습",
@@ -218,6 +223,20 @@ def _load_top_selection_rows(
 ) -> pd.DataFrame:
     return connection.execute(
         """
+        WITH active_models AS (
+            SELECT
+                horizon,
+                active_alpha_model_id,
+                model_spec_id
+            FROM fact_alpha_active_model
+            WHERE effective_from_date <= ?
+              AND (effective_to_date IS NULL OR effective_to_date >= ?)
+              AND active_flag = TRUE
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY horizon
+                ORDER BY effective_from_date DESC, created_at DESC, active_alpha_model_id DESC
+            ) = 1
+        )
         SELECT
             ranking.as_of_date AS selection_date,
             (
@@ -238,12 +257,14 @@ def _load_top_selection_rows(
             prediction.expected_excess_return,
             prediction.lower_band,
             prediction.upper_band,
-            prediction.model_spec_id,
-            prediction.active_alpha_model_id,
+            COALESCE(active_models.model_spec_id, prediction.model_spec_id) AS model_spec_id,
+            COALESCE(active_models.active_alpha_model_id, prediction.active_alpha_model_id) AS active_alpha_model_id,
             daily.close AS selection_close_price
         FROM fact_ranking AS ranking
         JOIN dim_symbol AS symbol
           ON ranking.symbol = symbol.symbol
+        LEFT JOIN active_models
+          ON ranking.horizon = active_models.horizon
         LEFT JOIN fact_prediction AS prediction
           ON ranking.as_of_date = prediction.as_of_date
          AND ranking.symbol = prediction.symbol
@@ -260,6 +281,8 @@ def _load_top_selection_rows(
         LIMIT ?
         """,
         [
+            as_of_date,
+            as_of_date,
             ALPHA_PREDICTION_VERSION,
             SELECTION_ENGINE_V2_VERSION,
             as_of_date,
@@ -326,6 +349,43 @@ def _load_market_news(connection, *, as_of_date: date, limit: int = 3) -> pd.Dat
         LIMIT ?
         """,
         [as_of_date, limit],
+    ).fetchdf()
+
+
+def _load_selection_gap_rows(connection, *, as_of_date: date) -> pd.DataFrame:
+    summary_row = connection.execute(
+        """
+        SELECT MAX(summary_date)
+        FROM fact_alpha_shadow_selection_gap_scorecard
+        WHERE summary_date <= ?
+        """,
+        [as_of_date],
+    ).fetchone()
+    summary_date = None if summary_row is None or summary_row[0] is None else summary_row[0]
+    if summary_date is None:
+        return pd.DataFrame()
+    return connection.execute(
+        """
+        SELECT
+            summary_date,
+            window_name,
+            horizon,
+            model_spec_id,
+            insufficient_history_flag,
+            matured_selection_date_count,
+            required_selection_date_count,
+            raw_top5_mean_realized_excess_return,
+            selected_top5_mean_realized_excess_return,
+            report_candidates_mean_realized_excess_return,
+            selected_top5_hit_rate,
+            drag_vs_raw_top5
+        FROM fact_alpha_shadow_selection_gap_scorecard
+        WHERE summary_date = ?
+          AND window_name = 'rolling_20'
+          AND segment_name = 'top5'
+        ORDER BY horizon, model_spec_id
+        """,
+        [summary_date],
     ).fetchdf()
 
 
@@ -421,7 +481,9 @@ def _format_pick_block(row: pd.Series, *, rank: int) -> list[str]:
         )
     model_spec = _translate_model_label(row.get("model_spec_id"))
     if row.get("active_alpha_model_id") or row.get("model_spec_id"):
-        lines.append(f"   - 사용 모델: {model_spec}")
+        lines.append(f"   - active serving spec: {model_spec}")
+        if str(row.get("model_spec_id") or "") != MODEL_SPEC_ID:
+            lines.append(f"   - fallback baseline: {MODEL_SPEC_LABELS.get(MODEL_SPEC_ID, MODEL_SPEC_ID)}")
     lines.append(f"   - 주요 근거: {reasons}")
     lines.append(f"   - 주의할 점: {risks}")
     return lines
@@ -506,14 +568,39 @@ def _format_alpha_promotion_line(row: pd.Series) -> str:
     decision_reason = _translate_alpha_decision_reason(row.get("decision_reason_label"))
     summary_parts = [
         f"- {horizon_basis} 모델 점검 (D+{int(row['horizon'])}): {decision_label}",
-        f"현재 사용 모델 {active_text}",
+        f"{row.get('active_role_label') or 'active serving spec'} {active_text}",
     ]
     if compare_text not in {"-", ""}:
-        summary_parts.append(f"비교 후보 {compare_text}")
+        summary_parts.append(f"{row.get('comparison_role_label') or 'legacy comparison baseline'} {compare_text}")
+    fallback_text = _translate_model_label(
+        row.get("fallback_model_label") or MODEL_SPEC_LABELS.get(MODEL_SPEC_ID, MODEL_SPEC_ID)
+    )
+    if fallback_text not in {"-", ""}:
+        summary_parts.append(f"{row.get('fallback_role_label') or 'fallback baseline'} {fallback_text}")
     if pd.notna(row.get("sample_count")):
         summary_parts.append(f"비교 표본 {int(row['sample_count'])}개")
     summary_parts.append(f"판단 이유 {decision_reason}")
     return " | ".join(summary_parts)
+
+
+def _format_selection_gap_line(row: pd.Series) -> str:
+    horizon_basis = _horizon_hold_basis_label(int(row["horizon"]))
+    model_text = _translate_model_label(row.get("model_spec_id"))
+    if bool(row.get("insufficient_history_flag")):
+        return (
+            f"- {horizon_basis} drag 점검 | {model_text} | "
+            f"표본 부족 {int(row.get('matured_selection_date_count') or 0)}"
+            f"/{int(row.get('required_selection_date_count') or 0)}"
+        )
+    drag_text = _pct_text(row.get("drag_vs_raw_top5"))
+    selected_text = _pct_text(row.get("selected_top5_mean_realized_excess_return"))
+    report_text = _pct_text(row.get("report_candidates_mean_realized_excess_return"))
+    hit_text = _pct_text(row.get("selected_top5_hit_rate"))
+    return (
+        f"- {horizon_basis} drag 점검 | {model_text} | "
+        f"selected top5 {selected_text} | report_candidates {report_text} | "
+        f"drag vs raw {drag_text} | hit rate {hit_text}"
+    )
 
 
 def _build_payload_content(
@@ -523,6 +610,7 @@ def _build_payload_content(
     candidate_horizon: int,
     market_pulse: dict[str, object],
     alpha_promotion: pd.DataFrame,
+    selection_gap: pd.DataFrame | None = None,
     sector_outlook: pd.DataFrame,
     single_buy_candidates: pd.DataFrame,
     market_news: pd.DataFrame,
@@ -554,6 +642,11 @@ def _build_payload_content(
         lines.append("- 오늘 확인할 모델 점검 결과는 아직 없습니다.")
     else:
         lines.extend(_format_alpha_promotion_line(row) for _, row in alpha_promotion.iterrows())
+    lines.extend(["", "**선택 드래그 점검**"])
+    if selection_gap is None or selection_gap.empty:
+        lines.append("- 최신 선택 드래그 점검 값이 아직 없습니다.")
+    else:
+        lines.extend(_format_selection_gap_line(row) for _, row in selection_gap.iterrows())
     lines.extend(
         [
             "",
@@ -692,6 +785,7 @@ def render_discord_eod_report(
                     connection,
                     as_of_date=as_of_date,
                 )
+                selection_gap = _load_selection_gap_rows(connection, as_of_date=as_of_date)
                 sector_outlook = sector_outlook_frame(
                     connection,
                     as_of_date=as_of_date,
@@ -714,6 +808,7 @@ def render_discord_eod_report(
                     candidate_horizon=DISCORD_EOD_CANDIDATE_HORIZON,
                     market_pulse=market_pulse,
                     alpha_promotion=alpha_promotion,
+                    selection_gap=selection_gap,
                     sector_outlook=sector_outlook,
                     single_buy_candidates=single_buy_candidates,
                     market_news=market_news,

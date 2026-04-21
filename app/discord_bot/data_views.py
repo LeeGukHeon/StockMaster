@@ -82,6 +82,20 @@ def leaderboard_frame(
         return pd.DataFrame()
     frame = connection.execute(
         """
+        WITH active_models AS (
+            SELECT
+                horizon,
+                active_alpha_model_id,
+                model_spec_id
+            FROM fact_alpha_active_model
+            WHERE effective_from_date <= ?
+              AND (effective_to_date IS NULL OR effective_to_date >= ?)
+              AND active_flag = TRUE
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY horizon
+                ORDER BY effective_from_date DESC, created_at DESC, active_alpha_model_id DESC
+            ) = 1
+        )
         SELECT
             ranking.as_of_date,
             ranking.as_of_date AS selection_date,
@@ -109,8 +123,11 @@ def leaderboard_frame(
             prediction.lower_band,
             prediction.median_band,
             prediction.upper_band,
-            prediction.model_spec_id,
-            prediction.active_alpha_model_id,
+            COALESCE(active_models.model_spec_id, prediction.model_spec_id) AS model_spec_id,
+            COALESCE(
+                active_models.active_alpha_model_id,
+                prediction.active_alpha_model_id
+            ) AS active_alpha_model_id,
             prediction.uncertainty_score,
             prediction.disagreement_score,
             prediction.fallback_flag,
@@ -122,6 +139,8 @@ def leaderboard_frame(
         FROM fact_ranking AS ranking
         JOIN dim_symbol AS symbol
           ON ranking.symbol = symbol.symbol
+        LEFT JOIN active_models
+          ON ranking.horizon = active_models.horizon
         LEFT JOIN fact_prediction AS prediction
           ON ranking.as_of_date = prediction.as_of_date
          AND ranking.symbol = prediction.symbol
@@ -140,7 +159,7 @@ def leaderboard_frame(
           AND ranking.ranking_version = ?
         ORDER BY ranking.horizon, ranking.final_selection_value DESC, ranking.symbol
         """,
-        [prediction_version, as_of_date, ranking_version],
+        [as_of_date, as_of_date, prediction_version, as_of_date, ranking_version],
     ).fetchdf()
     if frame.empty:
         return frame
@@ -259,7 +278,21 @@ def stock_workbench_live_snapshot_frame(
         return pd.DataFrame()
     return connection.execute(
         """
-        WITH d1 AS (
+        WITH active_models AS (
+            SELECT
+                horizon,
+                active_alpha_model_id,
+                model_spec_id
+            FROM fact_alpha_active_model
+            WHERE effective_from_date <= ?
+              AND (effective_to_date IS NULL OR effective_to_date >= ?)
+              AND active_flag = TRUE
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY horizon
+                ORDER BY effective_from_date DESC, created_at DESC, active_alpha_model_id DESC
+            ) = 1
+        ),
+        d1 AS (
             SELECT
                 symbol,
                 final_selection_value AS live_d1_selection_v2_value,
@@ -287,15 +320,28 @@ def stock_workbench_live_snapshot_frame(
         ),
         prediction AS (
             SELECT
-                symbol,
-                expected_excess_return AS live_d5_expected_excess_return,
-                lower_band,
-                upper_band
-            FROM fact_prediction
-            WHERE as_of_date = ?
-              AND horizon = 5
-              AND prediction_version = ?
-              AND ranking_version = ?
+                prediction_src.symbol,
+                prediction_src.model_spec_id AS live_d5_model_spec_id,
+                prediction_src.active_alpha_model_id AS live_d5_active_alpha_model_id,
+                prediction_src.expected_excess_return AS live_d5_expected_excess_return,
+                prediction_src.lower_band,
+                prediction_src.upper_band
+            FROM fact_prediction AS prediction_src
+            JOIN active_models
+              ON prediction_src.horizon = active_models.horizon
+             AND prediction_src.active_alpha_model_id = active_models.active_alpha_model_id
+            WHERE prediction_src.as_of_date = ?
+              AND prediction_src.horizon = 5
+              AND prediction_src.prediction_version = ?
+              AND prediction_src.ranking_version = ?
+        ),
+        d1_active AS (
+            SELECT
+                1 AS horizon,
+                active_alpha_model_id AS live_d1_active_alpha_model_id,
+                model_spec_id AS live_d1_model_spec_id
+            FROM active_models
+            WHERE horizon = 1
         ),
         reference_price AS (
             SELECT
@@ -316,10 +362,14 @@ def stock_workbench_live_snapshot_frame(
             d1.live_d1_selection_v2_grade,
             d1.live_d1_eligible_flag,
             d1.live_d1_report_candidate_flag,
+            d1_active.live_d1_model_spec_id,
+            d1_active.live_d1_active_alpha_model_id,
             d5.live_d5_selection_v2_value,
             d5.live_d5_selection_v2_grade,
             d5.live_d5_eligible_flag,
             d5.live_d5_report_candidate_flag,
+            prediction.live_d5_model_spec_id,
+            prediction.live_d5_active_alpha_model_id,
             prediction.live_d5_expected_excess_return,
             CASE
                 WHEN reference_price.live_reference_price IS NULL
@@ -338,6 +388,7 @@ def stock_workbench_live_snapshot_frame(
             END AS live_d5_stop_price
         FROM dim_symbol AS symbol_meta
         LEFT JOIN d1 ON symbol_meta.symbol = d1.symbol
+        LEFT JOIN d1_active ON TRUE
         LEFT JOIN d5 ON symbol_meta.symbol = d5.symbol
         LEFT JOIN prediction ON symbol_meta.symbol = prediction.symbol
         LEFT JOIN reference_price ON symbol_meta.symbol = reference_price.symbol
@@ -345,6 +396,8 @@ def stock_workbench_live_snapshot_frame(
         ORDER BY symbol_meta.symbol
         """,
         [
+            ranking_as_of_date,
+            ranking_as_of_date,
             ranking_as_of_date,
             SELECTION_ENGINE_V2_VERSION,
             ranking_as_of_date,

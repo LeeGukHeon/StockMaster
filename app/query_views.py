@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pandas as pd
@@ -159,6 +160,7 @@ def latest_alpha_model_spec_frame(
             feature_version,
             label_version,
             selection_engine_version,
+            spec_payload_json,
             active_candidate_flag,
             updated_at
         FROM dim_alpha_model_spec
@@ -170,7 +172,95 @@ def latest_alpha_model_spec_frame(
     parameters.append(limit)
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
         bootstrap_core_tables(connection)
-        return connection.execute(query, parameters).fetchdf()
+        frame = connection.execute(query, parameters).fetchdf()
+    if frame.empty:
+        return frame
+    lifecycle_roles: list[str | None] = []
+    lifecycle_fallback_flags: list[bool] = []
+    for payload in frame["spec_payload_json"].tolist():
+        parsed: dict[str, object] = {}
+        if isinstance(payload, str) and payload.strip():
+            try:
+                loaded = json.loads(payload)
+            except json.JSONDecodeError:
+                loaded = {}
+            if isinstance(loaded, dict):
+                parsed = loaded
+        lifecycle_roles.append(
+            None if parsed.get("lifecycle_role") in (None, "") else str(parsed.get("lifecycle_role"))
+        )
+        lifecycle_fallback_flags.append(bool(parsed.get("lifecycle_fallback_flag", False)))
+    frame["lifecycle_role"] = lifecycle_roles
+    frame["lifecycle_fallback_flag"] = lifecycle_fallback_flags
+    return frame
+
+
+def latest_alpha_selection_gap_scorecard_frame(
+    settings: Settings,
+    *,
+    summary_date=None,
+    window_name: str | None = None,
+    limit: int = 20,
+) -> pd.DataFrame:
+    if not settings.paths.duckdb_path.exists():
+        return pd.DataFrame()
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        bootstrap_core_tables(connection)
+        target_summary_date = summary_date
+        if target_summary_date is None:
+            row = connection.execute(
+                "SELECT MAX(summary_date) FROM fact_alpha_shadow_selection_gap_scorecard"
+            ).fetchone()
+            target_summary_date = None if row is None or row[0] is None else pd.Timestamp(row[0]).date()
+        if target_summary_date is None:
+            return pd.DataFrame()
+        query = """
+            SELECT
+                summary_date,
+                window_name,
+                window_start,
+                window_end,
+                horizon,
+                model_spec_id,
+                segment_name,
+                matured_selection_date_count,
+                required_selection_date_count,
+                insufficient_history_flag,
+                raw_top5_source,
+                hit_rate_formula,
+                raw_top5_mean_realized_excess_return,
+                selected_top5_mean_realized_excess_return,
+                report_candidates_mean_realized_excess_return,
+                raw_top5_hit_rate,
+                selected_top5_hit_rate,
+                report_candidates_hit_rate,
+                top5_overlap,
+                pred_only_top5_mean_realized_excess_return,
+                sel_only_top5_mean_realized_excess_return,
+                raw_top5_worst_realized_excess_return,
+                selected_top5_worst_realized_excess_return,
+                raw_top5_top1_expected_return_share,
+                selected_top5_top1_expected_return_share,
+                raw_top5_top1_minus_median_expected_return,
+                selected_top5_top1_minus_median_expected_return,
+                extreme_expected_return_threshold,
+                raw_top5_extreme_expected_return_count,
+                selected_top5_extreme_expected_return_count,
+                drag_vs_raw_top5,
+                evaluation_run_id
+            FROM fact_alpha_shadow_selection_gap_scorecard
+            WHERE summary_date = ?
+        """
+        params: list[object] = [target_summary_date]
+        if window_name is not None:
+            query += " AND window_name = ?"
+            params.append(window_name)
+        query += """
+            ORDER BY window_name, horizon, model_spec_id, segment_name
+            LIMIT ?
+        """
+        params.append(limit)
+        return connection.execute(query, params).fetchdf()
 
 
 def latest_alpha_rollback_frame(settings: Settings, *, limit: int = 20) -> pd.DataFrame:
