@@ -286,6 +286,7 @@ def _backfill_indicator_shadow_history(
     end_selection_date: date,
     horizons: list[int],
     model_specs: tuple[AlphaModelSpec, ...],
+    focus_model_spec_id: str | None,
     min_train_days: int,
     validation_days: int,
     limit_symbols: int | None,
@@ -322,6 +323,15 @@ def _backfill_indicator_shadow_history(
             market=market,
             model_specs=model_specs,
         )
+        if focus_model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID:
+            training_run_count += _ensure_d5_primary_reference_training_runs(
+                settings,
+                train_end_date=selection_date,
+                min_train_days=min_train_days,
+                validation_days=validation_days,
+                limit_symbols=limit_symbols,
+                market=market,
+            )
         shadow_result = materialize_alpha_shadow_candidates(
             settings,
             as_of_date=selection_date,
@@ -798,6 +808,7 @@ def run_alpha_indicator_product_bundle(
             end_selection_date=shadow_end_selection_date,
             horizons=horizons,
             model_specs=model_specs,
+            focus_model_spec_id=focus_model_spec_id,
             min_train_days=min_train_days,
             validation_days=validation_days,
             limit_symbols=limit_symbols,
