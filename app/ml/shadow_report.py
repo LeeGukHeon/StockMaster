@@ -294,6 +294,7 @@ def _build_markdown(
 def _build_d5_primary_markdown(
     pairwise_ledger: pd.DataFrame,
     *,
+    summary: pd.DataFrame,
     start_selection_date: date,
     end_selection_date: date,
     promotion_summary: pd.DataFrame,
@@ -371,25 +372,23 @@ def _build_d5_primary_markdown(
                 )
             )
     lines.extend(["", "## D+1 auxiliary interpretation", ""])
-    d1_rows = pairwise_ledger.loc[
-        (pairwise_ledger["horizon"] == 1)
-        & (pairwise_ledger["segment_value"] == "top5")
-        & (pairwise_ledger["window_type"].isin(["cohort", "rolling_20"]))
+    d1_rows = summary.loc[
+        (summary["horizon"] == 1)
+        & (summary["segment_value"] == "top5")
+        & (summary["window_type"].isin(["cohort", "rolling_20"]))
+        & (summary["model_spec_id"].isin([MODEL_SPEC_ID, "alpha_topbucket_h1_rolling_120_v1"]))
     ].copy()
     if d1_rows.empty:
         lines.append("- D+1 auxiliary comparator rows not available yet.")
     else:
-        for row in d1_rows.itertuples(index=False):
+        for row in d1_rows.sort_values(["window_type", "model_spec_id"]).itertuples(index=False):
             lines.append(
-                "- {window} vs {comparator}: comparator {comp_ret} | auxiliary reference gap {gap}".format(
+                "- {window} | {model}: excess {ret} | rank IC {rank_ic} | matured_dates={dates} | auxiliary precursor reference only".format(
                     window=row.window_type,
-                    comparator=row.comparator_model_spec_id,
-                    comp_ret=_format_metric(
-                        row.mean_realized_excess_return_comparator,
-                        pct=True,
-                        signed=True,
-                    ),
-                    gap=_format_metric(row.return_gap_vs_comparator, pct=True, signed=True),
+                    model=row.model_spec_id,
+                    ret=_format_metric(row.mean_realized_excess_return, pct=True, signed=True),
+                    rank_ic=_format_metric(row.rank_ic, signed=True),
+                    dates=int(row.matured_selection_date_count or 0),
                 )
             )
     lines.append("")
@@ -472,6 +471,7 @@ def render_alpha_shadow_comparison_report(
                 content = (
                     _build_d5_primary_markdown(
                         ledger,
+                        summary=summary,
                         start_selection_date=start_selection_date,
                         end_selection_date=end_selection_date,
                         promotion_summary=promotion_summary,
