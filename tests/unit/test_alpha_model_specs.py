@@ -64,10 +64,12 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     h1_spec = get_alpha_model_spec("alpha_topbucket_h1_rolling_120_v1")
     d1_spec = get_alpha_model_spec("alpha_lead_d1_v1")
     d5_spec = get_alpha_model_spec("alpha_swing_d5_v1")
+    d5_focus_spec = get_alpha_model_spec("alpha_swing_d5_v2")
     assert h5_spec.active_candidate_flag is False
     assert h1_spec.active_candidate_flag is False
     assert d1_spec.active_candidate_flag is True
     assert d5_spec.active_candidate_flag is True
+    assert d5_focus_spec.active_candidate_flag is True
     assert supports_horizon_for_spec(h5_spec, horizon=5) is True
     assert supports_horizon_for_spec(h5_spec, horizon=1) is False
     assert supports_horizon_for_spec(h1_spec, horizon=1) is True
@@ -76,6 +78,31 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     assert supports_horizon_for_spec(d1_spec, horizon=5) is False
     assert supports_horizon_for_spec(d5_spec, horizon=5) is True
     assert supports_horizon_for_spec(d5_spec, horizon=1) is False
+    assert supports_horizon_for_spec(d5_focus_spec, horizon=5) is True
+    assert supports_horizon_for_spec(d5_focus_spec, horizon=1) is False
+
+
+def test_d5_focus_spec_matches_frozen_contract() -> None:
+    spec = get_alpha_model_spec("alpha_swing_d5_v2")
+
+    assert spec.estimation_scheme == "rolling"
+    assert spec.rolling_window_days == 250
+    assert spec.member_names == ("elasticnet", "hist_gbm")
+    assert spec.feature_groups == (
+        "price_trend",
+        "volatility_risk",
+        "liquidity_turnover",
+        "investor_flow",
+        "news_catalyst",
+        "fundamentals_quality",
+        "value_safety",
+        "data_quality",
+    )
+    assert spec.target_variant == "top5_binary"
+    assert spec.training_target_variant == "top5_binary"
+    assert spec.validation_primary_metric_name == "top5_mean_excess_return"
+    assert spec.promotion_primary_loss_name == "loss_top5"
+    assert spec.allowed_horizons == (5,)
 
 
 def test_alpha_swing_d5_v2_matches_frozen_contract() -> None:

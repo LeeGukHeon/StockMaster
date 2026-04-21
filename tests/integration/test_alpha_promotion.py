@@ -482,7 +482,11 @@ def test_alpha_ops_helper_frames_surface_registry_and_candidates(tmp_path):
         "alpha_lead_d1_v1",
         "alpha_swing_d5_v1",
     }
-    assert set(spec_frame["model_spec_id"]) == {"alpha_lead_d1_v1", "alpha_swing_d5_v1"}
+    assert set(spec_frame["model_spec_id"]) == {
+        "alpha_lead_d1_v1",
+        "alpha_swing_d5_v1",
+        "alpha_swing_d5_v2",
+    }
     assert set(spec_frame["lifecycle_role"]) == {"active_candidate"}
     assert set(spec_frame["lifecycle_fallback_flag"]) == {False}
     assert set(rollback_frame["promotion_type"]) == {"ROLLBACK"}

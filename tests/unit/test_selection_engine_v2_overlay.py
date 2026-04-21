@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from app.selection import engine_v2
+from app.selection.engine_v2 import (
+    _augment_reason_tags,
+    _compute_crowding_penalty_score,
+    _resolve_selection_weights,
+)
 
 
 def test_crowding_penalty_scores_hot_names_higher():
@@ -41,24 +45,17 @@ def test_reason_tags_prefer_relative_and_persistence_signals():
     assert "flow_persistence_supportive" in tags
 
 
-def test_resolve_selection_v2_weights_uses_d5_primary_override_only_for_v2():
-    assert hasattr(engine_v2, "SELECTION_V2_D5_PRIMARY_WEIGHTS")
-
-    weights = engine_v2._resolve_selection_weights(
+def test_d5_primary_weights_apply_only_to_focus_spec():
+    focus_weights = _resolve_selection_weights(
         horizon=5,
         model_spec_id="alpha_swing_d5_v2",
         target_variant="top5_binary",
     )
-
-    assert weights == engine_v2.SELECTION_V2_D5_PRIMARY_WEIGHTS[5]
-    assert weights != engine_v2.SELECTION_V2_TOP5_FOCUS_WEIGHTS[5]
-
-
-def test_resolve_selection_v2_weights_keeps_generic_top5_focus_for_other_specs():
-    weights = engine_v2._resolve_selection_weights(
+    generic_top5_weights = _resolve_selection_weights(
         horizon=5,
         model_spec_id="alpha_swing_d5_v1",
         target_variant="top5_binary",
     )
 
-    assert weights == engine_v2.SELECTION_V2_TOP5_FOCUS_WEIGHTS[5]
+    assert focus_weights["alpha_core_score"] != generic_top5_weights["alpha_core_score"]
+    assert focus_weights["crowding_penalty_score"] != generic_top5_weights["crowding_penalty_score"]
