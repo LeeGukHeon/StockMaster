@@ -21,7 +21,6 @@ from app.ml.registry import (
     upsert_model_training_runs,
 )
 from app.ml.shadow import upsert_alpha_shadow_predictions, upsert_alpha_shadow_rankings
-from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from app.query_views import (
     latest_alpha_active_model_frame,
     latest_alpha_model_spec_frame,
@@ -29,6 +28,7 @@ from app.query_views import (
     latest_alpha_selection_gap_scorecard_frame,
     latest_alpha_training_candidate_frame,
 )
+from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from tests._ticket003_support import build_test_settings
 
 SELECTION_DATES = [
@@ -49,6 +49,7 @@ SPEC_BASE_RETURNS = {
     "alpha_topbucket_h1_rolling_120_v1": [0.018, 0.016, 0.019, 0.015, 0.017, 0.014, 0.016],
     "alpha_lead_d1_v1": [0.032, 0.028, 0.031, 0.026, 0.029, 0.025, 0.027],
     "alpha_swing_d5_v1": [0.024, 0.021, 0.025, 0.020, 0.023, 0.019, 0.022],
+    "alpha_swing_d5_v2": [0.020, 0.018, 0.021, 0.017, 0.019, 0.016, 0.018],
 }
 SPEC_BASE_ERRORS = {
     MODEL_SPEC_ID: [0.018, 0.015, 0.017, 0.014, 0.016, 0.015, 0.017],
@@ -58,6 +59,7 @@ SPEC_BASE_ERRORS = {
     "alpha_topbucket_h1_rolling_120_v1": [0.007, 0.008, 0.006, 0.007, 0.008, 0.007, 0.006],
     "alpha_lead_d1_v1": [0.003, 0.004, 0.003, 0.004, 0.004, 0.003, 0.004],
     "alpha_swing_d5_v1": [0.004, 0.004, 0.003, 0.004, 0.004, 0.003, 0.004],
+    "alpha_swing_d5_v2": [0.006, 0.006, 0.005, 0.006, 0.006, 0.005, 0.006],
 }
 SYMBOL_RETURN_ADJUSTMENTS = [0.006, 0.002, -0.002, -0.006]
 SYMBOL_ERROR_ADJUSTMENTS = [0.0015, -0.0010, 0.0005, -0.0005]

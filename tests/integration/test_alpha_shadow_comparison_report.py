@@ -2,21 +2,17 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from uuid import uuid4
 
-import pandas as pd
-
+from app.evaluation.alpha_shadow import (
+    materialize_alpha_shadow_evaluation_summary,
+    materialize_alpha_shadow_selection_outcomes,
+)
 from app.ml.constants import get_alpha_model_spec
+from app.ml.shadow import materialize_alpha_shadow_candidates
 from app.ml.shadow_report import render_alpha_shadow_comparison_report
+from app.ml.training import train_alpha_candidate_models, train_alpha_model_v1
 from app.storage.duckdb import duckdb_connection
 from tests.integration.test_alpha_shadow_pipeline import _prepare_shadow_settings
-from app.ml.training import train_alpha_model_v1, train_alpha_candidate_models
-from app.ml.shadow import materialize_alpha_shadow_candidates
-from app.evaluation.alpha_shadow import (
-    materialize_alpha_shadow_selection_outcomes,
-    materialize_alpha_shadow_evaluation_summary,
-    upsert_alpha_shadow_evaluation_summary,
-)
 
 
 def test_render_alpha_shadow_comparison_report_creates_artifacts(tmp_path):

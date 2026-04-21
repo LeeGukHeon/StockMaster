@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from app.features.feature_store import _load_feature_symbol_frame
 from app.evaluation.alpha_shadow import (
     materialize_alpha_shadow_evaluation_summary,
     materialize_alpha_shadow_selection_gap_scorecard,
 )
+from app.features.feature_store import _load_feature_symbol_frame
 from app.ml.active import freeze_alpha_active_model
 from app.ml.constants import (
     D5_PRIMARY_COMPARATOR_PAIRS,
@@ -29,8 +29,8 @@ from app.ml.shadow import materialize_alpha_shadow_candidates
 from app.ml.training import (
     build_alpha_model_spec_registry_frame,
     prune_training_result_artifacts,
-    train_alpha_model_v1,
     train_alpha_candidate_models,
+    train_alpha_model_v1,
 )
 from app.ml.validation import validate_alpha_model_v1
 from app.selection.engine_v2 import materialize_selection_engine_v2

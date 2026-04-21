@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from app.features.constants import FEATURE_GROUP_BY_NAME, FEATURE_NAMES
 
+
 @dataclass(frozen=True, slots=True)
 class AlphaModelSpec:
     model_spec_id: str

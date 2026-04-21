@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.evaluation.outcomes import materialize_selection_outcomes
-from app.features.feature_store import build_feature_store
+from app.features.feature_store import build_feature_store, load_feature_matrix
 from app.ml.active import freeze_alpha_active_model
 from app.ml.comparison import compare_selection_engines
 from app.ml.constants import (
@@ -17,7 +17,9 @@ from app.ml.constants import (
     SELECTION_ENGINE_VERSION,
     get_alpha_model_spec,
 )
+from app.ml.dataset import _ensure_feature_snapshots
 from app.ml.diagnostics import render_model_diagnostic_report
+from app.ml.indicator_product import run_alpha_indicator_product_bundle
 from app.ml.inference import (
     _apply_d1_lead_prediction_shape_control,
     _bucket_from_calibration,
@@ -25,9 +27,6 @@ from app.ml.inference import (
     materialize_alpha_predictions_v1,
     upsert_predictions,
 )
-from app.ml.dataset import _ensure_feature_snapshots
-from app.features.feature_store import load_feature_matrix
-from app.ml.indicator_product import run_alpha_indicator_product_bundle
 from app.ml.registry import load_latest_training_run, load_model_artifact
 from app.ml.training import (
     backfill_alpha_oof_predictions,
@@ -37,8 +36,8 @@ from app.ml.training import (
     train_alpha_model_v1,
 )
 from app.ml.validation import _validation_reference_runs_sql, validate_alpha_model_v1
-from app.selection.engine_v2 import materialize_selection_engine_v2
 from app.regime.snapshot import build_market_regime_snapshot
+from app.selection.engine_v2 import materialize_selection_engine_v2
 from app.storage.duckdb import duckdb_connection
 from tests._ticket003_support import (
     build_test_settings,

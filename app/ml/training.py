@@ -25,10 +25,8 @@ from app.labels.forward_returns import LABEL_VERSION
 from app.ml.constants import (
     ALPHA_CANDIDATE_MODEL_SPECS,
     CALIBRATION_BIN_COUNT,
-    CHALLENGER_ALPHA_MODEL_SPECS,
     DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS,
     MODEL_DOMAIN,
-    MODEL_MEMBER_NAMES,
     MODEL_VERSION,
     SELECTION_ENGINE_VERSION,
     AlphaModelSpec,
@@ -975,6 +973,7 @@ def _train_alpha_specs(
                     / f"train_end_date={train_end_date.isoformat()}"
                     / run_context.run_id
                 )
+                artifact_root.mkdir(parents=True, exist_ok=True)
                 training_run_rows: list[dict[str, object]] = []
                 member_prediction_frames: list[pd.DataFrame] = []
                 metric_frames: list[pd.DataFrame] = []

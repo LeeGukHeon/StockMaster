@@ -11,8 +11,12 @@ from app.ml.indicator_product import (
     inspect_alpha_indicator_product_readiness,
     run_alpha_indicator_product_bundle,
 )
-from tests._ticket003_support import seed_ticket003_data, seed_ticket004_flow_data, seed_ticket005_selection_history
-from tests._ticket003_support import build_test_settings
+from tests._ticket003_support import (
+    build_test_settings,
+    seed_ticket003_data,
+    seed_ticket004_flow_data,
+    seed_ticket005_selection_history,
+)
 
 
 def test_indicator_product_bundle_surfaces_missing_ohlcv_dates(tmp_path, monkeypatch) -> None:

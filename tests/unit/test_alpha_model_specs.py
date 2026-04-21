@@ -4,6 +4,8 @@ import json
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 from app.ml.constants import (
     CHALLENGER_ALPHA_MODEL_SPECS,
     DEFAULT_ALPHA_MODEL_SPEC,
@@ -13,8 +15,6 @@ from app.ml.constants import (
     resolve_target_column_for_spec,
     supports_horizon_for_spec,
 )
-import pandas as pd
-
 from app.ml.training import _metric_rows, _normalise_weights, _train_single_horizon
 
 

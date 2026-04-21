@@ -8,10 +8,12 @@ import pandas as pd
 
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
-from app.ml.constants import D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+from app.ml.constants import (
+    D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+    SELECTION_ENGINE_VERSION,
+    get_alpha_model_spec,
+)
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
-from app.ml.constants import SELECTION_ENGINE_VERSION
-from app.ml.constants import get_alpha_model_spec
 from app.ml.inference import materialize_alpha_predictions_v1
 from app.ml.registry import load_active_alpha_model
 from app.ranking.explanatory_score import (
@@ -559,7 +561,10 @@ def build_selection_engine_v2_rankings(
             and "model_spec_id" in prediction_frame.columns
             and prediction_frame["model_spec_id"].dropna().nunique() > 1
         ):
-            for model_spec_id, spec_prediction_frame in prediction_frame.groupby("model_spec_id", dropna=False):
+            for _model_spec_id, spec_prediction_frame in prediction_frame.groupby(
+                "model_spec_id",
+                dropna=False,
+            ):
                 scored = _score_selection_engine_v2_frame(
                     base,
                     spec_prediction_frame.copy(),
