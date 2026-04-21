@@ -12,11 +12,11 @@ WORKER_VENV="${STOCKMASTER_SCHEDULER_VENV:-/opt/stockmaster/worker-venv}"
 [[ -x "${WORKER_VENV}/bin/python" ]] || fail "missing scheduler worker venv: ${WORKER_VENV}"
 
 AS_OF_DATE="${1:-}"
-[[ -n "${AS_OF_DATE}" ]] || fail "usage: verify_indicator_product_bundle_host.sh <as-of-date> [--expected-preserved-horizon H:MODEL_SPEC_ID] [--require-comparator-model-spec-id MODEL_SPEC_ID]"
+[[ -n "${AS_OF_DATE}" ]] || fail "usage: verify_indicator_product_bundle_host.sh <as-of-date> [--expected-preserved-horizon H:MODEL_SPEC_ID] [--require-comparator H:MODEL_SPEC_ID]"
 shift
 
 EXPECTED_PRESERVED_HORIZONS=()
-REQUIRED_COMPARATOR_MODEL_SPEC_IDS=()
+REQUIRED_COMPARATOR_PAIRS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --expected-preserved-horizon)
@@ -24,9 +24,9 @@ while [[ $# -gt 0 ]]; do
       EXPECTED_PRESERVED_HORIZONS+=("$2")
       shift 2
       ;;
-    --require-comparator-model-spec-id)
-      [[ $# -ge 2 ]] || fail "missing value for --require-comparator-model-spec-id"
-      REQUIRED_COMPARATOR_MODEL_SPEC_IDS+=("$2")
+    --require-comparator)
+      [[ $# -ge 2 ]] || fail "missing value for --require-comparator"
+      REQUIRED_COMPARATOR_PAIRS+=("$2")
       shift 2
       ;;
     *)
@@ -41,7 +41,7 @@ export APP_ARTIFACTS_DIR="${STOCKMASTER_RUNTIME_ROOT:-/opt/stockmaster/runtime}/
 
 PYTHON="${WORKER_VENV}/bin/python"
 
-"${PYTHON}" - <<'PY' "${PROJECT_ROOT}" "${AS_OF_DATE}" "$(printf '%s\n' "${EXPECTED_PRESERVED_HORIZONS[@]}")" "$(printf '%s\n' "${REQUIRED_COMPARATOR_MODEL_SPEC_IDS[@]}")"
+"${PYTHON}" - <<'PY' "${PROJECT_ROOT}" "${AS_OF_DATE}" "$(printf '%s\n' "${EXPECTED_PRESERVED_HORIZONS[@]}")" "$(printf '%s\n' "${REQUIRED_COMPARATOR_PAIRS[@]}")"
 from pathlib import Path
 from datetime import date
 import json
@@ -58,7 +58,7 @@ as_of_date = date.fromisoformat(sys.argv[2])
 expected_preserved_horizons = [
     line for line in sys.argv[3].splitlines() if line.strip()
 ]
-required_comparator_model_spec_ids = [
+required_comparator_pairs = [
     line for line in sys.argv[4].splitlines() if line.strip()
 ]
 settings = load_settings(project_root=project_root)
@@ -117,17 +117,24 @@ with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection
         else latest_summary_date_row[0]
     )
     comparator_rows = []
-    if latest_summary_date is not None and required_comparator_model_spec_ids:
+    parsed_required_comparator_pairs = []
+    for item in required_comparator_pairs:
+        horizon_text, model_spec_id = item.split(":", 1)
+        parsed_required_comparator_pairs.append((int(horizon_text), model_spec_id))
+    if latest_summary_date is not None and parsed_required_comparator_pairs:
+        required_model_spec_ids = sorted({model_spec_id for _, model_spec_id in parsed_required_comparator_pairs})
+        required_horizons = sorted({horizon for horizon, _ in parsed_required_comparator_pairs})
         comparator_rows = connection.execute(
             f"""
             SELECT summary_date, horizon, model_spec_id, segment_value, mean_realized_excess_return
             FROM fact_alpha_shadow_evaluation_summary
             WHERE summary_date = ?
-              AND model_spec_id IN ({",".join("?" for _ in required_comparator_model_spec_ids)})
+              AND model_spec_id IN ({",".join("?" for _ in required_model_spec_ids)})
+              AND horizon IN ({",".join("?" for _ in required_horizons)})
               AND segment_value = 'top5'
             ORDER BY horizon, model_spec_id
             """,
-            [latest_summary_date, *required_comparator_model_spec_ids],
+            [latest_summary_date, *required_model_spec_ids, *required_horizons],
         ).fetchdf().to_dict(orient="records")
 
 artifact_root = settings.paths.artifacts_dir
@@ -156,11 +163,10 @@ found_comparator_pairs = {
     (int(row["horizon"]), str(row["model_spec_id"]))
     for row in comparator_rows
 }
-missing_comparator_model_spec_ids = []
-for model_spec_id in required_comparator_model_spec_ids:
-    expected_horizon = 1 if model_spec_id == "alpha_topbucket_h1_rolling_120_v1" else 1
-    if (expected_horizon, model_spec_id) not in found_comparator_pairs:
-        missing_comparator_model_spec_ids.append(model_spec_id)
+missing_comparator_pairs = []
+for horizon, model_spec_id in parsed_required_comparator_pairs:
+    if (int(horizon), model_spec_id) not in found_comparator_pairs:
+        missing_comparator_pairs.append(f"{int(horizon)}:{model_spec_id}")
 
 payload = {
     "as_of_date": as_of_date.isoformat(),
@@ -170,14 +176,14 @@ payload = {
     "latest_validation_run": validation.to_dict(orient="records"),
     "expected_preserved_horizons": expected_preserved_horizons,
     "preserved_horizon_mismatches": preserved_horizon_mismatches,
-    "required_comparator_model_spec_ids": required_comparator_model_spec_ids,
+    "required_comparator_pairs": required_comparator_pairs,
     "latest_summary_date": None if latest_summary_date is None else str(latest_summary_date),
     "comparator_rows": comparator_rows,
-    "missing_comparator_model_spec_ids": missing_comparator_model_spec_ids,
+    "missing_comparator_pairs": missing_comparator_pairs,
     "discord_artifact_dirs": sorted(path.name for path in discord_root.glob('*')) if discord_root.exists() else [],
     "release_artifact_dirs": sorted(path.name for path in release_root.glob('*')) if release_root.exists() else [],
 }
 print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
-if preserved_horizon_mismatches or missing_comparator_model_spec_ids:
+if preserved_horizon_mismatches or missing_comparator_pairs:
     raise SystemExit(1)
 PY
