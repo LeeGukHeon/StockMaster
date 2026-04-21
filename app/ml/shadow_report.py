@@ -10,7 +10,12 @@ import pandas as pd
 
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
-from app.ml.constants import MODEL_SPEC_ID
+from app.ml.constants import (
+    D5_PRIMARY_BUCKET_SEGMENTS,
+    D5_PRIMARY_COMPARATOR_PAIRS,
+    D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+    MODEL_SPEC_ID,
+)
 from app.ml.promotion import load_alpha_promotion_summary
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
@@ -84,6 +89,7 @@ def _load_shadow_summary(
             summary.model_spec_id,
             summary.segment_value,
             summary.count_evaluated,
+            COALESCE(summary.matured_selection_date_count, 0) AS matured_selection_date_count,
             summary.mean_realized_excess_return,
             summary.mean_point_loss,
             summary.rank_ic
@@ -93,7 +99,7 @@ def _load_shadow_summary(
          AND summary.model_spec_id = latest.model_spec_id
          AND summary.summary_date = latest.summary_date
         WHERE 1 = 1
-          AND segment_value IN ('all', 'top5', 'top10', 'report_candidates')
+          AND segment_value IN ('all', 'top5', 'top10', 'report_candidates', 'bucket_continuation', 'bucket_reversal_recovery', 'bucket_crowded_risk')
         ORDER BY summary.horizon, summary.window_type, summary.segment_value, summary.model_spec_id
         """,
         [end_selection_date, *horizons],
@@ -132,6 +138,7 @@ def _build_comparison_ledger(summary: pd.DataFrame) -> pd.DataFrame:
             "horizon",
             "segment_value",
             "model_spec_id",
+            "matured_selection_date_count",
             "count_evaluated",
             "mean_realized_excess_return",
             "rank_ic",
@@ -144,6 +151,79 @@ def _build_comparison_ledger(summary: pd.DataFrame) -> pd.DataFrame:
             "point_loss_improvement_vs_baseline",
         ]
     ].sort_values(["horizon", "window_type", "segment_value", "model_spec_id"]).reset_index(drop=True)
+
+
+def _build_pairwise_ledger(
+    summary: pd.DataFrame,
+    *,
+    focus_model_spec_id: str,
+    comparator_pairs: tuple[tuple[int, str], ...],
+) -> pd.DataFrame:
+    if summary.empty:
+        return pd.DataFrame()
+    focus_rows = summary.loc[summary["model_spec_id"] == focus_model_spec_id].copy()
+    if focus_rows.empty:
+        return pd.DataFrame()
+    ledgers: list[pd.DataFrame] = []
+    for horizon, comparator_model_spec_id in comparator_pairs:
+        comparator_rows = summary.loc[
+            (summary["horizon"] == int(horizon))
+            & (summary["model_spec_id"] == comparator_model_spec_id)
+        ].copy()
+        if comparator_rows.empty:
+            continue
+        merged = focus_rows.loc[focus_rows["horizon"] == int(horizon)].merge(
+            comparator_rows,
+            on=["summary_date", "window_type", "horizon", "segment_value"],
+            how="inner",
+            suffixes=("_focus", "_comparator"),
+        )
+        if merged.empty:
+            continue
+        merged["focus_model_spec_id"] = focus_model_spec_id
+        merged["comparator_model_spec_id"] = comparator_model_spec_id
+        merged["return_gap_vs_comparator"] = (
+            pd.to_numeric(merged["mean_realized_excess_return_focus"], errors="coerce")
+            - pd.to_numeric(merged["mean_realized_excess_return_comparator"], errors="coerce")
+        )
+        merged["rank_ic_gap_vs_comparator"] = (
+            pd.to_numeric(merged["rank_ic_focus"], errors="coerce")
+            - pd.to_numeric(merged["rank_ic_comparator"], errors="coerce")
+        )
+        merged["point_loss_improvement_vs_comparator"] = (
+            pd.to_numeric(merged["mean_point_loss_comparator"], errors="coerce")
+            - pd.to_numeric(merged["mean_point_loss_focus"], errors="coerce")
+        )
+        ledgers.append(
+            merged[
+                [
+                    "summary_date",
+                    "window_type",
+                    "horizon",
+                    "segment_value",
+                    "focus_model_spec_id",
+                    "comparator_model_spec_id",
+                    "count_evaluated_focus",
+                    "matured_selection_date_count_focus",
+                    "mean_realized_excess_return_focus",
+                    "rank_ic_focus",
+                    "mean_point_loss_focus",
+                    "count_evaluated_comparator",
+                    "matured_selection_date_count_comparator",
+                    "mean_realized_excess_return_comparator",
+                    "rank_ic_comparator",
+                    "mean_point_loss_comparator",
+                    "return_gap_vs_comparator",
+                    "rank_ic_gap_vs_comparator",
+                    "point_loss_improvement_vs_comparator",
+                ]
+            ]
+        )
+    if not ledgers:
+        return pd.DataFrame()
+    return pd.concat(ledgers, ignore_index=True).sort_values(
+        ["horizon", "window_type", "segment_value", "comparator_model_spec_id"]
+    ).reset_index(drop=True)
 
 
 def _format_metric(value: object, *, pct: bool = False, signed: bool = False) -> str:
