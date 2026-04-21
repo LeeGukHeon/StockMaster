@@ -1053,6 +1053,93 @@ def test_run_alpha_indicator_product_bundle_backfills_shadow_history_across_rang
     ]
 
 
+def test_run_alpha_indicator_product_bundle_d5_focus_enforces_comparator_lock(tmp_path):
+    settings = _prepare_ticket006_data(tmp_path)
+    swing_v1_spec = get_alpha_model_spec("alpha_swing_d5_v1")
+    swing_v2_spec = get_alpha_model_spec("alpha_swing_d5_v2")
+    legacy_h1_spec = get_alpha_model_spec("alpha_topbucket_h1_rolling_120_v1")
+
+    for train_end_date in [date(2026, 3, 4), date(2026, 3, 5), date(2026, 3, 6)]:
+        train_alpha_model_v1(
+            settings,
+            train_end_date=train_end_date,
+            horizons=[1, 5],
+            min_train_days=5,
+            validation_days=2,
+            limit_symbols=4,
+        )
+        train_alpha_candidate_models(
+            settings,
+            train_end_date=train_end_date,
+            horizons=[1, 5],
+            min_train_days=5,
+            validation_days=2,
+            limit_symbols=4,
+            market="ALL",
+            model_specs=(swing_v1_spec, swing_v2_spec, legacy_h1_spec),
+        )
+
+    result = run_alpha_indicator_product_bundle(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        as_of_date=date(2026, 3, 6),
+        shadow_start_selection_date=date(2026, 3, 4),
+        shadow_end_selection_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        model_spec_ids=["alpha_swing_d5_v2", "alpha_swing_d5_v1"],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+        market="ALL",
+        rolling_windows=[20, 60],
+        freeze_horizons=[5],
+        backfill_shadow_history=True,
+    )
+
+    assert result.freeze_horizons == [5]
+    assert result.frozen_model_spec_ids == ["alpha_swing_d5_v1"]
+    assert "alpha_swing_d5_v2" in result.blocked_freeze_model_spec_ids
+    assert result.freeze_block_reasons["alpha_swing_d5_v2"] == ["challenger_only_no_auto_freeze"]
+    assert result.active_model_spec_ids_by_horizon[5] == "alpha_swing_d5_v1"
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        comparator_rows = connection.execute(
+            """
+            SELECT model_spec_id, horizon
+            FROM fact_alpha_shadow_evaluation_summary
+            WHERE summary_date = ?
+              AND segment_value = 'top5'
+              AND model_spec_id IN (
+                'alpha_swing_d5_v2',
+                'alpha_swing_d5_v1',
+                'alpha_recursive_expanding_v1',
+                'alpha_topbucket_h1_rolling_120_v1'
+              )
+            GROUP BY model_spec_id, horizon
+            ORDER BY horizon, model_spec_id
+            """,
+            [date(2026, 3, 6)],
+        ).fetchall()
+
+    assert comparator_rows == [
+        ("alpha_recursive_expanding_v1", 1),
+        ("alpha_topbucket_h1_rolling_120_v1", 1),
+        ("alpha_recursive_expanding_v1", 5),
+        ("alpha_swing_d5_v1", 5),
+        ("alpha_swing_d5_v2", 5),
+    ]
+
+    validation_markdown = max(
+        (settings.paths.artifacts_dir / "model_validation").glob("*.md"),
+        key=lambda path: path.stat().st_mtime,
+    )
+    validation_text = validation_markdown.read_text(encoding="utf-8")
+    assert "d5_primary_top5_vs_swing_v1_cohort" in validation_text
+    assert "d5_primary_top5_vs_swing_v1_rolling20" in validation_text
+    assert "d5_bucket_continuation_vs_swing_v1" in validation_text
+    assert "d5_bucket_win_count_vs_swing_v1" in validation_text
+
+
 def test_validate_alpha_model_h5_only_omits_d1_concentration_checks(tmp_path):
     settings = _prepare_ticket006_data(tmp_path)
 
