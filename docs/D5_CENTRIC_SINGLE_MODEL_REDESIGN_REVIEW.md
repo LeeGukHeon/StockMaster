@@ -138,3 +138,19 @@ The redesign is feasible in the current codebase, but only if it stays bounded:
 - new challenger spec instead of mutating the existing D+5 control lane
 - model-spec-specific H5 ranking override instead of a generic top5-binary change
 - H5-aware comparator and bucket validation instead of reusing D+1-centric helpers
+
+## Leader HEAD re-review addendum (2026-04-21)
+
+After re-reviewing the integrated leader `main` branch, the host bundle scripts look materially better aligned with the frozen D+5 contract:
+- `scripts/server/run_indicator_product_bundle_host.sh` now runs the D+5 challenger/control pair and passes explicit comparator requirements.
+- `scripts/server/verify_indicator_product_bundle_host.sh` now verifies explicit `horizon:model_spec_id` comparator pairs instead of incorrectly hard-coding every comparator to H1.
+
+One report-side blocker still appears to remain in leader HEAD:
+- `app/ml/shadow_report.py` builds the D+5 report through `_build_pairwise_ledger(...)`, but that helper only emits rows when the focus model exists at the requested horizon.
+- `alpha_swing_d5_v2` is H5-only, while `D5_PRIMARY_COMPARATOR_PAIRS` still includes H1 auxiliary comparators.
+- Result: the "D+1 auxiliary interpretation" section cannot populate real rows and will fall back to the empty-state message unless the renderer loads D1 auxiliary rows from summary data separately from the H5 focus/comparator pairwise ledger.
+
+Recommended clean fix:
+- keep the H5 pairwise ledger for D+5 comparator and bucket sections
+- add a separate D+1 auxiliary summary/ledger path sourced directly from `fact_alpha_shadow_evaluation_summary` for the H1 comparator models
+- render that auxiliary section without pretending the H5 focus model has H1 rows
