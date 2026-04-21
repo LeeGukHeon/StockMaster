@@ -7,8 +7,9 @@ import pandas as pd
 
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
+from app.features.feature_store import load_feature_matrix
 from app.labels.forward_returns import LABEL_VERSION, build_forward_labels
-from app.ml.constants import get_alpha_model_spec
+from app.ml.constants import D5_PRIMARY_BUCKET_SEGMENTS, get_alpha_model_spec
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -60,6 +61,97 @@ class AlphaShadowCoverageWindow:
     db_only_max_selection_date: date | None
     effective_start_selection_date: date | None
     effective_end_selection_date: date | None
+
+
+BUCKET_FEATURE_COLUMNS: tuple[str, ...] = (
+    "ret_10d",
+    "dist_from_20d_high",
+    "drawdown_20d",
+    "residual_ret_5d",
+    "turnover_z_5_20",
+    "news_burst_share_1d",
+    "realized_vol_20d",
+)
+
+
+def _load_bucket_feature_frame(
+    connection,
+    *,
+    selection_dates: list[date],
+    symbols: list[str],
+) -> pd.DataFrame:
+    bucket_frames: list[pd.DataFrame] = []
+    for selection_date in selection_dates:
+        feature_matrix = load_feature_matrix(
+            connection,
+            as_of_date=selection_date,
+            symbols=symbols,
+            include_rank_features=False,
+            include_zscore_features=False,
+        )
+        if feature_matrix.empty:
+            continue
+        available_columns = [
+            column for column in BUCKET_FEATURE_COLUMNS if column in feature_matrix.columns
+        ]
+        if not available_columns:
+            continue
+        bucket_frame = feature_matrix.loc[:, ["symbol", *available_columns]].copy()
+        bucket_frame["selection_date"] = selection_date
+        bucket_frames.append(bucket_frame)
+    if not bucket_frames:
+        return pd.DataFrame(columns=["selection_date", "symbol", *BUCKET_FEATURE_COLUMNS])
+    combined = pd.concat(bucket_frames, ignore_index=True)
+    combined["symbol"] = combined["symbol"].astype(str).str.zfill(6)
+    return combined
+
+
+def _attach_bucket_features(connection, frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    selection_dates = sorted(
+        {
+            pd.Timestamp(value).date()
+            for value in pd.Series(frame["selection_date"]).dropna().tolist()
+        }
+    )
+    symbols = sorted(frame["symbol"].astype(str).str.zfill(6).drop_duplicates().tolist())
+    if not selection_dates or not symbols:
+        return frame
+    bucket_features = _load_bucket_feature_frame(
+        connection,
+        selection_dates=selection_dates,
+        symbols=symbols,
+    )
+    if bucket_features.empty:
+        return frame
+    working = frame.copy()
+    working["selection_date"] = pd.to_datetime(working["selection_date"]).dt.date
+    working["symbol"] = working["symbol"].astype(str).str.zfill(6)
+    return working.merge(
+        bucket_features,
+        on=["selection_date", "symbol"],
+        how="left",
+    )
+
+
+def _bucket_masks(frame: pd.DataFrame) -> dict[str, pd.Series]:
+    ret_10d = pd.to_numeric(frame.get("ret_10d"), errors="coerce")
+    dist_from_20d_high = pd.to_numeric(frame.get("dist_from_20d_high"), errors="coerce")
+    drawdown_20d = pd.to_numeric(frame.get("drawdown_20d"), errors="coerce")
+    residual_ret_5d = pd.to_numeric(frame.get("residual_ret_5d"), errors="coerce")
+    turnover_z_5_20 = pd.to_numeric(frame.get("turnover_z_5_20"), errors="coerce")
+    news_burst_share_1d = pd.to_numeric(frame.get("news_burst_share_1d"), errors="coerce")
+    realized_vol_20d = pd.to_numeric(frame.get("realized_vol_20d"), errors="coerce")
+    return {
+        "bucket_continuation": ret_10d.gt(0.03) & dist_from_20d_high.le(0.15),
+        "bucket_reversal_recovery": drawdown_20d.le(-0.08) & residual_ret_5d.gt(0.0),
+        "bucket_crowded_risk": (
+            turnover_z_5_20.ge(1.5)
+            | news_burst_share_1d.ge(0.30)
+            | realized_vol_20d.ge(0.05)
+        ),
+    }
 
 
 def _resolve_target_selection_dates(
@@ -697,7 +789,7 @@ def _segment_frames(
         horizon=horizon,
         model_spec_id=model_spec_id,
     )
-    return [
+    segments: list[tuple[str, pd.DataFrame]] = [
         ("all", ordered.copy()),
         (
             "top5",
@@ -716,6 +808,14 @@ def _segment_frames(
             report_candidates,
         ),
     ]
+    if int(horizon) == 5:
+        bucket_masks = _bucket_masks(ordered)
+        for segment_value in D5_PRIMARY_BUCKET_SEGMENTS:
+            bucket_mask = bucket_masks.get(segment_value)
+            if bucket_mask is None:
+                continue
+            segments.append((segment_value, ordered.loc[bucket_mask].copy()))
+    return segments
 
 
 def _build_summary_row(
@@ -731,6 +831,11 @@ def _build_summary_row(
     run_id: str,
 ) -> dict[str, object]:
     matured = frame.loc[frame["outcome_status"] == "matured"].copy()
+    matured_selection_date_count = int(
+        pd.to_datetime(matured.get("selection_date"), errors="coerce")
+        .dt.date.dropna()
+        .nunique()
+    )
     point_loss = pd.to_numeric(matured["prediction_error"], errors="coerce").pow(2)
     return {
         "summary_date": summary_date,
@@ -741,6 +846,7 @@ def _build_summary_row(
         "model_spec_id": model_spec_id,
         "segment_value": segment_value,
         "count_evaluated": int(len(matured)),
+        "matured_selection_date_count": matured_selection_date_count,
         "mean_realized_excess_return": _mean_or_none(matured["realized_excess_return"]),
         "mean_point_loss": _mean_or_none(point_loss),
         "rank_ic": _correlation_or_none(
@@ -1023,6 +1129,7 @@ def upsert_alpha_shadow_evaluation_summary(connection, frame: pd.DataFrame) -> N
             model_spec_id,
             segment_value,
             count_evaluated,
+            matured_selection_date_count,
             mean_realized_excess_return,
             mean_point_loss,
             rank_ic,
@@ -1038,6 +1145,7 @@ def upsert_alpha_shadow_evaluation_summary(connection, frame: pd.DataFrame) -> N
             model_spec_id,
             segment_value,
             count_evaluated,
+            matured_selection_date_count,
             mean_realized_excess_return,
             mean_point_loss,
             rank_ic,
@@ -1230,6 +1338,7 @@ def materialize_alpha_shadow_evaluation_summary(
                         notes=notes,
                     )
 
+                outcomes = _attach_bucket_features(connection, outcomes)
                 summary_rows: list[dict[str, object]] = []
                 for (horizon, model_spec_id), subset in outcomes.groupby(
                     ["horizon", "model_spec_id"],
