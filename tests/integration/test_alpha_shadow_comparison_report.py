@@ -141,6 +141,8 @@ def test_render_alpha_shadow_comparison_report_includes_d5_focus_sections(tmp_pa
     content = Path(preview).read_text(encoding="utf-8")
 
     assert "alpha_swing_d5_v2" in content
+    assert "D+5 raw-vs-selected drag" in content
     assert "D+5 robustness buckets vs alpha_swing_d5_v1" in content
     assert "Continuation" in content
     assert "D+1 auxiliary interpretation" in content
+    assert "compatibility/reporting surface only" in content

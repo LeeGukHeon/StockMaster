@@ -1135,6 +1135,8 @@ def test_run_alpha_indicator_product_bundle_d5_focus_enforces_comparator_lock(tm
     validation_text = validation_markdown.read_text(encoding="utf-8")
     assert "d5_primary_top5_vs_swing_v1_cohort" in validation_text
     assert "d5_primary_top5_vs_swing_v1_rolling20" in validation_text
+    assert "d5_primary_drag_improvement_cohort" in validation_text
+    assert "d5_primary_selected_top5_floor_cohort" in validation_text
     assert "d5_bucket_continuation_vs_swing_v1" in validation_text
     assert "d5_bucket_win_count_vs_swing_v1" in validation_text
 

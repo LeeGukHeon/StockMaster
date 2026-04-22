@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 
+from app.ml.constants import D5_PRIMARY_OUTPUT_CONTRACT_ROLES
 from app.selection.engine_v2 import (
     _augment_reason_tags,
     _compute_crowding_penalty_score,
+    _compute_late_entry_penalty_score,
     _resolve_selection_weights,
 )
 
@@ -21,13 +23,13 @@ def test_crowding_penalty_scores_hot_names_higher():
         }
     )
 
-    score = engine_v2._compute_crowding_penalty_score(frame, horizon=5)
+    score = _compute_crowding_penalty_score(frame, horizon=5)
 
     assert float(score.iloc[0]) > float(score.iloc[1])
 
 
 def test_reason_tags_prefer_relative_and_persistence_signals():
-    tags = engine_v2._augment_reason_tags(
+    tags = _augment_reason_tags(
         pd.Series(
             {
                 "relative_alpha_score": 75,
@@ -45,6 +47,21 @@ def test_reason_tags_prefer_relative_and_persistence_signals():
     assert "flow_persistence_supportive" in tags
 
 
+def test_d5_late_entry_penalty_scores_overheated_weak_names_higher():
+    frame = pd.DataFrame(
+        {
+            "crowding_penalty_score": [92, 35],
+            "relative_alpha_score": [24, 82],
+            "flow_persistence_score": [28, 80],
+            "news_drift_score": [32, 75],
+        }
+    )
+
+    score = _compute_late_entry_penalty_score(frame)
+
+    assert float(score.iloc[0]) > float(score.iloc[1])
+
+
 def test_d5_primary_weights_apply_only_to_focus_spec():
     focus_weights = _resolve_selection_weights(
         horizon=5,
@@ -59,3 +76,12 @@ def test_d5_primary_weights_apply_only_to_focus_spec():
 
     assert focus_weights["alpha_core_score"] != generic_top5_weights["alpha_core_score"]
     assert focus_weights["crowding_penalty_score"] != generic_top5_weights["crowding_penalty_score"]
+    assert focus_weights["late_entry_penalty_score"] < 0
+    assert "late_entry_penalty_score" not in generic_top5_weights
+
+
+def test_d5_output_contract_roles_keep_bands_diagnostic_only():
+    assert D5_PRIMARY_OUTPUT_CONTRACT_ROLES["expected_excess_return"] == "primary_ranking"
+    assert D5_PRIMARY_OUTPUT_CONTRACT_ROLES["uncertainty_score"] == "soft_penalty"
+    assert D5_PRIMARY_OUTPUT_CONTRACT_ROLES["lower_band"] == "diagnostic_only"
+    assert D5_PRIMARY_OUTPUT_CONTRACT_ROLES["report_candidate_flag"] == "compatibility_only"
