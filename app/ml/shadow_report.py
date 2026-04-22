@@ -12,6 +12,8 @@ from app.common.time import now_local
 from app.ml.constants import (
     D5_PRIMARY_BUCKET_SEGMENTS,
     D5_PRIMARY_COMPARATOR_PAIRS,
+    D5_PRIMARY_DRAG_BASELINE_BY_WINDOW,
+    D5_PRIMARY_DRAG_IMPROVEMENT_TARGET,
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
     MODEL_SPEC_ID,
 )
@@ -102,6 +104,53 @@ def _load_shadow_summary(
         ORDER BY summary.horizon, summary.window_type, summary.segment_value, summary.model_spec_id
         """,
         [end_selection_date, *horizons],
+    )
+
+
+def _load_selection_gap_summary(
+    connection,
+    *,
+    end_selection_date: date,
+    model_spec_ids: list[str],
+) -> pd.DataFrame:
+    if not model_spec_ids:
+        return pd.DataFrame()
+    model_placeholders = ",".join("?" for _ in model_spec_ids)
+    return _frame(
+        connection,
+        f"""
+        WITH latest_gap_dates AS (
+            SELECT
+                window_name,
+                horizon,
+                model_spec_id,
+                MAX(summary_date) AS summary_date
+            FROM fact_alpha_shadow_selection_gap_scorecard
+            WHERE summary_date <= ?
+              AND segment_name = 'top5'
+              AND horizon = 5
+              AND window_name IN ('cohort', 'rolling_20')
+              AND model_spec_id IN ({model_placeholders})
+            GROUP BY window_name, horizon, model_spec_id
+        )
+        SELECT
+            gap.summary_date,
+            gap.window_name,
+            gap.horizon,
+            gap.model_spec_id,
+            COALESCE(gap.matured_selection_date_count, 0) AS matured_selection_date_count,
+            gap.raw_top5_mean_realized_excess_return,
+            gap.selected_top5_mean_realized_excess_return,
+            gap.drag_vs_raw_top5
+        FROM fact_alpha_shadow_selection_gap_scorecard AS gap
+        JOIN latest_gap_dates AS latest
+          ON gap.summary_date = latest.summary_date
+         AND gap.window_name = latest.window_name
+         AND gap.horizon = latest.horizon
+         AND gap.model_spec_id = latest.model_spec_id
+        ORDER BY gap.window_name, gap.model_spec_id
+        """,
+        [end_selection_date, *model_spec_ids],
     )
 
 
@@ -294,6 +343,7 @@ def _build_d5_primary_markdown(
     pairwise_ledger: pd.DataFrame,
     *,
     summary: pd.DataFrame,
+    drag_summary: pd.DataFrame,
     start_selection_date: date,
     end_selection_date: date,
     promotion_summary: pd.DataFrame,
@@ -307,9 +357,55 @@ def _build_d5_primary_markdown(
         f"- Secondary D+5 comparator: `{MODEL_SPEC_ID}` (H5)",
         f"- D+1 auxiliary comparators: `{MODEL_SPEC_ID}`, `alpha_topbucket_h1_rolling_120_v1`",
         "",
-        "## D+5 overall comparator table",
+        "## D+5 raw-vs-selected drag",
         "",
     ]
+    if drag_summary.empty:
+        lines.append("- D+5 selection-gap rows not available yet.")
+    else:
+        for row in drag_summary.itertuples(index=False):
+            baseline_drag = D5_PRIMARY_DRAG_BASELINE_BY_WINDOW.get(str(row.window_name))
+            target_drag = (
+                None
+                if row.model_spec_id != D5_PRIMARY_FOCUS_MODEL_SPEC_ID or baseline_drag is None
+                else baseline_drag + D5_PRIMARY_DRAG_IMPROVEMENT_TARGET
+            )
+            target_suffix = (
+                ""
+                if target_drag is None
+                else " | frozen baseline {baseline} | lane target >= {target}".format(
+                    baseline=_format_metric(baseline_drag, pct=True, signed=True),
+                    target=_format_metric(target_drag, pct=True, signed=True),
+                )
+            )
+            lines.append(
+                "- {window} | {model}: raw {raw} | selected {selected} | drag {drag} | matured_dates={dates}{target_suffix}".format(
+                    window=row.window_name,
+                    model=row.model_spec_id,
+                    raw=_format_metric(
+                        row.raw_top5_mean_realized_excess_return,
+                        pct=True,
+                        signed=True,
+                    ),
+                    selected=_format_metric(
+                        row.selected_top5_mean_realized_excess_return,
+                        pct=True,
+                        signed=True,
+                    ),
+                    drag=_format_metric(row.drag_vs_raw_top5, pct=True, signed=True),
+                    dates=int(row.matured_selection_date_count or 0),
+                    target_suffix=target_suffix,
+                )
+            )
+    lines.extend(
+        [
+            "",
+            "- `report_candidates` remains a compatibility/reporting surface only for this lane and is excluded from primary drag success criteria.",
+            "",
+            "## D+5 overall comparator table",
+            "",
+        ]
+    )
     overall_rows = pairwise_ledger.loc[
         (pairwise_ledger["horizon"] == 5)
         & (pairwise_ledger["segment_value"] == "top5")
@@ -439,6 +535,19 @@ def render_alpha_shadow_comparison_report(
                 )
                 model_spec_ids = set(summary.get("model_spec_id", pd.Series(dtype="object")).astype(str))
                 d5_focus_enabled = D5_PRIMARY_FOCUS_MODEL_SPEC_ID in model_spec_ids
+                drag_summary = (
+                    _load_selection_gap_summary(
+                        connection,
+                        end_selection_date=end_selection_date,
+                        model_spec_ids=[
+                            D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+                            "alpha_swing_d5_v1",
+                            MODEL_SPEC_ID,
+                        ],
+                    )
+                    if d5_focus_enabled
+                    else pd.DataFrame()
+                )
                 ledger = (
                     _build_pairwise_ledger(
                         summary,
@@ -471,6 +580,7 @@ def render_alpha_shadow_comparison_report(
                     _build_d5_primary_markdown(
                         ledger,
                         summary=summary,
+                        drag_summary=drag_summary,
                         start_selection_date=start_selection_date,
                         end_selection_date=end_selection_date,
                         promotion_summary=promotion_summary,
@@ -488,6 +598,7 @@ def render_alpha_shadow_comparison_report(
                     "row_count": int(len(ledger)),
                     "baseline_model_spec_id": MODEL_SPEC_ID,
                     "focus_model_spec_id": D5_PRIMARY_FOCUS_MODEL_SPEC_ID if d5_focus_enabled else None,
+                    "d5_drag_row_count": int(len(drag_summary)) if d5_focus_enabled else None,
                 }
                 artifact_paths.extend(
                     _write_report_artifacts(

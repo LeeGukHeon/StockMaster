@@ -10,6 +10,7 @@ from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import (
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+    D5_PRIMARY_OUTPUT_CONTRACT_ROLES,
     SELECTION_ENGINE_VERSION,
     get_alpha_model_spec,
 )
@@ -110,8 +111,8 @@ SELECTION_V2_TOP5_FOCUS_WEIGHTS = {
 
 SELECTION_V2_D5_PRIMARY_WEIGHTS = {
     5: {
-        "alpha_core_score": 42,
-        "relative_alpha_score": 16,
+        "alpha_core_score": 44,
+        "relative_alpha_score": 18,
         "flow_persistence_score": 12,
         "flow_score": 8,
         "trend_momentum_score": 3,
@@ -121,10 +122,11 @@ SELECTION_V2_D5_PRIMARY_WEIGHTS = {
         "news_drift_score": 2,
         "regime_fit_score": 6,
         "risk_penalty_score": -5,
-        "uncertainty_score": -7,
-        "disagreement_score": -6,
+        "uncertainty_score": -5,
+        "disagreement_score": -4,
         "implementation_penalty_score": -5,
-        "crowding_penalty_score": -10,
+        "crowding_penalty_score": -7,
+        "late_entry_penalty_score": -9,
         "fallback_penalty": -3,
     },
 }
@@ -357,6 +359,22 @@ def _compute_crowding_penalty_score(frame: pd.DataFrame, *, horizon: int) -> pd.
     )
 
 
+def _compute_late_entry_penalty_score(frame: pd.DataFrame) -> pd.Series:
+    crowding = pd.to_numeric(frame.get("crowding_penalty_score"), errors="coerce").fillna(50.0)
+    relative_alpha = pd.to_numeric(frame.get("relative_alpha_score"), errors="coerce").fillna(50.0)
+    flow_persistence = pd.to_numeric(
+        frame.get("flow_persistence_score"),
+        errors="coerce",
+    ).fillna(50.0)
+    news_drift = pd.to_numeric(frame.get("news_drift_score"), errors="coerce").fillna(50.0)
+    return (
+        crowding.mul(0.45)
+        + (100.0 - relative_alpha).clip(lower=0.0).mul(0.25)
+        + (100.0 - flow_persistence).clip(lower=0.0).mul(0.20)
+        + (100.0 - news_drift).clip(lower=0.0).mul(0.10)
+    ).clip(lower=0.0, upper=100.0)
+
+
 def _attach_regime_context(
     feature_matrix: pd.DataFrame,
     *,
@@ -403,11 +421,18 @@ def _score_selection_engine_v2_frame(
     scored["fallback_reason"] = scored["fallback_reason"].fillna("")
 
     model_spec_id, target_variant = _resolve_model_spec_context(scored)
+    d5_primary_focus = (
+        model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID and int(horizon) == 5
+    )
     weights = _resolve_selection_weights(
         horizon=int(horizon),
         model_spec_id=model_spec_id,
         target_variant=target_variant,
     )
+    if d5_primary_focus:
+        scored["late_entry_penalty_score"] = _compute_late_entry_penalty_score(scored)
+    else:
+        scored["late_entry_penalty_score"] = pd.NA
     alpha_positive_components = {key: value for key, value in weights.items() if value > 0}
     positive_score = sum(
         pd.to_numeric(scored[name], errors="coerce").fillna(50.0) * weight
@@ -441,6 +466,11 @@ def _score_selection_engine_v2_frame(
         * abs(weights["crowding_penalty_score"])
         / 100.0
     )
+    late_entry_penalty = (
+        pd.to_numeric(scored["late_entry_penalty_score"], errors="coerce").fillna(0.0)
+        * abs(weights.get("late_entry_penalty_score", 0.0))
+        / 100.0
+    )
     fallback_penalty = scored["fallback_flag"].astype(float) * abs(weights["fallback_penalty"])
     scored["final_selection_value"] = (
         positive_score
@@ -449,6 +479,7 @@ def _score_selection_engine_v2_frame(
         - disagreement_penalty
         - implementation_penalty
         - crowding_penalty
+        - late_entry_penalty
         - fallback_penalty
     ).clip(lower=0.0, upper=100.0)
     scored["final_selection_rank_pct"] = scored["final_selection_value"].rank(
@@ -500,8 +531,13 @@ def _score_selection_engine_v2_frame(
         axis=1,
     )
     weight_payload = dict(weights)
+    output_contract_roles = (
+        dict(D5_PRIMARY_OUTPUT_CONTRACT_ROLES) if d5_primary_focus else None
+    )
     scored["explanatory_score_json"] = scored.apply(
-        lambda row, weight_payload=weight_payload: json.dumps(
+        lambda row,
+        weight_payload=weight_payload,
+        output_contract_roles=output_contract_roles: json.dumps(
             {
                 "alpha_core_score": float(row["alpha_core_score"]),
                 "relative_alpha_score": float(row["relative_alpha_score"]),
@@ -513,6 +549,9 @@ def _score_selection_engine_v2_frame(
                 "trend_momentum_score": float(row["trend_momentum_score"]),
                 "news_drift_score": float(row["news_drift_score"]),
                 "crowding_penalty_score": float(row["crowding_penalty_score"]),
+                "late_entry_penalty_score": None
+                if pd.isna(row["late_entry_penalty_score"])
+                else float(row["late_entry_penalty_score"]),
                 "quality_score": float(row["quality_score"]),
                 "value_safety_score": float(row["value_safety_score"]),
                 "regime_fit_score": float(row["regime_fit_score"]),
@@ -530,6 +569,7 @@ def _score_selection_engine_v2_frame(
                 "score_version": SELECTION_ENGINE_VERSION,
                 "score_type": "selection_engine_v2",
                 "active_weights": weight_payload,
+                "output_contract_roles": output_contract_roles,
             },
             ensure_ascii=False,
             sort_keys=True,

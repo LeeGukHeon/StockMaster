@@ -10,7 +10,10 @@ from app.common.time import now_local
 from app.ml.constants import (
     ALPHA_CANDIDATE_MODEL_SPECS,
     D5_PRIMARY_BUCKET_SEGMENTS,
+    D5_PRIMARY_DRAG_BASELINE_BY_WINDOW,
+    D5_PRIMARY_DRAG_IMPROVEMENT_TARGET,
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+    D5_PRIMARY_SELECTED_TOP5_FLOOR,
     MODEL_SPEC_ID,
     MODEL_VERSION,
     PREDICTION_VERSION,
@@ -378,6 +381,139 @@ def _append_d5_primary_checks(
     as_of_date: date,
     checks: list[dict[str, object]],
 ) -> None:
+    for window_name, baseline_drag in D5_PRIMARY_DRAG_BASELINE_BY_WINDOW.items():
+        row = connection.execute(
+            """
+            SELECT
+                summary_date,
+                drag_vs_raw_top5,
+                raw_top5_mean_realized_excess_return,
+                selected_top5_mean_realized_excess_return,
+                insufficient_history_flag,
+                matured_selection_date_count,
+                required_selection_date_count
+            FROM fact_alpha_shadow_selection_gap_scorecard
+            WHERE summary_date <= ?
+              AND window_name = ?
+              AND horizon = 5
+              AND model_spec_id = ?
+              AND segment_name = 'top5'
+            ORDER BY summary_date DESC
+            LIMIT 1
+            """,
+            [as_of_date, window_name, D5_PRIMARY_FOCUS_MODEL_SPEC_ID],
+        ).fetchone()
+        suffix = window_name.replace("_", "")
+        target_drag = baseline_drag + D5_PRIMARY_DRAG_IMPROVEMENT_TARGET
+        if row is None:
+            checks.extend(
+                [
+                    {
+                        "check_name": f"d5_primary_drag_improvement_{suffix}",
+                        "status": "warn",
+                        "value": "",
+                        "threshold": D5_PRIMARY_DRAG_IMPROVEMENT_TARGET,
+                        "detail": (
+                            "Missing D+5 selection-gap row for "
+                            f"{D5_PRIMARY_FOCUS_MODEL_SPEC_ID} at {window_name}."
+                        ),
+                    },
+                    {
+                        "check_name": f"d5_primary_selected_top5_floor_{suffix}",
+                        "status": "warn",
+                        "value": "",
+                        "threshold": D5_PRIMARY_SELECTED_TOP5_FLOOR,
+                        "detail": (
+                            "Missing D+5 selected top5 row for "
+                            f"{D5_PRIMARY_FOCUS_MODEL_SPEC_ID} at {window_name}."
+                        ),
+                    },
+                ]
+            )
+            continue
+        (
+            summary_date,
+            drag_vs_raw_top5,
+            raw_top5_mean_realized_excess_return,
+            selected_top5_mean_realized_excess_return,
+            insufficient_history_flag,
+            matured_selection_date_count,
+            required_selection_date_count,
+        ) = row
+        if bool(insufficient_history_flag):
+            detail = (
+                f"Insufficient matured selection dates for {D5_PRIMARY_FOCUS_MODEL_SPEC_ID} "
+                f"at {window_name} ({int(matured_selection_date_count or 0)}/"
+                f"{int(required_selection_date_count or 0)}) on summary_date={summary_date}."
+            )
+            checks.extend(
+                [
+                    {
+                        "check_name": f"d5_primary_drag_improvement_{suffix}",
+                        "status": "warn",
+                        "value": "" if drag_vs_raw_top5 is None else round(float(drag_vs_raw_top5), 6),
+                        "threshold": D5_PRIMARY_DRAG_IMPROVEMENT_TARGET,
+                        "detail": detail,
+                    },
+                    {
+                        "check_name": f"d5_primary_selected_top5_floor_{suffix}",
+                        "status": "warn",
+                        "value": (
+                            ""
+                            if selected_top5_mean_realized_excess_return is None
+                            else round(float(selected_top5_mean_realized_excess_return), 6)
+                        ),
+                        "threshold": D5_PRIMARY_SELECTED_TOP5_FLOOR,
+                        "detail": detail,
+                    },
+                ]
+            )
+            continue
+        drag_value = None if drag_vs_raw_top5 is None else float(drag_vs_raw_top5)
+        improvement = None if drag_value is None else float(drag_value - baseline_drag)
+        selected_value = (
+            None
+            if selected_top5_mean_realized_excess_return is None
+            else float(selected_top5_mean_realized_excess_return)
+        )
+        checks.extend(
+            [
+                {
+                    "check_name": f"d5_primary_drag_improvement_{suffix}",
+                    "status": (
+                        "pass"
+                        if improvement is not None
+                        and improvement >= D5_PRIMARY_DRAG_IMPROVEMENT_TARGET
+                        else "fail"
+                    ),
+                    "value": "" if improvement is None else round(improvement, 6),
+                    "threshold": D5_PRIMARY_DRAG_IMPROVEMENT_TARGET,
+                    "detail": (
+                        "D+5 drag improvement versus the frozen 2026-04-22 baseline at "
+                        f"{window_name}: raw={raw_top5_mean_realized_excess_return} "
+                        f"selected={selected_value} drag={drag_value} "
+                        f"baseline_drag={baseline_drag} target_drag>={target_drag} "
+                        f"summary_date={summary_date}."
+                    ),
+                },
+                {
+                    "check_name": f"d5_primary_selected_top5_floor_{suffix}",
+                    "status": (
+                        "pass"
+                        if selected_value is not None
+                        and selected_value >= D5_PRIMARY_SELECTED_TOP5_FLOOR
+                        else "fail"
+                    ),
+                    "value": "" if selected_value is None else round(selected_value, 6),
+                    "threshold": D5_PRIMARY_SELECTED_TOP5_FLOOR,
+                    "detail": (
+                        f"D+5 selected top5 floor for {D5_PRIMARY_FOCUS_MODEL_SPEC_ID} at "
+                        f"{window_name} on summary_date={summary_date}."
+                    ),
+                },
+            ]
+        )
+
     for window_type, threshold in D5_PRIMARY_TOP5_VS_SWING_V1_THRESHOLDS.items():
         row = _load_shadow_comparison_row(
             connection,
