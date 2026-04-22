@@ -123,7 +123,7 @@ SELECTION_V2_D5_PRIMARY_WEIGHTS = {
         "regime_fit_score": 6,
         "risk_penalty_score": -5,
         "uncertainty_score": -5,
-        "disagreement_score": -4,
+        "disagreement_score": -2,
         "implementation_penalty_score": -5,
         "crowding_penalty_score": -7,
         "late_entry_penalty_score": -9,

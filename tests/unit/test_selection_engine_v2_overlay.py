@@ -229,6 +229,22 @@ def test_d5_primary_weights_apply_only_to_focus_spec():
     assert focus_weights["crowding_penalty_score"] != generic_top5_weights["crowding_penalty_score"]
 
 
+def test_d5_primary_weights_soften_disagreement_penalty_for_focus_spec():
+    focus_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_swing_d5_v2",
+        target_variant="top5_binary",
+    )
+    generic_top5_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_swing_d5_v1",
+        target_variant="top5_binary",
+    )
+
+    assert focus_weights["disagreement_score"] == -2
+    assert focus_weights["disagreement_score"] > generic_top5_weights["disagreement_score"]
+
+
 def test_top5_binary_report_candidate_mask_uses_ranked_top_five():
     scored = pd.DataFrame(
         {
