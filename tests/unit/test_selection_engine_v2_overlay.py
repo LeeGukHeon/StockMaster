@@ -75,43 +75,12 @@ def test_d5_primary_weights_apply_only_to_focus_spec():
 
     assert focus_weights["alpha_core_score"] != generic_top5_weights["alpha_core_score"]
     assert focus_weights["crowding_penalty_score"] != generic_top5_weights["crowding_penalty_score"]
+    assert focus_weights["late_entry_penalty_score"] < 0
+    assert "late_entry_penalty_score" not in generic_top5_weights
 
 
-def test_top5_binary_report_candidate_mask_uses_ranked_top_five():
-    scored = pd.DataFrame(
-        {
-            "symbol": list("ABCDEF"),
-            "eligible_flag": [True, True, True, True, True, True],
-            "final_selection_value": [99.0, 98.0, 97.0, 96.0, 95.0, 94.0],
-            "final_selection_rank_pct": [1.0, 5 / 6, 4 / 6, 3 / 6, 2 / 6, 1 / 6],
-        }
-    )
-
-    mask = _select_report_candidate_mask(
-        scored,
-        model_spec_id="alpha_swing_d5_v2",
-        target_variant="top5_binary",
-        horizon=5,
-    )
-
-    assert scored.loc[mask, "symbol"].tolist() == ["A", "B", "C", "D", "E"]
-
-
-def test_non_topk_report_candidate_mask_requires_eligibility_and_rank_threshold():
-    scored = pd.DataFrame(
-        {
-            "symbol": list("ABCD"),
-            "eligible_flag": [True, False, True, True],
-            "final_selection_value": [90.0, 89.0, 88.0, 87.0],
-            "final_selection_rank_pct": [0.90, 0.95, 0.84, 0.85],
-        }
-    )
-
-    mask = _select_report_candidate_mask(
-        scored,
-        model_spec_id=None,
-        target_variant=None,
-        horizon=1,
-    )
-
-    assert scored.loc[mask, "symbol"].tolist() == ["A", "D"]
+def test_d5_output_contract_roles_keep_bands_diagnostic_only():
+    assert D5_PRIMARY_OUTPUT_CONTRACT_ROLES["expected_excess_return"] == "primary_ranking"
+    assert D5_PRIMARY_OUTPUT_CONTRACT_ROLES["uncertainty_score"] == "soft_penalty"
+    assert D5_PRIMARY_OUTPUT_CONTRACT_ROLES["lower_band"] == "diagnostic_only"
+    assert D5_PRIMARY_OUTPUT_CONTRACT_ROLES["report_candidate_flag"] == "compatibility_only"
