@@ -361,17 +361,25 @@ def _compute_crowding_penalty_score(frame: pd.DataFrame, *, horizon: int) -> pd.
 
 def _compute_late_entry_penalty_score(frame: pd.DataFrame) -> pd.Series:
     crowding = pd.to_numeric(frame.get("crowding_penalty_score"), errors="coerce").fillna(50.0)
+    alpha_core_source = frame.get("alpha_core_score")
+    if alpha_core_source is None:
+        alpha_core = pd.Series(50.0, index=frame.index)
+    else:
+        alpha_core = pd.to_numeric(alpha_core_source, errors="coerce").fillna(50.0)
     relative_alpha = pd.to_numeric(frame.get("relative_alpha_score"), errors="coerce").fillna(50.0)
     flow_persistence = pd.to_numeric(
         frame.get("flow_persistence_score"),
         errors="coerce",
     ).fillna(50.0)
     news_drift = pd.to_numeric(frame.get("news_drift_score"), errors="coerce").fillna(50.0)
-    return (
-        crowding.mul(0.45)
+    trailing_signal = (
+        (100.0 - alpha_core).clip(lower=0.0).mul(0.35)
         + (100.0 - relative_alpha).clip(lower=0.0).mul(0.25)
-        + (100.0 - flow_persistence).clip(lower=0.0).mul(0.20)
-        + (100.0 - news_drift).clip(lower=0.0).mul(0.10)
+        + (100.0 - flow_persistence).clip(lower=0.0).mul(0.25)
+        + (100.0 - news_drift).clip(lower=0.0).mul(0.15)
+    ) / 100.0
+    return (
+        crowding.sub(50.0).clip(lower=0.0).mul(2.0) * trailing_signal
     ).clip(lower=0.0, upper=100.0)
 
 
