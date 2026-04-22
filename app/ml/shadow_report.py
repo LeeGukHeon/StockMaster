@@ -141,6 +141,9 @@ def _load_selection_gap_summary(
             COALESCE(gap.matured_selection_date_count, 0) AS matured_selection_date_count,
             gap.raw_top5_mean_realized_excess_return,
             gap.selected_top5_mean_realized_excess_return,
+            gap.top5_overlap,
+            gap.pred_only_top5_mean_realized_excess_return,
+            gap.sel_only_top5_mean_realized_excess_return,
             gap.drag_vs_raw_top5
         FROM fact_alpha_shadow_selection_gap_scorecard AS gap
         JOIN latest_gap_dates AS latest
@@ -357,9 +360,38 @@ def _build_d5_primary_markdown(
         f"- Secondary D+5 comparator: `{MODEL_SPEC_ID}` (H5)",
         f"- D+1 auxiliary comparators: `{MODEL_SPEC_ID}`, `alpha_topbucket_h1_rolling_120_v1`",
         "",
-        "## D+5 raw-vs-selected drag",
+        "## Lag-first proof",
         "",
     ]
+    if drag_summary.empty:
+        lines.append("- D+5 selection-gap rows not available yet.")
+    else:
+        for row in drag_summary.itertuples(index=False):
+            lines.append(
+                "- {window} | {model}: `top5_overlap` {overlap} | `pred_only_top5_mean_realized_excess_return` {pred_only} | `sel_only_top5_mean_realized_excess_return` {sel_only} | matured_dates={dates}".format(
+                    window=row.window_name,
+                    model=row.model_spec_id,
+                    overlap=_format_metric(row.top5_overlap, pct=True),
+                    pred_only=_format_metric(
+                        row.pred_only_top5_mean_realized_excess_return,
+                        pct=True,
+                        signed=True,
+                    ),
+                    sel_only=_format_metric(
+                        row.sel_only_top5_mean_realized_excess_return,
+                        pct=True,
+                        signed=True,
+                    ),
+                    dates=int(row.matured_selection_date_count or 0),
+                )
+            )
+    lines.extend(
+        [
+            "",
+        "## D+5 raw-vs-selected drag",
+        "",
+        ]
+    )
     if drag_summary.empty:
         lines.append("- D+5 selection-gap rows not available yet.")
     else:
@@ -379,7 +411,7 @@ def _build_d5_primary_markdown(
                 )
             )
             lines.append(
-                "- {window} | {model}: raw {raw} | selected {selected} | drag {drag} | matured_dates={dates}{target_suffix}".format(
+                "- {window} | {model}: raw {raw} | selected {selected} | `drag_vs_raw_top5` {drag} | matured_dates={dates}{target_suffix}".format(
                     window=row.window_name,
                     model=row.model_spec_id,
                     raw=_format_metric(

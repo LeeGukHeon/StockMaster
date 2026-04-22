@@ -143,7 +143,12 @@ def test_render_alpha_shadow_comparison_report_includes_d5_focus_sections(tmp_pa
     content = Path(preview).read_text(encoding="utf-8")
 
     assert "alpha_swing_d5_v2" in content
+    assert "Lag-first proof" in content
+    assert "top5_overlap" in content
+    assert "pred_only_top5_mean_realized_excess_return" in content
+    assert "sel_only_top5_mean_realized_excess_return" in content
     assert "D+5 raw-vs-selected drag" in content
+    assert "drag_vs_raw_top5" in content
     assert "D+5 robustness buckets vs alpha_swing_d5_v1" in content
     assert "Continuation" in content
     assert "D+1 auxiliary interpretation" in content
@@ -191,10 +196,13 @@ def test_build_d5_primary_markdown_uses_summary_rows_for_d1_auxiliary_section() 
             {
                 "window_name": "cohort",
                 "model_spec_id": "alpha_swing_d5_v2",
-                "raw_top5_mean_realized_excess_return": 0.019,
-                "selected_top5_mean_realized_excess_return": 0.017,
-                "drag_vs_raw_top5": -0.002,
                 "matured_selection_date_count": 3,
+                "raw_top5_mean_realized_excess_return": 0.018,
+                "selected_top5_mean_realized_excess_return": 0.013,
+                "top5_overlap": 0.6,
+                "pred_only_top5_mean_realized_excess_return": 0.024,
+                "sel_only_top5_mean_realized_excess_return": 0.007,
+                "drag_vs_raw_top5": -0.005,
             }
         ]
     )
@@ -208,7 +216,8 @@ def test_build_d5_primary_markdown_uses_summary_rows_for_d1_auxiliary_section() 
         promotion_summary=pd.DataFrame(),
     )
 
-    assert "cohort | alpha_swing_d5_v2: raw" in markdown
+    assert "Lag-first proof" in markdown
+    assert "top5_overlap" in markdown
     assert "D+1 auxiliary interpretation" in markdown
     assert f"cohort | {MODEL_SPEC_ID}" in markdown
     assert "rolling_20 | alpha_topbucket_h1_rolling_120_v1" in markdown
