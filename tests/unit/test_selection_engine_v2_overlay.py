@@ -15,10 +15,10 @@ from app.selection.engine_v2 import (
 def test_crowding_penalty_scores_hot_names_higher():
     frame = pd.DataFrame(
         {
-            "ret_10d": [0.18, 0.02],
-            "dist_from_20d_high": [0.92, 0.12],
-            "turnover_burst_persistence_5d": [2.1, 0.4],
-            "news_burst_share_1d": [0.88, 0.10],
+            "ret_10d_rank_pct": [0.95, 0.20],
+            "dist_from_20d_high_rank_pct": [0.98, 0.30],
+            "turnover_burst_persistence_5d_rank_pct": [0.97, 0.40],
+            "news_burst_share_1d_rank_pct": [0.99, 0.20],
         }
     )
 
