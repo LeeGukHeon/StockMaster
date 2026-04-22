@@ -100,7 +100,15 @@ def _load_shadow_summary(
          AND summary.model_spec_id = latest.model_spec_id
          AND summary.summary_date = latest.summary_date
         WHERE 1 = 1
-          AND segment_value IN ('all', 'top5', 'top10', 'report_candidates', 'bucket_continuation', 'bucket_reversal_recovery', 'bucket_crowded_risk')
+          AND segment_value IN (
+                'all',
+                'top5',
+                'top10',
+                'report_candidates',
+                'bucket_continuation',
+                'bucket_reversal_recovery',
+                'bucket_crowded_risk'
+          )
         ORDER BY summary.horizon, summary.window_type, summary.segment_value, summary.model_spec_id
         """,
         [end_selection_date, *horizons],
@@ -201,7 +209,9 @@ def _build_comparison_ledger(summary: pd.DataFrame) -> pd.DataFrame:
             "rank_ic_gap_vs_baseline",
             "point_loss_improvement_vs_baseline",
         ]
-    ].sort_values(["horizon", "window_type", "segment_value", "model_spec_id"]).reset_index(drop=True)
+    ].sort_values(
+        ["horizon", "window_type", "segment_value", "model_spec_id"]
+    ).reset_index(drop=True)
 
 
 def _build_pairwise_ledger(
@@ -305,7 +315,10 @@ def _build_markdown(
     lines = [
         "# Alpha Shadow Comparison Report",
         "",
-        f"- Selection range: `{start_selection_date.isoformat()}..{end_selection_date.isoformat()}`",
+        (
+            "- Selection range: "
+            f"`{start_selection_date.isoformat()}..{end_selection_date.isoformat()}`"
+        ),
         f"- Baseline model: `{MODEL_SPEC_ID}`",
         "",
         "## Challenger vs baseline gaps",
@@ -320,14 +333,21 @@ def _build_markdown(
             lines.append(f"### H{int(horizon)} | {window_type} | {segment_value}")
             for row in group.itertuples(index=False):
                 lines.append(
-                    "- {model}: excess {ret} (gap {ret_gap}), rank IC {rank_ic} (gap {rank_gap}), point loss {loss} (improvement {loss_gap})".format(
+                    (
+                        "- {model}: excess {ret} (gap {ret_gap}), "
+                        "rank IC {rank_ic} (gap {rank_gap}), "
+                        "point loss {loss} (improvement {loss_gap})"
+                    ).format(
                         model=row.model_spec_id,
                         ret=_format_metric(row.mean_realized_excess_return, pct=True, signed=True),
                         ret_gap=_format_metric(row.return_gap_vs_baseline, pct=True, signed=True),
                         rank_ic=_format_metric(row.rank_ic, signed=True),
                         rank_gap=_format_metric(row.rank_ic_gap_vs_baseline, signed=True),
                         loss=_format_metric(row.mean_point_loss),
-                        loss_gap=_format_metric(row.point_loss_improvement_vs_baseline, signed=True),
+                        loss_gap=_format_metric(
+                            row.point_loss_improvement_vs_baseline,
+                            signed=True,
+                        ),
                     )
                 )
             lines.append("")
@@ -337,7 +357,12 @@ def _build_markdown(
     else:
         for row in promotion_summary.itertuples(index=False):
             lines.append(
-                f"- H{int(row.horizon)} | {row.decision_label} | active={row.active_model_label} | compare={row.comparison_model_label} | gap={_format_metric(row.promotion_gap, pct=True, signed=True)}"
+                (
+                    f"- H{int(row.horizon)} | {row.decision_label} | "
+                    f"active={row.active_model_label} | "
+                    f"compare={row.comparison_model_label} | "
+                    f"gap={_format_metric(row.promotion_gap, pct=True, signed=True)}"
+                )
             )
     return "\n".join(lines).strip()
 
@@ -437,7 +462,10 @@ def _build_d5_primary_markdown(
     lines.extend(
         [
             "",
-            "- `report_candidates` remains a compatibility/reporting surface only for this lane and is excluded from primary drag success criteria.",
+            (
+                "- `report_candidates` remains a compatibility/reporting surface only "
+                "for this lane and is excluded from primary drag success criteria."
+            ),
             "",
             "## D+5 overall comparator table",
             "",
@@ -458,7 +486,10 @@ def _build_d5_primary_markdown(
     else:
         for row in overall_rows.itertuples(index=False):
             lines.append(
-                "- {window} vs {comparator}: focus {focus_ret} | comparator {comp_ret} | gap {gap} | matured_dates={dates}".format(
+                (
+                    "- {window} vs {comparator}: focus {focus_ret} | "
+                    "comparator {comp_ret} | gap {gap} | matured_dates={dates}"
+                ).format(
                     window=row.window_type,
                     comparator=row.comparator_model_spec_id,
                     focus_ret=_format_metric(
@@ -487,7 +518,10 @@ def _build_d5_primary_markdown(
     else:
         for row in bucket_rows.itertuples(index=False):
             lines.append(
-                "- {bucket}: focus {focus_ret} | comparator {comp_ret} | gap {gap} | matured_dates={dates}".format(
+                (
+                    "- {bucket}: focus {focus_ret} | comparator {comp_ret} | "
+                    "gap {gap} | matured_dates={dates}"
+                ).format(
                     bucket=_humanize_segment(str(row.segment_value)),
                     focus_ret=_format_metric(
                         row.mean_realized_excess_return_focus,
@@ -515,7 +549,10 @@ def _build_d5_primary_markdown(
     else:
         for row in d1_rows.sort_values(["window_type", "model_spec_id"]).itertuples(index=False):
             lines.append(
-                "- {window} | {model}: excess {ret} | rank IC {rank_ic} | matured_dates={dates} | auxiliary precursor reference only".format(
+                (
+                    "- {window} | {model}: excess {ret} | rank IC {rank_ic} | "
+                    "matured_dates={dates} | auxiliary precursor reference only"
+                ).format(
                     window=row.window_type,
                     model=row.model_spec_id,
                     ret=_format_metric(row.mean_realized_excess_return, pct=True, signed=True),
@@ -530,7 +567,12 @@ def _build_d5_primary_markdown(
     else:
         for row in promotion_summary.itertuples(index=False):
             lines.append(
-                f"- H{int(row.horizon)} | {row.decision_label} | active={row.active_model_label} | compare={row.comparison_model_label} | gap={_format_metric(row.promotion_gap, pct=True, signed=True)}"
+                (
+                    f"- H{int(row.horizon)} | {row.decision_label} | "
+                    f"active={row.active_model_label} | "
+                    f"compare={row.comparison_model_label} | "
+                    f"gap={_format_metric(row.promotion_gap, pct=True, signed=True)}"
+                )
             )
     return "\n".join(lines).strip()
 
@@ -570,7 +612,9 @@ def render_alpha_shadow_comparison_report(
                     end_selection_date=end_selection_date,
                     horizons=horizons,
                 )
-                model_spec_ids = set(summary.get("model_spec_id", pd.Series(dtype="object")).astype(str))
+                model_spec_ids = set(
+                    summary.get("model_spec_id", pd.Series(dtype="object")).astype(str)
+                )
                 d5_focus_enabled = D5_PRIMARY_FOCUS_MODEL_SPEC_ID in model_spec_ids
                 drag_summary = (
                     _load_selection_gap_summary(
@@ -634,7 +678,9 @@ def render_alpha_shadow_comparison_report(
                     "report_type": "alpha_shadow_comparison_report",
                     "row_count": int(len(ledger)),
                     "baseline_model_spec_id": MODEL_SPEC_ID,
-                    "focus_model_spec_id": D5_PRIMARY_FOCUS_MODEL_SPEC_ID if d5_focus_enabled else None,
+                    "focus_model_spec_id": (
+                        D5_PRIMARY_FOCUS_MODEL_SPEC_ID if d5_focus_enabled else None
+                    ),
                     "d5_drag_row_count": int(len(drag_summary)) if d5_focus_enabled else None,
                 }
                 artifact_paths.extend(
