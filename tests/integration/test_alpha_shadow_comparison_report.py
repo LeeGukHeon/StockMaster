@@ -147,4 +147,55 @@ def test_render_alpha_shadow_comparison_report_includes_d5_focus_sections(tmp_pa
     assert "D+5 robustness buckets vs alpha_swing_d5_v1" in content
     assert "Continuation" in content
     assert "D+1 auxiliary interpretation" in content
-    assert "compatibility/reporting surface only" in content
+
+
+def test_build_d5_primary_markdown_uses_summary_rows_for_d1_auxiliary_section() -> None:
+    pairwise_ledger = pd.DataFrame(
+        [
+            {
+                "horizon": 5,
+                "window_type": "cohort",
+                "segment_value": "top5",
+                "comparator_model_spec_id": "alpha_swing_d5_v1",
+                "mean_realized_excess_return_focus": 0.021,
+                "mean_realized_excess_return_comparator": 0.014,
+                "return_gap_vs_comparator": 0.007,
+                "matured_selection_date_count_focus": 3,
+            }
+        ]
+    )
+    summary = pd.DataFrame(
+        [
+            {
+                "horizon": 1,
+                "window_type": "cohort",
+                "segment_value": "top5",
+                "model_spec_id": MODEL_SPEC_ID,
+                "mean_realized_excess_return": 0.011,
+                "rank_ic": 0.052,
+                "matured_selection_date_count": 3,
+            },
+            {
+                "horizon": 1,
+                "window_type": "rolling_20",
+                "segment_value": "top5",
+                "model_spec_id": "alpha_topbucket_h1_rolling_120_v1",
+                "mean_realized_excess_return": 0.015,
+                "rank_ic": 0.061,
+                "matured_selection_date_count": 2,
+            },
+        ]
+    )
+
+    markdown = _build_d5_primary_markdown(
+        pairwise_ledger,
+        summary=summary,
+        start_selection_date=date(2026, 3, 4),
+        end_selection_date=date(2026, 3, 6),
+        promotion_summary=pd.DataFrame(),
+    )
+
+    assert "D+1 auxiliary interpretation" in markdown
+    assert f"cohort | {MODEL_SPEC_ID}" in markdown
+    assert "rolling_20 | alpha_topbucket_h1_rolling_120_v1" in markdown
+    assert "D+1 auxiliary comparator rows not available yet." not in markdown
