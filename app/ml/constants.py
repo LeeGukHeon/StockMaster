@@ -36,6 +36,24 @@ D5_PRIMARY_BUCKET_SEGMENTS: tuple[str, ...] = (
     "bucket_reversal_recovery",
     "bucket_crowded_risk",
 )
+D5_PRIMARY_OUTPUT_CONTRACT_ROLES: dict[str, str] = {
+    "expected_excess_return": "primary_ranking",
+    "uncertainty_score": "soft_penalty",
+    "disagreement_score": "soft_penalty",
+    "crowding_penalty_score": "soft_penalty",
+    "risk_penalty_score": "soft_penalty",
+    "late_entry_penalty_score": "soft_penalty",
+    "lower_band": "diagnostic_only",
+    "median_band": "diagnostic_only",
+    "upper_band": "diagnostic_only",
+    "report_candidate_flag": "compatibility_only",
+}
+D5_PRIMARY_DRAG_BASELINE_BY_WINDOW: dict[str, float] = {
+    "cohort": -0.117986,
+    "rolling_20": -0.117986,
+}
+D5_PRIMARY_DRAG_IMPROVEMENT_TARGET = 0.03
+D5_PRIMARY_SELECTED_TOP5_FLOOR = 0.006493
 D5_PRIMARY_COMPARATOR_PAIRS: tuple[tuple[int, str], ...] = (
     (5, "alpha_swing_d5_v1"),
     (5, MODEL_SPEC_ID),
