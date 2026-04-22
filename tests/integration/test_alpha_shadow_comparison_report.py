@@ -7,6 +7,7 @@ import pandas as pd
 
 from app.evaluation.alpha_shadow import (
     materialize_alpha_shadow_evaluation_summary,
+    materialize_alpha_shadow_selection_gap_scorecard,
     materialize_alpha_shadow_selection_outcomes,
 )
 from app.ml.constants import MODEL_SPEC_ID, get_alpha_model_spec
@@ -55,6 +56,14 @@ def test_render_alpha_shadow_comparison_report_creates_artifacts(tmp_path):
         start_selection_date=date(2026, 3, 4),
         end_selection_date=date(2026, 3, 6),
         horizons=[1, 5],
+        rolling_windows=[2],
+    )
+    materialize_alpha_shadow_selection_gap_scorecard(
+        settings,
+        start_selection_date=date(2026, 3, 4),
+        end_selection_date=date(2026, 3, 6),
+        horizons=[5],
+        model_spec_ids=["alpha_swing_d5_v2", "alpha_swing_d5_v1", MODEL_SPEC_ID],
         rolling_windows=[2],
     )
 

@@ -354,7 +354,10 @@ def _build_d5_primary_markdown(
     lines = [
         "# Alpha Shadow Comparison Report",
         "",
-        f"- Selection range: `{start_selection_date.isoformat()}..{end_selection_date.isoformat()}`",
+        (
+            "- Selection range: "
+            f"`{start_selection_date.isoformat()}..{end_selection_date.isoformat()}`"
+        ),
         f"- Focus model: `{D5_PRIMARY_FOCUS_MODEL_SPEC_ID}`",
         "- Primary D+5 comparator: `alpha_swing_d5_v1`",
         f"- Secondary D+5 comparator: `{MODEL_SPEC_ID}` (H5)",
@@ -368,7 +371,12 @@ def _build_d5_primary_markdown(
     else:
         for row in drag_summary.itertuples(index=False):
             lines.append(
-                "- {window} | {model}: `top5_overlap` {overlap} | `pred_only_top5_mean_realized_excess_return` {pred_only} | `sel_only_top5_mean_realized_excess_return` {sel_only} | matured_dates={dates}".format(
+                (
+                    "- {window} | {model}: `top5_overlap` {overlap} | "
+                    "`pred_only_top5_mean_realized_excess_return` {pred_only} | "
+                    "`sel_only_top5_mean_realized_excess_return` {sel_only} | "
+                    "matured_dates={dates}"
+                ).format(
                     window=row.window_name,
                     model=row.model_spec_id,
                     overlap=_format_metric(row.top5_overlap, pct=True),
@@ -385,13 +393,7 @@ def _build_d5_primary_markdown(
                     dates=int(row.matured_selection_date_count or 0),
                 )
             )
-    lines.extend(
-        [
-            "",
-        "## D+5 raw-vs-selected drag",
-        "",
-        ]
-    )
+    lines.extend(["", "## D+5 raw-vs-selected drag", ""])
     if drag_summary.empty:
         lines.append("- D+5 selection-gap rows not available yet.")
     else:
@@ -411,7 +413,10 @@ def _build_d5_primary_markdown(
                 )
             )
             lines.append(
-                "- {window} | {model}: raw {raw} | selected {selected} | `drag_vs_raw_top5` {drag} | matured_dates={dates}{target_suffix}".format(
+                (
+                    "- {window} | {model}: raw {raw} | selected {selected} | "
+                    "`drag_vs_raw_top5` {drag} | matured_dates={dates}{target_suffix}"
+                ).format(
                     window=row.window_name,
                     model=row.model_spec_id,
                     raw=_format_metric(
