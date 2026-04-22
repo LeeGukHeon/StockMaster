@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from app.evaluation.alpha_shadow import (
+    RAW_TOP5_SOURCE_LABEL,
+    TOP5_HIT_RATE_FORMULA_LABEL,
     materialize_alpha_shadow_evaluation_summary,
     materialize_alpha_shadow_selection_gap_scorecard,
     materialize_alpha_shadow_selection_outcomes,
@@ -46,7 +50,11 @@ def test_shadow_ensure_feature_snapshot_rebuilds_invalid_quality_features(tmp_pa
             UPDATE fact_feature_snapshot
             SET feature_value = NULL
             WHERE as_of_date = ?
-              AND feature_name IN ('has_daily_ohlcv_flag', 'stale_price_flag', 'missing_key_feature_count')
+              AND feature_name IN (
+                'has_daily_ohlcv_flag',
+                'stale_price_flag',
+                'missing_key_feature_count'
+              )
             """,
             [date(2026, 3, 6)],
         )
@@ -215,7 +223,10 @@ def test_materialize_alpha_shadow_candidates_and_self_backtest(tmp_path):
             SELECT model_spec_id, horizon, COUNT(*) AS row_count
             FROM fact_alpha_shadow_prediction
             WHERE selection_date = ?
-              AND model_spec_id IN ('alpha_rank_rolling_120_v1', 'alpha_topbucket_h1_rolling_120_v1')
+              AND model_spec_id IN (
+                'alpha_rank_rolling_120_v1',
+                'alpha_topbucket_h1_rolling_120_v1'
+              )
             GROUP BY model_spec_id, horizon
             ORDER BY model_spec_id, horizon
             """,
@@ -296,6 +307,97 @@ def test_materialize_alpha_shadow_evaluation_summary_emits_d5_bucket_rows_for_sw
         ("bucket_crowded_risk",),
         ("bucket_reversal_recovery",),
     ]
+
+
+def test_materialize_alpha_shadow_selection_gap_scorecard_exposes_d5_drag_metrics(tmp_path):
+    settings = _prepare_shadow_settings(tmp_path)
+    d5_spec = get_alpha_model_spec("alpha_swing_d5_v2")
+
+    for train_end_date in [date(2026, 3, 4), date(2026, 3, 5), date(2026, 3, 6)]:
+        train_alpha_model_v1(
+            settings,
+            train_end_date=train_end_date,
+            horizons=[5],
+            min_train_days=5,
+            validation_days=2,
+            limit_symbols=4,
+        )
+        train_alpha_candidate_models(
+            settings,
+            train_end_date=train_end_date,
+            horizons=[5],
+            min_train_days=5,
+            validation_days=2,
+            limit_symbols=4,
+            model_specs=(d5_spec,),
+        )
+        materialize_alpha_shadow_candidates(
+            settings,
+            as_of_date=train_end_date,
+            horizons=[5],
+            limit_symbols=4,
+        )
+
+    materialize_alpha_shadow_selection_outcomes(
+        settings,
+        start_selection_date=date(2026, 3, 4),
+        end_selection_date=date(2026, 3, 6),
+        horizons=[5],
+    )
+    materialize_alpha_shadow_selection_gap_scorecard(
+        settings,
+        start_selection_date=date(2026, 3, 4),
+        end_selection_date=date(2026, 3, 6),
+        horizons=[5],
+        model_spec_ids=["alpha_swing_d5_v2"],
+        rolling_windows=[2],
+    )
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        row = connection.execute(
+            """
+            SELECT
+                raw_top5_mean_realized_excess_return,
+                selected_top5_mean_realized_excess_return,
+                report_candidates_mean_realized_excess_return,
+                raw_top5_hit_rate,
+                selected_top5_hit_rate,
+                report_candidates_hit_rate,
+                drag_vs_raw_top5,
+                raw_top5_source,
+                hit_rate_formula
+            FROM fact_alpha_shadow_selection_gap_scorecard
+            WHERE summary_date = ?
+              AND window_name = 'cohort'
+              AND horizon = 5
+              AND model_spec_id = 'alpha_swing_d5_v2'
+              AND segment_name = 'top5'
+            """,
+            [date(2026, 3, 6)],
+        ).fetchone()
+
+    assert row is not None
+    (
+        raw_mean,
+        selected_mean,
+        report_mean,
+        raw_hit_rate,
+        selected_hit_rate,
+        report_hit_rate,
+        drag_vs_raw_top5,
+        raw_top5_source,
+        hit_rate_formula,
+    ) = row
+
+    assert raw_mean is not None
+    assert selected_mean is not None
+    assert report_mean == pytest.approx(float(selected_mean))
+    assert raw_hit_rate is not None
+    assert selected_hit_rate is not None
+    assert report_hit_rate == pytest.approx(float(selected_hit_rate))
+    assert float(drag_vs_raw_top5) == pytest.approx(float(selected_mean) - float(raw_mean))
+    assert raw_top5_source == RAW_TOP5_SOURCE_LABEL
+    assert hit_rate_formula == TOP5_HIT_RATE_FORMULA_LABEL
 
 
 def test_resolve_alpha_shadow_db_only_windows_clips_to_candidate_and_market_range(tmp_path):
