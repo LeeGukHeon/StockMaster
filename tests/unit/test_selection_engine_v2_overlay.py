@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from app.selection.engine_v2 import (
+    D5_RAW_PRESERVATION_PRIORITY_COUNT,
     _alpha_core_score,
     _apply_d5_raw_preservation_guardrail,
     _augment_reason_tags,
@@ -127,6 +128,52 @@ def test_d5_raw_preservation_guardrail_keeps_safe_raw_leaders_in_top_slice():
     assert (
         guarded.loc[
             guarded["symbol"] == "B",
+            "raw_preservation_guardrail_applied",
+        ].item()
+        is True
+    )
+
+
+def test_d5_raw_preservation_guardrail_can_preserve_three_safe_raw_leaders():
+    assert D5_RAW_PRESERVATION_PRIORITY_COUNT == 3
+
+    scored = pd.DataFrame(
+        {
+            "symbol": list("ABCDEFGHI"),
+            "expected_excess_return": [0.20, 0.19, 0.18, 0.10, 0.09, 0.08, 0.07, 0.06, 0.05],
+            "final_selection_value": [70.0, 69.0, 68.0, 99.0, 98.0, 97.0, 96.0, 95.0, 94.0],
+            "final_selection_rank_pct": [
+                3 / 9,
+                2 / 9,
+                1 / 9,
+                1.0,
+                8 / 9,
+                7 / 9,
+                6 / 9,
+                5 / 9,
+                4 / 9,
+            ],
+            "eligible_flag": [True] * 9,
+            "critical_risk_flag": [False] * 9,
+            "fallback_flag": [False] * 9,
+            "uncertainty_score": [20.0] * 9,
+            "disagreement_score": [15.0] * 9,
+        }
+    )
+
+    guarded = _apply_d5_raw_preservation_guardrail(scored)
+    top_symbols = (
+        guarded.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
+        .head(5)["symbol"]
+        .tolist()
+    )
+
+    assert "A" in top_symbols
+    assert "B" in top_symbols
+    assert "C" in top_symbols
+    assert (
+        guarded.loc[
+            guarded["symbol"] == "C",
             "raw_preservation_guardrail_applied",
         ].item()
         is True

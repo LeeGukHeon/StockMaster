@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.common.time import today_local
 from app.discord_bot.read_store import materialize_discord_bot_read_store
 from app.logging import configure_logging, get_logger
+from app.ops.common import JobStatus
 from app.settings import load_settings
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 
@@ -43,13 +44,23 @@ def main() -> int:
             job_run_id=args.job_run_id,
         )
     logger.info(
-        "Discord bot read store materialized.",
-        extra={"run_id_value": result.run_id, "row_count": result.row_count},
+        "Discord bot read store completed.",
+        extra={
+            "run_id_value": result.run_id,
+            "row_count": result.row_count,
+            "status": result.status,
+        },
     )
-    print(
-        f"Discord bot read store materialized. as_of_date={target_date.isoformat()} "
-        f"rows={result.row_count}"
-    )
+    if str(result.status).upper() == JobStatus.SKIPPED:
+        print(
+            "Discord bot read store skipped. "
+            f"as_of_date={target_date.isoformat()} notes={result.notes}"
+        )
+    else:
+        print(
+            f"Discord bot read store materialized. as_of_date={target_date.isoformat()} "
+            f"rows={result.row_count}"
+        )
     return 0
 
 

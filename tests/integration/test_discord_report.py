@@ -232,6 +232,7 @@ def test_discord_report_render_and_publish_dry_run(tmp_path, monkeypatch):
     assert "message_count" not in all_messages
     assert "선택 드래그 점검" in all_messages
     assert "하루 선행 포착 v1" in all_messages
+    assert "5일 지속 포착 v1" in all_messages
     assert render_result.payload["message_count"] >= 1
     assert len(render_result.payload["messages"]) == render_result.payload["message_count"]
     assert publish_result.published is False

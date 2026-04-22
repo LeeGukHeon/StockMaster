@@ -169,6 +169,8 @@ SELECTION_V2_TOPBUCKET_WEIGHTS = {
     },
 }
 
+D5_RAW_PRESERVATION_PRIORITY_COUNT = 3
+
 
 def _resolve_selection_weights(
     *,
@@ -504,7 +506,9 @@ def _apply_d5_raw_preservation_guardrail(scored: pd.DataFrame) -> pd.DataFrame:
     if not preservable_raw_indices:
         return guarded
 
-    priority_preservable_indices = preservable_raw_indices[:2]
+    priority_preservable_indices = preservable_raw_indices[
+        :D5_RAW_PRESERVATION_PRIORITY_COUNT
+    ]
     priority_preservable_set = set(priority_preservable_indices)
 
     for offset, index in enumerate(priority_preservable_indices, start=1):
