@@ -461,13 +461,11 @@ def _compute_d5_raw_preservation_blocker_mask(scored: pd.DataFrame) -> pd.Series
         errors="coerce",
     ).fillna(0.0).astype(bool)
     uncertainty = pd.to_numeric(scored.get("uncertainty_score"), errors="coerce").fillna(0.0)
-    disagreement = pd.to_numeric(scored.get("disagreement_score"), errors="coerce").fillna(0.0)
     return (
         ~eligible
         | critical_risk
         | (fallback_flag & uncertainty.ge(75.0))
         | uncertainty.ge(85.0)
-        | disagreement.ge(85.0)
     )
 
 

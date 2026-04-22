@@ -8,6 +8,7 @@ from app.selection.engine_v2 import (
     _apply_d5_raw_preservation_guardrail,
     _augment_reason_tags,
     _compute_crowding_penalty_score,
+    _compute_d5_raw_preservation_blocker_mask,
     _compute_late_entry_penalty_score,
     _resolve_selection_weights,
     _select_report_candidate_mask,
@@ -178,6 +179,38 @@ def test_d5_raw_preservation_guardrail_can_preserve_three_safe_raw_leaders():
         ].item()
         is True
     )
+
+
+def test_d5_raw_preservation_blocker_mask_does_not_block_on_disagreement_alone():
+    scored = pd.DataFrame(
+        {
+            "eligible_flag": [True],
+            "critical_risk_flag": [False],
+            "fallback_flag": [False],
+            "uncertainty_score": [20.0],
+            "disagreement_score": [100.0],
+        }
+    )
+
+    blocker = _compute_d5_raw_preservation_blocker_mask(scored)
+
+    assert bool(blocker.iloc[0]) is False
+
+
+def test_d5_raw_preservation_blocker_mask_still_blocks_high_uncertainty():
+    scored = pd.DataFrame(
+        {
+            "eligible_flag": [True],
+            "critical_risk_flag": [False],
+            "fallback_flag": [False],
+            "uncertainty_score": [90.0],
+            "disagreement_score": [100.0],
+        }
+    )
+
+    blocker = _compute_d5_raw_preservation_blocker_mask(scored)
+
+    assert bool(blocker.iloc[0]) is True
 
 
 def test_d5_primary_weights_apply_only_to_focus_spec():
