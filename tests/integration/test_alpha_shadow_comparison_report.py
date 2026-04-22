@@ -186,16 +186,31 @@ def test_build_d5_primary_markdown_uses_summary_rows_for_d1_auxiliary_section() 
             },
         ]
     )
+    drag_summary = pd.DataFrame(
+        [
+            {
+                "window_name": "cohort",
+                "model_spec_id": "alpha_swing_d5_v2",
+                "raw_top5_mean_realized_excess_return": 0.019,
+                "selected_top5_mean_realized_excess_return": 0.017,
+                "drag_vs_raw_top5": -0.002,
+                "matured_selection_date_count": 3,
+            }
+        ]
+    )
 
     markdown = _build_d5_primary_markdown(
         pairwise_ledger,
         summary=summary,
+        drag_summary=drag_summary,
         start_selection_date=date(2026, 3, 4),
         end_selection_date=date(2026, 3, 6),
         promotion_summary=pd.DataFrame(),
     )
 
+    assert "cohort | alpha_swing_d5_v2: raw" in markdown
     assert "D+1 auxiliary interpretation" in markdown
     assert f"cohort | {MODEL_SPEC_ID}" in markdown
     assert "rolling_20 | alpha_topbucket_h1_rolling_120_v1" in markdown
     assert "D+1 auxiliary comparator rows not available yet." not in markdown
+    assert "report_candidates` remains a compatibility/reporting surface only" in markdown

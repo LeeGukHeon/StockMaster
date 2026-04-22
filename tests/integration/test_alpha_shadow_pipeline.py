@@ -363,6 +363,9 @@ def test_materialize_alpha_shadow_selection_gap_scorecard_exposes_d5_drag_metric
                 raw_top5_hit_rate,
                 selected_top5_hit_rate,
                 report_candidates_hit_rate,
+                top5_overlap,
+                pred_only_top5_mean_realized_excess_return,
+                sel_only_top5_mean_realized_excess_return,
                 drag_vs_raw_top5,
                 raw_top5_source,
                 hit_rate_formula
@@ -384,6 +387,9 @@ def test_materialize_alpha_shadow_selection_gap_scorecard_exposes_d5_drag_metric
         raw_hit_rate,
         selected_hit_rate,
         report_hit_rate,
+        top5_overlap,
+        pred_only_mean,
+        sel_only_mean,
         drag_vs_raw_top5,
         raw_top5_source,
         hit_rate_formula,
@@ -395,6 +401,15 @@ def test_materialize_alpha_shadow_selection_gap_scorecard_exposes_d5_drag_metric
     assert raw_hit_rate is not None
     assert selected_hit_rate is not None
     assert report_hit_rate == pytest.approx(float(selected_hit_rate))
+    assert top5_overlap is not None
+    overlap_value = float(top5_overlap)
+    assert 0.0 <= overlap_value <= 1.0
+    if overlap_value == pytest.approx(1.0):
+        assert pred_only_mean is None
+        assert sel_only_mean is None
+    else:
+        assert pred_only_mean is not None
+        assert sel_only_mean is not None
     assert float(drag_vs_raw_top5) == pytest.approx(float(selected_mean) - float(raw_mean))
     assert raw_top5_source == RAW_TOP5_SOURCE_LABEL
     assert hit_rate_formula == TOP5_HIT_RATE_FORMULA_LABEL
