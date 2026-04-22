@@ -61,6 +61,22 @@ def test_d5_late_entry_penalty_scores_overheated_weak_names_higher():
     assert float(score.iloc[0]) > float(score.iloc[1])
 
 
+def test_d5_late_entry_penalty_gives_relief_to_high_alpha_leaders():
+    frame = pd.DataFrame(
+        {
+            "crowding_penalty_score": [92, 92],
+            "alpha_core_score": [95, 20],
+            "relative_alpha_score": [55, 55],
+            "flow_persistence_score": [55, 55],
+            "news_drift_score": [55, 55],
+        }
+    )
+
+    score = _compute_late_entry_penalty_score(frame)
+
+    assert float(score.iloc[0]) < float(score.iloc[1])
+
+
 def test_d5_primary_weights_apply_only_to_focus_spec():
     focus_weights = _resolve_selection_weights(
         horizon=5,
