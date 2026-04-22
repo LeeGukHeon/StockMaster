@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pandas as pd
 
-from app.ml.constants import D5_PRIMARY_OUTPUT_CONTRACT_ROLES
 from app.selection.engine_v2 import (
     _augment_reason_tags,
     _compute_crowding_penalty_score,
