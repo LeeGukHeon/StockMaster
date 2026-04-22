@@ -283,6 +283,8 @@ def _augment_reason_tags(row: pd.Series, tags: list[str]) -> list[str]:
         values.append("news_drift_underreacted")
     if row.get("crowding_penalty_score", 100) <= 45:
         values.append("crowding_risk_low")
+    if row.get("raw_preservation_guardrail_applied", False):
+        values.append("raw_alpha_leader_preserved")
     values.extend(tags)
     if pd.notna(row.get("expected_excess_return")) and float(row["expected_excess_return"]) > 0:
         values.append("ml_alpha_supportive")
@@ -306,11 +308,46 @@ def _augment_risk_flags(row: pd.Series, flags: list[str]) -> list[str]:
     return sorted(set(values))
 
 
-def _alpha_core_score(frame: pd.DataFrame) -> pd.Series:
+def _alpha_core_rank_score(frame: pd.DataFrame) -> pd.Series:
     expected = pd.to_numeric(frame["expected_excess_return"], errors="coerce")
     if expected.notna().sum() <= 1:
         return pd.Series(50.0, index=frame.index)
     return expected.rank(method="average", pct=True).mul(100.0).fillna(50.0)
+
+
+def _alpha_core_magnitude_score(frame: pd.DataFrame) -> pd.Series:
+    expected = pd.to_numeric(frame["expected_excess_return"], errors="coerce")
+    if expected.notna().sum() <= 1:
+        return pd.Series(50.0, index=frame.index)
+    positive_expected = expected.clip(lower=0.0)
+    positive_max = positive_expected.max(skipna=True)
+    if pd.notna(positive_max) and float(positive_max) > 0.0:
+        return positive_expected.div(float(positive_max)).mul(100.0).fillna(0.0)
+    minimum = expected.min(skipna=True)
+    maximum = expected.max(skipna=True)
+    if pd.isna(minimum) or pd.isna(maximum) or float(maximum) <= float(minimum):
+        return pd.Series(50.0, index=frame.index)
+    return (
+        expected.sub(float(minimum))
+        .div(float(maximum) - float(minimum))
+        .mul(100.0)
+        .clip(lower=0.0, upper=100.0)
+        .fillna(50.0)
+    )
+
+
+def _alpha_core_score(
+    frame: pd.DataFrame,
+    *,
+    d5_primary_focus: bool = False,
+) -> pd.Series:
+    rank_component = _alpha_core_rank_score(frame)
+    if not d5_primary_focus:
+        return rank_component
+    magnitude_component = _alpha_core_magnitude_score(frame)
+    return (
+        rank_component.mul(0.55).add(magnitude_component.mul(0.45))
+    ).clip(lower=0.0, upper=100.0)
 
 
 def _compute_relative_alpha_score(frame: pd.DataFrame, *, horizon: int) -> pd.Series:
@@ -372,15 +409,140 @@ def _compute_late_entry_penalty_score(frame: pd.DataFrame) -> pd.Series:
         errors="coerce",
     ).fillna(50.0)
     news_drift = pd.to_numeric(frame.get("news_drift_score"), errors="coerce").fillna(50.0)
-    trailing_signal = (
-        (100.0 - alpha_core).clip(lower=0.0).mul(0.35)
-        + (100.0 - relative_alpha).clip(lower=0.0).mul(0.25)
-        + (100.0 - flow_persistence).clip(lower=0.0).mul(0.25)
-        + (100.0 - news_drift).clip(lower=0.0).mul(0.15)
-    ) / 100.0
+    weakness_score = (
+        alpha_core.rsub(58.0).clip(lower=0.0).div(58.0).mul(0.40)
+        + relative_alpha.rsub(55.0).clip(lower=0.0).div(55.0).mul(0.25)
+        + flow_persistence.rsub(55.0).clip(lower=0.0).div(55.0).mul(0.20)
+        + news_drift.rsub(52.0).clip(lower=0.0).div(52.0).mul(0.15)
+    ).clip(lower=0.0, upper=1.0)
+    weak_signal_share = (
+        alpha_core.lt(58.0).astype(float)
+        + relative_alpha.lt(55.0).astype(float)
+        + flow_persistence.lt(55.0).astype(float)
+        + news_drift.lt(52.0).astype(float)
+    ).div(4.0)
+    alpha_relief = (
+        alpha_core.sub(75.0).clip(lower=0.0).div(25.0).mul(0.45)
+        + relative_alpha.sub(65.0).clip(lower=0.0).div(35.0).mul(0.25)
+        + flow_persistence.sub(60.0).clip(lower=0.0).div(40.0).mul(0.15)
+        + news_drift.sub(60.0).clip(lower=0.0).div(40.0).mul(0.15)
+    ).clip(lower=0.0, upper=0.80)
+    crowding_gate = crowding.sub(55.0).clip(lower=0.0).div(45.0).clip(lower=0.0, upper=1.0)
     return (
-        crowding.sub(50.0).clip(lower=0.0).mul(2.0) * trailing_signal
+        crowding_gate.mul(100.0)
+        * weakness_score
+        * weak_signal_share.pow(1.5)
+        * (1.0 - alpha_relief)
     ).clip(lower=0.0, upper=100.0)
+
+
+def _top_selection_indices(scored: pd.DataFrame, *, limit: int) -> pd.Index:
+    return (
+        scored.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
+        .head(int(limit))
+        .index
+    )
+
+
+def _compute_d5_raw_preservation_blocker_mask(scored: pd.DataFrame) -> pd.Series:
+    eligible_flag = scored.get("eligible_flag")
+    if eligible_flag is None:
+        eligible = pd.Series(False, index=scored.index)
+    else:
+        eligible = eligible_flag.fillna(False).astype(bool)
+    critical_risk = pd.to_numeric(
+        scored.get("critical_risk_flag"),
+        errors="coerce",
+    ).fillna(0.0).astype(bool)
+    fallback_flag = pd.to_numeric(
+        scored.get("fallback_flag"),
+        errors="coerce",
+    ).fillna(0.0).astype(bool)
+    uncertainty = pd.to_numeric(scored.get("uncertainty_score"), errors="coerce").fillna(0.0)
+    disagreement = pd.to_numeric(scored.get("disagreement_score"), errors="coerce").fillna(0.0)
+    return (
+        ~eligible
+        | critical_risk
+        | (fallback_flag & uncertainty.ge(75.0))
+        | uncertainty.ge(85.0)
+        | disagreement.ge(85.0)
+    )
+
+
+def _apply_d5_raw_preservation_guardrail(scored: pd.DataFrame) -> pd.DataFrame:
+    guarded = scored.copy()
+    guarded["raw_top5_candidate_flag"] = False
+    guarded["raw_preservation_bonus"] = 0.0
+    guarded["raw_preservation_guardrail_applied"] = False
+    guarded["raw_preservation_blocker_flag"] = False
+
+    if guarded.empty:
+        return guarded
+
+    raw_top_indices = (
+        guarded.assign(
+            _expected_excess_return=pd.to_numeric(
+                guarded["expected_excess_return"],
+                errors="coerce",
+            )
+        )
+        .sort_values(
+            ["_expected_excess_return", "symbol"],
+            ascending=[False, True],
+            na_position="last",
+        )
+        .head(5)
+        .index
+    )
+    guarded.loc[raw_top_indices, "raw_top5_candidate_flag"] = True
+    blocker_mask = _compute_d5_raw_preservation_blocker_mask(guarded)
+    guarded["raw_preservation_blocker_flag"] = blocker_mask
+
+    preservable_raw_indices = [
+        index for index in raw_top_indices if not bool(blocker_mask.loc[index])
+    ]
+    if not preservable_raw_indices:
+        return guarded
+
+    priority_preservable_indices = preservable_raw_indices[:2]
+    priority_preservable_set = set(priority_preservable_indices)
+
+    for offset, index in enumerate(priority_preservable_indices, start=1):
+        current_top_indices = _top_selection_indices(guarded, limit=5)
+        if index in current_top_indices:
+            continue
+        missing_priority_count = sum(
+            priority_index not in current_top_indices
+            for priority_index in priority_preservable_indices
+        )
+        replaceable_top_indices = [
+            top_index
+            for top_index in current_top_indices
+            if top_index not in priority_preservable_set
+        ]
+        if not replaceable_top_indices:
+            break
+        cutoff_position = max(
+            0,
+            len(replaceable_top_indices) - int(missing_priority_count),
+        )
+        cutoff_index = replaceable_top_indices[cutoff_position]
+        cutoff_value = float(guarded.loc[cutoff_index, "final_selection_value"])
+        current_value = float(guarded.loc[index, "final_selection_value"])
+        bonus = max(0.0, cutoff_value - current_value + (0.01 * offset))
+        if bonus <= 0.0:
+            continue
+        guarded.loc[index, "final_selection_value"] = min(100.0, current_value + bonus)
+        guarded.loc[index, "raw_preservation_bonus"] = bonus
+
+    final_top_indices = set(_top_selection_indices(guarded, limit=5))
+    applied_indices = final_top_indices.intersection(priority_preservable_set)
+    guarded.loc[list(applied_indices), "raw_preservation_guardrail_applied"] = True
+    guarded["final_selection_rank_pct"] = guarded["final_selection_value"].rank(
+        method="average",
+        pct=True,
+    )
+    return guarded
 
 
 def _attach_regime_context(
@@ -406,7 +568,17 @@ def _score_selection_engine_v2_frame(
     settings: Settings,
 ) -> pd.DataFrame:
     scored = base.merge(prediction_frame, on="symbol", how="left")
-    scored["alpha_core_score"] = _alpha_core_score(scored)
+    model_spec_id, target_variant = _resolve_model_spec_context(scored)
+    d5_primary_focus = (
+        model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID and int(horizon) == 5
+    )
+    scored["alpha_core_rank_component_score"] = _alpha_core_rank_score(scored)
+    scored["alpha_core_magnitude_component_score"] = (
+        _alpha_core_magnitude_score(scored)
+        if d5_primary_focus
+        else pd.Series(float("nan"), index=scored.index, dtype="float64")
+    )
+    scored["alpha_core_score"] = _alpha_core_score(scored, d5_primary_focus=d5_primary_focus)
     scored["relative_alpha_score"] = _compute_relative_alpha_score(scored, horizon=horizon)
     scored["flow_persistence_score"] = _compute_flow_persistence_score(scored)
     scored["news_drift_score"] = _compute_news_drift_score(scored)
@@ -427,11 +599,6 @@ def _score_selection_engine_v2_frame(
     scored["disagreement_score"] = scored["disagreement_score"].fillna(disagreement_fill)
     scored["fallback_flag"] = scored["fallback_flag"].fillna(False).astype(bool)
     scored["fallback_reason"] = scored["fallback_reason"].fillna("")
-
-    model_spec_id, target_variant = _resolve_model_spec_context(scored)
-    d5_primary_focus = (
-        model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID and int(horizon) == 5
-    )
     weights = _resolve_selection_weights(
         horizon=int(horizon),
         model_spec_id=model_spec_id,
@@ -515,6 +682,13 @@ def _score_selection_engine_v2_frame(
         )
     )
     scored["grade"] = assign_grades(scored)
+    if d5_primary_focus:
+        scored = _apply_d5_raw_preservation_guardrail(scored)
+    else:
+        scored["raw_top5_candidate_flag"] = False
+        scored["raw_preservation_bonus"] = 0.0
+        scored["raw_preservation_guardrail_applied"] = False
+        scored["raw_preservation_blocker_flag"] = False
     scored["report_candidate_flag"] = _select_report_candidate_mask(
         scored,
         model_spec_id=model_spec_id,
@@ -548,6 +722,10 @@ def _score_selection_engine_v2_frame(
         output_contract_roles=output_contract_roles: json.dumps(
             {
                 "alpha_core_score": float(row["alpha_core_score"]),
+                "alpha_core_rank_component_score": float(row["alpha_core_rank_component_score"]),
+                "alpha_core_magnitude_component_score": None
+                if pd.isna(row["alpha_core_magnitude_component_score"])
+                else float(row["alpha_core_magnitude_component_score"]),
                 "relative_alpha_score": float(row["relative_alpha_score"]),
                 "expected_excess_return": None
                 if pd.isna(row["expected_excess_return"])
@@ -573,6 +751,12 @@ def _score_selection_engine_v2_frame(
                 "implementation_penalty_score": float(row["implementation_penalty_score"]),
                 "fallback_flag": bool(row["fallback_flag"]),
                 "fallback_reason": row["fallback_reason"] or None,
+                "raw_top5_candidate_flag": bool(row["raw_top5_candidate_flag"]),
+                "raw_preservation_bonus": float(row["raw_preservation_bonus"]),
+                "raw_preservation_guardrail_applied": bool(
+                    row["raw_preservation_guardrail_applied"]
+                ),
+                "raw_preservation_blocker_flag": bool(row["raw_preservation_blocker_flag"]),
                 "prediction_version": row.get("prediction_version"),
                 "score_version": SELECTION_ENGINE_VERSION,
                 "score_type": "selection_engine_v2",

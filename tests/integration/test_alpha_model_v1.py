@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 
@@ -37,7 +38,10 @@ from app.ml.training import (
 )
 from app.ml.validation import _validation_reference_runs_sql, validate_alpha_model_v1
 from app.regime.snapshot import build_market_regime_snapshot
-from app.selection.engine_v2 import materialize_selection_engine_v2
+from app.selection.engine_v2 import (
+    _score_selection_engine_v2_frame,
+    materialize_selection_engine_v2,
+)
 from app.storage.duckdb import duckdb_connection
 from tests._ticket003_support import (
     build_test_settings,
@@ -129,7 +133,9 @@ def test_train_alpha_model_v1_persists_registry_and_metrics(tmp_path):
     assert dataset_frame["target_top5_h1"].notna().any()
     assert dataset_frame["target_top5_h5"].notna().any()
     assert dataset_frame["target_topbucket_h1"].dropna().between(0.0, 1.0, inclusive="both").all()
-    assert set(dataset_frame["target_topbucket_h1"].dropna().unique()).issubset({0.0, 0.25, 0.5, 1.0})
+    assert set(dataset_frame["target_topbucket_h1"].dropna().unique()).issubset(
+        {0.0, 0.25, 0.5, 1.0}
+    )
 
 
 def test_train_alpha_model_v1_excludes_labels_not_available_by_train_end_date(tmp_path):
@@ -177,7 +183,11 @@ def test_ensure_feature_snapshots_rebuilds_invalid_quality_features(tmp_path, mo
             UPDATE fact_feature_snapshot
             SET feature_value = NULL
             WHERE as_of_date = ?
-              AND feature_name IN ('has_daily_ohlcv_flag', 'stale_price_flag', 'missing_key_feature_count')
+              AND feature_name IN (
+                  'has_daily_ohlcv_flag',
+                  'stale_price_flag',
+                  'missing_key_feature_count'
+              )
             """,
             [date(2026, 3, 6)],
         )
@@ -371,6 +381,74 @@ def test_materialize_alpha_predictions_and_selection_engine_v2(tmp_path):
     assert int(prediction_row[1] or 0) >= 1
     assert int(prediction_row[2] or 0) >= 1
     assert '"alpha_core_score"' in ranking_row[0]
+
+
+def test_d5_primary_selection_scoring_preserves_safe_raw_leaders(tmp_path):
+    settings = build_test_settings(tmp_path)
+    base = pd.DataFrame(
+        {
+            "symbol": list("ABCDEFG"),
+            "eligible_flag": [True, True, True, True, True, True, True],
+            "flow_score": [65.0, 64.0, 62.0, 61.0, 60.0, 59.0, 58.0],
+            "trend_momentum_score": [55.0, 54.0, 70.0, 69.0, 68.0, 67.0, 66.0],
+            "news_catalyst_score": [40.0, 40.0, 38.0, 38.0, 38.0, 38.0, 38.0],
+            "quality_score": [72.0, 71.0, 65.0, 64.0, 63.0, 62.0, 61.0],
+            "value_safety_score": [73.0, 72.0, 64.0, 63.0, 62.0, 61.0, 60.0],
+            "regime_fit_score": [60.0, 60.0, 55.0, 55.0, 55.0, 55.0, 55.0],
+            "risk_penalty_score": [10.0, 10.0, 18.0, 18.0, 18.0, 18.0, 18.0],
+            "implementation_penalty_score": [6.0, 6.0, 8.0, 8.0, 8.0, 8.0, 8.0],
+            "residual_ret_5d_rank_pct": [0.96, 0.93, 0.62, 0.58, 0.54, 0.50, 0.46],
+            "residual_ret_10d_rank_pct": [0.95, 0.92, 0.60, 0.57, 0.53, 0.49, 0.45],
+            "drawdown_20d_rank_pct": [0.80, 0.78, 0.62, 0.60, 0.58, 0.56, 0.54],
+            "foreign_flow_persistence_5d_rank_pct": [0.86, 0.84, 0.44, 0.42, 0.40, 0.38, 0.36],
+            "institution_flow_persistence_5d_rank_pct": [0.87, 0.85, 0.45, 0.43, 0.41, 0.39, 0.37],
+            "flow_disagreement_score_rank_pct": [0.20, 0.22, 0.52, 0.54, 0.56, 0.58, 0.60],
+            "news_drift_persistence_score_rank_pct": [0.82, 0.80, 0.36, 0.34, 0.32, 0.30, 0.28],
+            "news_burst_share_1d_rank_pct": [0.25, 0.27, 0.88, 0.86, 0.84, 0.82, 0.80],
+            "distinct_publishers_3d_rank_pct": [0.76, 0.74, 0.35, 0.34, 0.33, 0.32, 0.31],
+            "ret_10d_rank_pct": [0.66, 0.64, 0.96, 0.94, 0.92, 0.90, 0.88],
+            "dist_from_20d_high_rank_pct": [0.28, 0.30, 0.95, 0.93, 0.91, 0.89, 0.87],
+            "turnover_burst_persistence_5d_rank_pct": [0.34, 0.36, 0.94, 0.92, 0.90, 0.88, 0.86],
+            "uncertainty_proxy_score": [15.0, 15.0, 18.0, 18.0, 18.0, 18.0, 18.0],
+            "market": ["KOSPI"] * 7,
+        }
+    )
+    prediction_frame = pd.DataFrame(
+        {
+            "symbol": list("ABCDEFG"),
+            "model_spec_id": ["alpha_swing_d5_v2"] * 7,
+            "expected_excess_return": [0.17, 0.15, 0.11, 0.10, 0.09, 0.08, 0.07],
+            "prediction_version": [PREDICTION_VERSION] * 7,
+            "uncertainty_score": [12.0, 12.0, 20.0, 20.0, 20.0, 20.0, 20.0],
+            "disagreement_score": [10.0, 10.0, 18.0, 18.0, 18.0, 18.0, 18.0],
+            "fallback_flag": [False, False, False, False, False, False, False],
+            "fallback_reason": [None, None, None, None, None, None, None],
+        }
+    )
+
+    scored = _score_selection_engine_v2_frame(
+        base,
+        prediction_frame,
+        horizon=5,
+        settings=settings,
+    )
+
+    top_symbols = (
+        scored.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
+        .head(5)["symbol"]
+        .tolist()
+    )
+    row_a = scored.loc[scored["symbol"] == "A"].iloc[0]
+    row_b = scored.loc[scored["symbol"] == "B"].iloc[0]
+    payload_a = json.loads(str(row_a["explanatory_score_json"]))
+
+    assert "A" in top_symbols
+    assert "B" in top_symbols
+    assert bool(row_a["raw_top5_candidate_flag"]) is True
+    assert bool(row_a["raw_preservation_guardrail_applied"]) is True
+    assert bool(row_b["raw_top5_candidate_flag"]) is True
+    assert payload_a["raw_preservation_guardrail_applied"] is True
+    assert payload_a["alpha_core_magnitude_component_score"] is not None
 
 
 def test_materialize_alpha_predictions_handles_mixed_model_and_proxy_frames(tmp_path):
@@ -639,7 +717,14 @@ def test_validate_alpha_model_prefers_active_model_lineage_over_newer_challenger
         ).fetchone()[0]
         reference_training_run_id = connection.execute(
             reference_runs_sql + " SELECT training_run_id FROM reference_runs WHERE horizon = 1",
-            [MODEL_VERSION, date(2026, 3, 6), date(2026, 3, 6), MODEL_VERSION, MODEL_SPEC_ID, date(2026, 3, 6)],
+            [
+                MODEL_VERSION,
+                date(2026, 3, 6),
+                date(2026, 3, 6),
+                MODEL_VERSION,
+                MODEL_SPEC_ID,
+                date(2026, 3, 6),
+            ],
         ).fetchone()[0]
 
     assert reference_training_run_id == active_training_run_id

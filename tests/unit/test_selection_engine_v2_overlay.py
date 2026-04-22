@@ -3,6 +3,8 @@ from __future__ import annotations
 import pandas as pd
 
 from app.selection.engine_v2 import (
+    _alpha_core_score,
+    _apply_d5_raw_preservation_guardrail,
     _augment_reason_tags,
     _compute_crowding_penalty_score,
     _compute_late_entry_penalty_score,
@@ -45,6 +47,21 @@ def test_reason_tags_prefer_relative_and_persistence_signals():
     assert "flow_persistence_supportive" in tags
 
 
+def test_d5_alpha_core_score_uses_magnitude_to_separate_outsized_raw_leader():
+    frame = pd.DataFrame(
+        {
+            "expected_excess_return": [0.18, 0.07, 0.06, 0.05],
+        }
+    )
+
+    generic_score = _alpha_core_score(frame)
+    d5_score = _alpha_core_score(frame, d5_primary_focus=True)
+
+    assert float(d5_score.iloc[0] - d5_score.iloc[1]) > float(
+        generic_score.iloc[0] - generic_score.iloc[1]
+    )
+
+
 def test_d5_late_entry_penalty_scores_overheated_weak_names_higher():
     frame = pd.DataFrame(
         {
@@ -74,6 +91,46 @@ def test_d5_late_entry_penalty_gives_relief_to_high_alpha_leaders():
     score = _compute_late_entry_penalty_score(frame)
 
     assert float(score.iloc[0]) < float(score.iloc[1])
+
+
+def test_d5_raw_preservation_guardrail_keeps_safe_raw_leaders_in_top_slice():
+    scored = pd.DataFrame(
+        {
+            "symbol": list("ABCDEFG"),
+            "expected_excess_return": [0.16, 0.15, 0.09, 0.08, 0.07, 0.06, 0.05],
+            "final_selection_value": [70.0, 69.0, 95.0, 94.0, 93.0, 92.0, 91.0],
+            "final_selection_rank_pct": [2 / 7, 1 / 7, 1.0, 6 / 7, 5 / 7, 4 / 7, 3 / 7],
+            "eligible_flag": [True, True, True, True, True, True, True],
+            "critical_risk_flag": [False, False, False, False, False, False, False],
+            "fallback_flag": [False, False, False, False, False, False, False],
+            "uncertainty_score": [20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
+            "disagreement_score": [15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0],
+        }
+    )
+
+    guarded = _apply_d5_raw_preservation_guardrail(scored)
+    top_symbols = (
+        guarded.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
+        .head(5)["symbol"]
+        .tolist()
+    )
+
+    assert "A" in top_symbols
+    assert "B" in top_symbols
+    assert (
+        guarded.loc[
+            guarded["symbol"] == "A",
+            "raw_preservation_guardrail_applied",
+        ].item()
+        is True
+    )
+    assert (
+        guarded.loc[
+            guarded["symbol"] == "B",
+            "raw_preservation_guardrail_applied",
+        ].item()
+        is True
+    )
 
 
 def test_d5_primary_weights_apply_only_to_focus_spec():

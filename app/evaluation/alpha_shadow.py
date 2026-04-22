@@ -219,7 +219,10 @@ def resolve_alpha_shadow_db_only_windows(
     model_spec_ids: list[str] | None = None,
 ) -> list[AlphaShadowCoverageWindow]:
     if requested_start_selection_date > requested_end_selection_date:
-        raise ValueError("requested_start_selection_date must be on or before requested_end_selection_date.")
+        raise ValueError(
+            "requested_start_selection_date must be on or before "
+            "requested_end_selection_date."
+        )
 
     model_spec_clause = ""
     model_spec_params: list[object] = []
@@ -385,7 +388,11 @@ def _extract_report_candidate_frame(
     )
     candidate_limit = _resolve_report_candidate_limit(model_spec_id, horizon=horizon)
     if candidate_limit is not None:
-        return ordered.groupby("selection_date", sort=True, group_keys=False).head(candidate_limit).copy()
+        return (
+            ordered.groupby("selection_date", sort=True, group_keys=False)
+            .head(candidate_limit)
+            .copy()
+        )
     return ordered.loc[ordered["report_candidate_flag"].fillna(False).astype(bool)].copy()
 
 
@@ -667,7 +674,11 @@ def materialize_alpha_shadow_selection_outcomes(
                         notes=notes,
                     )
 
-                joined["prediction_error"] = pd.Series(float("nan"), index=joined.index, dtype="float64")
+                joined["prediction_error"] = pd.Series(
+                    float("nan"),
+                    index=joined.index,
+                    dtype="float64",
+                )
                 point_loss_supported = joined["model_spec_id"].map(_supports_point_loss)
                 joined.loc[point_loss_supported, "prediction_error"] = (
                     joined.loc[point_loss_supported, "realized_excess_return"]
@@ -1023,7 +1034,10 @@ def _build_selection_gap_row(
         "model_spec_id": str(model_spec_id),
         "segment_name": "top5",
         "matured_selection_date_count": int(
-            matured["selection_date"].dropna().map(lambda value: pd.Timestamp(value).date()).nunique()
+            matured["selection_date"]
+            .dropna()
+            .map(lambda value: pd.Timestamp(value).date())
+            .nunique()
         ),
         "required_selection_date_count": int(required_selection_date_count),
         "insufficient_history_flag": bool(insufficient_history_flag),
@@ -1528,7 +1542,8 @@ def materialize_alpha_shadow_selection_gap_scorecard(
                 ).fetchdf()
                 if outcomes.empty:
                     notes = (
-                        "No alpha shadow outcomes were available for selection-gap scorecard materialization. "
+                        "No alpha shadow outcomes were available for "
+                        "selection-gap scorecard materialization. "
                         f"range={start_selection_date.isoformat()}..{end_selection_date.isoformat()}"
                     )
                     record_run_finish(
@@ -1585,8 +1600,16 @@ def materialize_alpha_shadow_selection_gap_scorecard(
                                 _build_insufficient_selection_gap_row(
                                     summary_date=end_selection_date,
                                     window_name=window_name,
-                                    window_start=min(matured_dates) if matured_dates else start_selection_date,
-                                    window_end=max(matured_dates) if matured_dates else end_selection_date,
+                                    window_start=(
+                                        min(matured_dates)
+                                        if matured_dates
+                                        else start_selection_date
+                                    ),
+                                    window_end=(
+                                        max(matured_dates)
+                                        if matured_dates
+                                        else end_selection_date
+                                    ),
                                     horizon=int(horizon),
                                     model_spec_id=str(model_spec_id),
                                     matured_selection_date_count=len(matured_dates),
