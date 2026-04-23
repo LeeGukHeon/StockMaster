@@ -10,6 +10,7 @@ from app.selection.engine_v2 import (
     _compute_crowding_penalty_score,
     _compute_d5_raw_preservation_blocker_mask,
     _compute_late_entry_penalty_score,
+    _compute_output_contract_support_score,
     _resolve_selection_weights,
     _select_report_candidate_mask,
 )
@@ -288,6 +289,19 @@ def test_d5_primary_weights_soften_late_entry_penalty_for_focus_spec():
     )
 
     assert focus_weights["late_entry_penalty_score"] == -7
+
+
+def test_output_contract_support_score_rewards_stronger_lower_and_median_bands():
+    frame = pd.DataFrame(
+        {
+            "lower_band": [0.08, 0.01],
+            "median_band": [0.11, 0.03],
+        }
+    )
+
+    score = _compute_output_contract_support_score(frame)
+
+    assert float(score.iloc[0]) > float(score.iloc[1])
 
 
 def test_top5_binary_report_candidate_mask_uses_ranked_top_five():

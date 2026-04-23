@@ -43,8 +43,8 @@ D5_PRIMARY_OUTPUT_CONTRACT_ROLES: dict[str, str] = {
     "crowding_penalty_score": "soft_penalty",
     "risk_penalty_score": "soft_penalty",
     "late_entry_penalty_score": "soft_penalty",
-    "lower_band": "diagnostic_only",
-    "median_band": "diagnostic_only",
+    "lower_band": "bounded_ranking_support",
+    "median_band": "bounded_ranking_support",
     "upper_band": "diagnostic_only",
     "report_candidate_flag": "compatibility_only",
 }

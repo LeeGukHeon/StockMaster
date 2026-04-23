@@ -112,6 +112,7 @@ SELECTION_V2_TOP5_FOCUS_WEIGHTS = {
 SELECTION_V2_D5_PRIMARY_WEIGHTS = {
     5: {
         "alpha_core_score": 44,
+        "output_contract_support_score": 6,
         "relative_alpha_score": 18,
         "flow_persistence_score": 12,
         "flow_score": 8,
@@ -352,6 +353,22 @@ def _alpha_core_score(
     ).clip(lower=0.0, upper=100.0)
 
 
+def _output_contract_rank_score(frame: pd.DataFrame, column_name: str) -> pd.Series:
+    if column_name not in frame.columns:
+        return pd.Series(0.5, index=frame.index)
+    values = pd.to_numeric(frame.get(column_name), errors="coerce")
+    if values.notna().sum() <= 1:
+        return pd.Series(0.5, index=frame.index)
+    return values.rank(method="average", pct=True).fillna(0.5)
+
+
+def _compute_output_contract_support_score(frame: pd.DataFrame) -> pd.Series:
+    return _component_score(
+        _output_contract_rank_score(frame, "lower_band"),
+        _output_contract_rank_score(frame, "median_band"),
+    )
+
+
 def _compute_relative_alpha_score(frame: pd.DataFrame, *, horizon: int) -> pd.Series:
     if horizon == 1:
         return _component_score(
@@ -574,6 +591,10 @@ def _score_selection_engine_v2_frame(
         else pd.Series(float("nan"), index=scored.index, dtype="float64")
     )
     scored["alpha_core_score"] = _alpha_core_score(scored, d5_primary_focus=d5_primary_focus)
+    if d5_primary_focus:
+        scored["output_contract_support_score"] = _compute_output_contract_support_score(scored)
+    else:
+        scored["output_contract_support_score"] = pd.NA
     scored["relative_alpha_score"] = _compute_relative_alpha_score(scored, horizon=horizon)
     scored["flow_persistence_score"] = _compute_flow_persistence_score(scored)
     scored["news_drift_score"] = _compute_news_drift_score(scored)
@@ -717,6 +738,9 @@ def _score_selection_engine_v2_frame(
         output_contract_roles=output_contract_roles: json.dumps(
             {
                 "alpha_core_score": float(row["alpha_core_score"]),
+                "output_contract_support_score": None
+                if pd.isna(row["output_contract_support_score"])
+                else float(row["output_contract_support_score"]),
                 "alpha_core_rank_component_score": float(row["alpha_core_rank_component_score"]),
                 "alpha_core_magnitude_component_score": None
                 if pd.isna(row["alpha_core_magnitude_component_score"])
