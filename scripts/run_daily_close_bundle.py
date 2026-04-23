@@ -23,10 +23,7 @@ def main() -> int:
     parser.add_argument(
         "--skip-active-d5-swing",
         action="store_true",
-        help=(
-            "Do not bootstrap alpha_swing_d5_v2 into the H5 active/auto-promotion "
-            "cycle during daily close."
-        ),
+        help="Do not freeze H5 active alpha to alpha_swing_d5_v2 during daily close.",
     )
     parser.add_argument("--policy-config-path")
     args = parser.parse_args()
