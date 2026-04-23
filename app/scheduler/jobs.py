@@ -27,6 +27,7 @@ from app.ml.constants import (
 )
 from app.ml.inference import materialize_alpha_predictions_v1
 from app.ml.promotion import run_alpha_auto_promotion
+from app.ml.registry import load_active_alpha_model
 from app.ml.shadow import materialize_alpha_shadow_candidates
 from app.ml.training import train_alpha_candidate_models, train_alpha_model_v1
 from app.pipelines.daily_ohlcv import sync_daily_ohlcv
@@ -57,6 +58,31 @@ def _candidate_model_specs_for_daily_pipeline(*, active_d5_swing: bool):
     if all(spec.model_spec_id != D5_PRIMARY_FOCUS_MODEL_SPEC_ID for spec in specs):
         specs.append(get_alpha_model_spec(D5_PRIMARY_FOCUS_MODEL_SPEC_ID))
     return tuple(specs)
+
+
+def _d5_swing_bootstrap_required(connection, *, as_of_date: date) -> bool:
+    active_model = load_active_alpha_model(
+        connection,
+        as_of_date=as_of_date,
+        horizon=5,
+    )
+    if (
+        active_model is not None
+        and str(active_model.get("model_spec_id")) == D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+    ):
+        return False
+    prior_d5_row = connection.execute(
+        """
+        SELECT 1
+        FROM fact_alpha_active_model
+        WHERE horizon = 5
+          AND model_spec_id = ?
+          AND effective_from_date <= ?
+        LIMIT 1
+        """,
+        [D5_PRIMARY_FOCUS_MODEL_SPEC_ID, as_of_date],
+    ).fetchone()
+    return prior_d5_row is None
 
 
 @dataclass(slots=True)
@@ -281,7 +307,7 @@ def run_daily_pipeline_job(
                 input_sources.insert(8, "train_alpha_model_v1")
                 input_sources.insert(9, "train_alpha_candidate_models")
             if active_d5_swing:
-                input_sources.append("freeze_alpha_active_model_h5_d5_swing")
+                input_sources.insert(11, "freeze_alpha_active_model_h5_d5_swing_bootstrap")
             if publish_discord:
                 input_sources.append("publish_discord_eod_report")
             record_run_start(
@@ -371,31 +397,39 @@ def run_daily_pipeline_job(
                 as_of_date=pipeline_date,
                 horizons=[1, 5],
             )
+            d5_active_bootstrap_result = None
+            if active_d5_swing:
+                with duckdb_connection(settings.paths.duckdb_path) as connection:
+                    bootstrap_core_tables(connection)
+                    bootstrap_required = _d5_swing_bootstrap_required(
+                        connection,
+                        as_of_date=pipeline_date,
+                    )
+                if bootstrap_required:
+                    d5_active_bootstrap_result = freeze_alpha_active_model(
+                        settings,
+                        as_of_date=pipeline_date,
+                        source="daily_close_d5_swing_bootstrap",
+                        note=(
+                            "Daily close bootstrapped alpha_swing_d5_v2 as the initial "
+                            "active H5 2-5 trading-day swing recommendation model before "
+                            "auto-promotion takes ownership."
+                        ),
+                        horizons=[5],
+                        model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+                        train_end_date=pipeline_date,
+                        promotion_type="MANUAL_FREEZE",
+                    )
+                    if int(d5_active_bootstrap_result.row_count) <= 0:
+                        raise RuntimeError(
+                            "Daily pipeline could not bootstrap D5 swing H5 model because "
+                            "no valid alpha_swing_d5_v2 training run was available."
+                        )
             alpha_promotion_result = run_alpha_auto_promotion(
                 settings,
                 as_of_date=pipeline_date,
                 horizons=[1, 5],
             )
-            d5_active_freeze_result = None
-            if active_d5_swing:
-                d5_active_freeze_result = freeze_alpha_active_model(
-                    settings,
-                    as_of_date=pipeline_date,
-                    source="daily_close_active_d5_swing",
-                    note=(
-                        "Daily close promoted alpha_swing_d5_v2 as the active H5 "
-                        "2-5 trading-day swing recommendation model."
-                    ),
-                    horizons=[5],
-                    model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
-                    train_end_date=pipeline_date,
-                    promotion_type="MANUAL_FREEZE",
-                )
-                if int(d5_active_freeze_result.row_count) <= 0:
-                    raise RuntimeError(
-                        "Daily pipeline could not activate D5 swing H5 model because "
-                        "no valid alpha_swing_d5_v2 training run was available."
-                    )
             alpha_prediction_result = materialize_alpha_predictions_v1(
                 settings,
                 as_of_date=pipeline_date,
@@ -441,9 +475,9 @@ def run_daily_pipeline_job(
             if alpha_candidate_training_result is not None:
                 artifact_paths.extend(alpha_candidate_training_result.artifact_paths)
             artifact_paths.extend(alpha_shadow_result.artifact_paths)
+            if d5_active_bootstrap_result is not None:
+                artifact_paths.extend(d5_active_bootstrap_result.artifact_paths)
             artifact_paths.extend(alpha_promotion_result.artifact_paths)
-            if d5_active_freeze_result is not None:
-                artifact_paths.extend(d5_active_freeze_result.artifact_paths)
             artifact_paths.extend(alpha_prediction_result.artifact_paths)
             artifact_paths.extend(selection_v2_result.artifact_paths)
             if calibration_result is not None:
@@ -456,9 +490,9 @@ def run_daily_pipeline_job(
                 if alpha_candidate_training_result
                 else 0
             )
-            d5_active_freeze_rows = (
-                d5_active_freeze_result.row_count
-                if d5_active_freeze_result
+            d5_active_bootstrap_rows = (
+                d5_active_bootstrap_result.row_count
+                if d5_active_bootstrap_result
                 else 0
             )
             notes = (
@@ -481,7 +515,7 @@ def run_daily_pipeline_job(
                 f"alpha_promotion_rows={alpha_promotion_result.row_count}, "
                 "alpha_auto_promoted_horizons="
                 f"{alpha_promotion_result.promoted_horizon_count}, "
-                f"d5_active_freeze_rows={d5_active_freeze_rows}, "
+                f"d5_active_bootstrap_rows={d5_active_bootstrap_rows}, "
                 f"alpha_prediction_rows={alpha_prediction_result.row_count}, "
                 f"alpha_shadow_prediction_rows={alpha_shadow_result.prediction_row_count}, "
                 f"alpha_shadow_ranking_rows={alpha_shadow_result.ranking_row_count}, "

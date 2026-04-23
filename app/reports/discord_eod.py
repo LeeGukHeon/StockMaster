@@ -96,6 +96,7 @@ MODEL_SPEC_LABELS = {
     "alpha_topbucket_h1_rolling_120_v1": "하루 선행 비교 기준",
     "alpha_lead_d1_v1": "하루 선행 포착 v1",
     "alpha_swing_d5_v1": "5일 지속 포착 v1",
+    "alpha_swing_d5_v2": "2~5일 스윙 포착 v2",
     "alpha_recursive_rolling_combo": "누적+최근 구간 혼합",
     "recursive": "확장형 누적 학습",
     "rolling 120d": "최근 120거래일 중심 학습",

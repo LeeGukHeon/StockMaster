@@ -43,6 +43,7 @@ MODEL_SPEC_LABELS: dict[str, str] = {
     "alpha_topbucket_h1_rolling_120_v1": "topbucket h1 rolling 120d",
     "alpha_lead_d1_v1": "lead d1 v1",
     "alpha_swing_d5_v1": "swing d5 v1",
+    "alpha_swing_d5_v2": "swing d5 top5 v2",
     "alpha_recursive_rolling_combo": "recursive+rolling combo",
 }
 DECISION_LABELS: dict[str, str] = {
@@ -1021,16 +1022,24 @@ def run_alpha_auto_promotion(
                         loss_summary["primary_loss_name"] = loss_summary["model_spec_id"].map(
                             primary_loss_name_by_model_spec
                         )
-                        loss_summary["primary_loss"] = loss_summary.apply(
-                            lambda row: row[
-                                str(
-                                    row["primary_loss_name"]
-                                    or primary_loss_name_by_model_spec.get(
-                                        str(row["model_spec_id"]),
-                                        PRIMARY_LOSS_NAME,
-                                    )
+                        primary_loss_name_lookup = dict(primary_loss_name_by_model_spec)
+
+                        def primary_loss_for_row(
+                            row: pd.Series,
+                            *,
+                            loss_name_lookup: dict[str, str] = primary_loss_name_lookup,
+                        ) -> object:
+                            loss_name = str(
+                                row["primary_loss_name"]
+                                or loss_name_lookup.get(
+                                    str(row["model_spec_id"]),
+                                    PRIMARY_LOSS_NAME,
                                 )
-                            ],
+                            )
+                            return row[loss_name]
+
+                        loss_summary["primary_loss"] = loss_summary.apply(
+                            primary_loss_for_row,
                             axis=1,
                         )
                         primary_loss_frame = (
