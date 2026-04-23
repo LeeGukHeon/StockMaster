@@ -28,6 +28,7 @@ MODEL_SPEC_LABELS = {
     "alpha_topbucket_h1_rolling_120_v1": "하루 선행 비교 기준",
     "alpha_lead_d1_v1": "하루 선행 포착 v1",
     "alpha_swing_d5_v1": "5일 지속 포착 v1",
+    "alpha_swing_d5_v2": "2~5일 스윙 포착 v2",
 }
 
 
@@ -57,11 +58,6 @@ def _payload_messages(content: str) -> list[dict[str, str]]:
 def _json_object_value(payload: str | None, key: str) -> float | None:
     if not payload:
         return None
-
-
-def _translate_model_spec(model_spec_id: object) -> str:
-    text = str(model_spec_id or "-")
-    return MODEL_SPEC_LABELS.get(text, text)
     try:
         loaded = json.loads(payload)
     except json.JSONDecodeError:
@@ -73,6 +69,11 @@ def _translate_model_spec(model_spec_id: object) -> str:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _translate_model_spec(model_spec_id: object) -> str:
+    text = str(model_spec_id or "-")
+    return MODEL_SPEC_LABELS.get(text, text)
 
 
 def _write_report_artifacts(

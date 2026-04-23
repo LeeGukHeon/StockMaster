@@ -164,8 +164,8 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         model_spec_id="alpha_swing_d5_v1",
         estimation_scheme="rolling",
         rolling_window_days=250,
-        active_candidate_flag=True,
-        lifecycle_role="active_candidate",
+        active_candidate_flag=False,
+        lifecycle_role="baseline_only",
         feature_groups=(
             "price_trend",
             "liquidity_turnover",
@@ -213,7 +213,7 @@ ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
 DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = tuple(
     spec
     for spec in CHALLENGER_ALPHA_MODEL_SPECS
-    if spec.model_spec_id != D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+    if spec.active_candidate_flag and spec.model_spec_id != D5_PRIMARY_FOCUS_MODEL_SPEC_ID
 )
 
 MODEL_MEMBER_NAMES: tuple[str, ...] = (

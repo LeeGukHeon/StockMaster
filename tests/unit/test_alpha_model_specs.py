@@ -73,7 +73,8 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     assert h5_spec.active_candidate_flag is False
     assert h1_spec.active_candidate_flag is False
     assert d1_spec.active_candidate_flag is True
-    assert d5_spec.active_candidate_flag is True
+    assert d5_spec.active_candidate_flag is False
+    assert d5_spec.lifecycle_role == "baseline_only"
     assert d5_focus_spec.active_candidate_flag is True
     assert supports_horizon_for_spec(h5_spec, horizon=5) is True
     assert supports_horizon_for_spec(h5_spec, horizon=1) is False

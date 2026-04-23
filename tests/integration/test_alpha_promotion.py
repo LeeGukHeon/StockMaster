@@ -273,7 +273,7 @@ def test_run_alpha_auto_promotion_promotes_superior_challenger(tmp_path):
         train_end_date=date(2026, 3, 6),
     )
     _seed_shadow_prediction_and_ranking(settings, model_spec_id="alpha_lead_d1_v1")
-    _seed_shadow_prediction_and_ranking(settings, model_spec_id="alpha_swing_d5_v1")
+    _seed_shadow_prediction_and_ranking(settings, model_spec_id="alpha_swing_d5_v2")
 
     result = run_alpha_auto_promotion(
         settings,
@@ -314,11 +314,11 @@ def test_run_alpha_auto_promotion_promotes_superior_challenger(tmp_path):
     assert active_h1 is not None
     assert active_h5 is not None
     assert active_h1["model_spec_id"] == "alpha_lead_d1_v1"
-    assert active_h5["model_spec_id"] == "alpha_swing_d5_v1"
+    assert active_h5["model_spec_id"] == "alpha_swing_d5_v2"
     assert active_h1["promotion_type"] == "AUTO_PROMOTION"
     assert active_h1["source_type"] == "alpha_auto_promotion"
     assert "alpha_lead_d1_v1" in active_h1["promotion_report_json"]["superior_set"]
-    assert "alpha_swing_d5_v1" in active_h5["promotion_report_json"]["superior_set"]
+    assert "alpha_swing_d5_v2" in active_h5["promotion_report_json"]["superior_set"]
     assert promotion_rows > 0
     assert decision_row == ("PROMOTE_CHALLENGER", True, False, len(SELECTION_DATES))
 
@@ -482,11 +482,10 @@ def test_alpha_ops_helper_frames_surface_registry_and_candidates(tmp_path):
         "alpha_rolling_120_v1",
         "alpha_rolling_250_v1",
         "alpha_lead_d1_v1",
-        "alpha_swing_d5_v1",
+        "alpha_swing_d5_v2",
     }
     assert set(spec_frame["model_spec_id"]) == {
         "alpha_lead_d1_v1",
-        "alpha_swing_d5_v1",
         "alpha_swing_d5_v2",
     }
     assert set(spec_frame["lifecycle_role"]) == {"active_candidate"}
