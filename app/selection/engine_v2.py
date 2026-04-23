@@ -126,7 +126,7 @@ SELECTION_V2_D5_PRIMARY_WEIGHTS = {
         "disagreement_score": -2,
         "implementation_penalty_score": -5,
         "crowding_penalty_score": -7,
-        "late_entry_penalty_score": -9,
+        "late_entry_penalty_score": -7,
         "fallback_penalty": -3,
     },
 }
@@ -169,7 +169,7 @@ SELECTION_V2_TOPBUCKET_WEIGHTS = {
     },
 }
 
-D5_RAW_PRESERVATION_PRIORITY_COUNT = 3
+D5_RAW_PRESERVATION_PRIORITY_COUNT = 5
 
 
 def _resolve_selection_weights(
@@ -509,33 +509,26 @@ def _apply_d5_raw_preservation_guardrail(scored: pd.DataFrame) -> pd.DataFrame:
     ]
     priority_preservable_set = set(priority_preservable_indices)
 
-    for offset, index in enumerate(priority_preservable_indices, start=1):
-        current_top_indices = _top_selection_indices(guarded, limit=5)
-        if index in current_top_indices:
-            continue
-        missing_priority_count = sum(
-            priority_index not in current_top_indices
-            for priority_index in priority_preservable_indices
+    current_top_indices = _top_selection_indices(guarded, limit=5)
+    replaceable_top_indices = [
+        top_index
+        for top_index in current_top_indices
+        if top_index not in priority_preservable_set
+    ]
+    if replaceable_top_indices:
+        reserve_anchor = max(
+            float(guarded.loc[index, "final_selection_value"])
+            for index in replaceable_top_indices
         )
-        replaceable_top_indices = [
-            top_index
-            for top_index in current_top_indices
-            if top_index not in priority_preservable_set
-        ]
-        if not replaceable_top_indices:
-            break
-        cutoff_position = max(
-            0,
-            len(replaceable_top_indices) - int(missing_priority_count),
-        )
-        cutoff_index = replaceable_top_indices[cutoff_position]
-        cutoff_value = float(guarded.loc[cutoff_index, "final_selection_value"])
-        current_value = float(guarded.loc[index, "final_selection_value"])
-        bonus = max(0.0, cutoff_value - current_value + (0.01 * offset))
-        if bonus <= 0.0:
-            continue
-        guarded.loc[index, "final_selection_value"] = min(100.0, current_value + bonus)
-        guarded.loc[index, "raw_preservation_bonus"] = bonus
+
+        for reverse_offset, index in enumerate(reversed(priority_preservable_indices), start=1):
+            current_value = float(guarded.loc[index, "final_selection_value"])
+            target_value = min(100.0, reserve_anchor + (0.01 * reverse_offset))
+            bonus = max(0.0, target_value - current_value)
+            if bonus <= 0.0:
+                continue
+            guarded.loc[index, "final_selection_value"] = min(100.0, current_value + bonus)
+            guarded.loc[index, "raw_preservation_bonus"] = bonus
 
     final_top_indices = set(_top_selection_indices(guarded, limit=5))
     applied_indices = final_top_indices.intersection(priority_preservable_set)
