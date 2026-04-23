@@ -364,11 +364,12 @@ def test_daily_close_bundle_self_skips_on_non_trading_day(tmp_path) -> None:
 def test_daily_close_bundle_passes_requested_date_to_daily_pipeline(tmp_path, monkeypatch) -> None:
     settings = build_test_settings(tmp_path)
     seed_ticket003_data(settings)
-    captured: dict[str, date | None] = {}
+    captured: dict[str, object] = {}
     noop_result = SimpleNamespace(artifact_paths=[])
 
-    def fake_daily_pipeline_job(_settings, *, pipeline_date=None, **_kwargs):
+    def fake_daily_pipeline_job(_settings, *, pipeline_date=None, active_d5_swing=None, **_kwargs):
         captured["pipeline_date"] = pipeline_date
+        captured["active_d5_swing"] = active_d5_swing
         return noop_result
 
     monkeypatch.setattr("app.ops.bundles.run_daily_pipeline_job", fake_daily_pipeline_job)
@@ -391,6 +392,7 @@ def test_daily_close_bundle_passes_requested_date_to_daily_pipeline(tmp_path, mo
 
     assert result.status == JobStatus.SUCCESS
     assert captured["pipeline_date"] == date(2026, 3, 9)
+    assert captured["active_d5_swing"] is True
 
 
 def test_daily_close_recovery_disables_discord_publish(tmp_path, monkeypatch) -> None:

@@ -736,6 +736,7 @@ def run_alpha_indicator_product_bundle(
     backfill_shadow_history: bool = False,
     skip_completed_shadow_dates: bool = True,
     keep_shadow_training_artifacts: bool = False,
+    allow_d5_active_freeze: bool = False,
 ) -> AlphaIndicatorProductBundleResult:
     model_specs = _resolve_model_specs(model_spec_ids)
     focus_model_spec_id = _resolve_bundle_focus_model_spec_id(model_spec_ids)
@@ -922,7 +923,11 @@ def run_alpha_indicator_product_bundle(
                 missing_training_model_spec_ids.append(model_spec.model_spec_id)
                 continue
 
-            if model_spec.model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID and freezeable_horizons:
+            if (
+                model_spec.model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+                and freezeable_horizons
+                and not allow_d5_active_freeze
+            ):
                 blocked_freeze_model_spec_ids.append(model_spec.model_spec_id)
                 freeze_block_reasons[model_spec.model_spec_id] = [
                     "challenger_only_no_auto_freeze"
@@ -1027,6 +1032,7 @@ def run_alpha_indicator_product_bundle(
         f"specs={','.join(model_spec_ids)} "
         f"freeze_horizons={','.join(str(value) for value in target_freeze_horizons) or '-'} "
         f"shadow_backfill={'on' if backfill_shadow_history else 'off'} "
+        f"allow_d5_active_freeze={allow_d5_active_freeze} "
         f"shadow_backfill_dates={shadow_backfill_result.selection_date_count} "
         f"shadow_backfill_processed={shadow_backfill_result.processed_selection_date_count} "
         f"shadow_backfill_skipped={shadow_backfill_result.skipped_selection_date_count} "

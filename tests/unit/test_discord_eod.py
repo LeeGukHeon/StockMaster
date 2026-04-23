@@ -6,8 +6,8 @@ import pandas as pd
 
 from app.reports.discord_eod import (
     _build_payload_content,
-    _format_pick_block,
     _format_alpha_promotion_line,
+    _format_pick_block,
 )
 
 
@@ -66,6 +66,27 @@ def test_build_payload_content_labels_candidate_horizon_explicitly() -> None:
     assert "**선택 드래그 점검**" in content
     assert "하루 선행 포착 v1" in content
     assert "공식 추천안" not in content
+
+
+def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> None:
+    content = _build_payload_content(
+        as_of_date=date(2026, 3, 20),
+        sector_horizon=5,
+        candidate_horizon=5,
+        reference_horizon=1,
+        market_pulse={},
+        alpha_promotion=pd.DataFrame(),
+        selection_gap=pd.DataFrame(),
+        sector_outlook=pd.DataFrame(),
+        single_buy_candidates=pd.DataFrame(),
+        reference_candidates=pd.DataFrame(),
+        market_news=pd.DataFrame(),
+    )
+
+    assert "**2~5거래일 스윙 강세 예상 업종 | 5거래일 보유 기준 (D+5)**" in content
+    assert "**2~5거래일 스윙 상위 후보 5종목 | 5거래일 보유 기준 (D+5)**" in content
+    assert "**참고용 D1 단기 후보 | 하루 보유 기준 (D+1)**" in content
+    assert "D1 후보는 단기 참고용이며, 메인 매수/관찰 리스트는 D5 스윙 후보입니다." in content
 
 
 def test_format_pick_block_omits_active_model_id() -> None:

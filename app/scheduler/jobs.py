@@ -18,7 +18,13 @@ from app.evaluation.outcomes import materialize_selection_outcomes
 from app.evaluation.summary import materialize_prediction_evaluation
 from app.evaluation.validation import validate_evaluation_pipeline
 from app.features.feature_store import build_feature_store
-from app.ml.constants import MODEL_VERSION as ALPHA_MODEL_VERSION
+from app.ml.active import freeze_alpha_active_model
+from app.ml.constants import (
+    DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS,
+    D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+    MODEL_VERSION as ALPHA_MODEL_VERSION,
+    get_alpha_model_spec,
+)
 from app.ml.inference import materialize_alpha_predictions_v1
 from app.ml.promotion import run_alpha_auto_promotion
 from app.ml.shadow import materialize_alpha_shadow_candidates
@@ -42,6 +48,15 @@ from app.storage.manifests import record_run_finish, record_run_start
 DAILY_PIPELINE_INVESTOR_FLOW_FLUSH_BATCH_SIZE = 10
 DAILY_PIPELINE_INVESTOR_FLOW_MAX_WORKERS = 1
 DAILY_PIPELINE_INVESTOR_FLOW_PROVIDER_RECYCLE_INTERVAL = 25
+
+
+def _candidate_model_specs_for_daily_pipeline(*, active_d5_swing: bool):
+    if not active_d5_swing:
+        return DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS
+    specs = list(DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS)
+    if all(spec.model_spec_id != D5_PRIMARY_FOCUS_MODEL_SPEC_ID for spec in specs):
+        specs.append(get_alpha_model_spec(D5_PRIMARY_FOCUS_MODEL_SPEC_ID))
+    return tuple(specs)
 
 
 @dataclass(slots=True)
@@ -232,6 +247,7 @@ def run_daily_pipeline_job(
     pipeline_date: date | None = None,
     run_training: bool = True,
     publish_discord: bool = True,
+    active_d5_swing: bool = False,
 ) -> JobExecutionResult:
     ensure_storage_layout(settings)
     pipeline_date = pipeline_date or _resolve_pipeline_date(settings)
@@ -264,6 +280,8 @@ def run_daily_pipeline_job(
             if run_training:
                 input_sources.insert(8, "train_alpha_model_v1")
                 input_sources.insert(9, "train_alpha_candidate_models")
+            if active_d5_swing:
+                input_sources.append("freeze_alpha_active_model_h5_d5_swing")
             if publish_discord:
                 input_sources.append("publish_discord_eod_report")
             record_run_start(
@@ -341,6 +359,9 @@ def run_daily_pipeline_job(
                     horizons=[1, 5],
                     min_train_days=120,
                     validation_days=20,
+                    model_specs=_candidate_model_specs_for_daily_pipeline(
+                        active_d5_swing=active_d5_swing
+                    ),
                 )
                 if run_training
                 else None
@@ -355,6 +376,26 @@ def run_daily_pipeline_job(
                 as_of_date=pipeline_date,
                 horizons=[1, 5],
             )
+            d5_active_freeze_result = None
+            if active_d5_swing:
+                d5_active_freeze_result = freeze_alpha_active_model(
+                    settings,
+                    as_of_date=pipeline_date,
+                    source="daily_close_active_d5_swing",
+                    note=(
+                        "Daily close promoted alpha_swing_d5_v2 as the active H5 "
+                        "2-5 trading-day swing recommendation model."
+                    ),
+                    horizons=[5],
+                    model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+                    train_end_date=pipeline_date,
+                    promotion_type="MANUAL_FREEZE",
+                )
+                if int(d5_active_freeze_result.row_count) <= 0:
+                    raise RuntimeError(
+                        "Daily pipeline could not activate D5 swing H5 model because "
+                        "no valid alpha_swing_d5_v2 training run was available."
+                    )
             alpha_prediction_result = materialize_alpha_predictions_v1(
                 settings,
                 as_of_date=pipeline_date,
@@ -401,6 +442,8 @@ def run_daily_pipeline_job(
                 artifact_paths.extend(alpha_candidate_training_result.artifact_paths)
             artifact_paths.extend(alpha_shadow_result.artifact_paths)
             artifact_paths.extend(alpha_promotion_result.artifact_paths)
+            if d5_active_freeze_result is not None:
+                artifact_paths.extend(d5_active_freeze_result.artifact_paths)
             artifact_paths.extend(alpha_prediction_result.artifact_paths)
             artifact_paths.extend(selection_v2_result.artifact_paths)
             if calibration_result is not None:
@@ -411,6 +454,11 @@ def run_daily_pipeline_job(
             alpha_candidate_training_run_count = (
                 alpha_candidate_training_result.training_run_count
                 if alpha_candidate_training_result
+                else 0
+            )
+            d5_active_freeze_rows = (
+                d5_active_freeze_result.row_count
+                if d5_active_freeze_result
                 else 0
             )
             notes = (
@@ -433,6 +481,7 @@ def run_daily_pipeline_job(
                 f"alpha_promotion_rows={alpha_promotion_result.row_count}, "
                 "alpha_auto_promoted_horizons="
                 f"{alpha_promotion_result.promoted_horizon_count}, "
+                f"d5_active_freeze_rows={d5_active_freeze_rows}, "
                 f"alpha_prediction_rows={alpha_prediction_result.row_count}, "
                 f"alpha_shadow_prediction_rows={alpha_shadow_result.prediction_row_count}, "
                 f"alpha_shadow_ranking_rows={alpha_shadow_result.ranking_row_count}, "

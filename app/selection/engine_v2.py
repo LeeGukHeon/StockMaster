@@ -112,7 +112,6 @@ SELECTION_V2_TOP5_FOCUS_WEIGHTS = {
 SELECTION_V2_D5_PRIMARY_WEIGHTS = {
     5: {
         "alpha_core_score": 44,
-        "output_contract_support_score": 6,
         "relative_alpha_score": 18,
         "flow_persistence_score": 12,
         "flow_score": 8,
@@ -127,7 +126,7 @@ SELECTION_V2_D5_PRIMARY_WEIGHTS = {
         "disagreement_score": -2,
         "implementation_penalty_score": -5,
         "crowding_penalty_score": -7,
-        "late_entry_penalty_score": -7,
+        "late_entry_penalty_score": -9,
         "fallback_penalty": -3,
     },
 }
@@ -170,7 +169,7 @@ SELECTION_V2_TOPBUCKET_WEIGHTS = {
     },
 }
 
-D5_RAW_PRESERVATION_PRIORITY_COUNT = 5
+D5_RAW_PRESERVATION_PRIORITY_COUNT = 3
 
 
 def _resolve_selection_weights(
@@ -353,22 +352,6 @@ def _alpha_core_score(
     ).clip(lower=0.0, upper=100.0)
 
 
-def _output_contract_rank_score(frame: pd.DataFrame, column_name: str) -> pd.Series:
-    if column_name not in frame.columns:
-        return pd.Series(0.5, index=frame.index)
-    values = pd.to_numeric(frame.get(column_name), errors="coerce")
-    if values.notna().sum() <= 1:
-        return pd.Series(0.5, index=frame.index)
-    return values.rank(method="average", pct=True).fillna(0.5)
-
-
-def _compute_output_contract_support_score(frame: pd.DataFrame) -> pd.Series:
-    return _component_score(
-        _output_contract_rank_score(frame, "lower_band"),
-        _output_contract_rank_score(frame, "median_band"),
-    )
-
-
 def _compute_relative_alpha_score(frame: pd.DataFrame, *, horizon: int) -> pd.Series:
     if horizon == 1:
         return _component_score(
@@ -526,26 +509,33 @@ def _apply_d5_raw_preservation_guardrail(scored: pd.DataFrame) -> pd.DataFrame:
     ]
     priority_preservable_set = set(priority_preservable_indices)
 
-    current_top_indices = _top_selection_indices(guarded, limit=5)
-    replaceable_top_indices = [
-        top_index
-        for top_index in current_top_indices
-        if top_index not in priority_preservable_set
-    ]
-    if replaceable_top_indices:
-        reserve_anchor = max(
-            float(guarded.loc[index, "final_selection_value"])
-            for index in replaceable_top_indices
+    for offset, index in enumerate(priority_preservable_indices, start=1):
+        current_top_indices = _top_selection_indices(guarded, limit=5)
+        if index in current_top_indices:
+            continue
+        missing_priority_count = sum(
+            priority_index not in current_top_indices
+            for priority_index in priority_preservable_indices
         )
-
-        for reverse_offset, index in enumerate(reversed(priority_preservable_indices), start=1):
-            current_value = float(guarded.loc[index, "final_selection_value"])
-            target_value = min(100.0, reserve_anchor + (0.01 * reverse_offset))
-            bonus = max(0.0, target_value - current_value)
-            if bonus <= 0.0:
-                continue
-            guarded.loc[index, "final_selection_value"] = min(100.0, current_value + bonus)
-            guarded.loc[index, "raw_preservation_bonus"] = bonus
+        replaceable_top_indices = [
+            top_index
+            for top_index in current_top_indices
+            if top_index not in priority_preservable_set
+        ]
+        if not replaceable_top_indices:
+            break
+        cutoff_position = max(
+            0,
+            len(replaceable_top_indices) - int(missing_priority_count),
+        )
+        cutoff_index = replaceable_top_indices[cutoff_position]
+        cutoff_value = float(guarded.loc[cutoff_index, "final_selection_value"])
+        current_value = float(guarded.loc[index, "final_selection_value"])
+        bonus = max(0.0, cutoff_value - current_value + (0.01 * offset))
+        if bonus <= 0.0:
+            continue
+        guarded.loc[index, "final_selection_value"] = min(100.0, current_value + bonus)
+        guarded.loc[index, "raw_preservation_bonus"] = bonus
 
     final_top_indices = set(_top_selection_indices(guarded, limit=5))
     applied_indices = final_top_indices.intersection(priority_preservable_set)
@@ -591,10 +581,6 @@ def _score_selection_engine_v2_frame(
         else pd.Series(float("nan"), index=scored.index, dtype="float64")
     )
     scored["alpha_core_score"] = _alpha_core_score(scored, d5_primary_focus=d5_primary_focus)
-    if d5_primary_focus:
-        scored["output_contract_support_score"] = _compute_output_contract_support_score(scored)
-    else:
-        scored["output_contract_support_score"] = pd.NA
     scored["relative_alpha_score"] = _compute_relative_alpha_score(scored, horizon=horizon)
     scored["flow_persistence_score"] = _compute_flow_persistence_score(scored)
     scored["news_drift_score"] = _compute_news_drift_score(scored)
@@ -738,9 +724,6 @@ def _score_selection_engine_v2_frame(
         output_contract_roles=output_contract_roles: json.dumps(
             {
                 "alpha_core_score": float(row["alpha_core_score"]),
-                "output_contract_support_score": None
-                if pd.isna(row["output_contract_support_score"])
-                else float(row["output_contract_support_score"]),
                 "alpha_core_rank_component_score": float(row["alpha_core_rank_component_score"]),
                 "alpha_core_magnitude_component_score": None
                 if pd.isna(row["alpha_core_magnitude_component_score"])

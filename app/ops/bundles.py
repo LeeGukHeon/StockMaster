@@ -1183,6 +1183,7 @@ def run_daily_close_bundle(
     dry_run: bool = False,
     force: bool = False,
     publish_discord: bool = True,
+    active_d5_swing: bool = True,
     parent_run_id: str | None = None,
     root_run_id: str | None = None,
     recovery_of_run_id: str | None = None,
@@ -1237,6 +1238,7 @@ def run_daily_close_bundle(
                     pipeline_date=target_date,
                     run_training=True,
                     publish_discord=False,
+                    active_d5_swing=active_d5_swing,
                 )
                 job.run_step(
                     "build_portfolio_candidate_book",

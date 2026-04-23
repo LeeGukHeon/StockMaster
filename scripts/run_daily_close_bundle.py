@@ -20,6 +20,11 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--skip-discord", action="store_true")
+    parser.add_argument(
+        "--skip-active-d5-swing",
+        action="store_true",
+        help="Do not freeze H5 active alpha to alpha_swing_d5_v2 during daily close.",
+    )
     parser.add_argument("--policy-config-path")
     args = parser.parse_args()
     settings = load_cli_settings()
@@ -29,6 +34,7 @@ def main() -> int:
         dry_run=args.dry_run,
         force=args.force,
         publish_discord=not args.skip_discord,
+        active_d5_swing=not args.skip_active_d5_swing,
         policy_config_path=args.policy_config_path,
     )
     log_and_print(f"Daily close bundle completed. run_id={result.run_id} status={result.status}")

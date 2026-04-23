@@ -20,6 +20,13 @@ if [[ $# -gt 4 ]]; then
 else
   FREEZE_HORIZONS=(1)
 fi
+ALLOW_D5_ACTIVE_FREEZE_ARGS=()
+for freeze_horizon in "${FREEZE_HORIZONS[@]}"; do
+  if [[ "${freeze_horizon}" == "5" ]]; then
+    ALLOW_D5_ACTIVE_FREEZE_ARGS=(--allow-d5-active-freeze)
+    break
+  fi
+done
 
 [[ -n "${TRAIN_END_DATE}" ]] || fail "usage: run_indicator_product_bundle_host.sh <train-end-date> <as-of-date> [shadow-start-selection-date] [shadow-end-selection-date] [freeze-horizons...]"
 [[ -n "${AS_OF_DATE}" ]] || fail "usage: run_indicator_product_bundle_host.sh <train-end-date> <as-of-date> [shadow-start-selection-date] [shadow-end-selection-date] [freeze-horizons...]"
@@ -96,7 +103,8 @@ log "running indicator-product bundle"
   --model-spec-ids alpha_swing_d5_v2 alpha_swing_d5_v1 \
   --rolling-windows 20 60 \
   --backfill-shadow-history \
-  --freeze-horizons "${FREEZE_HORIZONS[@]}"
+  --freeze-horizons "${FREEZE_HORIZONS[@]}" \
+  "${ALLOW_D5_ACTIVE_FREEZE_ARGS[@]}"
 
 log "refreshing discord bot read store"
 "${PYTHON}" "${PROJECT_ROOT}/scripts/materialize_discord_bot_read_store.py" \

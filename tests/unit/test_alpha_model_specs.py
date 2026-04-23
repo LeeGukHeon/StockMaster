@@ -49,9 +49,6 @@ def test_default_spec_keeps_full_feature_space_and_members() -> None:
     assert "hist_gbm" in member_names
     assert "extra_trees" in member_names
 
-
-
-
 def test_target_column_resolution_supports_split_h1_h5_specs() -> None:
     assert resolve_target_column_for_spec(DEFAULT_ALPHA_MODEL_SPEC, horizon=1) == "target_h1"
     assert (
@@ -65,7 +62,6 @@ def test_target_column_resolution_supports_split_h1_h5_specs() -> None:
         )
         == "target_top5_h1"
     )
-
 
 
 def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
@@ -107,8 +103,8 @@ def test_d5_focus_spec_matches_frozen_contract() -> None:
         "value_safety",
         "data_quality",
     )
-    assert spec.target_variant == "top20_weighted"
-    assert spec.training_target_variant == "top20_weighted"
+    assert spec.target_variant == "top5_binary"
+    assert spec.training_target_variant == "top5_binary"
     assert spec.validation_primary_metric_name == "top5_mean_excess_return"
     assert spec.promotion_primary_loss_name == "loss_top5"
     assert spec.allowed_horizons == (5,)
@@ -133,12 +129,12 @@ def test_alpha_swing_d5_v2_matches_frozen_contract() -> None:
         "data_quality",
     )
     assert spec.member_names == ("elasticnet", "hist_gbm")
-    assert spec.target_variant == "top20_weighted"
-    assert spec.training_target_variant == "top20_weighted"
+    assert spec.target_variant == "top5_binary"
+    assert spec.training_target_variant == "top5_binary"
     assert spec.validation_primary_metric_name == "top5_mean_excess_return"
     assert spec.promotion_primary_loss_name == "loss_top5"
     assert spec.allowed_horizons == (5,)
-    assert resolve_target_column_for_spec(spec, horizon=5) == "target_topbucket_h5"
+    assert resolve_target_column_for_spec(spec, horizon=5) == "target_top5_h5"
     assert supports_horizon_for_spec(spec, horizon=5) is True
     assert supports_horizon_for_spec(spec, horizon=1) is False
 

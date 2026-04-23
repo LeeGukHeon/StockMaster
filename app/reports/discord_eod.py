@@ -24,8 +24,9 @@ from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from app.storage.manifests import record_run_finish, record_run_start
 
 DISCORD_MESSAGE_LIMIT = 1800
-DISCORD_EOD_CANDIDATE_HORIZON = 1
-DISCORD_EOD_SECTOR_HORIZON = 1
+DISCORD_EOD_CANDIDATE_HORIZON = 5
+DISCORD_EOD_SECTOR_HORIZON = 5
+DISCORD_EOD_REFERENCE_HORIZON = 1
 
 REASON_LABELS = {
     "ml_alpha_supportive": "최근 흐름과 모델 판단이 함께 받쳐줌",
@@ -614,9 +615,39 @@ def _build_payload_content(
     sector_outlook: pd.DataFrame,
     single_buy_candidates: pd.DataFrame,
     market_news: pd.DataFrame,
+    reference_horizon: int | None = None,
+    reference_candidates: pd.DataFrame | None = None,
 ) -> str:
     sector_basis = _horizon_hold_basis_label(sector_horizon)
     candidate_basis = _horizon_hold_basis_label(candidate_horizon)
+    reference_basis = (
+        _horizon_hold_basis_label(reference_horizon)
+        if reference_horizon is not None
+        else None
+    )
+    primary_candidate_title = (
+        f"**2~5거래일 스윙 상위 후보 5종목 | {candidate_basis} (D+{int(candidate_horizon)})**"
+        if int(candidate_horizon) == 5
+        else f"**다음 거래일 상위 후보 5종목 | {candidate_basis} (D+{int(candidate_horizon)})**"
+    )
+    sector_title = (
+        f"**2~5거래일 스윙 강세 예상 업종 | {sector_basis} (D+{int(sector_horizon)})**"
+        if int(sector_horizon) == 5
+        else f"**다음 거래일 강세 예상 업종 | {sector_basis} (D+{int(sector_horizon)})**"
+    )
+    primary_summary_line = (
+        "- 아래는 상위 업종 흐름과 2~5거래일 스윙 후보를 순서대로 정리한 장마감 요약입니다."
+        if int(candidate_horizon) == 5
+        else "- 아래는 상위 업종 흐름과 다음 거래일 상위 후보를 순서대로 정리한 장마감 요약입니다."
+    )
+    primary_horizon_line = (
+        f"- 메인 후보와 업종 흐름은 {candidate_basis}(D+{int(candidate_horizon)})으로 읽어주세요."
+        if int(candidate_horizon) == 5
+        else (
+            f"- 상위 후보와 업종 흐름은 "
+            f"{candidate_basis}(D+{int(candidate_horizon)})으로 읽어주세요."
+        )
+    )
     lines = [
         f"**StockMaster 오늘 장마감 요약 | {as_of_date.isoformat()}**",
         "",
@@ -631,13 +662,17 @@ def _build_payload_content(
             f" | 외국인 플러스 비율 {_pct_text(market_pulse.get('foreign_positive_ratio'))}"
             f" | 기관 플러스 비율 {_pct_text(market_pulse.get('institution_positive_ratio'))}"
         ),
-        "- 아래는 상위 업종 흐름과 다음 거래일 상위 후보를 순서대로 정리한 장마감 요약입니다.",
-        f"- 상위 후보와 업종 흐름은 {candidate_basis}(D+{int(candidate_horizon)})으로 읽어주세요.",
+        primary_summary_line,
+        primary_horizon_line,
+    ]
+    if int(candidate_horizon) == 5:
+        lines.append("- D1 후보는 단기 참고용이며, 메인 매수/관찰 리스트는 D5 스윙 후보입니다.")
+    lines.extend([
         "- 모델 점검은 하루 보유 기준(D+1)과 5거래일 보유 기준(D+5)을 함께 보여줍니다.",
         "- 기대수익과 참고 범위는 과거 통계 기반 참고치일 뿐, 실제 수익을 보장하는 값은 아닙니다.",
         "",
         "**모델 점검**",
-    ]
+    ])
     if alpha_promotion.empty:
         lines.append("- 오늘 확인할 모델 점검 결과는 아직 없습니다.")
     else:
@@ -650,7 +685,7 @@ def _build_payload_content(
     lines.extend(
         [
             "",
-            f"**다음 거래일 강세 예상 업종 | {sector_basis} (D+{int(sector_horizon)})**",
+            sector_title,
         ]
     )
     if sector_outlook.empty:
@@ -661,7 +696,7 @@ def _build_payload_content(
     lines.extend(
         [
             "",
-            f"**다음 거래일 상위 후보 5종목 | {candidate_basis} (D+{int(candidate_horizon)})**",
+            primary_candidate_title,
         ]
     )
     if single_buy_candidates.empty:
@@ -669,6 +704,18 @@ def _build_payload_content(
     else:
         for index, (_, row) in enumerate(single_buy_candidates.iterrows(), start=1):
             lines.extend(_format_pick_block(row, rank=index))
+    if reference_horizon is not None and reference_candidates is not None:
+        lines.extend(
+            [
+                "",
+                f"**참고용 D1 단기 후보 | {reference_basis} (D+{int(reference_horizon)})**",
+            ]
+        )
+        if reference_candidates.empty:
+            lines.append("- 참고용 D1 후보가 아직 없습니다.")
+        else:
+            for index, (_, row) in enumerate(reference_candidates.iterrows(), start=1):
+                lines.extend(_format_pick_block(row, rank=index))
     lines.append("")
     lines.append("**시장 전체 주요 뉴스**")
     if market_news.empty:
@@ -801,16 +848,32 @@ def render_discord_eod_report(
                     horizon=DISCORD_EOD_CANDIDATE_HORIZON,
                     limit=top_limit,
                 )
+                reference_candidates = (
+                    _load_top_selection_rows(
+                        connection,
+                        as_of_date=as_of_date,
+                        horizon=DISCORD_EOD_REFERENCE_HORIZON,
+                        limit=top_limit,
+                    )
+                    if DISCORD_EOD_REFERENCE_HORIZON != DISCORD_EOD_CANDIDATE_HORIZON
+                    else None
+                )
                 market_news = _load_market_news(connection, as_of_date=as_of_date)
                 content = _build_payload_content(
                     as_of_date=as_of_date,
                     sector_horizon=DISCORD_EOD_SECTOR_HORIZON,
                     candidate_horizon=DISCORD_EOD_CANDIDATE_HORIZON,
+                    reference_horizon=(
+                        DISCORD_EOD_REFERENCE_HORIZON
+                        if reference_candidates is not None
+                        else None
+                    ),
                     market_pulse=market_pulse,
                     alpha_promotion=alpha_promotion,
                     selection_gap=selection_gap,
                     sector_outlook=sector_outlook,
                     single_buy_candidates=single_buy_candidates,
+                    reference_candidates=reference_candidates,
                     market_news=market_news,
                 )
                 messages = _build_payload_messages(

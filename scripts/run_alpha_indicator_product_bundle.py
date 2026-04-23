@@ -50,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
     )
     parser.add_argument("--keep-shadow-training-artifacts", action="store_true")
+    parser.add_argument(
+        "--allow-d5-active-freeze",
+        action="store_true",
+        help="Allow alpha_swing_d5_v2 to become the active H5 model when horizon 5 is frozen.",
+    )
     return parser
 
 
@@ -75,6 +80,7 @@ def main() -> int:
         backfill_shadow_history=bool(args.backfill_shadow_history),
         skip_completed_shadow_dates=bool(args.skip_completed_shadow_dates),
         keep_shadow_training_artifacts=bool(args.keep_shadow_training_artifacts),
+        allow_d5_active_freeze=bool(args.allow_d5_active_freeze),
     )
     logger.info(
         "Alpha indicator product bundle completed.",

@@ -10,7 +10,6 @@ from app.selection.engine_v2 import (
     _compute_crowding_penalty_score,
     _compute_d5_raw_preservation_blocker_mask,
     _compute_late_entry_penalty_score,
-    _compute_output_contract_support_score,
     _resolve_selection_weights,
     _select_report_candidate_mask,
 )
@@ -137,7 +136,7 @@ def test_d5_raw_preservation_guardrail_keeps_safe_raw_leaders_in_top_slice():
 
 
 def test_d5_raw_preservation_guardrail_can_preserve_three_safe_raw_leaders():
-    assert D5_RAW_PRESERVATION_PRIORITY_COUNT == 5
+    assert D5_RAW_PRESERVATION_PRIORITY_COUNT == 3
 
     scored = pd.DataFrame(
         {
@@ -180,41 +179,6 @@ def test_d5_raw_preservation_guardrail_can_preserve_three_safe_raw_leaders():
         ].item()
         is True
     )
-
-
-def test_d5_raw_preservation_guardrail_can_preserve_five_safe_raw_leaders():
-    scored = pd.DataFrame(
-        {
-            "symbol": list("ABCDEFGHI"),
-            "expected_excess_return": [0.20, 0.19, 0.18, 0.17, 0.16, 0.10, 0.09, 0.08, 0.07],
-            "final_selection_value": [70.0, 69.0, 68.0, 67.0, 66.0, 99.0, 98.0, 97.0, 96.0],
-            "final_selection_rank_pct": [
-                5 / 9,
-                4 / 9,
-                3 / 9,
-                2 / 9,
-                1 / 9,
-                1.0,
-                8 / 9,
-                7 / 9,
-                6 / 9,
-            ],
-            "eligible_flag": [True] * 9,
-            "critical_risk_flag": [False] * 9,
-            "fallback_flag": [False] * 9,
-            "uncertainty_score": [20.0] * 9,
-            "disagreement_score": [15.0] * 9,
-        }
-    )
-
-    guarded = _apply_d5_raw_preservation_guardrail(scored)
-    top_symbols = (
-        guarded.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
-        .head(5)["symbol"]
-        .tolist()
-    )
-
-    assert top_symbols == ["A", "B", "C", "D", "E"]
 
 
 def test_d5_raw_preservation_blocker_mask_does_not_block_on_disagreement_alone():
@@ -279,29 +243,6 @@ def test_d5_primary_weights_soften_disagreement_penalty_for_focus_spec():
 
     assert focus_weights["disagreement_score"] == -2
     assert focus_weights["disagreement_score"] > generic_top5_weights["disagreement_score"]
-
-
-def test_d5_primary_weights_soften_late_entry_penalty_for_focus_spec():
-    focus_weights = _resolve_selection_weights(
-        horizon=5,
-        model_spec_id="alpha_swing_d5_v2",
-        target_variant="top5_binary",
-    )
-
-    assert focus_weights["late_entry_penalty_score"] == -7
-
-
-def test_output_contract_support_score_rewards_stronger_lower_and_median_bands():
-    frame = pd.DataFrame(
-        {
-            "lower_band": [0.08, 0.01],
-            "median_band": [0.11, 0.03],
-        }
-    )
-
-    score = _compute_output_contract_support_score(frame)
-
-    assert float(score.iloc[0]) > float(score.iloc[1])
 
 
 def test_top5_binary_report_candidate_mask_uses_ranked_top_five():
