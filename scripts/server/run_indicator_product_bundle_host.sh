@@ -103,6 +103,7 @@ log "running indicator-product bundle"
   --model-spec-ids alpha_swing_d5_v2 alpha_swing_d5_v1 \
   --rolling-windows 20 60 \
   --backfill-shadow-history \
+  --no-skip-completed-shadow-dates \
   --freeze-horizons "${FREEZE_HORIZONS[@]}" \
   "${ALLOW_D5_ACTIVE_FREEZE_ARGS[@]}"
 
