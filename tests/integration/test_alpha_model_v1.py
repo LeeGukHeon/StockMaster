@@ -1186,6 +1186,32 @@ def test_run_alpha_indicator_product_bundle_d5_focus_enforces_comparator_lock(tm
     assert result.freeze_block_reasons["alpha_swing_d5_v2"] == ["challenger_only_no_auto_freeze"]
     assert result.active_model_spec_ids_by_horizon[5] == "alpha_swing_d5_v1"
 
+    allowed_result = run_alpha_indicator_product_bundle(
+        settings,
+        train_end_date=date(2026, 3, 6),
+        as_of_date=date(2026, 3, 6),
+        shadow_start_selection_date=date(2026, 3, 4),
+        shadow_end_selection_date=date(2026, 3, 6),
+        horizons=[1, 5],
+        model_spec_ids=["alpha_swing_d5_v2", "alpha_swing_d5_v1"],
+        min_train_days=5,
+        validation_days=2,
+        limit_symbols=4,
+        market="ALL",
+        rolling_windows=[20, 60],
+        freeze_horizons=[5],
+        backfill_shadow_history=True,
+        allow_d5_active_freeze=True,
+    )
+
+    assert allowed_result.freeze_horizons == [5]
+    assert allowed_result.frozen_model_spec_ids == ["alpha_swing_d5_v2"]
+    assert "alpha_swing_d5_v1" in allowed_result.blocked_freeze_model_spec_ids
+    assert allowed_result.freeze_block_reasons["alpha_swing_d5_v1"] == [
+        "d5_focus_active_freeze_preferred"
+    ]
+    assert allowed_result.active_model_spec_ids_by_horizon[5] == "alpha_swing_d5_v2"
+
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         comparator_rows = connection.execute(
             """

@@ -894,6 +894,14 @@ def run_alpha_indicator_product_bundle(
                 is not None
             )
         }
+        prefer_d5_focus_active_freeze = (
+            allow_d5_active_freeze
+            and 5 in target_freeze_horizons
+            and any(
+                model_spec.model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+                for model_spec in model_specs
+            )
+        )
         for model_spec in model_specs:
             supported_horizons = [
                 int(horizon)
@@ -933,6 +941,19 @@ def run_alpha_indicator_product_bundle(
                     "challenger_only_no_auto_freeze"
                 ]
                 continue
+
+            if (
+                prefer_d5_focus_active_freeze
+                and model_spec.model_spec_id != D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+                and 5 in freezeable_horizons
+            ):
+                blocked_freeze_model_spec_ids.append(model_spec.model_spec_id)
+                freeze_block_reasons[model_spec.model_spec_id] = [
+                    "d5_focus_active_freeze_preferred"
+                ]
+                freezeable_horizons = [
+                    horizon for horizon in freezeable_horizons if int(horizon) != 5
+                ]
 
             if model_spec.model_spec_id == "alpha_lead_d1_v1" and 1 in freezeable_horizons:
                 d1_gate_ok, d1_gate_reasons = _evaluate_d1_freeze_gate(
