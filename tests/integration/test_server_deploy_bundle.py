@@ -45,6 +45,8 @@ def test_run_indicator_product_bundle_host_targets_d5_v2_lane():
     assert "--require-comparator 1:alpha_recursive_expanding_v1" in script
     assert "--require-comparator 1:alpha_topbucket_h1_rolling_120_v1" in script
     assert "--allow-d5-active-freeze" in script
+    assert "STOCKMASTER_FORCE_SHADOW_REPLAY" in script
+    assert "SHADOW_REPLAY_ARGS" in script
     assert "--no-skip-completed-shadow-dates" in script
 
 

@@ -27,6 +27,10 @@ for freeze_horizon in "${FREEZE_HORIZONS[@]}"; do
     break
   fi
 done
+SHADOW_REPLAY_ARGS=()
+if [[ "${STOCKMASTER_FORCE_SHADOW_REPLAY:-false}" == "true" ]]; then
+  SHADOW_REPLAY_ARGS=(--no-skip-completed-shadow-dates)
+fi
 
 [[ -n "${TRAIN_END_DATE}" ]] || fail "usage: run_indicator_product_bundle_host.sh <train-end-date> <as-of-date> [shadow-start-selection-date] [shadow-end-selection-date] [freeze-horizons...]"
 [[ -n "${AS_OF_DATE}" ]] || fail "usage: run_indicator_product_bundle_host.sh <train-end-date> <as-of-date> [shadow-start-selection-date] [shadow-end-selection-date] [freeze-horizons...]"
@@ -103,7 +107,7 @@ log "running indicator-product bundle"
   --model-spec-ids alpha_swing_d5_v2 alpha_swing_d5_v1 \
   --rolling-windows 20 60 \
   --backfill-shadow-history \
-  --no-skip-completed-shadow-dates \
+  "${SHADOW_REPLAY_ARGS[@]}" \
   --freeze-horizons "${FREEZE_HORIZONS[@]}" \
   "${ALLOW_D5_ACTIVE_FREEZE_ARGS[@]}"
 
