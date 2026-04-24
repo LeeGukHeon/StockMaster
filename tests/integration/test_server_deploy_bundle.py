@@ -16,10 +16,7 @@ def test_server_deploy_bundle_files_exist():
         Path("scripts/server/check_public_access.sh"),
         Path("scripts/server/backup_server_data.sh"),
         Path("scripts/server/print_runtime_info.sh"),
-        Path("docs/DEPLOY_OCI.md"),
-        Path("docs/RUNBOOK_SERVER_OPERATIONS.md"),
-        Path("docs/BACKUP_AND_RESTORE.md"),
-        Path("docs/EXTERNAL_ACCESS_CHECKLIST.md"),
+        Path("docs/STOCKMASTER_UNIFIED_MANUAL_KO.md"),
     ]
 
     missing = [str(path) for path in required_paths if not path.exists()]
@@ -31,7 +28,7 @@ def test_readme_links_server_deployment_bundle():
 
     assert "OCI / server deployment" in readme
     assert "deploy/docker-compose.server.yml" in readme
-    assert "docs/DEPLOY_OCI.md" in readme
+    assert "docs/STOCKMASTER_UNIFIED_MANUAL_KO.md" in readme
 
 
 def test_run_indicator_product_bundle_host_targets_d5_v2_lane():

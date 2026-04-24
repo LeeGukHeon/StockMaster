@@ -208,18 +208,6 @@ def write_audit_docs(
             project_root / "docs/DB_CONTRACT_MATRIX.md",
             render_contract_matrix(),
         ),
-        _write_markdown(
-            project_root / "docs/AUDIT_T000_T013_STATUS.md",
-            render_audit_status(settings, audit_result, generated_at=generated_at),
-        ),
-        _write_markdown(
-            project_root / "docs/GAP_REMEDIATION_BACKLOG.md",
-            render_gap_backlog(audit_result),
-        ),
-        _write_markdown(
-            project_root / "docs/CASE_RUNBOOK_T000_T013.md",
-            render_case_runbook(),
-        ),
     ]
 
 
