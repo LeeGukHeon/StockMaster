@@ -31,7 +31,7 @@ def test_format_alpha_promotion_line_uses_korean_labels() -> None:
     assert "하루 보유 기준 모델 점검 (D+1)" in line
     assert "확장형 누적 학습" in line
     assert "active serving spec" in line
-    assert "fallback baseline" in line
+    assert "기본 비교 모델" in line
     assert "p=" not in line
 
 
@@ -120,3 +120,33 @@ def test_format_pick_block_omits_active_model_id() -> None:
     assert "활성 모델 ID" not in rendered
     assert "단기 탄력 강함" in rendered
     assert "모델 확신이 낮음" in rendered
+
+
+def test_format_pick_block_translates_d5_reason_tags_to_korean() -> None:
+    row = pd.Series(
+        {
+            "symbol": "000020",
+            "company_name": "동화약품",
+            "market": "KOSPI",
+            "industry": "제약",
+            "sector": "헬스케어",
+            "final_selection_value": 72.1,
+            "grade": "B",
+            "selection_date": "2026-04-23 00:00:00",
+            "next_entry_trade_date": "2026-04-24 00:00:00",
+            "selection_close_price": 5970,
+            "expected_excess_return": 0.0122,
+            "lower_band": -0.0030,
+            "upper_band": 0.0200,
+            "model_spec_id": "alpha_swing_d5_v2",
+            "active_alpha_model_id": "freeze_alpha_active_model-xxx",
+            "top_reason_tags_json": '["residual_strength_improving","raw_alpha_leader_preserved"]',
+            "risk_flags_json": '["model_disagreement_high"]',
+        }
+    )
+
+    rendered = "\n".join(_format_pick_block(row, rank=1))
+
+    assert "상대 강도가 살아나는 흐름" in rendered
+    assert "원점수 상위 신호를 최대한 보존함" in rendered
+    assert "raw_alpha_leader_preserved" not in rendered

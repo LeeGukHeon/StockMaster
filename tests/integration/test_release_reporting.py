@@ -45,7 +45,8 @@ def test_render_release_candidate_checklist_includes_alpha_serving_and_gap_secti
                 raw_top5_mean_realized_excess_return, selected_top5_mean_realized_excess_return,
                 report_candidates_mean_realized_excess_return, raw_top5_hit_rate,
                 selected_top5_hit_rate, report_candidates_hit_rate, top5_overlap,
-                pred_only_top5_mean_realized_excess_return, sel_only_top5_mean_realized_excess_return,
+                pred_only_top5_mean_realized_excess_return,
+                sel_only_top5_mean_realized_excess_return,
                 drag_vs_raw_top5, evaluation_run_id, created_at
             ) VALUES (
                 ?, 'rolling_20', ?, ?, 1, 'alpha_lead_d1_v1', 'top5',
@@ -67,6 +68,6 @@ def test_render_release_candidate_checklist_includes_alpha_serving_and_gap_secti
 
     assert "## Alpha serving baseline" in content
     assert "active serving spec 하루 선행 포착 v1" in content
-    assert "fallback baseline=확장형 누적 학습" in content
+    assert "기본 비교 모델=확장형 누적 학습" in content
     assert "## Selection gap gate" in content
     assert "drag_vs_raw=-0.20%" in content

@@ -13,10 +13,10 @@ from app.common.discord import (
 )
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
-from app.ml.promotion import load_alpha_promotion_summary
 from app.ml.constants import MODEL_SPEC_ID
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
+from app.ml.promotion import load_alpha_promotion_summary
 from app.selection.sector_outlook import sector_outlook_frame
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
@@ -40,6 +40,11 @@ REASON_LABELS = {
     "low_drawdown_relative": "낙폭이 상대적으로 작음",
     "foreign_institution_flow_supportive": "외국인·기관 수급 우호적",
     "implementation_friction_contained": "실행 부담 낮음",
+    "residual_strength_improving": "상대 강도가 살아나는 흐름",
+    "flow_persistence_supportive": "수급 지속성이 받쳐줌",
+    "news_drift_underreacted": "뉴스 재평가가 덜 반영됨",
+    "crowding_risk_low": "과열 혼잡 부담이 낮음",
+    "raw_alpha_leader_preserved": "원점수 상위 신호를 최대한 보존함",
 }
 
 RISK_LABELS = {
@@ -484,8 +489,6 @@ def _format_pick_block(row: pd.Series, *, rank: int) -> list[str]:
     model_spec = _translate_model_label(row.get("model_spec_id"))
     if row.get("active_alpha_model_id") or row.get("model_spec_id"):
         lines.append(f"   - active serving spec: {model_spec}")
-        if str(row.get("model_spec_id") or "") != MODEL_SPEC_ID:
-            lines.append(f"   - fallback baseline: {MODEL_SPEC_LABELS.get(MODEL_SPEC_ID, MODEL_SPEC_ID)}")
     lines.append(f"   - 주요 근거: {reasons}")
     lines.append(f"   - 주의할 점: {risks}")
     return lines
@@ -573,12 +576,17 @@ def _format_alpha_promotion_line(row: pd.Series) -> str:
         f"{row.get('active_role_label') or 'active serving spec'} {active_text}",
     ]
     if compare_text not in {"-", ""}:
-        summary_parts.append(f"{row.get('comparison_role_label') or 'legacy comparison baseline'} {compare_text}")
+        summary_parts.append(
+            f"{row.get('comparison_role_label') or 'legacy comparison baseline'} "
+            f"{compare_text}"
+        )
     fallback_text = _translate_model_label(
         row.get("fallback_model_label") or MODEL_SPEC_LABELS.get(MODEL_SPEC_ID, MODEL_SPEC_ID)
     )
     if fallback_text not in {"-", ""}:
-        summary_parts.append(f"{row.get('fallback_role_label') or 'fallback baseline'} {fallback_text}")
+        summary_parts.append(
+            f"{row.get('fallback_role_label') or '기본 비교 모델'} {fallback_text}"
+        )
     if pd.notna(row.get("sample_count")):
         summary_parts.append(f"비교 표본 {int(row['sample_count'])}개")
     summary_parts.append(f"판단 이유 {decision_reason}")

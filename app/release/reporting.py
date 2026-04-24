@@ -514,7 +514,7 @@ def render_release_candidate_checklist(
                 f"- D+{int(row.horizon)} | active serving spec {_translate_model_spec(row.model_spec_id)} "
                 f"| active_alpha_model_id={row.active_alpha_model_id} "
                 f"| effective_from={row.effective_from_date} "
-                f"| fallback baseline={_translate_model_spec(MODEL_SPEC_ID)}"
+                f"| 기본 비교 모델={_translate_model_spec(MODEL_SPEC_ID)}"
             )
     lines.append("")
     lines.append("## Selection gap gate")

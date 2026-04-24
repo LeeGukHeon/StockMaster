@@ -410,7 +410,7 @@ def load_alpha_promotion_summary(
                 "chosen_model_label": format_alpha_model_spec_id(chosen_model_spec_id),
                 "fallback_model_spec_id": MODEL_SPEC_ID,
                 "fallback_model_label": format_alpha_model_spec_id(MODEL_SPEC_ID),
-                "fallback_role_label": "fallback baseline",
+                "fallback_role_label": "기본 비교 모델",
                 "window_start": representative["row"].window_start,
                 "window_end": representative["row"].window_end,
                 "sample_count": int(representative["row"].sample_count or 0),
