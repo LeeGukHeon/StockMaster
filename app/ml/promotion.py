@@ -12,6 +12,7 @@ from app.common.time import now_local
 from app.features.feature_store import REQUIRED_QUALITY_FEATURE_NAMES
 from app.ml.active import freeze_alpha_active_model
 from app.ml.constants import (
+    ALPHA_CANDIDATE_MODEL_SPECS,
     MCS_ALPHA,
     MCS_BLOCK_LENGTH,
     MCS_BOOTSTRAP_REPS,
@@ -21,12 +22,14 @@ from app.ml.constants import (
     PROMOTION_LOOKBACK_SELECTION_DATES,
     get_alpha_model_spec,
     resolve_promotion_primary_loss_for_spec,
+    supports_horizon_for_spec,
 )
 from app.ml.registry import (
     load_active_alpha_model,
-    load_alpha_model_specs,
     load_latest_training_run,
+    upsert_alpha_model_specs,
 )
+from app.ml.training import build_alpha_model_spec_registry_frame
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -676,19 +679,17 @@ def _load_candidate_model_spec_ids(
     incumbent_model_spec_id: str,
 ) -> list[str]:
     model_spec_ids = {
-        str(spec["model_spec_id"])
-        for spec in load_alpha_model_specs(
-            connection,
-            model_domain=MODEL_DOMAIN,
-            active_only=True,
-        )
+        str(spec.model_spec_id)
+        for spec in ALPHA_CANDIDATE_MODEL_SPECS
+        if spec.active_candidate_flag
+        and supports_horizon_for_spec(spec, horizon=int(horizon))
         if load_latest_training_run(
             connection,
             horizon=int(horizon),
             model_version=MODEL_VERSION,
             train_end_date=as_of_date,
             model_domain=MODEL_DOMAIN,
-            model_spec_id=str(spec["model_spec_id"]),
+            model_spec_id=str(spec.model_spec_id),
         )
         is not None
     }
@@ -953,6 +954,10 @@ def run_alpha_auto_promotion(
     with activate_run_context("run_alpha_auto_promotion", as_of_date=as_of_date) as run_context:
         with duckdb_connection(settings.paths.duckdb_path) as connection:
             bootstrap_core_tables(connection)
+            upsert_alpha_model_specs(
+                connection,
+                build_alpha_model_spec_registry_frame(ALPHA_CANDIDATE_MODEL_SPECS),
+            )
             record_run_start(
                 connection,
                 run_id=run_context.run_id,

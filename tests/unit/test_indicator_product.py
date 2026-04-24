@@ -91,7 +91,6 @@ def test_analysis_model_spec_ids_include_h5_comparator_for_d5_only_bundle() -> N
         focus_model_spec_id="alpha_swing_d5_v2",
     ) == [
         MODEL_SPEC_ID,
-        "alpha_swing_d5_v1",
         "alpha_swing_d5_v2",
         "alpha_topbucket_h1_rolling_120_v1",
     ]

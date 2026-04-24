@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model-spec-ids",
         nargs="+",
-        default=["alpha_swing_d5_v2", "alpha_swing_d5_v1"],
+        default=["alpha_swing_d5_v2"],
     )
     parser.add_argument("--min-train-days", type=int, default=120)
     parser.add_argument("--validation-days", type=int, default=20)

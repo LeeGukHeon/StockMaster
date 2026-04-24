@@ -40,7 +40,6 @@ def test_run_indicator_product_bundle_host_targets_d5_v2_lane():
     )
 
     assert "--model-spec-ids alpha_swing_d5_v2" in script
-    assert "--require-comparator 5:alpha_swing_d5_v1" in script
     assert "--require-comparator 5:alpha_recursive_expanding_v1" in script
     assert "--require-comparator 1:alpha_recursive_expanding_v1" in script
     assert "--require-comparator 1:alpha_topbucket_h1_rolling_120_v1" in script

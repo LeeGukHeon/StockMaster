@@ -633,7 +633,7 @@ def test_backfill_validate_compare_and_render_diagnostic(tmp_path):
     assert "top20_mean_excess_return_h5" in validation_text
     assert "rank_ic_h1" in validation_text
     assert "selection_gap_top5_drag_alpha_lead_d1_v1_h1_rolling_20" in validation_text
-    assert "selection_gap_top5_drag_alpha_swing_d5_v1_h5_rolling_60" in validation_text
+    assert "selection_gap_top5_drag_alpha_swing_d5_v2_h5_rolling_60" in validation_text
     assert "d1_concentration_roll20" in validation_text
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
@@ -1231,25 +1231,21 @@ def test_run_alpha_indicator_product_bundle_d5_focus_enforces_comparator_lock(tm
             [date(2026, 3, 6)],
         ).fetchall()
 
-    assert comparator_rows == [
-        ("alpha_recursive_expanding_v1", 1),
-        ("alpha_topbucket_h1_rolling_120_v1", 1),
-        ("alpha_recursive_expanding_v1", 5),
-        ("alpha_swing_d5_v1", 5),
-        ("alpha_swing_d5_v2", 5),
-    ]
+        assert comparator_rows == [
+            ("alpha_recursive_expanding_v1", 1),
+            ("alpha_topbucket_h1_rolling_120_v1", 1),
+            ("alpha_recursive_expanding_v1", 5),
+            ("alpha_swing_d5_v2", 5),
+        ]
 
     validation_markdown = max(
         (settings.paths.artifacts_dir / "model_validation").glob("*.md"),
         key=lambda path: path.stat().st_mtime,
     )
     validation_text = validation_markdown.read_text(encoding="utf-8")
-    assert "d5_primary_top5_vs_swing_v1_cohort" in validation_text
-    assert "d5_primary_top5_vs_swing_v1_rolling20" in validation_text
     assert "d5_primary_drag_improvement_cohort" in validation_text
     assert "d5_primary_selected_top5_floor_cohort" in validation_text
-    assert "d5_bucket_continuation_vs_swing_v1" in validation_text
-    assert "d5_bucket_win_count_vs_swing_v1" in validation_text
+    assert "d5_primary_top5_vs_recursive_h5_cohort" in validation_text
 
 
 def test_validate_alpha_model_h5_only_omits_d1_concentration_checks(tmp_path):

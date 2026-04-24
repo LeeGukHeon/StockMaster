@@ -378,6 +378,64 @@ def test_run_alpha_auto_promotion_blocks_lineage_mismatched_challenger(tmp_path)
     assert "shadow_validation_failed" in str(blocked_row[1])
 
 
+def test_run_alpha_auto_promotion_refreshes_registry_and_excludes_retired_d5_v1(tmp_path):
+    settings = _build_promotion_settings(tmp_path)
+    freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        source="test_seed",
+        note="seed incumbent",
+        horizons=[5],
+        model_spec_id="alpha_swing_d5_v2",
+        train_end_date=date(2026, 3, 6),
+    )
+    _seed_shadow_prediction_and_ranking(settings, model_spec_id="alpha_swing_d5_v2")
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        connection.execute(
+            """
+            UPDATE dim_alpha_model_spec
+            SET active_candidate_flag = TRUE
+            WHERE model_spec_id = 'alpha_swing_d5_v1'
+            """
+        )
+
+    result = run_alpha_auto_promotion(
+        settings,
+        as_of_date=date(2026, 3, 10),
+        horizons=[5],
+        lookback_selection_dates=len(SELECTION_DATES),
+        bootstrap_reps=200,
+        block_length=1,
+    )
+
+    assert result.row_count > 0
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        bootstrap_core_tables(connection)
+        v1_flag = connection.execute(
+            """
+            SELECT active_candidate_flag
+            FROM dim_alpha_model_spec
+            WHERE model_spec_id = 'alpha_swing_d5_v1'
+            """
+        ).fetchone()[0]
+        v1_rows = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fact_alpha_promotion_test
+            WHERE promotion_date = ?
+              AND horizon = 5
+              AND challenger_model_spec_id = 'alpha_swing_d5_v1'
+            """,
+            [date(2026, 3, 10)],
+        ).fetchone()[0]
+
+    assert bool(v1_flag) is False
+    assert int(v1_rows or 0) == 0
+
+
 def test_rollback_alpha_active_model_is_noop_without_previous_and_restores_previous(tmp_path):
     settings = _build_promotion_settings(tmp_path)
     freeze_alpha_active_model(

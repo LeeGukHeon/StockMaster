@@ -14,14 +14,17 @@ from app.features.feature_store import (
     load_feature_matrix,
 )
 from app.ml.constants import (
+    ALPHA_CANDIDATE_MODEL_SPECS,
+    D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
     DEFAULT_ALPHA_MODEL_SPEC,
     MODEL_DOMAIN,
+    MODEL_SPEC_ID,
     MODEL_VERSION,
     get_alpha_model_spec,
     supports_horizon_for_spec,
 )
 from app.ml.inference import build_prediction_frame_from_training_run
-from app.ml.registry import load_alpha_model_specs, load_latest_training_run
+from app.ml.registry import load_latest_training_run
 from app.selection.engine_v2 import build_selection_engine_v2_rankings
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
@@ -118,11 +121,22 @@ def _load_regime_map(connection, *, as_of_date: date) -> dict[str, dict[str, obj
 
 
 def _load_candidate_specs(connection) -> list[dict[str, object]]:
-    specs = load_alpha_model_specs(
-        connection,
-        model_domain=MODEL_DOMAIN,
-        active_only=False,
-    )
+    retained_spec_ids = {
+        MODEL_SPEC_ID,
+        "alpha_topbucket_h1_rolling_120_v1",
+        "alpha_lead_d1_v1",
+        D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+    }
+    specs = [
+        {
+            "model_spec_id": spec.model_spec_id,
+            "model_version": MODEL_VERSION,
+            "estimation_scheme": spec.estimation_scheme,
+            "rolling_window_days": spec.rolling_window_days,
+        }
+        for spec in ALPHA_CANDIDATE_MODEL_SPECS
+        if spec.model_spec_id in retained_spec_ids
+    ]
     if specs:
         return specs
     return [

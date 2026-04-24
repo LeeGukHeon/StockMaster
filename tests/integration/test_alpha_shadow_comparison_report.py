@@ -63,7 +63,7 @@ def test_render_alpha_shadow_comparison_report_creates_artifacts(tmp_path):
         start_selection_date=date(2026, 3, 4),
         end_selection_date=date(2026, 3, 6),
         horizons=[5],
-        model_spec_ids=["alpha_swing_d5_v2", "alpha_swing_d5_v1", MODEL_SPEC_ID],
+        model_spec_ids=["alpha_swing_d5_v2", MODEL_SPEC_ID],
         rolling_windows=[2],
     )
 
@@ -92,13 +92,12 @@ def test_render_alpha_shadow_comparison_report_creates_artifacts(tmp_path):
     with open(preview, encoding='utf-8') as fh:
         content = fh.read()
     assert 'Alpha Shadow Comparison Report' in content
-    assert 'alpha_rolling_120_v1' in content
+    assert MODEL_SPEC_ID in content
 
 
 def test_render_alpha_shadow_comparison_report_includes_d5_focus_sections(tmp_path):
     settings = _prepare_shadow_settings(tmp_path)
 
-    swing_v1_spec = get_alpha_model_spec("alpha_swing_d5_v1")
     swing_v2_spec = get_alpha_model_spec("alpha_swing_d5_v2")
     legacy_h1_spec = get_alpha_model_spec("alpha_topbucket_h1_rolling_120_v1")
 
@@ -118,7 +117,7 @@ def test_render_alpha_shadow_comparison_report_includes_d5_focus_sections(tmp_pa
             min_train_days=5,
             validation_days=2,
             limit_symbols=4,
-            model_specs=(swing_v1_spec, swing_v2_spec, legacy_h1_spec),
+            model_specs=(swing_v2_spec, legacy_h1_spec),
         )
         materialize_alpha_shadow_candidates(
             settings,
@@ -145,7 +144,7 @@ def test_render_alpha_shadow_comparison_report_includes_d5_focus_sections(tmp_pa
         start_selection_date=date(2026, 3, 4),
         end_selection_date=date(2026, 3, 6),
         horizons=[5],
-        model_spec_ids=["alpha_swing_d5_v2", "alpha_swing_d5_v1", MODEL_SPEC_ID],
+        model_spec_ids=["alpha_swing_d5_v2", MODEL_SPEC_ID],
         rolling_windows=[2],
     )
 
@@ -166,8 +165,7 @@ def test_render_alpha_shadow_comparison_report_includes_d5_focus_sections(tmp_pa
     assert "sel_only_top5_mean_realized_excess_return" in content
     assert "D+5 raw-vs-selected drag" in content
     assert "drag_vs_raw_top5" in content
-    assert "D+5 robustness buckets vs alpha_swing_d5_v1" in content
-    assert "Continuation" in content
+    assert "alpha_recursive_expanding_v1" in content
     assert "D+1 auxiliary interpretation" in content
 
 
@@ -178,7 +176,7 @@ def test_build_d5_primary_markdown_uses_summary_rows_for_d1_auxiliary_section() 
                 "horizon": 5,
                 "window_type": "cohort",
                 "segment_value": "top5",
-                "comparator_model_spec_id": "alpha_swing_d5_v1",
+                "comparator_model_spec_id": MODEL_SPEC_ID,
                 "mean_realized_excess_return_focus": 0.021,
                 "mean_realized_excess_return_comparator": 0.014,
                 "return_gap_vs_comparator": 0.007,

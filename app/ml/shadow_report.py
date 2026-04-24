@@ -10,11 +10,11 @@ import pandas as pd
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import (
-    D5_PRIMARY_BUCKET_SEGMENTS,
     D5_PRIMARY_COMPARATOR_PAIRS,
     D5_PRIMARY_DRAG_BASELINE_BY_WINDOW,
     D5_PRIMARY_DRAG_IMPROVEMENT_TARGET,
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+    D5_PRIMARY_H5_BASELINE_MODEL_SPEC_ID,
     MODEL_SPEC_ID,
 )
 from app.ml.promotion import load_alpha_promotion_summary
@@ -384,8 +384,7 @@ def _build_d5_primary_markdown(
             f"`{start_selection_date.isoformat()}..{end_selection_date.isoformat()}`"
         ),
         f"- Focus model: `{D5_PRIMARY_FOCUS_MODEL_SPEC_ID}`",
-        "- Primary D+5 comparator: `alpha_swing_d5_v1`",
-        f"- Secondary D+5 comparator: `{MODEL_SPEC_ID}` (H5)",
+        f"- Primary D+5 comparator: `{D5_PRIMARY_H5_BASELINE_MODEL_SPEC_ID}`",
         f"- D+1 auxiliary comparators: `{MODEL_SPEC_ID}`, `alpha_topbucket_h1_rolling_120_v1`",
         "",
         "## Lag-first proof",
@@ -474,11 +473,7 @@ def _build_d5_primary_markdown(
     overall_rows = pairwise_ledger.loc[
         (pairwise_ledger["horizon"] == 5)
         & (pairwise_ledger["segment_value"] == "top5")
-        & (
-            pairwise_ledger["comparator_model_spec_id"].isin(
-                ["alpha_swing_d5_v1", MODEL_SPEC_ID]
-            )
-        )
+        & (pairwise_ledger["comparator_model_spec_id"] == D5_PRIMARY_H5_BASELINE_MODEL_SPEC_ID)
         & (pairwise_ledger["window_type"].isin(["cohort", "rolling_20"]))
     ].copy()
     if overall_rows.empty:
@@ -492,37 +487,6 @@ def _build_d5_primary_markdown(
                 ).format(
                     window=row.window_type,
                     comparator=row.comparator_model_spec_id,
-                    focus_ret=_format_metric(
-                        row.mean_realized_excess_return_focus,
-                        pct=True,
-                        signed=True,
-                    ),
-                    comp_ret=_format_metric(
-                        row.mean_realized_excess_return_comparator,
-                        pct=True,
-                        signed=True,
-                    ),
-                    gap=_format_metric(row.return_gap_vs_comparator, pct=True, signed=True),
-                    dates=int(row.matured_selection_date_count_focus or 0),
-                )
-            )
-    lines.extend(["", "## D+5 robustness buckets vs alpha_swing_d5_v1", ""])
-    bucket_rows = pairwise_ledger.loc[
-        (pairwise_ledger["horizon"] == 5)
-        & (pairwise_ledger["window_type"] == "cohort")
-        & (pairwise_ledger["segment_value"].isin(D5_PRIMARY_BUCKET_SEGMENTS))
-        & (pairwise_ledger["comparator_model_spec_id"] == "alpha_swing_d5_v1")
-    ].copy()
-    if bucket_rows.empty:
-        lines.append("- Bucket rows not available yet.")
-    else:
-        for row in bucket_rows.itertuples(index=False):
-            lines.append(
-                (
-                    "- {bucket}: focus {focus_ret} | comparator {comp_ret} | "
-                    "gap {gap} | matured_dates={dates}"
-                ).format(
-                    bucket=_humanize_segment(str(row.segment_value)),
                     focus_ret=_format_metric(
                         row.mean_realized_excess_return_focus,
                         pct=True,
@@ -622,7 +586,6 @@ def render_alpha_shadow_comparison_report(
                         end_selection_date=end_selection_date,
                         model_spec_ids=[
                             D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
-                            "alpha_swing_d5_v1",
                             MODEL_SPEC_ID,
                         ],
                     )

@@ -92,7 +92,7 @@ log "checking indicator-product readiness train_end_date=${TRAIN_END_DATE}"
 "${PYTHON}" "${PROJECT_ROOT}/scripts/check_alpha_indicator_product_readiness.py" \
   --train-end-date "${TRAIN_END_DATE}" \
   --horizons 1 5 \
-  --model-spec-ids alpha_swing_d5_v2 alpha_swing_d5_v1
+  --model-spec-ids alpha_swing_d5_v2
 
 log "rematerializing alpha model specs"
 "${PYTHON}" "${PROJECT_ROOT}/scripts/materialize_alpha_model_specs.py"
@@ -104,7 +104,7 @@ log "running indicator-product bundle"
   --shadow-start-selection-date "${SHADOW_START_SELECTION_DATE}" \
   --shadow-end-selection-date "${SHADOW_END_SELECTION_DATE}" \
   --horizons 1 5 \
-  --model-spec-ids alpha_swing_d5_v2 alpha_swing_d5_v1 \
+  --model-spec-ids alpha_swing_d5_v2 \
   --rolling-windows 20 60 \
   --backfill-shadow-history \
   "${SHADOW_REPLAY_ARGS[@]}" \
@@ -129,7 +129,6 @@ log "verifying indicator-product bundle outputs"
 "${SERVER_SCRIPT_DIR}/verify_indicator_product_bundle_host.sh" \
   "${AS_OF_DATE}" \
   "${PRESERVED_HORIZON_ARGS[@]}" \
-  --require-comparator 5:alpha_swing_d5_v1 \
   --require-comparator 5:alpha_recursive_expanding_v1 \
   --require-comparator 1:alpha_recursive_expanding_v1 \
   --require-comparator 1:alpha_topbucket_h1_rolling_120_v1
