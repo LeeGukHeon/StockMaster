@@ -170,6 +170,8 @@ SELECTION_V2_TOPBUCKET_WEIGHTS = {
 }
 
 D5_RAW_PRESERVATION_PRIORITY_COUNT = 3
+D5_DISAGREEMENT_RELIEF_PRIORITY_COUNT = 3
+D5_DISAGREEMENT_RELIEF_SCORE_CAP = 85.0
 
 
 def _resolve_selection_weights(
@@ -547,6 +549,59 @@ def _apply_d5_raw_preservation_guardrail(scored: pd.DataFrame) -> pd.DataFrame:
     return guarded
 
 
+def _apply_d5_disagreement_penalty_relief(
+    scored: pd.DataFrame,
+    disagreement_penalty: pd.Series,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    if scored.empty:
+        empty = pd.Series(0.0, index=scored.index, dtype="float64")
+        return disagreement_penalty, empty, empty.astype(bool)
+
+    relief = pd.Series(0.0, index=scored.index, dtype="float64")
+    expected = pd.to_numeric(scored.get("expected_excess_return"), errors="coerce")
+    disagreement_score = pd.to_numeric(scored.get("disagreement_score"), errors="coerce")
+    eligible = pd.to_numeric(scored.get("eligible_flag"), errors="coerce").fillna(0.0).astype(bool)
+    fallback = pd.to_numeric(scored.get("fallback_flag"), errors="coerce").fillna(0.0).astype(bool)
+
+    priority_indices = (
+        scored.assign(_expected_excess_return=expected)
+        .sort_values(
+            ["_expected_excess_return", "symbol"],
+            ascending=[False, True],
+            na_position="last",
+        )
+        .head(D5_DISAGREEMENT_RELIEF_PRIORITY_COUNT)
+        .index
+    )
+    if len(priority_indices) == 0:
+        return disagreement_penalty, relief, relief.astype(bool)
+
+    for index in priority_indices:
+        if not bool(eligible.loc[index]) or bool(fallback.loc[index]):
+            continue
+        disagreement_raw_value = disagreement_score.loc[index]
+        disagreement_value = (
+            float(disagreement_raw_value)
+            if pd.notna(disagreement_raw_value)
+            else 50.0
+        )
+        capped_disagreement_value = min(
+            disagreement_value,
+            D5_DISAGREEMENT_RELIEF_SCORE_CAP,
+        )
+        if capped_disagreement_value >= disagreement_value:
+            continue
+        relief_fraction = 1.0 - (
+            capped_disagreement_value / disagreement_value
+        )
+        if relief_fraction <= 0.0:
+            continue
+        relief.loc[index] = float(disagreement_penalty.loc[index]) * relief_fraction
+
+    adjusted_penalty = disagreement_penalty.sub(relief).clip(lower=0.0)
+    return adjusted_penalty, relief, relief.gt(0.0)
+
+
 def _attach_regime_context(
     feature_matrix: pd.DataFrame,
     *,
@@ -632,6 +687,18 @@ def _score_selection_engine_v2_frame(
         * settings.model.disagreement_eta
         / 100.0
     )
+    if d5_primary_focus:
+        (
+            disagreement_penalty,
+            disagreement_relief,
+            disagreement_relief_applied,
+        ) = _apply_d5_disagreement_penalty_relief(
+            scored,
+            disagreement_penalty,
+        )
+    else:
+        disagreement_relief = pd.Series(0.0, index=scored.index, dtype="float64")
+        disagreement_relief_applied = pd.Series(False, index=scored.index, dtype="boolean")
     implementation_penalty = (
         pd.to_numeric(scored["implementation_penalty_score"], errors="coerce").fillna(50.0)
         * abs(weights["implementation_penalty_score"])
@@ -659,6 +726,8 @@ def _score_selection_engine_v2_frame(
         - late_entry_penalty
         - fallback_penalty
     ).clip(lower=0.0, upper=100.0)
+    scored["d5_disagreement_relief"] = disagreement_relief
+    scored["d5_disagreement_relief_applied"] = disagreement_relief_applied.astype(bool)
     scored["final_selection_rank_pct"] = scored["final_selection_value"].rank(
         method="average",
         pct=True,
@@ -750,6 +819,8 @@ def _score_selection_engine_v2_frame(
                 "disagreement_score": None
                 if pd.isna(row["disagreement_score"])
                 else float(row["disagreement_score"]),
+                "d5_disagreement_relief": float(row["d5_disagreement_relief"]),
+                "d5_disagreement_relief_applied": bool(row["d5_disagreement_relief_applied"]),
                 "implementation_penalty_score": float(row["implementation_penalty_score"]),
                 "fallback_flag": bool(row["fallback_flag"]),
                 "fallback_reason": row["fallback_reason"] or None,

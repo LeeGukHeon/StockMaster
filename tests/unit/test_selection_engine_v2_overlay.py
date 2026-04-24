@@ -5,6 +5,7 @@ import pandas as pd
 from app.selection.engine_v2 import (
     D5_RAW_PRESERVATION_PRIORITY_COUNT,
     _alpha_core_score,
+    _apply_d5_disagreement_penalty_relief,
     _apply_d5_raw_preservation_guardrail,
     _augment_reason_tags,
     _compute_crowding_penalty_score,
@@ -243,6 +244,63 @@ def test_d5_primary_weights_soften_disagreement_penalty_for_focus_spec():
 
     assert focus_weights["disagreement_score"] == -2
     assert focus_weights["disagreement_score"] > generic_top5_weights["disagreement_score"]
+
+
+def test_d5_disagreement_penalty_relief_caps_high_disagreement_for_top_raw_leaders():
+    scored = pd.DataFrame(
+        {
+            "symbol": list("ABCDE"),
+            "expected_excess_return": [0.20, 0.18, 0.16, 0.12, 0.08],
+            "disagreement_score": [98.0, 92.0, 88.0, 82.0, 60.0],
+            "eligible_flag": [True, True, True, True, True],
+            "fallback_flag": [False, False, False, False, False],
+        }
+    )
+    base_penalty = pd.Series([2.0, 2.0, 2.0, 2.0, 2.0], dtype="float64")
+
+    adjusted_penalty, relief, applied = _apply_d5_disagreement_penalty_relief(
+        scored,
+        base_penalty,
+    )
+
+    assert float(adjusted_penalty.iloc[0]) < float(base_penalty.iloc[0])
+    assert float(adjusted_penalty.iloc[1]) < float(base_penalty.iloc[1])
+    assert float(adjusted_penalty.iloc[2]) < float(base_penalty.iloc[2])
+    assert bool(applied.iloc[0]) is True
+    assert bool(applied.iloc[1]) is True
+    assert bool(applied.iloc[2]) is True
+    assert bool(applied.iloc[3]) is False
+    assert float(relief.iloc[0]) > 0.0
+    assert float(relief.iloc[1]) > 0.0
+    assert float(relief.iloc[2]) > 0.0
+
+
+def test_d5_disagreement_penalty_relief_skips_fallback_and_leaves_low_disagreement_unchanged():
+    scored = pd.DataFrame(
+        {
+            "symbol": list("ABC"),
+            "expected_excess_return": [0.20, 0.18, 0.16],
+            "disagreement_score": [80.0, 95.0, 45.0],
+            "eligible_flag": [True, True, True],
+            "fallback_flag": [False, True, False],
+        }
+    )
+    base_penalty = pd.Series([2.0, 2.0, 2.0], dtype="float64")
+
+    adjusted_penalty, relief, applied = _apply_d5_disagreement_penalty_relief(
+        scored,
+        base_penalty,
+    )
+
+    assert float(adjusted_penalty.iloc[0]) == float(base_penalty.iloc[0])
+    assert float(relief.iloc[0]) == 0.0
+    assert bool(applied.iloc[0]) is False
+    assert float(adjusted_penalty.iloc[1]) == float(base_penalty.iloc[1])
+    assert float(relief.iloc[1]) == 0.0
+    assert bool(applied.iloc[1]) is False
+    assert float(adjusted_penalty.iloc[2]) == float(base_penalty.iloc[2])
+    assert float(relief.iloc[2]) == 0.0
+    assert bool(applied.iloc[2]) is False
 
 
 def test_top5_binary_report_candidate_mask_uses_ranked_top_five():
