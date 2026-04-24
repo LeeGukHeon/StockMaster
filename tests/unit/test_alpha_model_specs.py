@@ -9,13 +9,19 @@ import pandas as pd
 from app.ml.constants import (
     CHALLENGER_ALPHA_MODEL_SPECS,
     DEFAULT_ALPHA_MODEL_SPEC,
+    REGISTRY_ALPHA_MODEL_SPECS,
     get_alpha_model_spec,
     resolve_feature_columns_for_spec,
     resolve_member_names_for_spec,
     resolve_target_column_for_spec,
     supports_horizon_for_spec,
 )
-from app.ml.training import _metric_rows, _normalise_weights, _train_single_horizon
+from app.ml.training import (
+    _metric_rows,
+    _normalise_weights,
+    _train_single_horizon,
+    build_alpha_model_spec_registry_frame,
+)
 
 
 def test_challenger_specs_use_distinct_feature_profiles() -> None:
@@ -86,6 +92,14 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     assert supports_horizon_for_spec(d5_spec, horizon=1) is False
     assert supports_horizon_for_spec(d5_focus_spec, horizon=5) is True
     assert supports_horizon_for_spec(d5_focus_spec, horizon=1) is False
+
+
+def test_registry_frame_excludes_retired_d5_v1_spec() -> None:
+    registry_ids = [spec.model_spec_id for spec in REGISTRY_ALPHA_MODEL_SPECS]
+    frame_ids = build_alpha_model_spec_registry_frame()["model_spec_id"].tolist()
+
+    assert "alpha_swing_d5_v1" not in registry_ids
+    assert "alpha_swing_d5_v1" not in frame_ids
 
 
 def test_d5_focus_spec_matches_frozen_contract() -> None:

@@ -211,6 +211,12 @@ ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
     DEFAULT_ALPHA_MODEL_SPEC,
     *CHALLENGER_ALPHA_MODEL_SPECS,
 )
+RETIRED_ALPHA_MODEL_SPEC_IDS: tuple[str, ...] = ("alpha_swing_d5_v1",)
+REGISTRY_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = tuple(
+    spec
+    for spec in ALPHA_CANDIDATE_MODEL_SPECS
+    if spec.model_spec_id not in RETIRED_ALPHA_MODEL_SPEC_IDS
+)
 DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = tuple(
     spec
     for spec in CHALLENGER_ALPHA_MODEL_SPECS
