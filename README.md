@@ -99,7 +99,7 @@ Key assets:
 - `deploy/docker-compose.server.yml`
 - `deploy/nginx/default.conf`
 - `deploy/env/.env.server.example`
-- `docs/STOCKMASTER_UNIFIED_MANUAL_KO.md`
+- `docs/operations/STOCKMASTER_UNIFIED_MANUAL_KO.md`
 - `deploy/systemd/stockmaster-compose.service`
 - `scripts/server/start_server.sh`
 - `scripts/server/stop_server.sh`
@@ -109,7 +109,7 @@ Key assets:
 - `scripts/server/check_public_access.sh`
 - `scripts/server/backup_server_data.sh`
 - `scripts/server/print_runtime_info.sh`
-- `docs/METADATA_HOST_WORKER_VALIDATION.md`
+- `docs/operations/METADATA_HOST_WORKER_VALIDATION.md`
 
 Local vs server:
 
@@ -132,7 +132,7 @@ The server stack expects:
 - runtime data under `/opt/stockmaster/runtime`
 - backups under `/opt/stockmaster/backups`
 - Docker Engine + Docker Compose plugin installed on the OCI instance
-- canonical ops/dev/server runbook in `docs/STOCKMASTER_UNIFIED_MANUAL_KO.md`
+- canonical ops/dev/server runbook in `docs/operations/STOCKMASTER_UNIFIED_MANUAL_KO.md`
 
 ## Scheduler automation
 
@@ -156,7 +156,7 @@ Key scheduler assets:
 - `scripts/server/uninstall_scheduler_units.sh`
 - `scripts/server/status_scheduler_units.sh`
 - `scripts/server/run_scheduler_job_host.sh`
-- `docs/STOCKMASTER_UNIFIED_MANUAL_KO.md`
+- `docs/operations/STOCKMASTER_UNIFIED_MANUAL_KO.md`
 
 Initial schedule:
 
@@ -1308,14 +1308,14 @@ TICKET-013 page structure:
 
 TICKET-013 docs:
 
-- [docs/USER_GUIDE.md](/d:/MyApps/StockMaster/docs/USER_GUIDE.md)
-- [docs/WORKFLOW_DAILY.md](/d:/MyApps/StockMaster/docs/WORKFLOW_DAILY.md)
-- [docs/GLOSSARY.md](/d:/MyApps/StockMaster/docs/GLOSSARY.md)
-- [docs/KNOWN_LIMITATIONS.md](/d:/MyApps/StockMaster/docs/KNOWN_LIMITATIONS.md)
+- [docs/user/USER_GUIDE.md](/d:/MyApps/StockMaster/docs/user/USER_GUIDE.md)
+- [docs/user/WORKFLOW_DAILY.md](/d:/MyApps/StockMaster/docs/user/WORKFLOW_DAILY.md)
+- [docs/user/GLOSSARY.md](/d:/MyApps/StockMaster/docs/user/GLOSSARY.md)
+- [docs/user/KNOWN_LIMITATIONS.md](/d:/MyApps/StockMaster/docs/user/KNOWN_LIMITATIONS.md)
 
 TICKET-016 audit docs:
 
-- [docs/DB_CONTRACT_MATRIX.md](/d:/MyApps/StockMaster/docs/DB_CONTRACT_MATRIX.md)
+- [docs/operations/DB_CONTRACT_MATRIX.md](/d:/MyApps/StockMaster/docs/operations/DB_CONTRACT_MATRIX.md)
 
 Presentation rules:
 

@@ -648,9 +648,9 @@ python3 scripts/render_discord_eod_report.py --as-of-date 2026-04-23 --dry-run
 이 문서 하나로 운영은 가능해야 한다.
 다만 배경 설계가 필요하면 아래 문서를 참고한다.
 
-- `docs/architecture/overview.md`
-- `docs/architecture/DISCORD_BOT_READ_STORE_ARCHITECTURE.md`
-- `docs/architecture/DUCKDB_ANALYTICS_AND_METADATA_STORE_SPLIT.md`
-- `docs/METADATA_HOST_WORKER_VALIDATION.md`
-- `docs/USER_GUIDE.md`
-- `docs/WORKFLOW_DAILY.md`
+- `docs/design/overview.md`
+- `docs/design/DISCORD_BOT_READ_STORE_ARCHITECTURE.md`
+- `docs/design/DUCKDB_ANALYTICS_AND_METADATA_STORE_SPLIT.md`
+- `docs/operations/METADATA_HOST_WORKER_VALIDATION.md`
+- `docs/user/USER_GUIDE.md`
+- `docs/user/WORKFLOW_DAILY.md`

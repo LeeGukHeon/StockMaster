@@ -205,7 +205,7 @@ def write_audit_docs(
     project_root = settings.paths.project_root
     return [
         _write_markdown(
-            project_root / "docs/DB_CONTRACT_MATRIX.md",
+            project_root / "docs/operations/DB_CONTRACT_MATRIX.md",
             render_contract_matrix(),
         ),
     ]
