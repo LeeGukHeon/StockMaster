@@ -13,16 +13,9 @@ UNIT_SOURCE_DIR="${PROJECT_ROOT}/deploy/systemd"
 TIMER_UNITS=(
   stockmaster-ops-maintenance.timer
   stockmaster-news-morning.timer
-  stockmaster-intraday-assist.timer
   stockmaster-news-after-close.timer
   stockmaster-evaluation.timer
   stockmaster-daily-close.timer
-  stockmaster-daily-audit-lite.timer
-  stockmaster-daily-overlay-refresh.timer
-  stockmaster-docker-build-cache-cleanup.timer
-  stockmaster-weekly-training.timer
-  stockmaster-weekly-calibration.timer
-  stockmaster-weekly-policy-research.timer
 )
 
 install -m 0644 "${UNIT_SOURCE_DIR}/stockmaster-scheduler@.service" "${SYSTEMD_DIR}/stockmaster-scheduler@.service"

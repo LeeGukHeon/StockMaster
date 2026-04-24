@@ -16,16 +16,9 @@ REQUIRED_FILES = [
     "deploy/systemd/stockmaster-scheduler@.service",
     "deploy/systemd/stockmaster-ops-maintenance.timer",
     "deploy/systemd/stockmaster-news-morning.timer",
-    "deploy/systemd/stockmaster-intraday-assist.timer",
     "deploy/systemd/stockmaster-news-after-close.timer",
     "deploy/systemd/stockmaster-evaluation.timer",
     "deploy/systemd/stockmaster-daily-close.timer",
-    "deploy/systemd/stockmaster-daily-audit-lite.timer",
-    "deploy/systemd/stockmaster-daily-overlay-refresh.timer",
-    "deploy/systemd/stockmaster-docker-build-cache-cleanup.timer",
-    "deploy/systemd/stockmaster-weekly-training.timer",
-    "deploy/systemd/stockmaster-weekly-calibration.timer",
-    "deploy/systemd/stockmaster-weekly-policy-research.timer",
     "scripts/server/run_scheduler_job.sh",
     "scripts/server/install_scheduler_units.sh",
     "scripts/server/uninstall_scheduler_units.sh",
@@ -40,16 +33,9 @@ def main() -> int:
     expected_jobs = {
         "ops_maintenance",
         "news_morning",
-        "intraday_assist",
         "news_after_close",
         "evaluation",
         "daily_close",
-        "daily_audit_lite",
-        "daily_overlay_refresh",
-        "docker_build_cache_cleanup",
-        "weekly_training_candidate",
-        "weekly_calibration",
-        "weekly_policy_research",
     }
     catalog_jobs = set(catalog["job_key"].tolist()) if not catalog.empty else set()
     missing_jobs = sorted(expected_jobs - catalog_jobs)

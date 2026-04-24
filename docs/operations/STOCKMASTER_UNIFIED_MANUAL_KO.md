@@ -310,16 +310,9 @@ sudo systemctl restart stockmaster-discord-bot.service
 
 - `deploy/systemd/stockmaster-ops-maintenance.timer`
 - `deploy/systemd/stockmaster-news-morning.timer`
-- `deploy/systemd/stockmaster-intraday-assist.timer`
 - `deploy/systemd/stockmaster-news-after-close.timer`
 - `deploy/systemd/stockmaster-evaluation.timer`
 - `deploy/systemd/stockmaster-daily-close.timer`
-- `deploy/systemd/stockmaster-daily-audit-lite.timer`
-- `deploy/systemd/stockmaster-daily-overlay-refresh.timer`
-- `deploy/systemd/stockmaster-docker-build-cache-cleanup.timer`
-- `deploy/systemd/stockmaster-weekly-training.timer`
-- `deploy/systemd/stockmaster-weekly-calibration.timer`
-- `deploy/systemd/stockmaster-weekly-policy-research.timer`
 
 ### 6.3 현재 권장 운영 구성
 
@@ -331,26 +324,25 @@ sudo systemctl restart stockmaster-discord-bot.service
 - `daily-close`
 - `ops-maintenance`
 
-주의:
+코드에는 남아 있지만 기본 설치 대상이 아닌 manual/chained job:
 
 - `daily-overlay-refresh`
 - `daily-audit-lite`
+- `docker-build-cache-cleanup`
+- `intraday-assist`
+- `weekly-training-candidate`
+- `weekly-calibration`
+- `weekly-policy-research`
 
-는 **daily-close 성공 후 체인으로 따라가는 구조**가 있으므로,
-별도 backstop timer를 항상 켜는지 여부는 중복 실행 정책과 함께 판단한다.
+이들은 수동 실행 또는 follow-up chain 용도로만 유지한다.
 
 ### 6.4 주요 schedule
 
 - ops maintenance: 매일 `02:30`
 - morning news: 평일 `08:30`
-- intraday assist: 평일 장중 5분 간격
 - after-close news: 평일 `16:10`
 - evaluation: 평일 `16:20`
 - daily-close: 평일 `17:30`
-- daily-overlay-refresh: 평일 `21:30`
-- weekly-training: 토요일 `03:30`
-- weekly-calibration: 토요일 `10:00`
-- weekly-policy-research: 토요일 `14:00`
 
 ### 6.5 상태 확인
 

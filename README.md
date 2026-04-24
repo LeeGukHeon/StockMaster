@@ -21,7 +21,7 @@ Implemented through TICKET-017:
 - final workflow polish with latest snapshot, report index, release candidate checks, Docs/Help, and Korean UI vocabulary
 - OCI deployment assets with server compose, nginx reverse proxy, backup/runbook, and external access checklist
 - DB contract audit / latest layer integrity checks / artifact reference validation
-- host systemd timer based scheduler orchestration with serial lock discipline, scheduled news sync, daily close/evaluation, weekly candidate generation, and maintenance automation
+- host systemd timer based scheduler orchestration with serial lock discipline, scheduled news sync, daily close/evaluation, and maintenance automation
 - Streamlit Today, Ops, Health Dashboard, Research, Leaderboard, Market Pulse, Stock Workbench, Evaluation, Intraday Console, Portfolio Studio, Portfolio Evaluation, and Docs/Help pages
 
 Out of scope:
@@ -143,31 +143,32 @@ Key scheduler assets:
 - `deploy/systemd/stockmaster-scheduler@.service`
 - `deploy/systemd/stockmaster-ops-maintenance.timer`
 - `deploy/systemd/stockmaster-news-morning.timer`
-- `deploy/systemd/stockmaster-intraday-assist.timer`
 - `deploy/systemd/stockmaster-news-after-close.timer`
 - `deploy/systemd/stockmaster-evaluation.timer`
 - `deploy/systemd/stockmaster-daily-close.timer`
-- `deploy/systemd/stockmaster-daily-audit-lite.timer`
-- `deploy/systemd/stockmaster-daily-overlay-refresh.timer`
-- `deploy/systemd/stockmaster-weekly-training.timer`
-- `deploy/systemd/stockmaster-weekly-calibration.timer`
-- `deploy/systemd/stockmaster-weekly-policy-research.timer`
 - `scripts/server/install_scheduler_units.sh`
 - `scripts/server/uninstall_scheduler_units.sh`
 - `scripts/server/status_scheduler_units.sh`
 - `scripts/server/run_scheduler_job_host.sh`
 - `docs/operations/STOCKMASTER_UNIFIED_MANUAL_KO.md`
 
-Initial schedule:
+Current installed schedule:
 
 - ops maintenance: daily `02:30`
 - morning news sync: Mon-Fri `08:30`
-- intraday assist: Mon-Fri `08:55-15:15`, every 5 minutes
 - after-close news sync: Mon-Fri `16:10`
 - evaluation bundle: Mon-Fri `16:20`
-- daily close bundle: Mon-Fri `17:00`
-- daily overlay refresh: Mon-Fri `21:30`
-- daily audit lite: Tue-Sat `05:30`
+- daily close bundle: Mon-Fri `17:30`
+
+Manual or chained-only jobs remain in code but are not installed as standalone timers by default:
+
+- `daily-overlay-refresh`
+- `daily-audit-lite`
+- `docker-build-cache-cleanup`
+- `intraday-assist`
+- `weekly-training-candidate`
+- `weekly-calibration`
+- `weekly-policy-research`
 - docker build cache cleanup: daily `04:30`
 - weekly training candidate: Sat `03:30`
 - weekly calibration: Sat `10:00`
