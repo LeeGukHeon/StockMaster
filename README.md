@@ -1312,7 +1312,6 @@ TICKET-013 docs:
 - [docs/WORKFLOW_DAILY.md](/d:/MyApps/StockMaster/docs/WORKFLOW_DAILY.md)
 - [docs/GLOSSARY.md](/d:/MyApps/StockMaster/docs/GLOSSARY.md)
 - [docs/KNOWN_LIMITATIONS.md](/d:/MyApps/StockMaster/docs/KNOWN_LIMITATIONS.md)
-- [docs/REPORTS_AND_PAGES.md](/d:/MyApps/StockMaster/docs/REPORTS_AND_PAGES.md)
 
 TICKET-016 audit docs:
 

@@ -1092,7 +1092,7 @@ TICKET_CHECKLIST: tuple[ChecklistItem, ...] = (
             "docs/GLOSSARY.md",
             "docs/KNOWN_LIMITATIONS.md",
         ),
-        optional_files=("docs/REPORTS_AND_PAGES.md",),
+        optional_files=(),
     ),
 )
 
