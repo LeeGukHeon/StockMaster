@@ -20,13 +20,16 @@ from app.evaluation.validation import validate_evaluation_pipeline
 from app.features.feature_store import build_feature_store
 from app.ml.active import freeze_alpha_active_model
 from app.ml.constants import (
-    DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS,
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
-    MODEL_VERSION as ALPHA_MODEL_VERSION,
+    DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS,
     get_alpha_model_spec,
+)
+from app.ml.constants import (
+    MODEL_VERSION as ALPHA_MODEL_VERSION,
 )
 from app.ml.inference import materialize_alpha_predictions_v1
 from app.ml.promotion import run_alpha_auto_promotion
+from app.ml.registry import load_active_alpha_model
 from app.ml.shadow import materialize_alpha_shadow_candidates
 from app.ml.training import train_alpha_candidate_models, train_alpha_model_v1
 from app.pipelines.daily_ohlcv import sync_daily_ohlcv
@@ -281,7 +284,7 @@ def run_daily_pipeline_job(
                 input_sources.insert(8, "train_alpha_model_v1")
                 input_sources.insert(9, "train_alpha_candidate_models")
             if active_d5_swing:
-                input_sources.append("freeze_alpha_active_model_h5_d5_swing")
+                input_sources.append("freeze_alpha_active_model_h5_d5_swing_init")
             if publish_discord:
                 input_sources.append("publish_discord_eod_report")
             record_run_start(
@@ -378,24 +381,32 @@ def run_daily_pipeline_job(
             )
             d5_active_freeze_result = None
             if active_d5_swing:
-                d5_active_freeze_result = freeze_alpha_active_model(
-                    settings,
-                    as_of_date=pipeline_date,
-                    source="daily_close_active_d5_swing",
-                    note=(
-                        "Daily close promoted alpha_swing_d5_v2 as the active H5 "
-                        "2-5 trading-day swing recommendation model."
-                    ),
-                    horizons=[5],
-                    model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
-                    train_end_date=pipeline_date,
-                    promotion_type="MANUAL_FREEZE",
-                )
-                if int(d5_active_freeze_result.row_count) <= 0:
-                    raise RuntimeError(
-                        "Daily pipeline could not activate D5 swing H5 model because "
-                        "no valid alpha_swing_d5_v2 training run was available."
+                with duckdb_connection(settings.paths.duckdb_path) as active_connection:
+                    bootstrap_core_tables(active_connection)
+                    active_h5 = load_active_alpha_model(
+                        active_connection,
+                        as_of_date=pipeline_date,
+                        horizon=5,
                     )
+                if active_h5 is None:
+                    d5_active_freeze_result = freeze_alpha_active_model(
+                        settings,
+                        as_of_date=pipeline_date,
+                        source="daily_close_active_d5_swing_init",
+                        note=(
+                            "Daily close initialized the active H5 swing model because "
+                            "no active checkpoint champion was registered yet."
+                        ),
+                        horizons=[5],
+                        model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+                        train_end_date=pipeline_date,
+                        promotion_type="MANUAL_FREEZE",
+                    )
+                    if int(d5_active_freeze_result.row_count) <= 0:
+                        raise RuntimeError(
+                            "Daily pipeline could not initialize the active D5 swing H5 "
+                            "model because no valid alpha_swing_d5_v2 training run was available."
+                        )
             alpha_prediction_result = materialize_alpha_predictions_v1(
                 settings,
                 as_of_date=pipeline_date,

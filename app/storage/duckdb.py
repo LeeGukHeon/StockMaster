@@ -480,6 +480,10 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         horizon INTEGER NOT NULL,
         incumbent_model_spec_id VARCHAR NOT NULL,
         challenger_model_spec_id VARCHAR NOT NULL,
+        promotion_scope VARCHAR,
+        incumbent_training_run_id VARCHAR,
+        challenger_training_run_id VARCHAR,
+        chosen_training_run_id VARCHAR,
         loss_name VARCHAR NOT NULL,
         window_start DATE,
         window_end DATE,
@@ -2131,6 +2135,25 @@ EVALUATION_SUMMARY_COLUMN_MIGRATIONS: tuple[str, ...] = (
     ),
 )
 
+PROMOTION_TEST_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    (
+        "ALTER TABLE fact_alpha_promotion_test "
+        "ADD COLUMN IF NOT EXISTS promotion_scope VARCHAR"
+    ),
+    (
+        "ALTER TABLE fact_alpha_promotion_test "
+        "ADD COLUMN IF NOT EXISTS incumbent_training_run_id VARCHAR"
+    ),
+    (
+        "ALTER TABLE fact_alpha_promotion_test "
+        "ADD COLUMN IF NOT EXISTS challenger_training_run_id VARCHAR"
+    ),
+    (
+        "ALTER TABLE fact_alpha_promotion_test "
+        "ADD COLUMN IF NOT EXISTS chosen_training_run_id VARCHAR"
+    ),
+)
+
 SELECTION_GAP_SCORECARD_COLUMN_MIGRATIONS: tuple[str, ...] = (
     (
         "ALTER TABLE fact_alpha_shadow_selection_gap_scorecard "
@@ -3348,6 +3371,9 @@ def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
             connection.execute(ddl)
 
         for ddl in EVALUATION_SUMMARY_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in PROMOTION_TEST_COLUMN_MIGRATIONS:
             connection.execute(ddl)
 
         for ddl in SELECTION_GAP_SCORECARD_COLUMN_MIGRATIONS:

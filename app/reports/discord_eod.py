@@ -78,6 +78,16 @@ ALPHA_DECISION_REASON_LABELS = {
     "multiple challengers survived without a clear winner": "도전자 여러 개가 남았지만 뚜렷한 승자가 없음",
     "matured shadow self-backtest history is not available": "성숙한 shadow 검증 이력이 아직 부족함",
     "shadow self-backtest matrix is incomplete": "shadow 검증 손실 행렬이 아직 불완전함",
+    "no active H5 champion was registered, so the latest candidate initialized serving": "활성 H5 챔피언이 없어 최신 학습 후보로 초기화함",
+    "the latest H5 candidate already matches the active champion": "최신 H5 후보가 이미 현재 챔피언과 같음",
+    "no trained H5 candidate run was available for checkpoint challenge": "H5 체크포인트 비교에 쓸 최신 학습 후보 run이 없음",
+    "the active H5 champion run could not be resolved for checkpoint challenge": "현재 H5 챔피언 run을 불러오지 못해 체크포인트 비교를 중단함",
+    "no matured H5 checkpoint challenge history was available": "성숙한 H5 체크포인트 비교 이력이 부족함",
+    "the latest H5 candidate did not improve selected top5 performance enough": "최신 H5 후보가 selected top5 성과를 충분히 개선하지 못함",
+    "the latest H5 candidate regressed on selection drag": "최신 H5 후보가 selection drag에서 악화됨",
+    "the latest H5 candidate regressed on selected top5 hit rate": "최신 H5 후보가 selected top5 적중률에서 악화됨",
+    "the latest H5 candidate regressed on worst selected top5 loss": "최신 H5 후보가 selected top5 최악 손실에서 악화됨",
+    "the latest H5 candidate cleared checkpoint guardrails and replaced the champion": "최신 H5 후보가 체크포인트 승급 조건을 통과해 챔피언을 교체함",
 }
 
 EXECUTION_STYLE_LABELS = {
