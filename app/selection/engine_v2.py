@@ -170,6 +170,7 @@ SELECTION_V2_TOPBUCKET_WEIGHTS = {
 }
 
 D5_RAW_PRESERVATION_PRIORITY_COUNT = 3
+D5_RAW_PRESERVATION_EXTREME_UNCERTAINTY_THRESHOLD = 92.0
 
 
 def _resolve_selection_weights(
@@ -452,20 +453,24 @@ def _compute_d5_raw_preservation_blocker_mask(scored: pd.DataFrame) -> pd.Series
         eligible = pd.Series(False, index=scored.index)
     else:
         eligible = eligible_flag.fillna(False).astype(bool)
-    critical_risk = pd.to_numeric(
-        scored.get("critical_risk_flag"),
-        errors="coerce",
-    ).fillna(0.0).astype(bool)
     fallback_flag = pd.to_numeric(
         scored.get("fallback_flag"),
         errors="coerce",
     ).fillna(0.0).astype(bool)
     uncertainty = pd.to_numeric(scored.get("uncertainty_score"), errors="coerce").fillna(0.0)
+    drawdown_series = scored.get("drawdown_20d")
+    if drawdown_series is None:
+        large_drawdown = pd.Series(False, index=scored.index, dtype=bool)
+    else:
+        large_drawdown = pd.to_numeric(
+            drawdown_series,
+            errors="coerce",
+        ).le(-0.15)
     return (
         ~eligible
-        | critical_risk
+        | large_drawdown
         | (fallback_flag & uncertainty.ge(75.0))
-        | uncertainty.ge(85.0)
+        | uncertainty.ge(D5_RAW_PRESERVATION_EXTREME_UNCERTAINTY_THRESHOLD)
     )
 
 

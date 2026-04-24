@@ -186,6 +186,7 @@ def test_d5_raw_preservation_blocker_mask_does_not_block_on_disagreement_alone()
         {
             "eligible_flag": [True],
             "critical_risk_flag": [False],
+            "drawdown_20d": [0.0],
             "fallback_flag": [False],
             "uncertainty_score": [20.0],
             "disagreement_score": [100.0],
@@ -202,9 +203,44 @@ def test_d5_raw_preservation_blocker_mask_still_blocks_high_uncertainty():
         {
             "eligible_flag": [True],
             "critical_risk_flag": [False],
+            "drawdown_20d": [0.0],
             "fallback_flag": [False],
-            "uncertainty_score": [90.0],
+            "uncertainty_score": [95.0],
             "disagreement_score": [100.0],
+        }
+    )
+
+    blocker = _compute_d5_raw_preservation_blocker_mask(scored)
+
+    assert bool(blocker.iloc[0]) is True
+
+
+def test_d5_raw_preservation_blocker_mask_allows_volatility_only_cases():
+    scored = pd.DataFrame(
+        {
+            "eligible_flag": [True],
+            "critical_risk_flag": [True],
+            "drawdown_20d": [-0.05],
+            "fallback_flag": [False],
+            "uncertainty_score": [88.0],
+            "disagreement_score": [95.0],
+        }
+    )
+
+    blocker = _compute_d5_raw_preservation_blocker_mask(scored)
+
+    assert bool(blocker.iloc[0]) is False
+
+
+def test_d5_raw_preservation_blocker_mask_still_blocks_large_drawdown():
+    scored = pd.DataFrame(
+        {
+            "eligible_flag": [True],
+            "critical_risk_flag": [True],
+            "drawdown_20d": [-0.20],
+            "fallback_flag": [False],
+            "uncertainty_score": [88.0],
+            "disagreement_score": [95.0],
         }
     )
 
