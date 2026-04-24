@@ -310,17 +310,32 @@ def load_alpha_promotion_summary(
         if not parsed_rows:
             continue
 
+        active_row = active_lookup.get(int(horizon), {})
         first = parsed_rows[0]
         incumbent_model_spec_id = str(first["row"].incumbent_model_spec_id)
+        active_model_spec_id = str(
+            active_row.get("active_model_spec_id") or incumbent_model_spec_id
+        )
+        operational_candidate_ids = {
+            spec.model_spec_id
+            for spec in ALPHA_CANDIDATE_MODEL_SPECS
+            if spec.active_candidate_flag and supports_horizon_for_spec(spec, horizon=int(horizon))
+        }
+        operational_candidate_ids.update({incumbent_model_spec_id, active_model_spec_id})
+        parsed_rows = [
+            item
+            for item in parsed_rows
+            if str(item["row"].challenger_model_spec_id) in operational_candidate_ids
+        ]
+        if not parsed_rows:
+            continue
+
+        first = parsed_rows[0]
         decision = str(first["row"].decision)
         chosen_model_spec_id = (
             str(first["chosen_model_spec_id"])
             if first["chosen_model_spec_id"] not in (None, "")
             else None
-        )
-        active_row = active_lookup.get(int(horizon), {})
-        active_model_spec_id = str(
-            active_row.get("active_model_spec_id") or incumbent_model_spec_id
         )
         mean_losses = (
             first["mean_losses"] if isinstance(first["mean_losses"], dict) else {}
