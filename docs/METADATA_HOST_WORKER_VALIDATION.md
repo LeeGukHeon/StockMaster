@@ -1,7 +1,7 @@
 # Metadata / Host Worker Validation
 
 이 문서는 metadata Postgres + host scheduler worker 전환 후 검증 순서를 남기는 체크리스트입니다.
-운영 절차 전체는 [RUNBOOK_SERVER_OPERATIONS.md](d:/MyApps/StockMaster/docs/RUNBOOK_SERVER_OPERATIONS.md)를 우선합니다.
+운영 절차 전체는 [STOCKMASTER_UNIFIED_MANUAL_KO.md](STOCKMASTER_UNIFIED_MANUAL_KO.md)를 우선합니다.
 
 ## Server Preconditions
 

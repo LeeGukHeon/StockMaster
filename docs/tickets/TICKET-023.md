@@ -33,4 +33,4 @@ Scheduler host worker 분리.
 - 서버 worker venv 경로 `/opt/stockmaster/worker-venv`, Python 3.11 확인
 - metadata db loopback 포트 `127.0.0.1:5433` 경로 확인
 - active lock 충돌은 scheduler 경로에서 `SKIPPED_LOCKED` 정상 스킵으로 정리
-- 운영 기준 문서는 `docs/RUNBOOK_SERVER_OPERATIONS.md`로 통합
+- 운영 기준 문서는 `docs/STOCKMASTER_UNIFIED_MANUAL_KO.md`로 통합

@@ -34,4 +34,4 @@ Metadata store split 1차 이행.
 - 서버 `.env.server` 기준 `METADATA_DB_ENABLED=true`, `METADATA_DB_BACKEND=postgres` 운영 반영
 - 운영 메타데이터 latest rebuild 및 최근 run 기록 Postgres 적재 확인
 - 로컬 `.env`는 계속 `METADATA_DB_ENABLED=false`, `METADATA_DB_BACKEND=duckdb`로 유지
-- 운영 기준 문서는 `docs/RUNBOOK_SERVER_OPERATIONS.md`로 통합
+- 운영 기준 문서는 `docs/STOCKMASTER_UNIFIED_MANUAL_KO.md`로 통합

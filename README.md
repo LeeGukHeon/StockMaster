@@ -99,7 +99,7 @@ Key assets:
 - `deploy/docker-compose.server.yml`
 - `deploy/nginx/default.conf`
 - `deploy/env/.env.server.example`
-- `docs/DEPLOY_OCI.md`
+- `docs/STOCKMASTER_UNIFIED_MANUAL_KO.md`
 - `deploy/systemd/stockmaster-compose.service`
 - `scripts/server/start_server.sh`
 - `scripts/server/stop_server.sh`
@@ -109,10 +109,6 @@ Key assets:
 - `scripts/server/check_public_access.sh`
 - `scripts/server/backup_server_data.sh`
 - `scripts/server/print_runtime_info.sh`
-- `docs/BACKUP_AND_RESTORE.md`
-- `docs/EXTERNAL_ACCESS_CHECKLIST.md`
-- `docs/RUNBOOK_SERVER_OPERATIONS.md`
-- `docs/SCHEDULER_AUTOMATION.md`
 - `docs/METADATA_HOST_WORKER_VALIDATION.md`
 
 Local vs server:
@@ -136,7 +132,7 @@ The server stack expects:
 - runtime data under `/opt/stockmaster/runtime`
 - backups under `/opt/stockmaster/backups`
 - Docker Engine + Docker Compose plugin installed on the OCI instance
-- canonical ops/dev/server runbook in `docs/RUNBOOK_SERVER_OPERATIONS.md`
+- canonical ops/dev/server runbook in `docs/STOCKMASTER_UNIFIED_MANUAL_KO.md`
 
 ## Scheduler automation
 
@@ -160,8 +156,7 @@ Key scheduler assets:
 - `scripts/server/uninstall_scheduler_units.sh`
 - `scripts/server/status_scheduler_units.sh`
 - `scripts/server/run_scheduler_job_host.sh`
-- `docs/SCHEDULER_AUTOMATION.md`
-- `docs/RUNBOOK_SERVER_OPERATIONS.md`
+- `docs/STOCKMASTER_UNIFIED_MANUAL_KO.md`
 
 Initial schedule:
 
