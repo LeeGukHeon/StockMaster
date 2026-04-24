@@ -45,7 +45,6 @@ MODEL_SPEC_LABELS: dict[str, str] = {
     "alpha_rank_rolling_120_v1": "rank rolling 120d",
     "alpha_topbucket_h1_rolling_120_v1": "topbucket h1 rolling 120d",
     "alpha_lead_d1_v1": "lead d1 v1",
-    "alpha_swing_d5_v1": "swing d5 v1",
     "alpha_swing_d5_v2": "swing d5 top5 v2",
     "alpha_recursive_rolling_combo": "recursive+rolling combo",
 }

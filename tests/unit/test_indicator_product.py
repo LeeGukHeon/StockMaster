@@ -44,7 +44,7 @@ def test_indicator_product_bundle_surfaces_missing_ohlcv_dates(tmp_path, monkeyp
             shadow_start_selection_date=date(2026, 3, 6),
             shadow_end_selection_date=date(2026, 3, 6),
             horizons=[1, 5],
-            model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v1"],
+            model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v2"],
             min_train_days=5,
             validation_days=2,
             limit_symbols=4,
@@ -71,7 +71,7 @@ def test_indicator_product_readiness_surfaces_spec_runnability(tmp_path) -> None
         settings,
         train_end_date=date(2026, 3, 6),
         horizons=[1, 5],
-        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v1"],
+        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v2"],
         limit_symbols=4,
         market="ALL",
     )
@@ -81,7 +81,7 @@ def test_indicator_product_readiness_surfaces_spec_runnability(tmp_path) -> None
     assert readiness.available_label_rows_by_horizon[5] > 0
     spec_map = {row.model_spec_id: row for row in readiness.specs}
     assert spec_map["alpha_lead_d1_v1"].runnable_horizons == [1]
-    assert spec_map["alpha_swing_d5_v1"].runnable_horizons == [5]
+    assert spec_map["alpha_swing_d5_v2"].runnable_horizons == [5]
 
 
 def test_analysis_model_spec_ids_include_h5_comparator_for_d5_only_bundle() -> None:

@@ -741,26 +741,27 @@ def test_run_alpha_indicator_product_bundle_smoke(tmp_path):
         shadow_start_selection_date=date(2026, 3, 6),
         shadow_end_selection_date=date(2026, 3, 6),
         horizons=[1, 5],
-        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v1"],
+        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v2"],
         min_train_days=5,
         validation_days=2,
         limit_symbols=4,
         market="ALL",
         rolling_windows=[20, 60],
         freeze_horizons=[1, 5],
+        allow_d5_active_freeze=True,
     )
 
-    assert result.training_run_count == 2
+    assert result.training_run_count == 5
     assert result.freeze_horizons == [1, 5]
     assert result.freeze_row_count == 2
-    assert result.frozen_model_spec_ids == ["alpha_swing_d5_v1"]
+    assert result.frozen_model_spec_ids == ["alpha_swing_d5_v2"]
     assert result.blocked_freeze_model_spec_ids == ["alpha_lead_d1_v1"]
     assert result.freeze_block_reasons["alpha_lead_d1_v1"][0].startswith(
         "insufficient_matured_shadow_dates="
     )
     assert result.missing_training_model_spec_ids == []
     assert result.active_model_spec_ids_by_horizon[1] == MODEL_SPEC_ID
-    assert result.active_model_spec_ids_by_horizon[5] == "alpha_swing_d5_v1"
+    assert result.active_model_spec_ids_by_horizon[5] == "alpha_swing_d5_v2"
     assert result.prediction_row_count == 8
     assert result.ranking_row_count == 8
     assert result.shadow_prediction_row_count > 0
@@ -794,13 +795,13 @@ def test_run_alpha_indicator_product_bundle_smoke(tmp_path):
             SELECT COUNT(*)
             FROM fact_alpha_shadow_selection_gap_scorecard
             WHERE summary_date = ?
-              AND model_spec_id IN ('alpha_lead_d1_v1', 'alpha_swing_d5_v1')
+              AND model_spec_id IN ('alpha_lead_d1_v1', 'alpha_swing_d5_v2')
             """,
             [date(2026, 3, 6)],
         ).fetchone()[0]
 
     assert active_h1[0] == MODEL_SPEC_ID
-    assert active_h5[0] == "alpha_swing_d5_v1"
+    assert active_h5[0] == "alpha_swing_d5_v2"
     assert int(gap_rows or 0) > 0
 
 
@@ -832,7 +833,7 @@ def test_run_alpha_indicator_product_bundle_preserves_h5_when_freeze_horizon_is_
         shadow_start_selection_date=date(2026, 3, 6),
         shadow_end_selection_date=date(2026, 3, 6),
         horizons=[1, 5],
-        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v1"],
+        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v2"],
         min_train_days=5,
         validation_days=2,
         limit_symbols=4,
@@ -890,7 +891,7 @@ def test_run_alpha_indicator_product_bundle_defaults_to_d1_only_freeze_when_h1_i
         shadow_start_selection_date=date(2026, 3, 6),
         shadow_end_selection_date=date(2026, 3, 6),
         horizons=[1, 5],
-        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v1"],
+        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v2"],
         min_train_days=5,
         validation_days=2,
         limit_symbols=4,
@@ -926,7 +927,7 @@ def test_materialize_alpha_predictions_v1_applies_d1_shape_control_only(tmp_path
         market="ALL",
         model_specs=(
             get_alpha_model_spec("alpha_lead_d1_v1"),
-            get_alpha_model_spec("alpha_swing_d5_v1"),
+            get_alpha_model_spec("alpha_swing_d5_v2"),
         ),
     )
     with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
@@ -944,7 +945,7 @@ def test_materialize_alpha_predictions_v1_applies_d1_shape_control_only(tmp_path
             model_version=MODEL_VERSION,
             train_end_date=date(2026, 3, 6),
             model_domain=MODEL_DOMAIN,
-            model_spec_id="alpha_swing_d5_v1",
+            model_spec_id="alpha_swing_d5_v2",
         )
 
     lead_result, _ = build_prediction_frame_from_training_run(
@@ -1062,7 +1063,7 @@ def test_run_alpha_indicator_product_bundle_backfills_shadow_history_across_rang
         shadow_start_selection_date=date(2026, 3, 4),
         shadow_end_selection_date=date(2026, 3, 6),
         horizons=[1, 5],
-        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v1"],
+        model_spec_ids=["alpha_lead_d1_v1", "alpha_swing_d5_v2"],
         min_train_days=5,
         validation_days=2,
         limit_symbols=4,
@@ -1092,7 +1093,7 @@ def test_run_alpha_indicator_product_bundle_backfills_shadow_history_across_rang
             """
             SELECT COUNT(DISTINCT selection_date)
             FROM fact_alpha_shadow_prediction
-            WHERE model_spec_id = 'alpha_swing_d5_v1'
+            WHERE model_spec_id = 'alpha_swing_d5_v2'
               AND horizon = 5
               AND selection_date BETWEEN ? AND ?
             """,
@@ -1133,15 +1134,24 @@ def test_run_alpha_indicator_product_bundle_backfills_shadow_history_across_rang
     assert comparator_rows == [
         ("alpha_lead_d1_v1", 1),
         ("alpha_recursive_expanding_v1", 1),
+        ("alpha_recursive_expanding_v1", 5),
         ("alpha_topbucket_h1_rolling_120_v1", 1),
     ]
 
 
 def test_run_alpha_indicator_product_bundle_d5_focus_enforces_comparator_lock(tmp_path):
     settings = _prepare_ticket006_data(tmp_path)
-    swing_v1_spec = get_alpha_model_spec("alpha_swing_d5_v1")
     swing_v2_spec = get_alpha_model_spec("alpha_swing_d5_v2")
     legacy_h1_spec = get_alpha_model_spec("alpha_topbucket_h1_rolling_120_v1")
+    freeze_alpha_active_model(
+        settings,
+        as_of_date=date(2026, 3, 6),
+        source="test-seed",
+        horizons=[5],
+        model_spec_id=MODEL_SPEC_ID,
+        train_end_date=date(2026, 3, 6),
+        promotion_type="MANUAL_FREEZE",
+    )
 
     for train_end_date in [date(2026, 3, 4), date(2026, 3, 5), date(2026, 3, 6)]:
         train_alpha_model_v1(
@@ -1160,7 +1170,7 @@ def test_run_alpha_indicator_product_bundle_d5_focus_enforces_comparator_lock(tm
             validation_days=2,
             limit_symbols=4,
             market="ALL",
-            model_specs=(swing_v1_spec, swing_v2_spec, legacy_h1_spec),
+            model_specs=(swing_v2_spec, legacy_h1_spec),
         )
 
     result = run_alpha_indicator_product_bundle(
@@ -1170,7 +1180,7 @@ def test_run_alpha_indicator_product_bundle_d5_focus_enforces_comparator_lock(tm
         shadow_start_selection_date=date(2026, 3, 4),
         shadow_end_selection_date=date(2026, 3, 6),
         horizons=[1, 5],
-        model_spec_ids=["alpha_swing_d5_v2", "alpha_swing_d5_v1"],
+        model_spec_ids=["alpha_swing_d5_v2"],
         min_train_days=5,
         validation_days=2,
         limit_symbols=4,
@@ -1181,10 +1191,10 @@ def test_run_alpha_indicator_product_bundle_d5_focus_enforces_comparator_lock(tm
     )
 
     assert result.freeze_horizons == [5]
-    assert result.frozen_model_spec_ids == ["alpha_swing_d5_v1"]
-    assert "alpha_swing_d5_v2" in result.blocked_freeze_model_spec_ids
+    assert result.frozen_model_spec_ids == []
+    assert result.blocked_freeze_model_spec_ids == ["alpha_swing_d5_v2"]
     assert result.freeze_block_reasons["alpha_swing_d5_v2"] == ["challenger_only_no_auto_freeze"]
-    assert result.active_model_spec_ids_by_horizon[5] == "alpha_swing_d5_v1"
+    assert 5 not in result.active_model_spec_ids_by_horizon
 
     allowed_result = run_alpha_indicator_product_bundle(
         settings,
@@ -1193,7 +1203,7 @@ def test_run_alpha_indicator_product_bundle_d5_focus_enforces_comparator_lock(tm
         shadow_start_selection_date=date(2026, 3, 4),
         shadow_end_selection_date=date(2026, 3, 6),
         horizons=[1, 5],
-        model_spec_ids=["alpha_swing_d5_v2", "alpha_swing_d5_v1"],
+        model_spec_ids=["alpha_swing_d5_v2"],
         min_train_days=5,
         validation_days=2,
         limit_symbols=4,
@@ -1206,10 +1216,6 @@ def test_run_alpha_indicator_product_bundle_d5_focus_enforces_comparator_lock(tm
 
     assert allowed_result.freeze_horizons == [5]
     assert allowed_result.frozen_model_spec_ids == ["alpha_swing_d5_v2"]
-    assert "alpha_swing_d5_v1" in allowed_result.blocked_freeze_model_spec_ids
-    assert allowed_result.freeze_block_reasons["alpha_swing_d5_v1"] == [
-        "d5_focus_active_freeze_preferred"
-    ]
     assert allowed_result.active_model_spec_ids_by_horizon[5] == "alpha_swing_d5_v2"
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
@@ -1221,7 +1227,6 @@ def test_run_alpha_indicator_product_bundle_d5_focus_enforces_comparator_lock(tm
               AND segment_value = 'top5'
               AND model_spec_id IN (
                 'alpha_swing_d5_v2',
-                'alpha_swing_d5_v1',
                 'alpha_recursive_expanding_v1',
                 'alpha_topbucket_h1_rolling_120_v1'
               )

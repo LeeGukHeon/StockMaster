@@ -27,7 +27,6 @@ MODEL_SPEC_LABELS = {
     "alpha_rank_rolling_120_v1": "5일 지속성 비교 기준",
     "alpha_topbucket_h1_rolling_120_v1": "하루 선행 비교 기준",
     "alpha_lead_d1_v1": "하루 선행 포착 v1",
-    "alpha_swing_d5_v1": "5일 지속 포착 v1",
     "alpha_swing_d5_v2": "2~5일 스윙 포착 v2",
 }
 

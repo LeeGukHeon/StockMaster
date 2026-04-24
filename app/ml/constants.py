@@ -162,28 +162,6 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         allowed_horizons=(1,),
     ),
     AlphaModelSpec(
-        model_spec_id="alpha_swing_d5_v1",
-        estimation_scheme="rolling",
-        rolling_window_days=250,
-        active_candidate_flag=False,
-        lifecycle_role="baseline_only",
-        feature_groups=(
-            "price_trend",
-            "liquidity_turnover",
-            "investor_flow",
-            "news_catalyst",
-            "fundamentals_quality",
-            "value_safety",
-            "data_quality",
-        ),
-        member_names=("elasticnet", "hist_gbm"),
-        target_variant="top5_binary",
-        training_target_variant="top5_binary",
-        validation_primary_metric_name="top5_mean_excess_return",
-        promotion_primary_loss_name="loss_top5",
-        allowed_horizons=(5,),
-    ),
-    AlphaModelSpec(
         model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
         estimation_scheme="rolling",
         rolling_window_days=250,
@@ -210,12 +188,6 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
 ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
     DEFAULT_ALPHA_MODEL_SPEC,
     *CHALLENGER_ALPHA_MODEL_SPECS,
-)
-RETIRED_ALPHA_MODEL_SPEC_IDS: tuple[str, ...] = ("alpha_swing_d5_v1",)
-REGISTRY_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = tuple(
-    spec
-    for spec in ALPHA_CANDIDATE_MODEL_SPECS
-    if spec.model_spec_id not in RETIRED_ALPHA_MODEL_SPEC_IDS
 )
 DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = tuple(
     spec

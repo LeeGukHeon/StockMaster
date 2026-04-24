@@ -221,7 +221,7 @@ def test_d5_primary_weights_apply_only_to_focus_spec():
     )
     generic_top5_weights = _resolve_selection_weights(
         horizon=5,
-        model_spec_id="alpha_swing_d5_v1",
+        model_spec_id="alpha_rank_rolling_120_v1",
         target_variant="top5_binary",
     )
 
@@ -237,7 +237,7 @@ def test_d5_primary_weights_soften_disagreement_penalty_for_focus_spec():
     )
     generic_top5_weights = _resolve_selection_weights(
         horizon=5,
-        model_spec_id="alpha_swing_d5_v1",
+        model_spec_id="alpha_rank_rolling_120_v1",
         target_variant="top5_binary",
     )
 

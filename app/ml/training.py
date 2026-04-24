@@ -28,7 +28,6 @@ from app.ml.constants import (
     DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS,
     MODEL_DOMAIN,
     MODEL_VERSION,
-    REGISTRY_ALPHA_MODEL_SPECS,
     SELECTION_ENGINE_VERSION,
     AlphaModelSpec,
     resolve_feature_columns_for_spec,
@@ -543,7 +542,7 @@ def _model_spec_registry_row(model_spec: AlphaModelSpec) -> dict[str, object]:
 
 
 def build_alpha_model_spec_registry_frame(
-    model_specs: tuple[AlphaModelSpec, ...] = REGISTRY_ALPHA_MODEL_SPECS,
+    model_specs: tuple[AlphaModelSpec, ...] = ALPHA_CANDIDATE_MODEL_SPECS,
 ) -> pd.DataFrame:
     return pd.DataFrame([_model_spec_registry_row(spec) for spec in model_specs])
 

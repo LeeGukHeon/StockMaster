@@ -9,7 +9,6 @@ import pandas as pd
 from app.ml.constants import (
     CHALLENGER_ALPHA_MODEL_SPECS,
     DEFAULT_ALPHA_MODEL_SPEC,
-    REGISTRY_ALPHA_MODEL_SPECS,
     get_alpha_model_spec,
     resolve_feature_columns_for_spec,
     resolve_member_names_for_spec,
@@ -74,13 +73,10 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     h5_spec = get_alpha_model_spec("alpha_rank_rolling_120_v1")
     h1_spec = get_alpha_model_spec("alpha_topbucket_h1_rolling_120_v1")
     d1_spec = get_alpha_model_spec("alpha_lead_d1_v1")
-    d5_spec = get_alpha_model_spec("alpha_swing_d5_v1")
     d5_focus_spec = get_alpha_model_spec("alpha_swing_d5_v2")
     assert h5_spec.active_candidate_flag is False
     assert h1_spec.active_candidate_flag is False
     assert d1_spec.active_candidate_flag is True
-    assert d5_spec.active_candidate_flag is False
-    assert d5_spec.lifecycle_role == "baseline_only"
     assert d5_focus_spec.active_candidate_flag is True
     assert supports_horizon_for_spec(h5_spec, horizon=5) is True
     assert supports_horizon_for_spec(h5_spec, horizon=1) is False
@@ -88,18 +84,22 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     assert supports_horizon_for_spec(h1_spec, horizon=5) is False
     assert supports_horizon_for_spec(d1_spec, horizon=1) is True
     assert supports_horizon_for_spec(d1_spec, horizon=5) is False
-    assert supports_horizon_for_spec(d5_spec, horizon=5) is True
-    assert supports_horizon_for_spec(d5_spec, horizon=1) is False
     assert supports_horizon_for_spec(d5_focus_spec, horizon=5) is True
     assert supports_horizon_for_spec(d5_focus_spec, horizon=1) is False
 
 
-def test_registry_frame_excludes_retired_d5_v1_spec() -> None:
-    registry_ids = [spec.model_spec_id for spec in REGISTRY_ALPHA_MODEL_SPECS]
+def test_registry_frame_matches_operational_specs() -> None:
     frame_ids = build_alpha_model_spec_registry_frame()["model_spec_id"].tolist()
 
-    assert "alpha_swing_d5_v1" not in registry_ids
-    assert "alpha_swing_d5_v1" not in frame_ids
+    assert frame_ids == [
+        "alpha_recursive_expanding_v1",
+        "alpha_rolling_120_v1",
+        "alpha_rolling_250_v1",
+        "alpha_rank_rolling_120_v1",
+        "alpha_topbucket_h1_rolling_120_v1",
+        "alpha_lead_d1_v1",
+        "alpha_swing_d5_v2",
+    ]
 
 
 def test_d5_focus_spec_matches_frozen_contract() -> None:

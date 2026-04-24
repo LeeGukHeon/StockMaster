@@ -150,7 +150,7 @@ def _seed_alpha_promotion_surface(settings) -> None:
                 0.020, 0.018, 0.017, 0.55, 0.53, 0.52, 0.60, 0.021, 0.015, -0.002, 'seed-gap', now()
             ),
             (
-                ?, 'rolling_20', ?, ?, 5, 'alpha_swing_d5_v1', 'top5',
+                ?, 'rolling_20', ?, ?, 5, 'alpha_swing_d5_v2', 'top5',
                 20, 20, FALSE, 'prediction desc', 'realized_excess_return > 0',
                 0.016, 0.015, 0.014, 0.53, 0.52, 0.51, 0.58, 0.017, 0.013, -0.001, 'seed-gap', now()
             )

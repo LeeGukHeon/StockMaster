@@ -48,7 +48,6 @@ SPEC_BASE_RETURNS = {
     "alpha_rank_rolling_120_v1": [0.027, 0.022, 0.026, 0.019, 0.024, 0.018, 0.021],
     "alpha_topbucket_h1_rolling_120_v1": [0.018, 0.016, 0.019, 0.015, 0.017, 0.014, 0.016],
     "alpha_lead_d1_v1": [0.032, 0.028, 0.031, 0.026, 0.029, 0.025, 0.027],
-    "alpha_swing_d5_v1": [0.024, 0.021, 0.025, 0.020, 0.023, 0.019, 0.022],
     "alpha_swing_d5_v2": [0.020, 0.018, 0.021, 0.017, 0.019, 0.016, 0.018],
 }
 SPEC_BASE_ERRORS = {
@@ -58,7 +57,6 @@ SPEC_BASE_ERRORS = {
     "alpha_rank_rolling_120_v1": [0.005, 0.006, 0.004, 0.005, 0.006, 0.005, 0.004],
     "alpha_topbucket_h1_rolling_120_v1": [0.007, 0.008, 0.006, 0.007, 0.008, 0.007, 0.006],
     "alpha_lead_d1_v1": [0.003, 0.004, 0.003, 0.004, 0.004, 0.003, 0.004],
-    "alpha_swing_d5_v1": [0.004, 0.004, 0.003, 0.004, 0.004, 0.003, 0.004],
     "alpha_swing_d5_v2": [0.006, 0.006, 0.005, 0.006, 0.006, 0.005, 0.006],
 }
 SYMBOL_RETURN_ADJUSTMENTS = [0.006, 0.002, -0.002, -0.006]
@@ -378,7 +376,7 @@ def test_run_alpha_auto_promotion_blocks_lineage_mismatched_challenger(tmp_path)
     assert "shadow_validation_failed" in str(blocked_row[1])
 
 
-def test_run_alpha_auto_promotion_refreshes_registry_and_excludes_retired_d5_v1(tmp_path):
+def test_run_alpha_auto_promotion_uses_current_h5_candidate_set(tmp_path):
     settings = _build_promotion_settings(tmp_path)
     freeze_alpha_active_model(
         settings,
@@ -393,13 +391,17 @@ def test_run_alpha_auto_promotion_refreshes_registry_and_excludes_retired_d5_v1(
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
-        connection.execute(
-            """
-            UPDATE dim_alpha_model_spec
-            SET active_candidate_flag = TRUE
-            WHERE model_spec_id = 'alpha_swing_d5_v1'
-            """
-        )
+        active_h5_specs = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT model_spec_id
+                FROM dim_alpha_model_spec
+                WHERE active_candidate_flag = TRUE
+                  AND model_spec_id LIKE 'alpha_swing_d5%'
+                """
+            ).fetchall()
+        }
 
     result = run_alpha_auto_promotion(
         settings,
@@ -411,29 +413,34 @@ def test_run_alpha_auto_promotion_refreshes_registry_and_excludes_retired_d5_v1(
     )
 
     assert result.row_count > 0
+    assert active_h5_specs == {"alpha_swing_d5_v2"}
 
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         bootstrap_core_tables(connection)
-        v1_flag = connection.execute(
-            """
-            SELECT active_candidate_flag
-            FROM dim_alpha_model_spec
-            WHERE model_spec_id = 'alpha_swing_d5_v1'
-            """
-        ).fetchone()[0]
-        v1_rows = connection.execute(
+        challenger_ids = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT DISTINCT challenger_model_spec_id
+                FROM fact_alpha_promotion_test
+                WHERE promotion_date = ?
+                  AND horizon = 5
+                """,
+                [date(2026, 3, 10)],
+            ).fetchall()
+        }
+        h5_rows = connection.execute(
             """
             SELECT COUNT(*)
             FROM fact_alpha_promotion_test
             WHERE promotion_date = ?
               AND horizon = 5
-              AND challenger_model_spec_id = 'alpha_swing_d5_v1'
             """,
             [date(2026, 3, 10)],
         ).fetchone()[0]
 
-    assert bool(v1_flag) is False
-    assert int(v1_rows or 0) == 0
+    assert challenger_ids == {"alpha_swing_d5_v2"}
+    assert int(h5_rows or 0) > 0
 
 
 def test_rollback_alpha_active_model_is_noop_without_previous_and_restores_previous(tmp_path):

@@ -14,7 +14,6 @@ def test_daily_pipeline_includes_d5_primary_spec_only_when_active_swing_enabled(
         for spec in _candidate_model_specs_for_daily_pipeline(active_d5_swing=True)
     ]
 
+    assert default_ids == ["alpha_lead_d1_v1"]
     assert D5_PRIMARY_FOCUS_MODEL_SPEC_ID not in default_ids
-    assert "alpha_swing_d5_v1" not in default_ids
-    assert "alpha_swing_d5_v1" not in active_ids
     assert active_ids.count(D5_PRIMARY_FOCUS_MODEL_SPEC_ID) == 1
