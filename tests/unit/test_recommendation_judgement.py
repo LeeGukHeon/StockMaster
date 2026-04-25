@@ -34,3 +34,14 @@ def test_classify_recommendation_rejects_negative_expected_return() -> None:
     )
 
     assert judgement.label == "매수 보류"
+
+
+def test_classify_recommendation_distinguishes_missing_evidence_from_small_sample() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=60,
+        expected_excess_return=0.01,
+        evidence_by_band={},
+    )
+
+    assert judgement.label == "관찰 우선"
+    assert "점수대 성과 미연결" in judgement.summary

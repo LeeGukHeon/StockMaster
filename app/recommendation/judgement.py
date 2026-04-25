@@ -78,7 +78,9 @@ def _evidence_supports_aggressive(evidence: ScoreBandEvidence | None) -> bool:
 
 
 def _evidence_summary(evidence: ScoreBandEvidence | None) -> str:
-    if evidence is None or evidence.sample_count <= 0 or evidence.avg_excess_return is None:
+    if evidence is None:
+        return "점수대 성과 미연결"
+    if evidence.sample_count <= 0 or evidence.avg_excess_return is None:
         return "점수대 성과 표본 부족"
     return f"{evidence.score_band}점대 과거 평균 {evidence.avg_excess_return:+.1%}"
 
