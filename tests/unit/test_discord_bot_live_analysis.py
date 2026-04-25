@@ -136,20 +136,21 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
 
     rendered = render_live_stock_analysis(object(), query="삼성전자")
 
-    assert "현재가 71,000원" in rendered
+    assert "현재 71,000원" in rendered
     assert "005930 삼성전자 · 매수해볼 가치 있음" in rendered
-    assert "D5 S · 점수 72.0 · 기대 +2.10%" in rendered
-    assert "참고: D1 A · 5일수익 +3.45%" in rendered
-    assert "판단근거: 점수대 성과 우위" in rendered
-    assert "상대 강도가 살아나는 흐름" in rendered
-    assert "원점수 상위 신호를 최대한 보존함" in rendered
-    assert "단기 탄력 강함" in rendered
+    assert "D5 S/72.0점 · 기대 +2.10%" in rendered
+    assert "판단: 점수대 성과 우위" in rendered
+    assert "근거: 상대 강도가 살아나는 흐름, 원점수 상위 신호를 최대한 보존함" in rendered
+    assert "단기 탄력 강함" not in rendered
     assert "raw_alpha_leader_preserved" not in rendered
-    assert "앙상블 내부 판단이 엇갈림" in rendered
-    assert "신호(0~100): D5추세 71.0" in rendered
-    assert "데이터: KIS 실시간 시세 기준 · Naver 최신 뉴스 2건 반영" in rendered
-    assert "가격선: 목표 72,500원" in rendered
-    assert "뉴스: 삼성전자 실적 개선 / 삼성전자 AI 반도체 기대" in rendered
+    assert "주의: 앙상블 내부 판단이 엇갈림" in rendered
+    assert "외 1" not in rendered
+    assert "신호 추세 강함 · 수급 양호 · 위험 낮음" in rendered
+    assert "데이터: KIS 실시간 시세 기준" not in rendered
+    assert "가격: 목표 72,500원 · 손절 68,800원" in rendered
+    assert "뉴스: 삼성전자 실적 개선" in rendered
+    assert "삼성전자 AI 반도체 기대" not in rendered
+    assert len(rendered.splitlines()) <= 7
 
 
 def test_render_live_stock_analysis_returns_candidate_list_for_ambiguous_query(monkeypatch) -> None:
@@ -234,6 +235,7 @@ def test_render_live_stock_analysis_degrades_when_external_providers_fail(monkey
     rendered = render_live_stock_analysis(object(), query="삼성전자")
 
     assert "005930 삼성전자 · 매수해볼 가치 있음" in rendered
-    assert "D5 A · 점수 66.0 · 기대 +1.00%" in rendered
-    assert "분석 모드 busy · snapshot 재사용" in rendered
+    assert "D5 A/66.0점 · 기대 +1.00%" in rendered
+    assert "상태: busy · snapshot 재사용" in rendered
     assert "데이터: KIS 실시간 시세 미수신 · Naver 최신 뉴스 미수신" in rendered
+    assert len(rendered.splitlines()) <= 7
