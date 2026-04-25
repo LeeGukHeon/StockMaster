@@ -45,3 +45,26 @@ def test_classify_recommendation_distinguishes_missing_evidence_from_small_sampl
 
     assert judgement.label == "관찰 우선"
     assert "점수대 성과 미연결" in judgement.summary
+
+
+def test_classify_recommendation_treats_sparse_bad_75_band_as_overconfidence() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=82,
+        expected_excess_return=0.05,
+        evidence_by_band={"75+": ScoreBandEvidence("75+", 3, -0.046, 0.0)},
+    )
+
+    assert judgement.label == "관찰 우선"
+    assert "과확신 경고" in judgement.summary
+    assert "75+점대 과거 평균 -4.6%" in judgement.summary
+
+
+def test_classify_recommendation_blocks_buy_when_band_sample_is_too_small() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=68,
+        expected_excess_return=0.02,
+        evidence_by_band={"65-75": ScoreBandEvidence("65-75", 5, 0.01, 0.6)},
+    )
+
+    assert judgement.label == "매수 보류"
+    assert "점수대 우위 약함" in judgement.summary

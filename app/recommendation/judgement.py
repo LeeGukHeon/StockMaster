@@ -60,9 +60,25 @@ def _float_or_none(value: object) -> float | None:
 
 
 def _evidence_supports_buy(evidence: ScoreBandEvidence | None) -> bool:
-    if evidence is None or evidence.sample_count < 30 or evidence.avg_excess_return is None:
+    if evidence is None:
         return True
+    if evidence.sample_count < 30 or evidence.avg_excess_return is None:
+        return False
     return evidence.avg_excess_return > 0.0
+
+
+def _evidence_warns_overconfidence(evidence: ScoreBandEvidence | None) -> bool:
+    if evidence is None:
+        return False
+    if evidence.score_band != "75+":
+        return False
+    if evidence.sample_count < 30:
+        return True
+    if evidence.avg_excess_return is None:
+        return True
+    if evidence.avg_excess_return <= 0.0:
+        return True
+    return evidence.hit_rate is not None and evidence.hit_rate < 0.45
 
 
 def _evidence_supports_aggressive(evidence: ScoreBandEvidence | None) -> bool:
@@ -113,6 +129,14 @@ def classify_recommendation(
         return RecommendationJudgement(
             label="매수 보류",
             summary=f"기대수익률이 낮음 · {evidence_text}",
+            score_band=band,
+            evidence=evidence,
+        )
+
+    if _evidence_warns_overconfidence(evidence):
+        return RecommendationJudgement(
+            label="관찰 우선",
+            summary=f"고점수 과확신 경고 · {evidence_text}",
             score_band=band,
             evidence=evidence,
         )
