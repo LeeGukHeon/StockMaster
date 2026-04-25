@@ -5,7 +5,7 @@ import argparse
 import json
 import shutil
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
 from typing import Iterable
@@ -286,7 +286,7 @@ def run_backtest(args: argparse.Namespace) -> int:
         "db_read_only": True,
         "delete_temp_models_per_date": not args.keep_temp_models,
         "outputs": [],
-        "jobs": [job.__dict__ for job in jobs],
+        "jobs": [asdict(job) for job in jobs],
     }
 
     summary_frames: list[pd.DataFrame] = []
