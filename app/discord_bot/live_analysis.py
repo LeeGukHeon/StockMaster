@@ -15,6 +15,12 @@ from app.providers.naver_news.client import NaverNewsProvider
 from app.reports.discord_eod import REASON_LABELS, RISK_LABELS
 from app.settings import Settings
 
+LIVE_RISK_LABELS = {
+    **RISK_LABELS,
+    "model_disagreement_high": "앙상블 내부 판단이 엇갈림",
+    "model_uncertainty_high": "모델 불확실성이 큼",
+}
+
 SIGNAL_METRIC_LABELS = {
     "d1_trend_momentum_score": "D1 추세 탄력",
     "d5_trend_momentum_score": "D5 추세 탄력",
@@ -260,9 +266,9 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
         lines.append(f"실시간 목표가 {target_price}원 · 손절 참고선 {stop_price}원")
     signal_lines = _render_signal_decomposition(analysis_payload.get("signal_decomposition", {}))
     if signal_lines:
-        lines.append("신호 분해")
+        lines.append("신호 분해 (0~100, 지지/부담 강도)")
         lines.extend(signal_lines)
-    risk_flags = _translate_tag_list(analysis_payload.get("risk_flags"), RISK_LABELS, limit=4)
+    risk_flags = _translate_tag_list(analysis_payload.get("risk_flags"), LIVE_RISK_LABELS, limit=4)
     if risk_flags:
         lines.append("리스크 플래그")
         lines.extend(f"- {item}" for item in risk_flags)

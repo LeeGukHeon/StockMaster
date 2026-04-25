@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
-import json
 
 import duckdb
 import pandas as pd
@@ -15,6 +15,7 @@ from app.features.builders.liquidity_features import build_liquidity_feature_fra
 from app.features.builders.news_features import build_news_feature_frame
 from app.features.builders.price_features import build_price_feature_frame
 from app.features.builders.quality_features import build_data_quality_feature_frame
+from app.features.constants import FEATURE_NAMES
 from app.features.feature_store import (
     _load_feature_symbol_frame,
     _load_investor_flow_history,
@@ -25,6 +26,7 @@ from app.features.feature_store import (
     _unregister_symbol_stage,
     load_feature_matrix,
 )
+from app.features.normalization import compute_group_rank_pct
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ml.inference import (
@@ -80,7 +82,9 @@ def _derive_invalidation_conditions(risk_flags: list[str]) -> list[str]:
         if risk_flag == "high_realized_volatility":
             conditions.append("변동성이 더 커지면 선행 신호보다 잡음이 커질 수 있습니다.")
         elif risk_flag == "large_recent_drawdown":
-            conditions.append("최근 급락이 이어지면 반등 가설보다 추세 훼손 가능성을 우선 봐야 합니다.")
+            conditions.append(
+                "최근 급락이 이어지면 반등 가설보다 추세 훼손 가능성을 우선 봐야 합니다."
+            )
         elif risk_flag == "model_uncertainty_high":
             conditions.append("모델 불확실성이 높아 추가 확인 없이 공격적으로 진입하지 않습니다.")
         elif risk_flag == "crowding_risk":
@@ -104,9 +108,7 @@ def build_live_analysis_payload(
         else ["snapshot", "quote", "news"]
     )
     degradation_mode = (
-        "none"
-        if live_result.mode == "live" and live_row is not None
-        else str(live_result.mode)
+        "none" if live_result.mode == "live" and live_row is not None else str(live_result.mode)
     )
     d1_grade = (
         live_row.get("live_d1_selection_v2_grade")
@@ -180,13 +182,9 @@ def build_live_analysis_payload(
         "d5_grade": d5_grade,
         "d5_expected_excess_return": d5_expected,
         "ret_5d": snapshot_payload.get("ret_5d"),
-        "d1_head_spec_id": (
-            None if live_row is None else live_row.get("live_d1_model_spec_id")
-        )
+        "d1_head_spec_id": (None if live_row is None else live_row.get("live_d1_model_spec_id"))
         or snapshot_payload.get("d1_model_spec_id"),
-        "d5_head_spec_id": (
-            None if live_row is None else live_row.get("live_d5_model_spec_id")
-        )
+        "d5_head_spec_id": (None if live_row is None else live_row.get("live_d5_model_spec_id"))
         or snapshot_payload.get("d5_model_spec_id"),
         "d1_active_alpha_model_id": (
             None if live_row is None else live_row.get("live_d1_active_alpha_model_id")
@@ -289,7 +287,9 @@ def _build_workbench_live_feature_row(
         symbol_frame[["symbol", "company_name", "market"]]
         .merge(latest_price_dates, on="symbol", how="left")
         .merge(latest_close, on="symbol", how="left")
-        .merge(build_price_feature_frame(ohlcv_history, as_of_date=as_of_date), on="symbol", how="left")
+        .merge(
+            build_price_feature_frame(ohlcv_history, as_of_date=as_of_date), on="symbol", how="left"
+        )
         .merge(
             build_liquidity_feature_frame(ohlcv_history, as_of_date=as_of_date),
             on="symbol",
@@ -309,7 +309,9 @@ def _build_workbench_live_feature_row(
             on="symbol",
             how="left",
         )
-        .merge(build_news_feature_frame(recent_news, as_of_date=as_of_date), on="symbol", how="left")
+        .merge(
+            build_news_feature_frame(recent_news, as_of_date=as_of_date), on="symbol", how="left"
+        )
     )
 
     feature_matrix["earnings_yield_proxy"] = feature_matrix["net_income_latest"] / feature_matrix[
@@ -340,6 +342,20 @@ def _build_workbench_live_feature_row(
     )
     feature_matrix.insert(0, "as_of_date", as_of_date)
     return feature_matrix
+
+
+def _refresh_live_rank_features(feature_matrix: pd.DataFrame) -> pd.DataFrame:
+    if feature_matrix.empty or "market" not in feature_matrix.columns:
+        return feature_matrix
+    refreshed = feature_matrix.copy()
+    for feature_name in FEATURE_NAMES:
+        if feature_name not in refreshed.columns:
+            continue
+        refreshed[f"{feature_name}_rank_pct"] = compute_group_rank_pct(
+            refreshed,
+            column=feature_name,
+        )
+    return refreshed
 
 
 def _workbench_latest_reference_price(
@@ -418,7 +434,9 @@ def compute_live_stock_recommendation(
 
             feature_context = load_feature_matrix(connection, as_of_date=as_of_date, market="ALL")
             if feature_context.empty:
-                return LiveRecalcResult(pd.DataFrame(), mode="missing", note="특징값 스냅샷이 없습니다.")
+                return LiveRecalcResult(
+                    pd.DataFrame(), mode="missing", note="특징값 스냅샷이 없습니다."
+                )
 
             live_feature_row = _build_workbench_live_feature_row(
                 connection,
@@ -426,12 +444,15 @@ def compute_live_stock_recommendation(
                 symbol=normalized_symbol,
             )
             if live_feature_row.empty:
-                return LiveRecalcResult(pd.DataFrame(), mode="missing", note="종목 특징값을 만들지 못했습니다.")
+                return LiveRecalcResult(
+                    pd.DataFrame(), mode="missing", note="종목 특징값을 만들지 못했습니다."
+                )
 
             feature_context = feature_context.loc[
                 feature_context["symbol"].astype(str).ne(normalized_symbol)
             ].copy()
             feature_matrix = pd.concat([feature_context, live_feature_row], ignore_index=True)
+            feature_matrix = _refresh_live_rank_features(feature_matrix)
 
             prediction_frames_by_horizon: dict[int, pd.DataFrame] = {}
             live_prediction_rows: dict[int, pd.DataFrame] = {}
@@ -514,7 +535,9 @@ def compute_live_stock_recommendation(
                     continue
                 ranking_by_horizon[int(symbol_row["horizon"].iloc[0])] = symbol_row.iloc[0]
             if not ranking_by_horizon:
-                return LiveRecalcResult(pd.DataFrame(), mode="missing", note="실시간 순위를 만들지 못했습니다.")
+                return LiveRecalcResult(
+                    pd.DataFrame(), mode="missing", note="실시간 순위를 만들지 못했습니다."
+                )
 
             reference_date, reference_price = _workbench_latest_reference_price(
                 connection,
@@ -529,7 +552,8 @@ def compute_live_stock_recommendation(
                 d5_prediction_row = live_prediction_rows[5].iloc[0]
             expected = (
                 None
-                if d5_prediction_row is None or pd.isna(d5_prediction_row.get("expected_excess_return"))
+                if d5_prediction_row is None
+                or pd.isna(d5_prediction_row.get("expected_excess_return"))
                 else float(d5_prediction_row["expected_excess_return"])
             )
             upper = (
@@ -551,32 +575,52 @@ def compute_live_stock_recommendation(
                         "live_as_of_date": as_of_date,
                         "live_reference_date": reference_date,
                         "live_reference_price": reference_price,
-                        "live_d1_selection_v2_value": ranking_by_horizon.get(1, {}).get("final_selection_value"),
+                        "live_d1_selection_v2_value": ranking_by_horizon.get(1, {}).get(
+                            "final_selection_value"
+                        ),
                         "live_d1_selection_v2_grade": ranking_by_horizon.get(1, {}).get("grade"),
                         "live_d1_eligible_flag": ranking_by_horizon.get(1, {}).get("eligible_flag"),
-                        "live_d1_report_candidate_flag": ranking_by_horizon.get(1, {}).get("report_candidate_flag"),
+                        "live_d1_report_candidate_flag": ranking_by_horizon.get(1, {}).get(
+                            "report_candidate_flag"
+                        ),
                         "live_d1_model_spec_id": None
                         if d1_prediction_row is None
                         else d1_prediction_row.get("model_spec_id"),
                         "live_d1_active_alpha_model_id": None
                         if d1_prediction_row is None
                         else d1_prediction_row.get("active_alpha_model_id"),
-                        "live_d1_top_reason_tags_json": ranking_by_horizon.get(1, {}).get("top_reason_tags_json"),
-                        "live_d1_risk_flags_json": ranking_by_horizon.get(1, {}).get("risk_flags_json"),
-                        "live_d1_explanatory_score_json": ranking_by_horizon.get(1, {}).get("explanatory_score_json"),
-                        "live_d5_selection_v2_value": ranking_by_horizon.get(5, {}).get("final_selection_value"),
+                        "live_d1_top_reason_tags_json": ranking_by_horizon.get(1, {}).get(
+                            "top_reason_tags_json"
+                        ),
+                        "live_d1_risk_flags_json": ranking_by_horizon.get(1, {}).get(
+                            "risk_flags_json"
+                        ),
+                        "live_d1_explanatory_score_json": ranking_by_horizon.get(1, {}).get(
+                            "explanatory_score_json"
+                        ),
+                        "live_d5_selection_v2_value": ranking_by_horizon.get(5, {}).get(
+                            "final_selection_value"
+                        ),
                         "live_d5_selection_v2_grade": ranking_by_horizon.get(5, {}).get("grade"),
                         "live_d5_eligible_flag": ranking_by_horizon.get(5, {}).get("eligible_flag"),
-                        "live_d5_report_candidate_flag": ranking_by_horizon.get(5, {}).get("report_candidate_flag"),
+                        "live_d5_report_candidate_flag": ranking_by_horizon.get(5, {}).get(
+                            "report_candidate_flag"
+                        ),
                         "live_d5_model_spec_id": None
                         if d5_prediction_row is None
                         else d5_prediction_row.get("model_spec_id"),
                         "live_d5_active_alpha_model_id": None
                         if d5_prediction_row is None
                         else d5_prediction_row.get("active_alpha_model_id"),
-                        "live_d5_top_reason_tags_json": ranking_by_horizon.get(5, {}).get("top_reason_tags_json"),
-                        "live_d5_risk_flags_json": ranking_by_horizon.get(5, {}).get("risk_flags_json"),
-                        "live_d5_explanatory_score_json": ranking_by_horizon.get(5, {}).get("explanatory_score_json"),
+                        "live_d5_top_reason_tags_json": ranking_by_horizon.get(5, {}).get(
+                            "top_reason_tags_json"
+                        ),
+                        "live_d5_risk_flags_json": ranking_by_horizon.get(5, {}).get(
+                            "risk_flags_json"
+                        ),
+                        "live_d5_explanatory_score_json": ranking_by_horizon.get(5, {}).get(
+                            "explanatory_score_json"
+                        ),
                         "live_d5_expected_excess_return": expected,
                         "live_d5_target_price": None
                         if reference_price is None or expected is None

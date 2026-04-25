@@ -142,9 +142,9 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
     assert "원점수 상위 신호를 최대한 보존함" in rendered
     assert "단기 탄력 강함" in rendered
     assert "raw_alpha_leader_preserved" not in rendered
-    assert "모델 판단이 엇갈림" in rendered
+    assert "앙상블 내부 판단이 엇갈림" in rendered
     assert "D5 추세 탄력 71.0" in rendered
-    assert "신호 분해" in rendered
+    assert "신호 분해 (0~100, 지지/부담 강도)" in rendered
     assert "시세 기준 KIS 실시간 시세 기준" in rendered
     assert "뉴스 기준 Naver 최신 뉴스 2건 반영" in rendered
     assert "실시간 목표가 72,500원" in rendered

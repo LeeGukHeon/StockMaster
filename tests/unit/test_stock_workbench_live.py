@@ -4,10 +4,13 @@ from datetime import date
 
 import pandas as pd
 
+from app.common.artifacts import resolve_artifact_path
+from app.discord_bot.live_recalc import (
+    _refresh_live_rank_features,
+    compute_live_stock_recommendation,
+)
 from app.features.feature_store import build_feature_store
 from app.regime.snapshot import build_market_regime_snapshot
-from app.common.artifacts import resolve_artifact_path
-from app.discord_bot.live_recalc import compute_live_stock_recommendation
 from tests._ticket003_support import build_test_settings, seed_ticket003_data
 
 
@@ -110,8 +113,25 @@ def test_resolve_artifact_path_maps_legacy_artifact_root(tmp_path) -> None:
     runtime_artifact.parent.mkdir(parents=True, exist_ok=True)
     runtime_artifact.write_bytes(b"artifact")
 
-    legacy_artifact = settings.paths.project_root / "data" / "artifacts" / "models" / "alpha_model_v1.pkl"
+    legacy_artifact = (
+        settings.paths.project_root / "data" / "artifacts" / "models" / "alpha_model_v1.pkl"
+    )
 
     resolved = resolve_artifact_path(settings, str(legacy_artifact))
 
     assert resolved == runtime_artifact.resolve()
+
+
+def test_refresh_live_rank_features_recomputes_live_row_rank_pct() -> None:
+    frame = pd.DataFrame(
+        [
+            {"symbol": "000001", "market": "KOSPI", "ret_5d": 0.01},
+            {"symbol": "000002", "market": "KOSPI", "ret_5d": 0.03},
+            {"symbol": "005930", "market": "KOSPI", "ret_5d": 0.10},
+        ]
+    )
+
+    refreshed = _refresh_live_rank_features(frame)
+    live_rank = refreshed.loc[refreshed["symbol"] == "005930", "ret_5d_rank_pct"].iloc[0]
+
+    assert live_rank == 1.0
