@@ -76,6 +76,15 @@ def _pct_text(value: object, *, signed: bool = True) -> str:
         return _safe_text(value)
 
 
+def _score_text(value: object) -> str:
+    if value in (None, "", "-"):
+        return "-"
+    try:
+        return f"{float(value):.1f}"
+    except (TypeError, ValueError):
+        return _safe_text(value)
+
+
 def _parse_payload(value: object) -> dict[str, Any]:
     if not isinstance(value, str) or not value.strip():
         return {}
@@ -181,24 +190,31 @@ def _basis_line(mode: str, note: str | None) -> str:
     return "최신 스냅샷 기준으로 안내합니다."
 
 
-def _render_signal_decomposition(signal_payload: dict[str, object]) -> list[str]:
-    lines: list[str] = []
-    for label, values in (
-        ("가격/추세", signal_payload.get("price")),
-        ("수급", signal_payload.get("flow")),
-        ("뉴스", signal_payload.get("news")),
-        ("혼잡/리스크", signal_payload.get("crowding_risk")),
-    ):
-        if not isinstance(values, dict):
-            continue
-        non_empty = [
-            f"{SIGNAL_METRIC_LABELS.get(key, key)} {float(value):.1f}"
-            for key, value in values.items()
-            if value is not None and not (isinstance(value, float) and pd.isna(value))
-        ]
-        if non_empty:
-            lines.append(f"- {label}: " + ", ".join(non_empty))
-    return lines
+def _signal_value(signal_payload: dict[str, object], section: str, key: str) -> object:
+    values = signal_payload.get(section)
+    if not isinstance(values, dict):
+        return None
+    return values.get(key)
+
+
+def _render_compact_signal_line(signal_payload: dict[str, object]) -> str:
+    d5_trend = _score_text(_signal_value(signal_payload, "price", "d5_trend_momentum_score"))
+    d5_flow = _score_text(_signal_value(signal_payload, "flow", "d5_flow_score"))
+    d5_flow_persist = _score_text(
+        _signal_value(signal_payload, "flow", "d5_flow_persistence_score")
+    )
+    d5_crowding = _score_text(
+        _signal_value(signal_payload, "crowding_risk", "d5_crowding_penalty_score")
+    )
+    d5_risk = _score_text(_signal_value(signal_payload, "crowding_risk", "d5_risk_penalty_score"))
+    parts = [
+        f"D5추세 {d5_trend}",
+        f"수급 {d5_flow}",
+        f"수급지속 {d5_flow_persist}",
+        f"과열 {d5_crowding}",
+        f"위험 {d5_risk}",
+    ]
+    return " · ".join(parts)
 
 
 def _render_candidate_list(query: str, rows: pd.DataFrame) -> str:
@@ -224,7 +240,6 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     payload = _parse_payload(row.get("payload_json"))
     symbol = _safe_text(row.get("symbol"))
     company_name = _safe_text(row.get("company_name"))
-    market = _safe_text(row.get("market"))
     live_result = compute_live_stock_recommendation(settings, symbol=symbol)
     live_row = live_result.frame.iloc[0] if not live_result.frame.empty else None
 
@@ -232,7 +247,6 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     headlines, news_basis = _fetch_news(settings, company_name=company_name)
 
     current_price = _int_text(quote.get("stck_prpr"))
-    change_price = _int_text(quote.get("prdy_vrss"))
     change_rate = _pct_from_quote(quote.get("prdy_ctrt"))
     high_price = _int_text(quote.get("stck_hgpr"))
     low_price = _int_text(quote.get("stck_lwpr"))
@@ -246,45 +260,40 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     d1_grade = _safe_text(analysis_payload.get("d1_grade"))
     d5_grade = _safe_text(analysis_payload.get("d5_grade"))
     d5_expected = analysis_payload.get("d5_expected_excess_return")
+    judgement_label = _safe_text(analysis_payload.get("d5_judgement_label"), "판단 보류")
+    judgement_summary = _safe_text(analysis_payload.get("d5_judgement_summary"))
+    d5_score = _score_text(analysis_payload.get("d5_final_selection_value"))
+    risk_flags = _translate_tag_list(analysis_payload.get("risk_flags"), LIVE_RISK_LABELS, limit=2)
+    risk_text = ", ".join(risk_flags) if risk_flags else "특이 리스크 없음"
+
+    signal_text = _render_compact_signal_line(analysis_payload.get("signal_decomposition", {}))
 
     lines = [
-        f"**{symbol} {company_name} · D5 스윙 즉석 분석**",
-        f"{market} · 2~5거래일 보유 관점의 주력 판단입니다.",
-        _basis_line(live_result.mode, live_result.note),
-        f"현재가 {current_price}원, 전일 대비 {change_price}원 ({change_rate})",
-        f"주력 판단: D5 {d5_grade} · 예상 초과수익률 {_pct_text(d5_expected)}",
-        f"보조 참고: D1 {d1_grade} · 최근 5일 수익률 {_pct_text(analysis_payload.get('ret_5d'))}",
+        f"**{symbol} {company_name} · {judgement_label}**",
         (
-            f"운영 head: D5 {_safe_text(analysis_payload.get('d5_head_spec_id'))} "
-            f"· D1 참고 {_safe_text(analysis_payload.get('d1_head_spec_id'))}"
+            f"D5 {d5_grade} · 점수 {d5_score} · 기대 {_pct_text(d5_expected)} "
+            f"· 현재가 {current_price}원 ({change_rate})"
         ),
-        f"왜 지금 보나: {_translated_why_now(analysis_payload)}",
+        f"근거: {_translated_why_now(analysis_payload)}",
+        f"판단근거: {judgement_summary}",
+        f"신호(0~100): {signal_text}",
+        f"리스크: {risk_text}",
+        f"참고: D1 {d1_grade} · 5일수익 {_pct_text(analysis_payload.get('ret_5d'))}",
     ]
     if live_row is not None:
         target_price = _int_text(live_row.get("live_d5_target_price"))
         stop_price = _int_text(live_row.get("live_d5_stop_price"))
-        lines.append(f"실시간 목표가 {target_price}원 · 손절 참고선 {stop_price}원")
-    signal_lines = _render_signal_decomposition(analysis_payload.get("signal_decomposition", {}))
-    if signal_lines:
-        lines.append("신호 분해 (0~100, 지지/부담 강도)")
-        lines.extend(signal_lines)
-    risk_flags = _translate_tag_list(analysis_payload.get("risk_flags"), LIVE_RISK_LABELS, limit=4)
-    if risk_flags:
-        lines.append("리스크 플래그")
-        lines.extend(f"- {item}" for item in risk_flags)
-    invalidations = analysis_payload.get("invalidation_conditions") or []
-    if invalidations:
-        lines.append("무효화 조건")
-        lines.extend(f"- {item}" for item in invalidations)
+        lines.append(f"가격선: 목표 {target_price}원 · 손절참고 {stop_price}원")
     if analysis_payload.get("snapshot_reused_flag"):
         lines.append(
             f"분석 모드 {analysis_payload.get('degradation_mode')} · snapshot 재사용 "
             f"({', '.join(analysis_payload.get('source_precedence') or [])})"
         )
-    lines.append(f"당일 고가 {high_price}원 · 저가 {low_price}원 · 누적 거래량 {volume}")
-    lines.append(f"시세 기준 {analysis_payload.get('quote_timestamp_or_basis')}")
-    lines.append(f"뉴스 기준 {analysis_payload.get('news_basis')}")
+    if high_price != "-" or low_price != "-" or volume != "-":
+        lines.append(f"당일: 고가 {high_price}원 · 저가 {low_price}원 · 거래량 {volume}")
+    quote_basis = analysis_payload.get("quote_timestamp_or_basis")
+    news_basis = analysis_payload.get("news_basis")
+    lines.append(f"데이터: {quote_basis} · {news_basis}")
     if headlines:
-        lines.append("최근 뉴스")
-        lines.extend(f"- {headline}" for headline in headlines)
+        lines.append("뉴스: " + " / ".join(headlines[:2]))
     return "\n".join(lines)

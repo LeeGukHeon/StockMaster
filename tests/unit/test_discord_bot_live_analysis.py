@@ -106,6 +106,9 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
                         "live_d1_selection_v2_grade": "A",
                         "live_d5_selection_v2_grade": "S",
                         "live_d5_expected_excess_return": 0.021,
+                        "live_d5_selection_v2_value": 72.0,
+                        "live_d5_judgement_label": "매수해볼 가치 있음",
+                        "live_d5_judgement_summary": "점수대 성과 우위 · 65-75점대 과거 평균 +0.6%",
                         "live_d5_target_price": 72500,
                         "live_d5_stop_price": 68800,
                         "live_d5_model_spec_id": "alpha_swing_d5_v2",
@@ -134,21 +137,19 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
     rendered = render_live_stock_analysis(object(), query="삼성전자")
 
     assert "현재가 71,000원" in rendered
-    assert "D5 스윙 즉석 분석" in rendered
-    assert "주력 판단: D5 S · 예상 초과수익률 +2.10%" in rendered
-    assert "보조 참고: D1 A · 최근 5일 수익률 +3.45%" in rendered
-    assert "운영 head: D5 alpha_swing_d5_v2 · D1 참고 alpha_lead_d1_v1" in rendered
+    assert "005930 삼성전자 · 매수해볼 가치 있음" in rendered
+    assert "D5 S · 점수 72.0 · 기대 +2.10%" in rendered
+    assert "참고: D1 A · 5일수익 +3.45%" in rendered
+    assert "판단근거: 점수대 성과 우위" in rendered
     assert "상대 강도가 살아나는 흐름" in rendered
     assert "원점수 상위 신호를 최대한 보존함" in rendered
     assert "단기 탄력 강함" in rendered
     assert "raw_alpha_leader_preserved" not in rendered
     assert "앙상블 내부 판단이 엇갈림" in rendered
-    assert "D5 추세 탄력 71.0" in rendered
-    assert "신호 분해 (0~100, 지지/부담 강도)" in rendered
-    assert "시세 기준 KIS 실시간 시세 기준" in rendered
-    assert "뉴스 기준 Naver 최신 뉴스 2건 반영" in rendered
-    assert "실시간 목표가 72,500원" in rendered
-    assert "- 삼성전자 실적 개선" in rendered
+    assert "신호(0~100): D5추세 71.0" in rendered
+    assert "데이터: KIS 실시간 시세 기준 · Naver 최신 뉴스 2건 반영" in rendered
+    assert "가격선: 목표 72,500원" in rendered
+    assert "뉴스: 삼성전자 실적 개선 / 삼성전자 AI 반도체 기대" in rendered
 
 
 def test_render_live_stock_analysis_returns_candidate_list_for_ambiguous_query(monkeypatch) -> None:
@@ -206,6 +207,9 @@ def test_render_live_stock_analysis_degrades_when_external_providers_fail(monkey
                         "d1_grade": "B",
                         "d5_grade": "A",
                         "d5_expected_excess_return": 0.01,
+                        "d5_final_selection_value": 66.0,
+                        "d5_judgement_label": "매수해볼 가치 있음",
+                        "d5_judgement_summary": "점수대 성과 우위 · 점수대 성과 표본 부족",
                         "ret_5d": 0.02,
                         "d5_model_spec_id": "alpha_swing_d5_v2",
                     },
@@ -229,7 +233,7 @@ def test_render_live_stock_analysis_degrades_when_external_providers_fail(monkey
 
     rendered = render_live_stock_analysis(object(), query="삼성전자")
 
-    assert "주력 판단: D5 A · 예상 초과수익률 +1.00%" in rendered
+    assert "005930 삼성전자 · 매수해볼 가치 있음" in rendered
+    assert "D5 A · 점수 66.0 · 기대 +1.00%" in rendered
     assert "분석 모드 busy · snapshot 재사용" in rendered
-    assert "시세 기준 KIS 실시간 시세 미수신" in rendered
-    assert "뉴스 기준 Naver 최신 뉴스 미수신" in rendered
+    assert "데이터: KIS 실시간 시세 미수신 · Naver 최신 뉴스 미수신" in rendered

@@ -2,14 +2,27 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from typing import Any
 
 import duckdb
 import pandas as pd
 
 from app.common.time import now_local
+from app.discord_bot.data_views import (
+    latest_evaluation_summary_frame,
+    latest_intraday_policy_evaluation_frame,
+    leaderboard_frame,
+    resolve_latest_ranking_date,
+    resolve_latest_ranking_version,
+    stock_workbench_live_snapshot_frame,
+    stock_workbench_summary_frame,
+)
 from app.ml.promotion import load_alpha_promotion_summary
 from app.ops.common import JobStatus, OpsJobResult
+from app.recommendation.judgement import (
+    ScoreBandEvidence,
+    classify_recommendation,
+    load_score_band_evidence,
+)
 from app.reports.discord_eod import (
     ALPHA_DECISION_LABELS,
     ALPHA_DECISION_REASON_LABELS,
@@ -24,15 +37,6 @@ from app.storage.metadata_postgres import (
     executemany_postgres_sql,
     fetchdf_postgres_sql,
     metadata_postgres_enabled,
-)
-from app.discord_bot.data_views import (
-    leaderboard_frame,
-    latest_evaluation_summary_frame,
-    latest_intraday_policy_evaluation_frame,
-    resolve_latest_ranking_date,
-    resolve_latest_ranking_version,
-    stock_workbench_live_snapshot_frame,
-    stock_workbench_summary_frame,
 )
 
 BOT_SNAPSHOT_TABLE = "fact_discord_bot_snapshot"
@@ -76,6 +80,18 @@ def _parse_json_list(value: object, mapping: dict[str, str]) -> list[str]:
     if not isinstance(parsed, list):
         return []
     return [mapping.get(str(item), str(item)) for item in parsed if str(item).strip()]
+
+
+def _parse_raw_json_list(value: object) -> list[str]:
+    if value in (None, "", "[]"):
+        return []
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed if str(item).strip()]
 
 
 def _model_label(value: object) -> str:
@@ -176,6 +192,7 @@ def _build_pick_rows(
     built_at: str,
     as_of_date: str | None,
     source_run_id: str,
+    score_evidence: dict[str, ScoreBandEvidence] | None = None,
 ) -> list[dict[str, object]]:
     if frame.empty:
         return []
@@ -184,12 +201,21 @@ def _build_pick_rows(
         return []
     rows: list[dict[str, object]] = []
     for rank, row in enumerate(working.head(BOT_PICK_LIMIT).itertuples(index=False), start=1):
+        raw_risks = _parse_raw_json_list(getattr(row, "risks", "[]"))
         reasons = _parse_json_list(getattr(row, "reasons", "[]"), REASON_LABELS)[:2]
         risks = _parse_json_list(getattr(row, "risks", "[]"), RISK_LABELS)[:2]
+        judgement = classify_recommendation(
+            final_selection_value=getattr(row, "final_selection_value", None),
+            expected_excess_return=getattr(row, "expected_excess_return", None),
+            risk_flags=raw_risks,
+            evidence_by_band=score_evidence,
+        )
         summary_parts = [
+            judgement.label,
+            f"점수 {_format_number(getattr(row, 'final_selection_value', None))}",
             f"등급 {_safe_text(getattr(row, 'grade', None))}",
-            f"예상 초과수익률 {_format_percent(getattr(row, 'expected_excess_return', None), signed=True)}",
-            f"진입 예정일 {_safe_text(getattr(row, 'next_entry_trade_date', None))}",
+            f"기대 {_format_percent(getattr(row, 'expected_excess_return', None), signed=True)}",
+            f"진입 {_safe_text(getattr(row, 'next_entry_trade_date', None))}",
         ]
         if reasons:
             summary_parts.append(f"핵심 근거 {', '.join(reasons)}")
@@ -204,6 +230,9 @@ def _build_pick_rows(
             "industry": _safe_text(getattr(row, "industry", None)),
             "sector": _safe_text(getattr(row, "sector", None)),
             "model_spec_id": _model_label(getattr(row, "model_spec_id", None)),
+            "judgement_label": judgement.label,
+            "judgement_summary": judgement.summary,
+            "score_band": judgement.score_band,
             "reasons": reasons,
             "risks": risks,
         }
@@ -218,7 +247,10 @@ def _build_pick_rows(
                 symbol=_safe_text(getattr(row, "symbol", None)),
                 company_name=_safe_text(getattr(row, "company_name", None)),
                 market=_safe_text(getattr(row, "market", None)),
-                title=f"{_safe_text(getattr(row, 'symbol', None))} {_safe_text(getattr(row, 'company_name', None))}",
+                title=(
+                    f"{_safe_text(getattr(row, 'symbol', None))} "
+                    f"{_safe_text(getattr(row, 'company_name', None))}"
+                ),
                 subtitle=_hold_basis_label(int(horizon)),
                 summary=" · ".join(summary_parts),
                 payload=payload,
@@ -262,8 +294,12 @@ def _build_weekly_rows(
                 summary=summary,
                 payload={
                     "sample_count": int(getattr(item, "sample_count", 0) or 0),
-                    "active_top10_mean_excess_return": getattr(item, "active_top10_mean_excess_return", None),
-                    "comparison_top10_mean_excess_return": getattr(item, "comparison_top10_mean_excess_return", None),
+                    "active_top10_mean_excess_return": getattr(
+                        item, "active_top10_mean_excess_return", None
+                    ),
+                    "comparison_top10_mean_excess_return": getattr(
+                        item, "comparison_top10_mean_excess_return", None
+                    ),
                 },
                 source_run_id=source_run_id,
             )
@@ -271,10 +307,14 @@ def _build_weekly_rows(
     for item in evaluation_summary.head(BOT_WEEKLY_LIMIT).itertuples(index=False):
         order += 1
         horizon = int(getattr(item, "horizon", 0) or 0)
+        mean_excess = _format_percent(
+            getattr(item, "mean_realized_excess_return", None),
+            signed=True,
+        )
         summary = " · ".join(
             [
                 _safe_text(getattr(item, "window_type", None)),
-                f"평균 초과수익 {_format_percent(getattr(item, 'mean_realized_excess_return', None), signed=True)}",
+                f"평균 초과수익 {mean_excess}",
                 f"적중률 {_format_percent(getattr(item, 'hit_rate', None))}",
             ]
         )
@@ -344,19 +384,37 @@ def _build_stock_summary_rows(
     for item in summary_frame.itertuples(index=False):
         symbol = _safe_text(getattr(item, "symbol", None))
         live = live_by_symbol.get(symbol)
-        d1_grade = _safe_text(getattr(live, "live_d1_selection_v2_grade", None) if live else getattr(item, "d1_selection_v2_grade", None))
-        d5_grade = _safe_text(getattr(live, "live_d5_selection_v2_grade", None) if live else getattr(item, "d5_selection_v2_grade", None))
+        d1_grade = _safe_text(
+            getattr(live, "live_d1_selection_v2_grade", None)
+            if live
+            else getattr(item, "d1_selection_v2_grade", None)
+        )
+        d5_grade = _safe_text(
+            getattr(live, "live_d5_selection_v2_grade", None)
+            if live
+            else getattr(item, "d5_selection_v2_grade", None)
+        )
         d5_expected = (
             getattr(live, "live_d5_expected_excess_return", None)
             if live is not None
             else getattr(item, "d5_alpha_expected_excess_return", None)
         )
+        d5_score = (
+            getattr(live, "live_d5_selection_v2_value", None)
+            if live is not None
+            else getattr(item, "d5_selection_v2_value", None)
+        )
+        judgement = classify_recommendation(
+            final_selection_value=d5_score,
+            expected_excess_return=d5_expected,
+        )
         summary = " · ".join(
             [
-                f"D1 {d1_grade}",
+                judgement.label,
+                f"D5 점수 {_format_number(d5_score)}",
                 f"D5 {d5_grade}",
-                f"D5 예상 초과수익률 {_format_percent(d5_expected, signed=True)}",
-                f"5일 수익률 {_format_percent(getattr(item, 'ret_5d', None), signed=True)}",
+                f"기대 {_format_percent(d5_expected, signed=True)}",
+                f"5일수익 {_format_percent(getattr(item, 'ret_5d', None), signed=True)}",
                 f"뉴스 {_format_number(getattr(item, 'news_count_3d', None), decimals=0)}건",
             ]
         )
@@ -376,6 +434,9 @@ def _build_stock_summary_rows(
                 getattr(live, "live_d5_active_alpha_model_id", None) if live else None
             ),
             "d5_expected_excess_return": d5_expected,
+            "d5_final_selection_value": d5_score,
+            "d5_judgement_label": judgement.label,
+            "d5_judgement_summary": judgement.summary,
             "ret_5d": getattr(item, "ret_5d", None),
             "ret_20d": getattr(item, "ret_20d", None),
             "news_count_3d": getattr(item, "news_count_3d", None),
@@ -441,6 +502,18 @@ def materialize_discord_bot_read_store(
             ranking_version=ranking_version,
         )
 
+    score_evidence_by_horizon: dict[int, dict[str, ScoreBandEvidence]] = {}
+    if ranking_version is not None:
+        for horizon in (1, 5):
+            try:
+                score_evidence_by_horizon[horizon] = load_score_band_evidence(
+                    connection,
+                    horizon=horizon,
+                    ranking_version=ranking_version,
+                )
+            except duckdb.Error:
+                score_evidence_by_horizon[horizon] = {}
+
     summary_frame = stock_workbench_summary_frame(connection)
     live_frame = stock_workbench_live_snapshot_frame(
         connection,
@@ -468,6 +541,7 @@ def materialize_discord_bot_read_store(
                 built_at=built_at_text,
                 as_of_date=target_as_of_date_text,
                 source_run_id=job_run_id,
+                score_evidence=score_evidence_by_horizon.get(int(horizon)),
             )
         )
     rows.extend(

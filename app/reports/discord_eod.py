@@ -17,6 +17,11 @@ from app.ml.constants import MODEL_SPEC_ID
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ml.promotion import load_alpha_promotion_summary
+from app.recommendation.judgement import (
+    ScoreBandEvidence,
+    classify_recommendation,
+    load_score_band_evidence,
+)
 from app.selection.sector_outlook import sector_outlook_frame
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
@@ -405,15 +410,44 @@ def _load_selection_gap_rows(connection, *, as_of_date: date) -> pd.DataFrame:
     ).fetchdf()
 
 
-def _translate_tags(raw_value: object, mapping: dict[str, str]) -> str:
+def _raw_tag_list(raw_value: object) -> list[str]:
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return []
     try:
-        parsed = json.loads(raw_value or "[]")
+        parsed = json.loads(raw_value)
     except (TypeError, ValueError, json.JSONDecodeError):
-        parsed = []
+        return []
     if not isinstance(parsed, list):
-        return "-"
-    labels = [mapping.get(str(item), str(item)) for item in parsed[:2]]
+        return []
+    return [str(item) for item in parsed]
+
+
+def _translate_tags(raw_value: object, mapping: dict[str, str], *, limit: int = 2) -> str:
+    labels = [mapping.get(item, item) for item in _raw_tag_list(raw_value)[:limit]]
     return ", ".join(labels) if labels else "-"
+
+
+def _score_band_evidence_line(
+    evidence_by_band: dict[str, ScoreBandEvidence] | None,
+) -> str:
+    if not evidence_by_band:
+        return "최근 점수대별 성숙 성과 표본 부족"
+    preferred_order = ("75+", "65-75", "55-65", "<55")
+    parts: list[str] = []
+    for band in preferred_order:
+        evidence = evidence_by_band.get(band)
+        if evidence is None or evidence.sample_count <= 0:
+            continue
+        if evidence.avg_excess_return is None:
+            parts.append(f"{band}점대 n={evidence.sample_count}")
+            continue
+        parts.append(
+            f"{band}점대 {evidence.avg_excess_return:+.1%}"
+            f"(n={evidence.sample_count})"
+        )
+    if not parts:
+        return "최근 점수대별 성숙 성과 표본 부족"
+    return "최근 성숙 성과: " + " · ".join(parts[:3])
 
 
 def _translate_alpha_decision_label(value: object) -> str:
@@ -458,48 +492,37 @@ def _pct_text(value: object) -> str:
     return f"{float(value):.1%}"
 
 
-def _format_pick_block(row: pd.Series, *, rank: int) -> list[str]:
+def _format_pick_block(
+    row: pd.Series,
+    *,
+    rank: int,
+    score_evidence: dict[str, ScoreBandEvidence] | None = None,
+) -> list[str]:
     reasons = _translate_tags(row["top_reason_tags_json"], REASON_LABELS)
     risks = _translate_tags(row["risk_flags_json"], RISK_LABELS)
+    judgement = classify_recommendation(
+        final_selection_value=row.get("final_selection_value"),
+        expected_excess_return=row.get("expected_excess_return"),
+        risk_flags=_raw_tag_list(row.get("risk_flags_json")),
+        evidence_by_band=score_evidence,
+    )
+    score = float(row["final_selection_value"])
+    expected_text = _pct_text(row.get("expected_excess_return"))
     lines = [
-        f"{rank}. `{row['symbol']}` {row['company_name']} ({row['market']})",
-        f"   - 왜 봐야 하나: 등급 {row['grade']} / 종합점수 {float(row['final_selection_value']):.1f}",
+        (
+            f"{rank}. `{row['symbol']}` {row['company_name']} · {judgement.label}"
+            f" | 점수 {score:.1f}/{row['grade']} | 기대 {expected_text}"
+        ),
+        f"   - {judgement.summary} | 근거 {reasons} | 리스크 {risks}",
     ]
-    if pd.notna(row.get("sector")) or pd.notna(row.get("industry")):
-        lines.append(
-            f"   - 업종: {row.get('industry') or '-'} / 상위 섹터 {row.get('sector') or '-'}"
-        )
-    if pd.notna(row.get("selection_date")) or pd.notna(row.get("next_entry_trade_date")):
-        lines.append(
-            "   - 언제 보나: 선정일 {selection_date} / 진입 예정일 {entry_date}".format(
-                selection_date=_date_text(row.get("selection_date")),
-                entry_date=_date_text(row.get("next_entry_trade_date")),
-            )
-        )
-    if pd.notna(row.get("selection_close_price")):
-        lines.append(f"   - 참고 기준가: {float(row['selection_close_price']):,.0f}원")
-    if all(pd.notna(row.get(key)) for key in ("expected_excess_return", "lower_band", "upper_band")):
-        lines.append(
-            "   - 참고 흐름: 기대수익 {expected:+.2%}, 참고 범위 {lower:+.2%} ~ {upper:+.2%}".format(
-                expected=float(row["expected_excess_return"]),
-                lower=float(row["lower_band"]),
-                upper=float(row["upper_band"]),
-            )
-        )
-    if all(pd.notna(row.get(key)) for key in ("selection_close_price", "expected_excess_return", "lower_band", "upper_band")):
+    if pd.notna(row.get("selection_close_price")) and pd.notna(
+        row.get("expected_excess_return")
+    ):
         base_price = float(row["selection_close_price"])
+        target_price = base_price * (1.0 + float(row["expected_excess_return"]))
         lines.append(
-            "   - 참고 가격선: 목표 {target:,.0f}원 / 강한 흐름 {upper:,.0f}원 / 손절선 {stop:,.0f}원".format(
-                target=base_price * (1.0 + float(row["expected_excess_return"])),
-                upper=base_price * (1.0 + float(row["upper_band"])),
-                stop=base_price * (1.0 + float(row["lower_band"])),
-            )
+            f"   - 기준가 {base_price:,.0f}원 → 참고목표 {target_price:,.0f}원"
         )
-    model_spec = _translate_model_label(row.get("model_spec_id"))
-    if row.get("active_alpha_model_id") or row.get("model_spec_id"):
-        lines.append(f"   - active serving spec: {model_spec}")
-    lines.append(f"   - 주요 근거: {reasons}")
-    lines.append(f"   - 주의할 점: {risks}")
     return lines
 
 
@@ -556,7 +579,9 @@ def _format_official_pick_block(row: pd.Series, *, rank: int) -> list[str]:
             price_parts.append(f"손절 참고선 {float(row['action_stop_price']):,.0f}원")
         lines.append(f"   - 참고 가격선: {' / '.join(price_parts)}")
 
-    model_spec = MODEL_SPEC_LABELS.get(str(row.get("model_spec_id")), str(row.get("model_spec_id") or "-"))
+    model_spec = MODEL_SPEC_LABELS.get(
+        str(row.get("model_spec_id")), str(row.get("model_spec_id") or "-")
+    )
     if row.get("active_alpha_model_id") or row.get("model_spec_id"):
         lines.append(
             f"   - 사용 모델: {model_spec} / 활성 모델 ID {row.get('active_alpha_model_id') or '-'}"
@@ -586,8 +611,7 @@ def _format_alpha_promotion_line(row: pd.Series) -> str:
     ]
     if compare_text not in {"-", ""}:
         summary_parts.append(
-            f"{row.get('comparison_role_label') or 'legacy comparison baseline'} "
-            f"{compare_text}"
+            f"{row.get('comparison_role_label') or 'legacy comparison baseline'} {compare_text}"
         )
     fallback_text = _translate_model_label(
         row.get("fallback_model_label") or MODEL_SPEC_LABELS.get(MODEL_SPEC_ID, MODEL_SPEC_ID)
@@ -635,93 +659,68 @@ def _build_payload_content(
     market_news: pd.DataFrame,
     reference_horizon: int | None = None,
     reference_candidates: pd.DataFrame | None = None,
+    score_evidence_by_horizon: dict[int, dict[str, ScoreBandEvidence]] | None = None,
 ) -> str:
     sector_basis = _horizon_hold_basis_label(sector_horizon)
     candidate_basis = _horizon_hold_basis_label(candidate_horizon)
     reference_basis = (
-        _horizon_hold_basis_label(reference_horizon)
+        _horizon_hold_basis_label(reference_horizon) if reference_horizon is not None else None
+    )
+    primary_candidate_title = (
+        f"**2~5거래일 스윙 후보 | {candidate_basis} (D+{int(candidate_horizon)})**"
+        if int(candidate_horizon) == 5
+        else f"**다음 거래일 후보 | {candidate_basis} (D+{int(candidate_horizon)})**"
+    )
+    sector_title = (
+        f"**강세 예상 업종 | {sector_basis} (D+{int(sector_horizon)})**"
+    )
+    evidence_by_horizon = score_evidence_by_horizon or {}
+    primary_score_evidence = evidence_by_horizon.get(int(candidate_horizon))
+    reference_score_evidence = (
+        evidence_by_horizon.get(int(reference_horizon))
         if reference_horizon is not None
         else None
     )
-    primary_candidate_title = (
-        f"**2~5거래일 스윙 상위 후보 5종목 | {candidate_basis} (D+{int(candidate_horizon)})**"
-        if int(candidate_horizon) == 5
-        else f"**다음 거래일 상위 후보 5종목 | {candidate_basis} (D+{int(candidate_horizon)})**"
-    )
-    sector_title = (
-        f"**2~5거래일 스윙 강세 예상 업종 | {sector_basis} (D+{int(sector_horizon)})**"
-        if int(sector_horizon) == 5
-        else f"**다음 거래일 강세 예상 업종 | {sector_basis} (D+{int(sector_horizon)})**"
-    )
-    primary_summary_line = (
-        "- 아래는 상위 업종 흐름과 2~5거래일 스윙 후보를 순서대로 정리한 장마감 요약입니다."
-        if int(candidate_horizon) == 5
-        else "- 아래는 상위 업종 흐름과 다음 거래일 상위 후보를 순서대로 정리한 장마감 요약입니다."
-    )
-    primary_horizon_line = (
-        f"- 메인 후보와 업종 흐름은 {candidate_basis}(D+{int(candidate_horizon)})으로 읽어주세요."
-        if int(candidate_horizon) == 5
-        else (
-            f"- 상위 후보와 업종 흐름은 "
-            f"{candidate_basis}(D+{int(candidate_horizon)})으로 읽어주세요."
-        )
+    regime_text = REGIME_LABELS.get(
+        str(market_pulse.get("regime_state")),
+        market_pulse.get("regime_state") or "미확인",
     )
     lines = [
-        f"**StockMaster 오늘 장마감 요약 | {as_of_date.isoformat()}**",
-        "",
-        "**한눈에 보기**",
+        f"**StockMaster 장마감 추천 요약 | {as_of_date.isoformat()}**",
         (
-            f"- 오늘 시장 흐름: {REGIME_LABELS.get(str(market_pulse.get('regime_state')), market_pulse.get('regime_state') or '미확인')}"
-            f" | 시장 점수 {market_pulse.get('regime_score') or '미확인'}"
-            f" | 상승 종목 비율 {_pct_text(market_pulse.get('breadth_up_ratio'))}"
+            f"- 시장: {regime_text} · 상승비율 {_pct_text(market_pulse.get('breadth_up_ratio'))}"
+            f" · 외인+ {_pct_text(market_pulse.get('foreign_positive_ratio'))}"
+            f" · 기관+ {_pct_text(market_pulse.get('institution_positive_ratio'))}"
         ),
-        (
-            f"- 수급 체감: 집계 종목 {market_pulse.get('flow_row_count') or 0}개"
-            f" | 외국인 플러스 비율 {_pct_text(market_pulse.get('foreign_positive_ratio'))}"
-            f" | 기관 플러스 비율 {_pct_text(market_pulse.get('institution_positive_ratio'))}"
-        ),
-        primary_summary_line,
-        primary_horizon_line,
+        f"- 기준: 메인 후보는 {candidate_basis}(D+{int(candidate_horizon)}) 중심입니다.",
+        f"- 판단: {_score_band_evidence_line(primary_score_evidence)}",
+        "- 기대수익은 보장값이 아니라 과거 성숙 성과와 현재 신호를 함께 본 참고값입니다.",
     ]
-    if int(candidate_horizon) == 5:
-        lines.append("- D1 후보는 단기 참고용이며, 메인 매수/관찰 리스트는 D5 스윙 후보입니다.")
-    lines.extend([
-        "- 모델 점검은 하루 보유 기준(D+1)과 5거래일 보유 기준(D+5)을 함께 보여줍니다.",
-        "- 기대수익과 참고 범위는 과거 통계 기반 참고치일 뿐, 실제 수익을 보장하는 값은 아닙니다.",
-        "",
-        "**모델 점검**",
-    ])
+
     if alpha_promotion.empty:
-        lines.append("- 오늘 확인할 모델 점검 결과는 아직 없습니다.")
+        model_notes: list[str] = []
     else:
-        lines.extend(_format_alpha_promotion_line(row) for _, row in alpha_promotion.iterrows())
-    lines.extend(["", "**선택 드래그 점검**"])
-    if selection_gap is None or selection_gap.empty:
-        lines.append("- 최신 선택 드래그 점검 값이 아직 없습니다.")
-    else:
-        lines.extend(_format_selection_gap_line(row) for _, row in selection_gap.iterrows())
-    lines.extend(
-        [
-            "",
-            sector_title,
+        model_notes = [
+            _format_alpha_promotion_line(row)
+            for _, row in alpha_promotion.head(2).iterrows()
         ]
-    )
-    if sector_outlook.empty:
-        lines.append("- 상위 랭킹 기준으로 눈에 띄는 업종 집중이 아직 없습니다.")
-    else:
-        for index, (_, row) in enumerate(sector_outlook.iterrows(), start=1):
-            lines.append(_format_sector_outlook_line(row, rank=index))
-    lines.extend(
-        [
-            "",
-            primary_candidate_title,
-        ]
-    )
+    if selection_gap is not None and not selection_gap.empty:
+        model_notes.extend(
+            _format_selection_gap_line(row)
+            for _, row in selection_gap.head(2).iterrows()
+        )
+    if model_notes:
+        lines.extend(["", "**모델/선택 점검**", *model_notes])
+
+    lines.extend(["", primary_candidate_title])
     if single_buy_candidates.empty:
-        lines.append("- 단일매수 상위 후보가 아직 없습니다.")
+        lines.append("- 상위 후보가 아직 없습니다.")
     else:
         for index, (_, row) in enumerate(single_buy_candidates.iterrows(), start=1):
-            lines.extend(_format_pick_block(row, rank=index))
+            lines.extend(
+                _format_pick_block(row, rank=index, score_evidence=primary_score_evidence)
+            )
+
     if reference_horizon is not None and reference_candidates is not None:
         lines.extend(
             [
@@ -732,14 +731,21 @@ def _build_payload_content(
         if reference_candidates.empty:
             lines.append("- 참고용 D1 후보가 아직 없습니다.")
         else:
-            for index, (_, row) in enumerate(reference_candidates.iterrows(), start=1):
-                lines.extend(_format_pick_block(row, rank=index))
-    lines.append("")
-    lines.append("**시장 전체 주요 뉴스**")
-    if market_news.empty:
-        lines.append("- 해당 날짜의 시장 전체 뉴스가 없습니다.")
+            for index, (_, row) in enumerate(reference_candidates.head(3).iterrows(), start=1):
+                lines.extend(
+                    _format_pick_block(row, rank=index, score_evidence=reference_score_evidence)
+                )
+
+    lines.extend(["", sector_title])
+    if sector_outlook.empty:
+        lines.append("- 눈에 띄는 업종 집중이 아직 없습니다.")
     else:
-        for _, row in market_news.iterrows():
+        for index, (_, row) in enumerate(sector_outlook.head(2).iterrows(), start=1):
+            lines.append(_format_sector_outlook_line(row, rank=index))
+
+    if not market_news.empty:
+        lines.extend(["", "**시장 뉴스**"])
+        for _, row in market_news.head(3).iterrows():
             lines.append(f"- {row['title']} ({row['publisher']})")
     return "\n".join(lines)
 
@@ -805,10 +811,7 @@ def _build_payload_messages(
         if index == 1:
             content_text = chunk
         else:
-            header = (
-                f"**{continuation_title} | {as_of_date.isoformat()} "
-                f"(계속 {index}/{total})**"
-            )
+            header = f"**{continuation_title} | {as_of_date.isoformat()} (계속 {index}/{total})**"
             content_text = f"{header}\n\n{chunk}"
         messages.append({"username": username, "content": content_text})
     return messages
@@ -877,14 +880,27 @@ def render_discord_eod_report(
                     else None
                 )
                 market_news = _load_market_news(connection, as_of_date=as_of_date)
+                score_evidence_by_horizon = {
+                    DISCORD_EOD_CANDIDATE_HORIZON: load_score_band_evidence(
+                        connection,
+                        horizon=DISCORD_EOD_CANDIDATE_HORIZON,
+                        ranking_version=SELECTION_ENGINE_V2_VERSION,
+                    )
+                }
+                if DISCORD_EOD_REFERENCE_HORIZON != DISCORD_EOD_CANDIDATE_HORIZON:
+                    score_evidence_by_horizon[
+                        DISCORD_EOD_REFERENCE_HORIZON
+                    ] = load_score_band_evidence(
+                        connection,
+                        horizon=DISCORD_EOD_REFERENCE_HORIZON,
+                        ranking_version=SELECTION_ENGINE_V2_VERSION,
+                    )
                 content = _build_payload_content(
                     as_of_date=as_of_date,
                     sector_horizon=DISCORD_EOD_SECTOR_HORIZON,
                     candidate_horizon=DISCORD_EOD_CANDIDATE_HORIZON,
                     reference_horizon=(
-                        DISCORD_EOD_REFERENCE_HORIZON
-                        if reference_candidates is not None
-                        else None
+                        DISCORD_EOD_REFERENCE_HORIZON if reference_candidates is not None else None
                     ),
                     market_pulse=market_pulse,
                     alpha_promotion=alpha_promotion,
@@ -893,6 +909,7 @@ def render_discord_eod_report(
                     single_buy_candidates=single_buy_candidates,
                     reference_candidates=reference_candidates,
                     market_news=market_news,
+                    score_evidence_by_horizon=score_evidence_by_horizon,
                 )
                 messages = _build_payload_messages(
                     username=settings.discord.username,

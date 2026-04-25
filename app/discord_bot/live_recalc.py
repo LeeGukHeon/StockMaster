@@ -34,6 +34,7 @@ from app.ml.inference import (
     build_prediction_frame_from_training_run,
 )
 from app.ml.shadow import _load_regime_map
+from app.recommendation.judgement import classify_recommendation, load_score_band_evidence
 from app.selection.engine_v2 import build_selection_engine_v2_rankings
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables
@@ -181,6 +182,18 @@ def build_live_analysis_payload(
         "d1_grade": d1_grade,
         "d5_grade": d5_grade,
         "d5_expected_excess_return": d5_expected,
+        "d5_final_selection_value": (
+            None if live_row is None else live_row.get("live_d5_selection_v2_value")
+        )
+        or snapshot_payload.get("d5_final_selection_value"),
+        "d5_judgement_label": (
+            None if live_row is None else live_row.get("live_d5_judgement_label")
+        )
+        or snapshot_payload.get("d5_judgement_label"),
+        "d5_judgement_summary": (
+            None if live_row is None else live_row.get("live_d5_judgement_summary")
+        )
+        or snapshot_payload.get("d5_judgement_summary"),
         "ret_5d": snapshot_payload.get("ret_5d"),
         "d1_head_spec_id": (None if live_row is None else live_row.get("live_d1_model_spec_id"))
         or snapshot_payload.get("d1_model_spec_id"),
@@ -550,6 +563,20 @@ def compute_live_stock_recommendation(
             d5_prediction_row = None
             if 5 in live_prediction_rows and not live_prediction_rows[5].empty:
                 d5_prediction_row = live_prediction_rows[5].iloc[0]
+            d5_risk_flags = _json_list(ranking_by_horizon.get(5, {}).get("risk_flags_json"))
+            d5_evidence = load_score_band_evidence(
+                connection,
+                horizon=5,
+                ranking_version=SELECTION_ENGINE_V2_VERSION,
+            )
+            d5_judgement = classify_recommendation(
+                final_selection_value=ranking_by_horizon.get(5, {}).get("final_selection_value"),
+                expected_excess_return=None
+                if d5_prediction_row is None
+                else d5_prediction_row.get("expected_excess_return"),
+                risk_flags=d5_risk_flags,
+                evidence_by_band=d5_evidence,
+            )
             expected = (
                 None
                 if d5_prediction_row is None
@@ -622,6 +649,8 @@ def compute_live_stock_recommendation(
                             "explanatory_score_json"
                         ),
                         "live_d5_expected_excess_return": expected,
+                        "live_d5_judgement_label": d5_judgement.label,
+                        "live_d5_judgement_summary": d5_judgement.summary,
                         "live_d5_target_price": None
                         if reference_price is None or expected is None
                         else reference_price * (1.0 + expected),

@@ -4,6 +4,7 @@ from datetime import date
 
 import pandas as pd
 
+from app.recommendation.judgement import ScoreBandEvidence
 from app.reports.discord_eod import (
     _build_payload_content,
     _format_alpha_promotion_line,
@@ -60,10 +61,10 @@ def test_build_payload_content_labels_candidate_horizon_explicitly() -> None:
         market_news=pd.DataFrame(),
     )
 
-    assert "**다음 거래일 강세 예상 업종 | 하루 보유 기준 (D+1)**" in content
-    assert "**다음 거래일 상위 후보 5종목 | 하루 보유 기준 (D+1)**" in content
-    assert "모델 점검은 하루 보유 기준(D+1)과 5거래일 보유 기준(D+5)을 함께 보여줍니다." in content
-    assert "**선택 드래그 점검**" in content
+    assert "**강세 예상 업종 | 하루 보유 기준 (D+1)**" in content
+    assert "**다음 거래일 후보 | 하루 보유 기준 (D+1)**" in content
+    assert "기대수익은 보장값이 아니라" in content
+    assert "**모델/선택 점검**" in content
     assert "하루 선행 포착 v1" in content
     assert "공식 추천안" not in content
 
@@ -83,10 +84,10 @@ def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> Non
         market_news=pd.DataFrame(),
     )
 
-    assert "**2~5거래일 스윙 강세 예상 업종 | 5거래일 보유 기준 (D+5)**" in content
-    assert "**2~5거래일 스윙 상위 후보 5종목 | 5거래일 보유 기준 (D+5)**" in content
+    assert "**강세 예상 업종 | 5거래일 보유 기준 (D+5)**" in content
+    assert "**2~5거래일 스윙 후보 | 5거래일 보유 기준 (D+5)**" in content
     assert "**참고용 D1 단기 후보 | 하루 보유 기준 (D+1)**" in content
-    assert "D1 후보는 단기 참고용이며, 메인 매수/관찰 리스트는 D5 스윙 후보입니다." in content
+    assert "메인 후보는 5거래일 보유 기준(D+5) 중심" in content
 
 
 def test_format_pick_block_omits_active_model_id() -> None:
@@ -115,9 +116,10 @@ def test_format_pick_block_omits_active_model_id() -> None:
     lines = _format_pick_block(row, rank=1)
     rendered = "\n".join(lines)
 
-    assert "active serving spec: 확장형 누적 학습" in rendered
+    assert "active serving spec" not in rendered
     assert "fallback baseline" not in rendered
     assert "활성 모델 ID" not in rendered
+    assert "관찰 우선" in rendered
     assert "단기 탄력 강함" in rendered
     assert "모델 확신이 낮음" in rendered
 
@@ -145,8 +147,18 @@ def test_format_pick_block_translates_d5_reason_tags_to_korean() -> None:
         }
     )
 
-    rendered = "\n".join(_format_pick_block(row, rank=1))
+    rendered = "\n".join(
+        _format_pick_block(
+            row,
+            rank=1,
+            score_evidence={
+                "65-75": ScoreBandEvidence("65-75", 100, 0.006, 0.47)
+            },
+        )
+    )
 
+    assert "매수해볼 가치 있음" in rendered
+    assert "65-75점대 과거 평균 +0.6%" in rendered
     assert "상대 강도가 살아나는 흐름" in rendered
     assert "원점수 상위 신호를 최대한 보존함" in rendered
     assert "raw_alpha_leader_preserved" not in rendered
