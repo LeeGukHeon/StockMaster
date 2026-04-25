@@ -21,6 +21,18 @@ LIVE_RISK_LABELS = {
     "model_uncertainty_high": "모델 불확실성이 큼",
 }
 
+LIVE_SHORT_LABELS = {
+    "상대 강도가 살아나는 흐름": "상대강도 개선",
+    "원점수 상위 신호를 최대한 보존함": "원점수 상위",
+    "수급 지속성이 받쳐줌": "수급 지속성",
+    "단기 탄력 강함": "단기 탄력",
+    "뉴스 재평가가 덜 반영됨": "뉴스 재평가",
+    "과열 혼잡 부담이 낮음": "과열 낮음",
+    "앙상블 내부 판단이 엇갈림": "모델 판단 엇갈림",
+    "모델 불확실성이 큼": "모델 불확실성",
+    "최근 흔들림이 큼": "변동성 큼",
+}
+
 
 def _safe_text(value: object, fallback: str = "-") -> str:
     if value is None:
@@ -98,6 +110,10 @@ def _translate_tag_list(values: object, mapping: dict[str, str], *, limit: int =
         if len(labels) >= limit:
             break
     return labels
+
+
+def _short_label(label: str) -> str:
+    return LIVE_SHORT_LABELS.get(label, label)
 
 
 def _translated_why_now(analysis_payload: dict[str, object]) -> str:
@@ -192,20 +208,18 @@ def _score_level(value: object, *, high_is_good: bool = True) -> str | None:
 def _render_signal_summary(signal_payload: dict[str, object]) -> str:
     trend = _score_level(_signal_value(signal_payload, "price", "d5_trend_momentum_score"))
     flow = _score_level(_signal_value(signal_payload, "flow", "d5_flow_score"))
-    persistence = _score_level(
-        _signal_value(signal_payload, "flow", "d5_flow_persistence_score")
-    )
     risk = _score_level(
         _signal_value(signal_payload, "crowding_risk", "d5_risk_penalty_score"),
         high_is_good=False,
     )
     parts: list[str] = []
-    if trend:
-        parts.append(f"추세 {trend}")
-    if flow:
-        parts.append(f"수급 {flow}")
-    if persistence and persistence != flow:
-        parts.append(f"지속성 {persistence}")
+    if trend and flow and trend == flow:
+        parts.append(f"추세·수급 {trend}")
+    else:
+        if trend:
+            parts.append(f"추세 {trend}")
+        if flow:
+            parts.append(f"수급 {flow}")
     if risk:
         parts.append(f"위험 {risk}")
     return " · ".join(parts) if parts else "확인 제한"
@@ -220,7 +234,7 @@ def _short_list_text(
 ) -> str:
     if not items:
         return empty
-    shown = items[:limit]
+    shown = [_short_label(item) for item in items[:limit]]
     suffix = f" 외 {len(items) - limit}" if show_suffix and len(items) > limit else ""
     return ", ".join(shown) + suffix
 

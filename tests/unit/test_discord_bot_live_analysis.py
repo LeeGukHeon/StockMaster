@@ -140,10 +140,11 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
     assert "005930 삼성전자 · 매수해볼 가치 있음" in rendered
     assert "D5 S/72.0점 · 기대 +2.10%" in rendered
     assert "판단: 점수대 성과 우위" in rendered
-    assert "근거: 상대 강도가 살아나는 흐름, 원점수 상위 신호를 최대한 보존함" in rendered
+    assert "근거: 상대강도 개선, 원점수 상위" in rendered
+    assert "상대 강도가 살아나는 흐름" not in rendered
     assert "단기 탄력 강함" not in rendered
     assert "raw_alpha_leader_preserved" not in rendered
-    assert "주의: 앙상블 내부 판단이 엇갈림" in rendered
+    assert "주의: 모델 판단 엇갈림" in rendered
     assert "외 1" not in rendered
     assert "신호 추세 강함 · 수급 양호 · 위험 낮음" in rendered
     assert "데이터: KIS 실시간 시세 기준" not in rendered
