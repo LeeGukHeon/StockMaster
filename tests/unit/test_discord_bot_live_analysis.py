@@ -83,6 +83,9 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
                         "d1_grade": "A",
                         "d5_grade": "B",
                         "d5_expected_excess_return": 0.0123,
+                        "d5_final_selection_value": 68.0,
+                        "d5_judgement_label": "관찰 우선",
+                        "d5_judgement_summary": "분할 접근 권장 · 65-75점대 과거 평균 +0.6%",
                         "ret_5d": 0.0345,
                     },
                     ensure_ascii=False,
@@ -137,9 +140,10 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
     rendered = render_live_stock_analysis(object(), query="삼성전자")
 
     assert "현재 71,000원" in rendered
-    assert "005930 삼성전자 · 매수해볼 가치 있음" in rendered
-    assert "D5 S/72.0점 · 기대 +2.10%" in rendered
-    assert "판단: 점수대 성과 우위" in rendered
+    assert "005930 삼성전자 · 관찰 우선" in rendered
+    assert "장마감 D5 B/68.0점 · 기대 +1.23%" in rendered
+    assert "판단: 분할 접근 권장" in rendered
+    assert "실시간: 점수 72.0점 · 매수해볼 가치 있음" in rendered
     assert "근거: 상대강도 개선, 원점수 상위" in rendered
     assert "상대 강도가 살아나는 흐름" not in rendered
     assert "단기 탄력 강함" not in rendered
@@ -151,7 +155,7 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
     assert "가격: 목표 72,500원 · 손절 68,800원" in rendered
     assert "뉴스: 삼성전자 실적 개선" in rendered
     assert "삼성전자 AI 반도체 기대" not in rendered
-    assert len(rendered.splitlines()) <= 7
+    assert len(rendered.splitlines()) <= 8
 
 
 def test_render_live_stock_analysis_returns_candidate_list_for_ambiguous_query(monkeypatch) -> None:
@@ -236,7 +240,7 @@ def test_render_live_stock_analysis_degrades_when_external_providers_fail(monkey
     rendered = render_live_stock_analysis(object(), query="삼성전자")
 
     assert "005930 삼성전자 · 매수해볼 가치 있음" in rendered
-    assert "D5 A/66.0점 · 기대 +1.00%" in rendered
+    assert "장마감 D5 A/66.0점 · 기대 +1.00%" in rendered
     assert "상태: busy · snapshot 재사용" in rendered
     assert "데이터: KIS 실시간 시세 미수신 · Naver 최신 뉴스 미수신" in rendered
     assert len(rendered.splitlines()) <= 7

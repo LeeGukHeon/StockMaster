@@ -276,11 +276,23 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
         quote_timestamp_or_basis=quote_basis,
         news_basis=news_basis,
     )
-    d5_grade = _safe_text(analysis_payload.get("d5_grade"))
-    d5_expected = analysis_payload.get("d5_expected_excess_return")
-    judgement_label = _safe_text(analysis_payload.get("d5_judgement_label"), "판단 보류")
-    judgement_summary = _safe_text(analysis_payload.get("d5_judgement_summary"))
-    d5_score = _score_text(analysis_payload.get("d5_final_selection_value"))
+    live_d5_grade = _safe_text(analysis_payload.get("d5_grade"))
+    live_d5_expected = analysis_payload.get("d5_expected_excess_return")
+    live_judgement_label = _safe_text(analysis_payload.get("d5_judgement_label"), "판단 보류")
+    live_d5_score = _score_text(analysis_payload.get("d5_final_selection_value"))
+    stable_d5_grade = _safe_text(payload.get("d5_grade") or live_d5_grade)
+    stable_d5_expected = payload.get("d5_expected_excess_return", live_d5_expected)
+    stable_d5_score = _score_text(
+        payload.get("d5_final_selection_value")
+        or analysis_payload.get("d5_final_selection_value")
+    )
+    stable_judgement_label = _safe_text(
+        payload.get("d5_judgement_label") or analysis_payload.get("d5_judgement_label"),
+        "판단 보류",
+    )
+    stable_judgement_summary = _safe_text(
+        payload.get("d5_judgement_summary") or analysis_payload.get("d5_judgement_summary")
+    )
     risk_flags = _translate_tag_list(analysis_payload.get("risk_flags"), LIVE_RISK_LABELS, limit=2)
     risk_text = _short_list_text(risk_flags, empty="특이 리스크 없음", limit=1)
     reason_text = _short_list_text(
@@ -292,15 +304,27 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     signal_text = _render_signal_summary(analysis_payload.get("signal_decomposition", {}))
 
     lines = [
-        f"**{symbol} {company_name} · {judgement_label}**",
+        f"**{symbol} {company_name} · {stable_judgement_label}**",
         (
-            f"현재 {current_price}원 ({change_rate}) · "
-            f"D5 {d5_grade}/{d5_score}점 · 기대 {_pct_text(d5_expected)}"
+            f"장마감 D5 {stable_d5_grade}/{stable_d5_score}점 "
+            f"· 기대 {_pct_text(stable_d5_expected)} "
+            f"· 현재 {current_price}원 ({change_rate})"
         ),
-        f"판단: {judgement_summary}",
-        f"근거: {reason_text} · 신호 {signal_text}",
-        f"주의: {risk_text}",
+        f"판단: {stable_judgement_summary}",
     ]
+    if live_row is not None and live_d5_score != stable_d5_score:
+        live_label = (
+            "추격매수 보류"
+            if live_judgement_label == "매수 보류"
+            else live_judgement_label
+        )
+        lines.append(f"실시간: 점수 {live_d5_score}점 · {live_label}")
+    lines.extend(
+        [
+            f"근거: {reason_text} · 신호 {signal_text}",
+            f"주의: {risk_text}",
+        ]
+    )
     if live_row is not None:
         target_price = _int_text(live_row.get("live_d5_target_price"))
         stop_price = _int_text(live_row.get("live_d5_stop_price"))
