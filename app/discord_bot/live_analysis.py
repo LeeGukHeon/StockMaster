@@ -5,11 +5,30 @@ from typing import Any
 
 import pandas as pd
 
-from app.discord_bot.live_recalc import build_live_analysis_payload, compute_live_stock_recommendation
+from app.discord_bot.live_recalc import (
+    build_live_analysis_payload,
+    compute_live_stock_recommendation,
+)
 from app.discord_bot.read_store import fetch_discord_bot_snapshot_rows
 from app.providers.kis.client import KISProvider
 from app.providers.naver_news.client import NaverNewsProvider
+from app.reports.discord_eod import REASON_LABELS, RISK_LABELS
 from app.settings import Settings
+
+SIGNAL_METRIC_LABELS = {
+    "d1_trend_momentum_score": "D1 추세 탄력",
+    "d5_trend_momentum_score": "D5 추세 탄력",
+    "d1_relative_alpha_score": "D1 상대 강도",
+    "d5_relative_alpha_score": "D5 상대 강도",
+    "d1_flow_score": "D1 수급",
+    "d5_flow_score": "D5 수급",
+    "d5_flow_persistence_score": "D5 수급 지속성",
+    "d1_news_drift_score": "D1 뉴스 재평가",
+    "d5_news_drift_score": "D5 뉴스 재평가",
+    "d1_crowding_penalty_score": "D1 과열 부담",
+    "d5_crowding_penalty_score": "D5 과열 부담",
+    "d5_risk_penalty_score": "D5 위험 부담",
+}
 
 
 def _safe_text(value: object, fallback: str = "-") -> str:
@@ -61,6 +80,35 @@ def _parse_payload(value: object) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _translate_tag(value: object, mapping: dict[str, str]) -> str:
+    text = _safe_text(value)
+    if text == "-":
+        return ""
+    return mapping.get(text, text)
+
+
+def _translate_tag_list(values: object, mapping: dict[str, str], *, limit: int = 3) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    labels: list[str] = []
+    for value in values:
+        label = _translate_tag(value, mapping)
+        if label and label not in labels:
+            labels.append(label)
+        if len(labels) >= limit:
+            break
+    return labels
+
+
+def _translated_why_now(analysis_payload: dict[str, object]) -> str:
+    d5_reasons = _translate_tag_list(analysis_payload.get("d5_reason_tags"), REASON_LABELS, limit=2)
+    d1_reasons = _translate_tag_list(analysis_payload.get("d1_reason_tags"), REASON_LABELS, limit=1)
+    reasons = d5_reasons + [label for label in d1_reasons if label not in d5_reasons]
+    if reasons:
+        return " · ".join(reasons)
+    return _safe_text(analysis_payload.get("why_now"))
+
+
 def _latest_news_lines(provider: NaverNewsProvider, *, company_name: str) -> list[str]:
     payload = provider.search_news(query=company_name, limit=3, start=1, sort="date")
     lines: list[str] = []
@@ -72,9 +120,50 @@ def _latest_news_lines(provider: NaverNewsProvider, *, company_name: str) -> lis
     return lines
 
 
+def _close_provider(provider: object | None) -> None:
+    if provider is None:
+        return
+    close = getattr(provider, "close", None)
+    if close is None:
+        return
+    try:
+        close()
+    except Exception:
+        return
+
+
+def _fetch_quote(settings: Settings, *, symbol: str) -> tuple[dict[str, object], str]:
+    provider = None
+    try:
+        provider = KISProvider(settings)
+        quote_payload = provider.fetch_current_quote(
+            symbol=symbol,
+            persist_probe_artifacts=False,
+        )
+    except Exception:
+        return {}, "KIS 실시간 시세 미수신"
+    finally:
+        _close_provider(provider)
+    quote = quote_payload.get("output") or {}
+    return quote, "KIS 실시간 시세 기준" if quote else "KIS 실시간 시세 미수신"
+
+
+def _fetch_news(settings: Settings, *, company_name: str) -> tuple[list[str], str]:
+    provider = None
+    try:
+        provider = NaverNewsProvider(settings)
+        headlines = _latest_news_lines(provider, company_name=company_name)
+    except Exception:
+        return [], "Naver 최신 뉴스 미수신"
+    finally:
+        _close_provider(provider)
+    basis = f"Naver 최신 뉴스 {len(headlines)}건 반영" if headlines else "최근 뉴스 미반영"
+    return headlines, basis
+
+
 def _basis_line(mode: str, note: str | None) -> str:
     if mode == "live":
-        return "실시간 재계산 head와 최신 안정 스냅샷을 함께 사용했습니다."
+        return "D5 스윙 주력 판단은 실시간 재계산 head와 최신 안정 스냅샷을 함께 사용했습니다."
     if note:
         return note
     if mode == "busy":
@@ -97,13 +186,20 @@ def _render_signal_decomposition(signal_payload: dict[str, object]) -> list[str]
         if not isinstance(values, dict):
             continue
         non_empty = [
-            f"{key}={float(value):.1f}"
+            f"{SIGNAL_METRIC_LABELS.get(key, key)} {float(value):.1f}"
             for key, value in values.items()
             if value is not None and not (isinstance(value, float) and pd.isna(value))
         ]
         if non_empty:
             lines.append(f"- {label}: " + ", ".join(non_empty))
     return lines
+
+
+def _render_candidate_list(query: str, rows: pd.DataFrame) -> str:
+    lines = ["**종목 후보**", f"`{query}`가 여러 종목과 매칭됩니다. 6자리 코드로 다시 조회하세요."]
+    for row in rows.head(5).itertuples(index=False):
+        lines.append(f"- {row.title}")
+    return "\n".join(lines)
 
 
 def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
@@ -116,10 +212,7 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     if rows.empty:
         return f"`{query}` 기준으로 찾은 종목이 없습니다."
     if len(rows) > 1:
-        lines = ["**종목 후보**"]
-        for row in rows.head(5).itertuples(index=False):
-            lines.append(f"- {row.title}")
-        return "\n".join(lines)
+        return _render_candidate_list(query, rows)
 
     row = rows.iloc[0]
     payload = _parse_payload(row.get("payload_json"))
@@ -129,18 +222,8 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     live_result = compute_live_stock_recommendation(settings, symbol=symbol)
     live_row = live_result.frame.iloc[0] if not live_result.frame.empty else None
 
-    kis = KISProvider(settings)
-    news = NaverNewsProvider(settings)
-    try:
-        quote_payload = kis.fetch_current_quote(
-            symbol=symbol,
-            persist_probe_artifacts=False,
-        )
-        quote = quote_payload.get("output") or {}
-        headlines = _latest_news_lines(news, company_name=company_name)
-    finally:
-        kis.close()
-        news.close()
+    quote, quote_basis = _fetch_quote(settings, symbol=symbol)
+    headlines, news_basis = _fetch_news(settings, company_name=company_name)
 
     current_price = _int_text(quote.get("stck_prpr"))
     change_price = _int_text(quote.get("prdy_vrss"))
@@ -148,12 +231,6 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     high_price = _int_text(quote.get("stck_hgpr"))
     low_price = _int_text(quote.get("stck_lwpr"))
     volume = _int_text(quote.get("acml_vol"))
-    quote_basis = "KIS 실시간 시세 기준" if quote else "실시간 시세 미수신"
-    news_basis = (
-        f"Naver 최신 뉴스 {len(headlines)}건 반영"
-        if headlines
-        else "최근 뉴스 미반영"
-    )
     analysis_payload = build_live_analysis_payload(
         payload,
         live_result,
@@ -165,26 +242,27 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     d5_expected = analysis_payload.get("d5_expected_excess_return")
 
     lines = [
-        f"**{symbol} {company_name}**",
-        f"{market} 기준 즉석 분석입니다.",
+        f"**{symbol} {company_name} · D5 스윙 즉석 분석**",
+        f"{market} · 2~5거래일 보유 관점의 주력 판단입니다.",
         _basis_line(live_result.mode, live_result.note),
         f"현재가 {current_price}원, 전일 대비 {change_price}원 ({change_rate})",
-        f"D1 {d1_grade} · D5 {d5_grade}",
+        f"주력 판단: D5 {d5_grade} · 예상 초과수익률 {_pct_text(d5_expected)}",
+        f"보조 참고: D1 {d1_grade} · 최근 5일 수익률 {_pct_text(analysis_payload.get('ret_5d'))}",
         (
-            f"활성 head D1 {_safe_text(analysis_payload.get('d1_head_spec_id'))} "
-            f"· D5 {_safe_text(analysis_payload.get('d5_head_spec_id'))}"
+            f"운영 head: D5 {_safe_text(analysis_payload.get('d5_head_spec_id'))} "
+            f"· D1 참고 {_safe_text(analysis_payload.get('d1_head_spec_id'))}"
         ),
-        f"D5 예상 초과수익률 {_pct_text(d5_expected)}",
-        f"최근 5일 수익률 {_pct_text(analysis_payload.get('ret_5d'))}",
-        f"왜 지금 보나: {_safe_text(analysis_payload.get('why_now'))}",
+        f"왜 지금 보나: {_translated_why_now(analysis_payload)}",
     ]
     if live_row is not None:
-        lines.append(
-            f"실시간 목표가 {_int_text(live_row.get('live_d5_target_price'))}원 · 손절 참고선 {_int_text(live_row.get('live_d5_stop_price'))}원"
-        )
-    lines.append("신호 분해")
-    lines.extend(_render_signal_decomposition(analysis_payload.get("signal_decomposition", {})))
-    risk_flags = analysis_payload.get("risk_flags") or []
+        target_price = _int_text(live_row.get("live_d5_target_price"))
+        stop_price = _int_text(live_row.get("live_d5_stop_price"))
+        lines.append(f"실시간 목표가 {target_price}원 · 손절 참고선 {stop_price}원")
+    signal_lines = _render_signal_decomposition(analysis_payload.get("signal_decomposition", {}))
+    if signal_lines:
+        lines.append("신호 분해")
+        lines.extend(signal_lines)
+    risk_flags = _translate_tag_list(analysis_payload.get("risk_flags"), RISK_LABELS, limit=4)
     if risk_flags:
         lines.append("리스크 플래그")
         lines.extend(f"- {item}" for item in risk_flags)
