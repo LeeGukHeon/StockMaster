@@ -508,22 +508,20 @@ def _format_pick_block(
     )
     score = float(row["final_selection_value"])
     expected_text = _pct_text(row.get("expected_excess_return"))
-    lines = [
-        (
-            f"{rank}. `{row['symbol']}` {row['company_name']} · {judgement.label}"
-            f" | 점수 {score:.1f}/{row['grade']} | 기대 {expected_text}"
-        ),
-        f"   - {judgement.summary} | 근거 {reasons} | 리스크 {risks}",
-    ]
+    detail = f"   - {judgement.summary} | 근거 {reasons} | 리스크 {risks}"
     if pd.notna(row.get("selection_close_price")) and pd.notna(
         row.get("expected_excess_return")
     ):
         base_price = float(row["selection_close_price"])
         target_price = base_price * (1.0 + float(row["expected_excess_return"]))
-        lines.append(
-            f"   - 기준가 {base_price:,.0f}원 → 참고목표 {target_price:,.0f}원"
-        )
-    return lines
+        detail += f" | {base_price:,.0f}→{target_price:,.0f}원"
+    return [
+        (
+            f"{rank}. `{row['symbol']}` {row['company_name']} · {judgement.label}"
+            f" | 점수 {score:.1f}/{row['grade']} | 기대 {expected_text}"
+        ),
+        detail,
+    ]
 
 
 def _format_sector_outlook_line(row: pd.Series, *, rank: int) -> str:
@@ -697,21 +695,6 @@ def _build_payload_content(
         "- 기대수익은 보장값이 아니라 과거 성숙 성과와 현재 신호를 함께 본 참고값입니다.",
     ]
 
-    if alpha_promotion.empty:
-        model_notes: list[str] = []
-    else:
-        model_notes = [
-            _format_alpha_promotion_line(row)
-            for _, row in alpha_promotion.head(2).iterrows()
-        ]
-    if selection_gap is not None and not selection_gap.empty:
-        model_notes.extend(
-            _format_selection_gap_line(row)
-            for _, row in selection_gap.head(2).iterrows()
-        )
-    if model_notes:
-        lines.extend(["", "**모델/선택 점검**", *model_notes])
-
     lines.extend(["", primary_candidate_title])
     if single_buy_candidates.empty:
         lines.append("- 상위 후보가 아직 없습니다.")
@@ -731,7 +714,7 @@ def _build_payload_content(
         if reference_candidates.empty:
             lines.append("- 참고용 D1 후보가 아직 없습니다.")
         else:
-            for index, (_, row) in enumerate(reference_candidates.head(3).iterrows(), start=1):
+            for index, (_, row) in enumerate(reference_candidates.head(2).iterrows(), start=1):
                 lines.extend(
                     _format_pick_block(row, rank=index, score_evidence=reference_score_evidence)
                 )
@@ -745,7 +728,7 @@ def _build_payload_content(
 
     if not market_news.empty:
         lines.extend(["", "**시장 뉴스**"])
-        for _, row in market_news.head(3).iterrows():
+        for _, row in market_news.head(2).iterrows():
             lines.append(f"- {row['title']} ({row['publisher']})")
     return "\n".join(lines)
 

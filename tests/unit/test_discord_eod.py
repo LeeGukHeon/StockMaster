@@ -64,8 +64,7 @@ def test_build_payload_content_labels_candidate_horizon_explicitly() -> None:
     assert "**강세 예상 업종 | 하루 보유 기준 (D+1)**" in content
     assert "**다음 거래일 후보 | 하루 보유 기준 (D+1)**" in content
     assert "기대수익은 보장값이 아니라" in content
-    assert "**모델/선택 점검**" in content
-    assert "하루 선행 포착 v1" in content
+    assert "**모델/선택 점검**" not in content
     assert "공식 추천안" not in content
 
 
@@ -122,6 +121,7 @@ def test_format_pick_block_omits_active_model_id() -> None:
     assert "관찰 우선" in rendered
     assert "단기 탄력 강함" in rendered
     assert "모델 확신이 낮음" in rendered
+    assert "8,860→8,872원" in rendered
 
 
 def test_format_pick_block_translates_d5_reason_tags_to_korean() -> None:
