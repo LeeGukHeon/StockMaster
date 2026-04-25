@@ -295,12 +295,15 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     )
     risk_flags = _translate_tag_list(analysis_payload.get("risk_flags"), LIVE_RISK_LABELS, limit=2)
     risk_text = _short_list_text(risk_flags, empty="특이 리스크 없음", limit=1)
-    reason_text = _short_list_text(
-        _translated_why_now(analysis_payload).split(" · "),
-        empty="근거 제한",
-        limit=2,
-        show_suffix=False,
-    )
+    if live_result.mode == "closed":
+        reason_text = "장마감 추천 기준"
+    else:
+        reason_text = _short_list_text(
+            _translated_why_now(analysis_payload).split(" · "),
+            empty="근거 제한",
+            limit=2,
+            show_suffix=False,
+        )
     signal_text = _render_signal_summary(analysis_payload.get("signal_decomposition", {}))
 
     lines = [
@@ -319,17 +322,17 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
             else live_judgement_label
         )
         lines.append(f"실시간: 점수 {live_d5_score}점 · {live_label}")
-    lines.extend(
-        [
-            f"근거: {reason_text} · 신호 {signal_text}",
-            f"주의: {risk_text}",
-        ]
-    )
+    reason_line = f"근거: {reason_text}"
+    if signal_text != "확인 제한":
+        reason_line += f" · 신호 {signal_text}"
+    lines.append(reason_line)
+    if risk_flags or live_result.mode != "closed":
+        lines.append(f"주의: {risk_text}")
     if live_row is not None:
         target_price = _int_text(live_row.get("live_d5_target_price"))
         stop_price = _int_text(live_row.get("live_d5_stop_price"))
         lines.append(f"가격: 목표 {target_price}원 · 손절 {stop_price}원")
-    if analysis_payload.get("snapshot_reused_flag"):
+    if analysis_payload.get("snapshot_reused_flag") and live_result.mode != "closed":
         lines.append(f"상태: {analysis_payload.get('degradation_mode')} · snapshot 재사용")
     if headlines:
         lines.append(f"뉴스: {headlines[0]}")

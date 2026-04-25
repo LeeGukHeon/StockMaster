@@ -374,6 +374,7 @@ def _build_stock_summary_rows(
     built_at: str,
     as_of_date: str | None,
     source_run_id: str,
+    score_evidence: dict[str, ScoreBandEvidence] | None = None,
 ) -> list[dict[str, object]]:
     if summary_frame.empty:
         return []
@@ -407,6 +408,7 @@ def _build_stock_summary_rows(
         judgement = classify_recommendation(
             final_selection_value=d5_score,
             expected_excess_return=d5_expected,
+            evidence_by_band=score_evidence,
         )
         summary = " · ".join(
             [
@@ -561,6 +563,7 @@ def materialize_discord_bot_read_store(
             built_at=built_at_text,
             as_of_date=target_as_of_date_text,
             source_run_id=job_run_id,
+            score_evidence=score_evidence_by_horizon.get(5),
         )
     )
 

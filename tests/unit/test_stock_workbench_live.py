@@ -27,6 +27,11 @@ def test_compute_live_stock_recommendation_returns_on_demand_snapshot(
     dummy_artifact.write_bytes(b"artifact")
 
     monkeypatch.setattr(
+        "app.discord_bot.live_recalc._is_regular_trading_session",
+        lambda settings, connection, *, as_of_date: True,
+    )
+
+    monkeypatch.setattr(
         "app.discord_bot.live_recalc._resolve_training_run_for_inference",
         lambda connection, *, as_of_date, horizon: (
             {

@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, time
 
 import duckdb
 import pandas as pd
 
 from app.common.artifacts import resolve_artifact_path
+from app.common.time import now_local
 from app.features.builders.flow_features import build_flow_feature_frame
 from app.features.builders.fundamentals_features import build_fundamentals_feature_frame
 from app.features.builders.liquidity_features import build_liquidity_feature_frame
@@ -45,6 +46,10 @@ class LiveRecalcResult:
     frame: pd.DataFrame
     mode: str
     note: str | None = None
+
+
+MARKET_OPEN_TIME = time(9, 0)
+MARKET_CLOSE_TIME = time(15, 30)
 
 
 def _json_list(value: object) -> list[str]:
@@ -257,6 +262,23 @@ def _latest_workbench_as_of_date(connection) -> date | None:
     return pd.Timestamp(row[0]).date()
 
 
+def _is_regular_trading_session(settings: Settings, connection, *, as_of_date: date) -> bool:
+    now_ts = now_local(settings.app.timezone)
+    if now_ts.date() != as_of_date:
+        return False
+    calendar_row = connection.execute(
+        """
+        SELECT is_trading_day
+        FROM dim_trading_calendar
+        WHERE trading_date = ?
+        """,
+        [now_ts.date()],
+    ).fetchone()
+    if calendar_row is not None and not bool(calendar_row[0]):
+        return False
+    return MARKET_OPEN_TIME <= now_ts.time() <= MARKET_CLOSE_TIME
+
+
 def _build_workbench_live_feature_row(
     connection,
     *,
@@ -444,6 +466,12 @@ def compute_live_stock_recommendation(
             as_of_date = _latest_workbench_as_of_date(connection)
             if as_of_date is None:
                 return LiveRecalcResult(pd.DataFrame(), mode="missing", note="기준일이 없습니다.")
+            if not _is_regular_trading_session(settings, connection, as_of_date=as_of_date):
+                return LiveRecalcResult(
+                    pd.DataFrame(),
+                    mode="closed",
+                    note="비거래시간이라 장마감 추천 기준으로 안내합니다.",
+                )
 
             feature_context = load_feature_matrix(connection, as_of_date=as_of_date, market="ALL")
             if feature_context.empty:
