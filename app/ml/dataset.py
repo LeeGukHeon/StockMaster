@@ -13,7 +13,7 @@ from app.features.feature_store import (
     feature_snapshot_has_required_quality_features,
 )
 from app.labels.forward_returns import build_forward_labels
-from app.ml.constants import MODEL_DATASET_VERSION
+from app.ml.constants import MARKET_REGIME_FEATURE_COLUMNS, MODEL_DATASET_VERSION
 from app.pipelines._helpers import load_symbol_frame
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
@@ -22,7 +22,27 @@ from app.storage.manifests import record_run_finish, record_run_start
 from app.storage.parquet_io import write_parquet
 
 MARKET_FEATURE_COLUMNS: tuple[str, ...] = ("market_is_kospi", "market_is_kosdaq")
-TRAINING_FEATURE_COLUMNS: tuple[str, ...] = FEATURE_NAMES + MARKET_FEATURE_COLUMNS
+TRAINING_FEATURE_COLUMNS: tuple[str, ...] = (
+    FEATURE_NAMES + MARKET_FEATURE_COLUMNS + MARKET_REGIME_FEATURE_COLUMNS
+)
+REGIME_STATE_FEATURE_MAP: dict[str, str] = {
+    "panic": "market_regime_panic_flag",
+    "risk_off": "market_regime_risk_off_flag",
+    "neutral": "market_regime_neutral_flag",
+    "risk_on": "market_regime_risk_on_flag",
+    "euphoria": "market_regime_euphoria_flag",
+}
+REGIME_NUMERIC_FEATURE_MAP: dict[str, str] = {
+    "regime_score": "market_regime_score",
+    "breadth_up_ratio": "market_breadth_up_ratio",
+    "breadth_down_ratio": "market_breadth_down_ratio",
+    "median_symbol_return_1d": "market_median_symbol_return_1d",
+    "median_symbol_return_5d": "market_median_symbol_return_5d",
+    "market_realized_vol_20d": "market_realized_vol_20d",
+    "turnover_burst_z": "market_turnover_burst_z",
+    "new_high_ratio_20d": "market_new_high_ratio_20d",
+    "new_low_ratio_20d": "market_new_low_ratio_20d",
+}
 
 
 @dataclass(slots=True)
@@ -141,6 +161,108 @@ def _ensure_feature_snapshots(
             force=True,
         )
     return [*missing_dates, *invalid_dates]
+
+
+def _market_scope_for_row(market: object) -> str:
+    market_value = str(market or "").upper()
+    if market_value in {"KOSPI", "KOSDAQ"}:
+        return market_value
+    return "KR_ALL"
+
+
+def _empty_market_regime_features(frame: pd.DataFrame) -> pd.DataFrame:
+    augmented = frame.copy()
+    for feature_name in MARKET_REGIME_FEATURE_COLUMNS:
+        if feature_name not in augmented.columns:
+            augmented[feature_name] = pd.NA
+    augmented["market_regime_coverage_flag"] = 0.0
+    for feature_name in REGIME_STATE_FEATURE_MAP.values():
+        augmented[feature_name] = 0.0
+    return augmented
+
+
+def augment_market_regime_features(connection, frame: pd.DataFrame) -> pd.DataFrame:
+    """Attach point-in-time market regime features to a training/inference frame.
+
+    Regime rows are market-level, so each symbol row uses its own KOSPI/KOSDAQ scope when
+    available and falls back to KR_ALL for broad-market coverage. The join is strictly
+    same-date and therefore does not use future information.
+    """
+    if frame.empty:
+        return _empty_market_regime_features(frame)
+    if "as_of_date" not in frame.columns or "market" not in frame.columns:
+        return _empty_market_regime_features(frame)
+
+    augmented = frame.copy()
+    augmented["as_of_date"] = pd.to_datetime(augmented["as_of_date"]).dt.date
+    dates = sorted(date_value for date_value in augmented["as_of_date"].dropna().unique())
+    if not dates:
+        return _empty_market_regime_features(augmented)
+
+    placeholders = ",".join("?" for _ in dates)
+    regime = connection.execute(
+        f"""
+        SELECT
+            as_of_date,
+            market_scope,
+            breadth_up_ratio,
+            breadth_down_ratio,
+            median_symbol_return_1d,
+            median_symbol_return_5d,
+            market_realized_vol_20d,
+            turnover_burst_z,
+            new_high_ratio_20d,
+            new_low_ratio_20d,
+            regime_state,
+            regime_score
+        FROM fact_market_regime_snapshot
+        WHERE as_of_date IN ({placeholders})
+        """,
+        dates,
+    ).fetchdf()
+    if regime.empty:
+        return _empty_market_regime_features(augmented)
+
+    regime["as_of_date"] = pd.to_datetime(regime["as_of_date"]).dt.date
+    regime["market_scope"] = regime["market_scope"].astype(str).str.upper()
+    preferred = augmented[["as_of_date", "market"]].copy()
+    preferred["__row_id"] = augmented.index
+    preferred["market_scope"] = preferred["market"].map(_market_scope_for_row)
+
+    preferred_regime = preferred.merge(
+        regime,
+        on=["as_of_date", "market_scope"],
+        how="left",
+    ).set_index("__row_id")
+    fallback_regime = (
+        preferred[["__row_id", "as_of_date"]]
+        .merge(
+            regime.loc[regime["market_scope"].eq("KR_ALL")],
+            on="as_of_date",
+            how="left",
+        )
+        .set_index("__row_id")
+    )
+
+    matched = preferred_regime["regime_state"].notna()
+    fallback_matched = fallback_regime["regime_state"].notna()
+    selected_state = preferred_regime["regime_state"].where(
+        matched,
+        fallback_regime["regime_state"],
+    )
+
+    for source_column, feature_name in REGIME_NUMERIC_FEATURE_MAP.items():
+        selected = preferred_regime[source_column].where(matched, fallback_regime[source_column])
+        augmented[feature_name] = pd.to_numeric(selected.reindex(augmented.index), errors="coerce")
+
+    selected_state = selected_state.reindex(augmented.index).fillna("").astype(str).str.lower()
+    for state_name, feature_name in REGIME_STATE_FEATURE_MAP.items():
+        augmented[feature_name] = selected_state.eq(state_name).astype(float)
+    augmented["market_regime_coverage_flag"] = (matched | fallback_matched).reindex(
+        augmented.index,
+        fill_value=False,
+    ).astype(float)
+    return augmented
 
 
 def _buyable_candidate_scores(label_rows: pd.DataFrame) -> pd.Series:
@@ -359,6 +481,7 @@ def _load_dataset_frame(
     )
     dataset["market_is_kospi"] = dataset["market"].eq("KOSPI").astype(float)
     dataset["market_is_kosdaq"] = dataset["market"].eq("KOSDAQ").astype(float)
+    dataset = augment_market_regime_features(connection, dataset)
     dataset["as_of_date"] = pd.to_datetime(dataset["as_of_date"]).dt.date
     for feature_name in FEATURE_NAMES:
         if feature_name not in dataset.columns:
@@ -419,6 +542,7 @@ def build_model_training_dataset(
                 input_sources=[
                     "fact_feature_snapshot",
                     "fact_forward_return_label",
+                    "fact_market_regime_snapshot",
                     "dim_symbol",
                 ],
                 notes=(

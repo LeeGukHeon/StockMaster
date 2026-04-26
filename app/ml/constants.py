@@ -203,6 +203,7 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
             "investor_flow",
             "fundamentals_quality",
             "value_safety",
+            "market_regime",
             "data_quality",
         ),
         member_names=("elasticnet", "hist_gbm"),
@@ -222,6 +223,27 @@ DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = tuple(
     for spec in CHALLENGER_ALPHA_MODEL_SPECS
     if spec.active_candidate_flag and spec.model_spec_id != D5_PRIMARY_FOCUS_MODEL_SPEC_ID
 )
+
+MARKET_REGIME_FEATURE_COLUMNS: tuple[str, ...] = (
+    "market_regime_score",
+    "market_breadth_up_ratio",
+    "market_breadth_down_ratio",
+    "market_median_symbol_return_1d",
+    "market_median_symbol_return_5d",
+    "market_realized_vol_20d",
+    "market_turnover_burst_z",
+    "market_new_high_ratio_20d",
+    "market_new_low_ratio_20d",
+    "market_regime_panic_flag",
+    "market_regime_risk_off_flag",
+    "market_regime_neutral_flag",
+    "market_regime_risk_on_flag",
+    "market_regime_euphoria_flag",
+    "market_regime_coverage_flag",
+)
+DERIVED_FEATURE_GROUP_COLUMNS: dict[str, tuple[str, ...]] = {
+    "market_regime": MARKET_REGIME_FEATURE_COLUMNS,
+}
 
 MODEL_MEMBER_NAMES: tuple[str, ...] = (
     "elasticnet",
@@ -252,6 +274,8 @@ def resolve_feature_columns_for_spec(
             for feature_name in FEATURE_NAMES
             if FEATURE_GROUP_BY_NAME.get(feature_name) in allowed_groups
         ]
+        for feature_group in model_spec.feature_groups:
+            columns.extend(DERIVED_FEATURE_GROUP_COLUMNS.get(feature_group, ()))
     if include_market_features:
         columns.extend(["market_is_kospi", "market_is_kosdaq"])
     return tuple(dict.fromkeys(columns))

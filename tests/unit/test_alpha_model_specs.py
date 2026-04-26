@@ -9,6 +9,7 @@ import pandas as pd
 from app.ml.constants import (
     CHALLENGER_ALPHA_MODEL_SPECS,
     DEFAULT_ALPHA_MODEL_SPEC,
+    MARKET_REGIME_FEATURE_COLUMNS,
     get_alpha_model_spec,
     resolve_feature_columns_for_spec,
     resolve_member_names_for_spec,
@@ -178,11 +179,14 @@ def test_alpha_buyable_d5_v1_is_experimental_and_uses_buyable_target() -> None:
         "investor_flow",
         "fundamentals_quality",
         "value_safety",
+        "market_regime",
         "data_quality",
     )
     feature_columns = resolve_feature_columns_for_spec(spec)
     assert "news_count_1d" not in feature_columns
     assert "news_drift_persistence_score" not in feature_columns
+    for feature_name in MARKET_REGIME_FEATURE_COLUMNS:
+        assert feature_name in feature_columns
     assert spec.member_names == ("elasticnet", "hist_gbm")
     assert spec.target_variant == "buyable_top5"
     assert spec.training_target_variant == "buyable_top5"

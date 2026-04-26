@@ -19,7 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.features.feature_store import load_feature_matrix
 from app.ml.constants import get_alpha_model_spec, supports_horizon_for_spec
-from app.ml.dataset import _load_dataset_frame
+from app.ml.dataset import _load_dataset_frame, augment_market_regime_features
 from app.ml.inference import build_prediction_frame_from_training_run
 from app.ml.registry import load_active_alpha_model
 from app.ml.training import _train_single_horizon
@@ -372,6 +372,7 @@ def run_backtest(args: argparse.Namespace) -> int:
                 include_rank_features=False,
                 include_zscore_features=False,
             )
+            feature_frame = augment_market_regime_features(connection, feature_frame)
             prediction_frame, _ = build_prediction_frame_from_training_run(
                 run_id=run_id,
                 as_of_date=as_of_date,

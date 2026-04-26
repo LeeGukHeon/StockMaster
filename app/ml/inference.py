@@ -25,7 +25,7 @@ from app.ml.constants import (
     PREDICTION_VERSION,
     SELECTION_ENGINE_VERSION,
 )
-from app.ml.dataset import TRAINING_FEATURE_COLUMNS
+from app.ml.dataset import TRAINING_FEATURE_COLUMNS, augment_market_regime_features
 from app.ml.registry import (
     load_active_alpha_model,
     load_latest_training_run,
@@ -608,6 +608,7 @@ def materialize_alpha_predictions_v1(
                 as_of_date=run_context.as_of_date,
                 input_sources=[
                     "fact_feature_snapshot",
+                    "fact_market_regime_snapshot",
                     "fact_model_training_run",
                     "fact_alpha_active_model",
                 ],
@@ -626,6 +627,7 @@ def materialize_alpha_predictions_v1(
                     include_rank_features=False,
                     include_zscore_features=False,
                 )
+                feature_frame = augment_market_regime_features(connection, feature_frame)
                 if feature_frame.empty:
                     raise RuntimeError(
                         "Feature matrix is missing for alpha inference. "
