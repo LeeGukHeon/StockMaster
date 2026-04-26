@@ -91,8 +91,12 @@ def _derive_invalidation_conditions(risk_flags: list[str]) -> list[str]:
             conditions.append(
                 "최근 급락이 이어지면 반등 가설보다 추세 훼손 가능성을 우선 봐야 합니다."
             )
-        elif risk_flag == "model_uncertainty_high":
-            conditions.append("모델 불확실성이 높아 추가 확인 없이 공격적으로 진입하지 않습니다.")
+        elif risk_flag in {"prediction_error_bucket_high", "model_uncertainty_high"}:
+            conditions.append("고예측 구간은 과거 오차가 커서 분할·관찰 기준으로만 봅니다.")
+        elif risk_flag == "model_disagreement_high":
+            conditions.append("앙상블 판단 차이가 커서 단독 신호로 과신하지 않습니다.")
+        elif risk_flag == "model_joint_instability_high":
+            conditions.append("고예측 오차와 모델 이견이 겹치면 매수 후보에서 제외합니다.")
         elif risk_flag == "crowding_risk":
             conditions.append("거래 과열이 심해지면 D+1 선행 우위가 빠르게 약해질 수 있습니다.")
     if not conditions:

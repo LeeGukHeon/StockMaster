@@ -108,7 +108,7 @@ def test_format_pick_block_omits_active_model_id() -> None:
             "model_spec_id": "alpha_recursive_expanding_v1",
             "active_alpha_model_id": "freeze_alpha_active_model-xxx",
             "top_reason_tags_json": '["short_term_momentum_strong"]',
-            "risk_flags_json": '["model_uncertainty_high"]',
+            "risk_flags_json": '["model_joint_instability_high"]',
         }
     )
 
@@ -120,7 +120,7 @@ def test_format_pick_block_omits_active_model_id() -> None:
     assert "활성 모델 ID" not in rendered
     assert "관찰 우선" in rendered
     assert "단기 탄력 강함" in rendered
-    assert "모델 확신이 낮음" in rendered
+    assert "고예측 오차와 모델 이견이 동시에 큼" in rendered
     assert "8,860→8,872원" in rendered
 
 

@@ -5,9 +5,10 @@ import pandas as pd
 from app.selection.engine_v2 import (
     D5_RAW_PRESERVATION_PRIORITY_COUNT,
     _alpha_core_score,
-    _apply_d5_buyable_risk_gate,
+    _apply_d5_buyability_risk_gate,
     _apply_d5_raw_preservation_guardrail,
     _augment_reason_tags,
+    _augment_risk_flags,
     _compute_crowding_penalty_score,
     _compute_d5_raw_preservation_blocker_mask,
     _compute_late_entry_penalty_score,
@@ -49,6 +50,29 @@ def test_reason_tags_prefer_relative_and_persistence_signals():
     assert "residual_strength_improving" in tags
     assert "flow_persistence_supportive" in tags
     assert "news_drift_underreacted" not in tags
+
+
+def test_model_risk_flags_separate_error_bucket_disagreement_and_joint_risk():
+    high_error_only = _augment_risk_flags(
+        pd.Series({"uncertainty_score": 89.0, "disagreement_score": 70.0}),
+        [],
+    )
+    high_disagreement_only = _augment_risk_flags(
+        pd.Series({"uncertainty_score": 68.0, "disagreement_score": 95.0}),
+        [],
+    )
+    joint = _augment_risk_flags(
+        pd.Series({"uncertainty_score": 89.0, "disagreement_score": 95.0}),
+        [],
+    )
+
+    assert high_error_only == ["prediction_error_bucket_high"]
+    assert high_disagreement_only == ["model_disagreement_high"]
+    assert joint == [
+        "model_disagreement_high",
+        "model_joint_instability_high",
+        "prediction_error_bucket_high",
+    ]
 
 
 def test_d5_alpha_core_score_uses_magnitude_to_separate_outsized_raw_leader():
@@ -372,7 +396,7 @@ def test_non_topk_report_candidate_mask_requires_eligibility_and_rank_threshold(
     assert scored.loc[mask, "symbol"].tolist() == ["A", "D"]
 
 
-def test_d5_buyable_risk_gate_demotes_data_missingness_and_joint_model_risk():
+def test_d5_buyability_risk_gate_demotes_data_missingness_and_joint_model_risk():
     scored = pd.DataFrame(
         {
             "symbol": ["A", "B", "C", "D"],
@@ -382,53 +406,65 @@ def test_d5_buyable_risk_gate_demotes_data_missingness_and_joint_model_risk():
     risk_flags = pd.Series(
         [
             ["data_missingness_high"],
-            ["model_uncertainty_high", "model_disagreement_high"],
+            ["model_joint_instability_high"],
             [
                 "data_missingness_high",
-                "model_uncertainty_high",
-                "model_disagreement_high",
+                "model_joint_instability_high",
             ],
             [],
         ]
     )
 
-    gated = _apply_d5_buyable_risk_gate(
+    gated = _apply_d5_buyability_risk_gate(
         scored,
         risk_flags,
         model_spec_id="alpha_buyable_d5_v1",
         horizon=5,
     )
 
-    assert gated["d5_buyable_risk_gate_penalty_score"].tolist() == [14.0, 10.0, 24.0, 0.0]
+    assert gated["d5_buyability_risk_gate_penalty_score"].tolist() == [
+        14.0,
+        10.0,
+        24.0,
+        0.0,
+    ]
     assert gated["final_selection_value"].tolist() == [56.0, 60.0, 46.0, 70.0]
     assert float(gated.loc[gated["symbol"].eq("D"), "final_selection_rank_pct"].item()) == 1.0
 
 
-def test_d5_buyable_risk_gate_does_not_penalize_thin_liquidity_alone():
+def test_d5_buyability_risk_gate_does_not_penalize_thin_liquidity_alone():
     scored = pd.DataFrame({"symbol": ["A"], "final_selection_value": [70.0]})
     risk_flags = pd.Series([["thin_liquidity"]])
 
-    gated = _apply_d5_buyable_risk_gate(
+    gated = _apply_d5_buyability_risk_gate(
         scored,
         risk_flags,
         model_spec_id="alpha_buyable_d5_v1",
         horizon=5,
     )
 
-    assert gated["d5_buyable_risk_gate_penalty_score"].item() == 0.0
+    assert gated["d5_buyability_risk_gate_penalty_score"].item() == 0.0
     assert gated["final_selection_value"].item() == 70.0
 
 
-def test_d5_buyable_risk_gate_does_not_change_other_specs():
+def test_d5_buyability_risk_gate_applies_to_active_d5_and_skips_other_specs():
     scored = pd.DataFrame({"symbol": ["A"], "final_selection_value": [70.0]})
-    risk_flags = pd.Series([["data_missingness_high", "model_uncertainty_high"]])
+    risk_flags = pd.Series([["data_missingness_high"]])
 
-    gated = _apply_d5_buyable_risk_gate(
+    active_gated = _apply_d5_buyability_risk_gate(
         scored,
         risk_flags,
         model_spec_id="alpha_swing_d5_v2",
         horizon=5,
     )
+    other_gated = _apply_d5_buyability_risk_gate(
+        scored,
+        risk_flags,
+        model_spec_id="alpha_recursive_expanding_v1",
+        horizon=5,
+    )
 
-    assert gated["d5_buyable_risk_gate_penalty_score"].item() == 0.0
-    assert gated["final_selection_value"].item() == 70.0
+    assert active_gated["d5_buyability_risk_gate_penalty_score"].item() == 14.0
+    assert active_gated["final_selection_value"].item() == 56.0
+    assert other_gated["d5_buyability_risk_gate_penalty_score"].item() == 0.0
+    assert other_gated["final_selection_value"].item() == 70.0

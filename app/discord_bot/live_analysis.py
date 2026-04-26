@@ -17,8 +17,10 @@ from app.settings import Settings
 
 LIVE_RISK_LABELS = {
     **RISK_LABELS,
-    "model_disagreement_high": "앙상블 내부 판단이 엇갈림",
-    "model_uncertainty_high": "모델 불확실성이 큼",
+    "prediction_error_bucket_high": "고예측 구간 오차 큼",
+    "model_disagreement_high": "앙상블 판단 차이 큼",
+    "model_joint_instability_high": "모델 불안정성 큼",
+    "model_uncertainty_high": "고예측 구간 오차 큼",
 }
 
 LIVE_SHORT_LABELS = {
@@ -28,8 +30,9 @@ LIVE_SHORT_LABELS = {
     "단기 탄력 강함": "단기 탄력",
     "뉴스 재평가가 덜 반영됨": "뉴스 재평가",
     "과열 혼잡 부담이 낮음": "과열 낮음",
-    "앙상블 내부 판단이 엇갈림": "모델 판단 엇갈림",
-    "모델 불확실성이 큼": "모델 불확실성",
+    "고예측 구간 오차 큼": "고예측 오차",
+    "앙상블 판단 차이 큼": "모델 이견",
+    "모델 불안정성 큼": "모델 불안정",
     "최근 흔들림이 큼": "변동성 큼",
 }
 

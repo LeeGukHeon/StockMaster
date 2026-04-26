@@ -6,6 +6,8 @@ from typing import Mapping
 
 import duckdb
 
+from app.ranking.risk_taxonomy import BUYABILITY_BLOCKING_RISK_FLAGS
+
 
 @dataclass(frozen=True, slots=True)
 class ScoreBandEvidence:
@@ -25,14 +27,7 @@ class RecommendationJudgement:
     evidence: ScoreBandEvidence | None = None
 
 
-SEVERE_RISK_FLAGS = {
-    "data_missingness_high",
-    "high_realized_volatility",
-    "large_recent_drawdown",
-    "model_uncertainty_high",
-    "prediction_fallback",
-    "thin_liquidity",
-}
+SEVERE_RISK_FLAGS = BUYABILITY_BLOCKING_RISK_FLAGS
 
 
 def score_band_for_value(value: object) -> str:

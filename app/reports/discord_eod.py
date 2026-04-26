@@ -17,6 +17,7 @@ from app.ml.constants import MODEL_SPEC_ID
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ml.promotion import load_alpha_promotion_summary
+from app.ranking.risk_taxonomy import BUYABILITY_BLOCKING_RISK_FLAGS
 from app.recommendation.judgement import (
     ScoreBandEvidence,
     classify_recommendation,
@@ -62,8 +63,10 @@ RISK_LABELS = {
     "uncertainty_proxy_high": "예측 흔들림이 큼",
     "implementation_friction_high": "실행 부담이 큼",
     "flow_coverage_missing": "수급 정보가 부족함",
-    "model_uncertainty_high": "모델 확신이 낮음",
-    "model_disagreement_high": "모델 판단이 엇갈림",
+    "prediction_error_bucket_high": "고예측 구간의 과거 오차가 큼",
+    "model_disagreement_high": "앙상블 판단 차이가 큰 편",
+    "model_joint_instability_high": "고예측 오차와 모델 이견이 동시에 큼",
+    "model_uncertainty_high": "고예측 구간의 과거 오차가 큼",
     "prediction_fallback": "예측 보조값을 함께 참고함",
 }
 
@@ -242,8 +245,12 @@ def _load_top_selection_rows(
     horizon: int,
     limit: int,
 ) -> pd.DataFrame:
+    blocking_risk_filters = "\n".join(
+        f"          AND NOT contains(COALESCE(ranking.risk_flags_json, ''), '\"{flag}\"')"
+        for flag in sorted(BUYABILITY_BLOCKING_RISK_FLAGS)
+    )
     return connection.execute(
-        """
+        f"""
         WITH active_models AS (
             SELECT
                 horizon,
@@ -298,6 +305,8 @@ def _load_top_selection_rows(
         WHERE ranking.as_of_date = ?
           AND ranking.horizon = ?
           AND ranking.ranking_version = ?
+          AND ranking.eligible_flag = TRUE
+{blocking_risk_filters}
         ORDER BY ranking.final_selection_value DESC, ranking.symbol
         LIMIT ?
         """,

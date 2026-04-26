@@ -148,7 +148,7 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
     assert "상대 강도가 살아나는 흐름" not in rendered
     assert "단기 탄력 강함" not in rendered
     assert "raw_alpha_leader_preserved" not in rendered
-    assert "주의: 모델 판단 엇갈림" in rendered
+    assert "주의: 모델 이견" in rendered
     assert "외 1" not in rendered
     assert "신호 추세 강함 · 수급 양호 · 위험 낮음" in rendered
     assert "데이터: KIS 실시간 시세 기준" not in rendered
