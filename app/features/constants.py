@@ -100,11 +100,14 @@ FEATURE_SPECS: tuple[FeatureSpec, ...] = (
 
 FEATURE_NAMES: tuple[str, ...] = tuple(spec.name for spec in FEATURE_SPECS)
 FEATURE_GROUP_BY_NAME: dict[str, str] = {spec.name: spec.group for spec in FEATURE_SPECS}
-CORE_FEATURES_FOR_MISSINGNESS: tuple[str, ...] = (
+PRICE_COVERAGE_FEATURES: tuple[str, ...] = (
     "ret_3d",
     "ret_5d",
     "realized_vol_20d",
     "adv_20",
+)
+CORE_FEATURES_FOR_MISSINGNESS: tuple[str, ...] = (
+    *PRICE_COVERAGE_FEATURES,
     "roe_latest",
     "debt_ratio_latest",
 )

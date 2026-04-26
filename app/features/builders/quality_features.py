@@ -4,14 +4,7 @@ from datetime import date
 
 import pandas as pd
 
-from app.features.constants import CORE_FEATURES_FOR_MISSINGNESS
-
-PRICE_COVERAGE_FEATURES: tuple[str, ...] = (
-    "ret_3d",
-    "ret_5d",
-    "realized_vol_20d",
-    "adv_20",
-)
+from app.features.constants import CORE_FEATURES_FOR_MISSINGNESS, PRICE_COVERAGE_FEATURES
 
 
 def build_data_quality_feature_frame(
