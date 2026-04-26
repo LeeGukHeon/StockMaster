@@ -14,6 +14,7 @@ BUYABILITY_BLOCKING_RISK_FLAGS = frozenset(
         "data_missingness_high",
         "high_realized_volatility",
         "large_recent_drawdown",
+        "thin_liquidity",
         "prediction_fallback",
         "implementation_friction_high",
         MODEL_JOINT_INSTABILITY_HIGH_FLAG,
@@ -25,6 +26,7 @@ GRADE_CAPPING_RISK_FLAGS = frozenset(
         "data_missingness_high",
         "high_realized_volatility",
         "large_recent_drawdown",
+        "thin_liquidity",
         "implementation_friction_high",
         MODEL_JOINT_INSTABILITY_HIGH_FLAG,
     }

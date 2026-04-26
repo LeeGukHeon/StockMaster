@@ -192,6 +192,7 @@ D5_DATA_MISSINGNESS_GATE_PENALTY = 14.0
 D5_JOINT_MODEL_INSTABILITY_GATE_PENALTY = 10.0
 D5_HIGH_VOLATILITY_GATE_PENALTY = 8.0
 D5_LARGE_DRAWDOWN_GATE_PENALTY = 12.0
+D5_THIN_LIQUIDITY_GATE_PENALTY = 7.0
 D5_PREDICTION_FALLBACK_GATE_PENALTY = 8.0
 D5_IMPLEMENTATION_FRICTION_GATE_PENALTY = 8.0
 D5_INELIGIBLE_GATE_PENALTY = 18.0
@@ -368,6 +369,7 @@ def _apply_d5_buyability_risk_gate(
     joint_model_instability = _risk_flag_mask(risk_flags, "model_joint_instability_high")
     high_volatility = _risk_flag_mask(risk_flags, "high_realized_volatility")
     large_drawdown = _risk_flag_mask(risk_flags, "large_recent_drawdown")
+    thin_liquidity = _risk_flag_mask(risk_flags, "thin_liquidity")
     prediction_fallback = _risk_flag_mask(risk_flags, "prediction_fallback")
     implementation_friction = _risk_flag_mask(risk_flags, "implementation_friction_high")
     eligible_flag = gated.get("eligible_flag")
@@ -380,6 +382,7 @@ def _apply_d5_buyability_risk_gate(
         + joint_model_instability.astype(float).mul(D5_JOINT_MODEL_INSTABILITY_GATE_PENALTY)
         + high_volatility.astype(float).mul(D5_HIGH_VOLATILITY_GATE_PENALTY)
         + large_drawdown.astype(float).mul(D5_LARGE_DRAWDOWN_GATE_PENALTY)
+        + thin_liquidity.astype(float).mul(D5_THIN_LIQUIDITY_GATE_PENALTY)
         + prediction_fallback.astype(float).mul(D5_PREDICTION_FALLBACK_GATE_PENALTY)
         + implementation_friction.astype(float).mul(D5_IMPLEMENTATION_FRICTION_GATE_PENALTY)
         + ineligible.astype(float).mul(D5_INELIGIBLE_GATE_PENALTY)

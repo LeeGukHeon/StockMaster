@@ -432,7 +432,7 @@ def test_d5_buyability_risk_gate_demotes_data_missingness_and_joint_model_risk()
     assert float(gated.loc[gated["symbol"].eq("D"), "final_selection_rank_pct"].item()) == 1.0
 
 
-def test_d5_buyability_risk_gate_does_not_penalize_thin_liquidity_alone():
+def test_d5_buyability_risk_gate_penalizes_thin_liquidity_for_buyability():
     scored = pd.DataFrame({"symbol": ["A"], "final_selection_value": [70.0]})
     risk_flags = pd.Series([["thin_liquidity"]])
 
@@ -443,8 +443,8 @@ def test_d5_buyability_risk_gate_does_not_penalize_thin_liquidity_alone():
         horizon=5,
     )
 
-    assert gated["d5_buyability_risk_gate_penalty_score"].item() == 0.0
-    assert gated["final_selection_value"].item() == 70.0
+    assert gated["d5_buyability_risk_gate_penalty_score"].item() == 7.0
+    assert gated["final_selection_value"].item() == 63.0
 
 
 def test_d5_buyability_risk_gate_applies_to_active_d5_and_skips_other_specs():

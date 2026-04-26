@@ -14,7 +14,7 @@ def test_classify_recommendation_uses_positive_score_band_evidence() -> None:
     assert "65-75점대 과거 평균 +0.6%" in judgement.summary
 
 
-def test_classify_recommendation_keeps_thin_liquidity_as_advisory() -> None:
+def test_classify_recommendation_treats_thin_liquidity_as_buyability_blocker() -> None:
     judgement = classify_recommendation(
         final_selection_value=70,
         expected_excess_return=0.02,
@@ -22,7 +22,8 @@ def test_classify_recommendation_keeps_thin_liquidity_as_advisory() -> None:
         evidence_by_band={"65-75": ScoreBandEvidence("65-75", 120, 0.006, 0.47)},
     )
 
-    assert judgement.label == "매수해볼 가치 있음"
+    assert judgement.label == "관찰 우선"
+    assert "리스크 확인 필요" in judgement.summary
 
 
 def test_classify_recommendation_caps_blocking_risk_to_observation() -> None:

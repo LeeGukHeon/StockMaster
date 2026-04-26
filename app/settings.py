@@ -311,9 +311,21 @@ def _apply_env_overrides(config: dict[str, Any], env_values: dict[str, str]) -> 
 
     logging_cfg["level"] = env_values.get("APP_LOG_LEVEL", logging_cfg.get("level"))
 
-    paths["data_dir"] = env_values.get("APP_DATA_DIR", paths.get("data_dir"))
+    data_dir_override = env_values.get("APP_DATA_DIR")
+    paths["data_dir"] = data_dir_override or paths.get("data_dir")
     paths["duckdb_path"] = env_values.get("APP_DUCKDB_PATH", paths.get("duckdb_path"))
-    paths["artifacts_dir"] = env_values.get("APP_ARTIFACTS_DIR", paths.get("artifacts_dir"))
+    for path_key, env_key in (
+        ("raw_dir", "APP_RAW_DIR"),
+        ("curated_dir", "APP_CURATED_DIR"),
+        ("marts_dir", "APP_MARTS_DIR"),
+        ("cache_dir", "APP_CACHE_DIR"),
+        ("logs_dir", "APP_LOGS_DIR"),
+        ("artifacts_dir", "APP_ARTIFACTS_DIR"),
+    ):
+        if env_key in env_values:
+            paths[path_key] = env_values.get(env_key)
+        elif data_dir_override:
+            paths[path_key] = None
 
     storage["warning_ratio"] = float(
         env_values.get("STORAGE_WARNING_RATIO", storage.get("warning_ratio"))
