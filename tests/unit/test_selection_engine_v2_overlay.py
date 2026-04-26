@@ -5,6 +5,7 @@ import pandas as pd
 from app.selection.engine_v2 import (
     D5_RAW_PRESERVATION_PRIORITY_COUNT,
     _alpha_core_score,
+    _apply_d5_buyable_risk_gate,
     _apply_d5_raw_preservation_guardrail,
     _augment_reason_tags,
     _compute_crowding_penalty_score,
@@ -369,3 +370,65 @@ def test_non_topk_report_candidate_mask_requires_eligibility_and_rank_threshold(
     )
 
     assert scored.loc[mask, "symbol"].tolist() == ["A", "D"]
+
+
+def test_d5_buyable_risk_gate_demotes_data_missingness_and_joint_model_risk():
+    scored = pd.DataFrame(
+        {
+            "symbol": ["A", "B", "C", "D"],
+            "final_selection_value": [70.0, 70.0, 70.0, 70.0],
+        }
+    )
+    risk_flags = pd.Series(
+        [
+            ["data_missingness_high"],
+            ["model_uncertainty_high", "model_disagreement_high"],
+            [
+                "data_missingness_high",
+                "model_uncertainty_high",
+                "model_disagreement_high",
+            ],
+            [],
+        ]
+    )
+
+    gated = _apply_d5_buyable_risk_gate(
+        scored,
+        risk_flags,
+        model_spec_id="alpha_buyable_d5_v1",
+        horizon=5,
+    )
+
+    assert gated["d5_buyable_risk_gate_penalty_score"].tolist() == [14.0, 10.0, 24.0, 0.0]
+    assert gated["final_selection_value"].tolist() == [56.0, 60.0, 46.0, 70.0]
+    assert float(gated.loc[gated["symbol"].eq("D"), "final_selection_rank_pct"].item()) == 1.0
+
+
+def test_d5_buyable_risk_gate_does_not_penalize_thin_liquidity_alone():
+    scored = pd.DataFrame({"symbol": ["A"], "final_selection_value": [70.0]})
+    risk_flags = pd.Series([["thin_liquidity"]])
+
+    gated = _apply_d5_buyable_risk_gate(
+        scored,
+        risk_flags,
+        model_spec_id="alpha_buyable_d5_v1",
+        horizon=5,
+    )
+
+    assert gated["d5_buyable_risk_gate_penalty_score"].item() == 0.0
+    assert gated["final_selection_value"].item() == 70.0
+
+
+def test_d5_buyable_risk_gate_does_not_change_other_specs():
+    scored = pd.DataFrame({"symbol": ["A"], "final_selection_value": [70.0]})
+    risk_flags = pd.Series([["data_missingness_high", "model_uncertainty_high"]])
+
+    gated = _apply_d5_buyable_risk_gate(
+        scored,
+        risk_flags,
+        model_spec_id="alpha_swing_d5_v2",
+        horizon=5,
+    )
+
+    assert gated["d5_buyable_risk_gate_penalty_score"].item() == 0.0
+    assert gated["final_selection_value"].item() == 70.0

@@ -184,6 +184,8 @@ SELECTION_V2_TOPBUCKET_WEIGHTS = {
 
 D5_RAW_PRESERVATION_PRIORITY_COUNT = 3
 D5_RAW_PRESERVATION_EXTREME_UNCERTAINTY_THRESHOLD = 92.0
+D5_BUYABLE_DATA_MISSINGNESS_GATE_PENALTY = 14.0
+D5_BUYABLE_JOINT_MODEL_RISK_GATE_PENALTY = 10.0
 
 
 def _is_d5_focus_model_spec(model_spec_id: str | None) -> bool:
@@ -329,6 +331,47 @@ def _augment_risk_flags(row: pd.Series, flags: list[str]) -> list[str]:
     if bool(row.get("fallback_flag")):
         values.append("prediction_fallback")
     return sorted(set(values))
+
+
+def _risk_flag_mask(risk_flags: pd.Series, flag: str) -> pd.Series:
+    return pd.Series(
+        [flag in values for values in risk_flags],
+        index=risk_flags.index,
+        dtype="bool",
+    )
+
+
+def _apply_d5_buyable_risk_gate(
+    scored: pd.DataFrame,
+    risk_flags: pd.Series,
+    *,
+    model_spec_id: str | None,
+    horizon: int,
+) -> pd.DataFrame:
+    gated = scored.copy()
+    gated["d5_buyable_risk_gate_penalty_score"] = 0.0
+    if model_spec_id != D5_BUYABLE_MODEL_SPEC_ID or int(horizon) != 5:
+        return gated
+
+    data_missingness = _risk_flag_mask(risk_flags, "data_missingness_high")
+    joint_model_risk = _risk_flag_mask(
+        risk_flags,
+        "model_uncertainty_high",
+    ) & _risk_flag_mask(risk_flags, "model_disagreement_high")
+    penalty = (
+        data_missingness.astype(float).mul(D5_BUYABLE_DATA_MISSINGNESS_GATE_PENALTY)
+        + joint_model_risk.astype(float).mul(D5_BUYABLE_JOINT_MODEL_RISK_GATE_PENALTY)
+    )
+    gated["d5_buyable_risk_gate_penalty_score"] = penalty
+    gated["final_selection_value"] = (
+        pd.to_numeric(gated["final_selection_value"], errors="coerce").fillna(0.0)
+        - penalty
+    ).clip(lower=0.0, upper=100.0)
+    gated["final_selection_rank_pct"] = gated["final_selection_value"].rank(
+        method="average",
+        pct=True,
+    )
+    return gated
 
 
 def _alpha_core_rank_score(frame: pd.DataFrame) -> pd.Series:
@@ -701,6 +744,12 @@ def _score_selection_engine_v2_frame(
             for flag in values
         )
     )
+    scored = _apply_d5_buyable_risk_gate(
+        scored,
+        risk_flags,
+        model_spec_id=model_spec_id,
+        horizon=int(horizon),
+    )
     scored["grade"] = assign_grades(scored)
     if d5_primary_focus and model_spec_id != D5_BUYABLE_MODEL_SPEC_ID:
         scored = _apply_d5_raw_preservation_guardrail(scored)
@@ -771,6 +820,9 @@ def _score_selection_engine_v2_frame(
                 "implementation_penalty_score": float(row["implementation_penalty_score"]),
                 "fallback_flag": bool(row["fallback_flag"]),
                 "fallback_reason": row["fallback_reason"] or None,
+                "d5_buyable_risk_gate_penalty_score": float(
+                    row["d5_buyable_risk_gate_penalty_score"]
+                ),
                 "raw_top5_candidate_flag": bool(row["raw_top5_candidate_flag"]),
                 "raw_preservation_bonus": float(row["raw_preservation_bonus"]),
                 "raw_preservation_guardrail_applied": bool(
