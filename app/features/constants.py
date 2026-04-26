@@ -107,5 +107,4 @@ CORE_FEATURES_FOR_MISSINGNESS: tuple[str, ...] = (
     "adv_20",
     "roe_latest",
     "debt_ratio_latest",
-    "news_count_3d",
 )
