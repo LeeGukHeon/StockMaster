@@ -276,7 +276,7 @@ def _build_metrics(frame: pd.DataFrame, *, job: BacktestJob) -> pd.DataFrame:
 def _safe_remove_tree(path: Path) -> None:
     if not path.exists():
         return
-    if "walk_forward_alpha_backtest" not in str(path):
+    if "walk_forward_alpha" not in str(path):
         raise RuntimeError(f"Refusing to remove unexpected artifact path: {path}")
     shutil.rmtree(path)
 
