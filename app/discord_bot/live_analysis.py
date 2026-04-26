@@ -11,7 +11,6 @@ from app.discord_bot.live_recalc import (
 )
 from app.discord_bot.read_store import fetch_discord_bot_snapshot_rows
 from app.providers.kis.client import KISProvider
-from app.providers.naver_news.client import NaverNewsProvider
 from app.reports.discord_eod import REASON_LABELS, RISK_LABELS
 from app.settings import Settings
 
@@ -128,17 +127,6 @@ def _translated_why_now(analysis_payload: dict[str, object]) -> str:
     return _safe_text(analysis_payload.get("why_now"))
 
 
-def _latest_news_lines(provider: NaverNewsProvider, *, company_name: str) -> list[str]:
-    payload = provider.search_news(query=company_name, limit=3, start=1, sort="date")
-    lines: list[str] = []
-    for item in payload.get("items", [])[:3]:
-        title = _safe_text(item.get("title_plain"))
-        if title == "-":
-            continue
-        lines.append(title)
-    return lines
-
-
 def _close_provider(provider: object | None) -> None:
     if provider is None:
         return
@@ -165,20 +153,6 @@ def _fetch_quote(settings: Settings, *, symbol: str) -> tuple[dict[str, object],
         _close_provider(provider)
     quote = quote_payload.get("output") or {}
     return quote, "KIS 실시간 시세 기준" if quote else "KIS 실시간 시세 미수신"
-
-
-def _fetch_news(settings: Settings, *, company_name: str) -> tuple[list[str], str]:
-    provider = None
-    try:
-        provider = NaverNewsProvider(settings)
-        headlines = _latest_news_lines(provider, company_name=company_name)
-    except Exception:
-        return [], "Naver 최신 뉴스 미수신"
-    finally:
-        _close_provider(provider)
-    basis = f"Naver 최신 뉴스 {len(headlines)}건 반영" if headlines else "최근 뉴스 미반영"
-    return headlines, basis
-
 
 
 def _signal_value(signal_payload: dict[str, object], section: str, key: str) -> object:
@@ -269,15 +243,13 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     live_row = live_result.frame.iloc[0] if not live_result.frame.empty else None
 
     quote, quote_basis = _fetch_quote(settings, symbol=symbol)
-    headlines, news_basis = _fetch_news(settings, company_name=company_name)
-
     current_price = _int_text(quote.get("stck_prpr"))
     change_rate = _pct_from_quote(quote.get("prdy_ctrt"))
     analysis_payload = build_live_analysis_payload(
         payload,
         live_result,
         quote_timestamp_or_basis=quote_basis,
-        news_basis=news_basis,
+        news_basis="뉴스 미사용",
     )
     live_d5_grade = _safe_text(analysis_payload.get("d5_grade"))
     live_d5_expected = analysis_payload.get("d5_expected_excess_return")
@@ -337,8 +309,6 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
         lines.append(f"가격: 목표 {target_price}원 · 손절 {stop_price}원")
     if analysis_payload.get("snapshot_reused_flag") and live_result.mode != "closed":
         lines.append(f"상태: {analysis_payload.get('degradation_mode')} · snapshot 재사용")
-    if headlines:
-        lines.append(f"뉴스: {headlines[0]}")
-    elif quote_basis != "KIS 실시간 시세 기준" or news_basis != "Naver 최신 뉴스 0건 반영":
-        lines.append(f"데이터: {quote_basis} · {news_basis}")
+    if quote_basis != "KIS 실시간 시세 기준":
+        lines.append(f"데이터: {quote_basis}")
     return "\n".join(lines)

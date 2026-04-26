@@ -33,6 +33,7 @@ DISCORD_MESSAGE_LIMIT = 1800
 DISCORD_EOD_CANDIDATE_HORIZON = 5
 DISCORD_EOD_SECTOR_HORIZON = 5
 DISCORD_EOD_REFERENCE_HORIZON = 1
+DISCORD_EOD_MIN_CANDIDATE_SCORE = 55.0
 
 REASON_LABELS = {
     "ml_alpha_supportive": "최근 흐름과 모델 판단이 함께 받쳐줌",
@@ -306,6 +307,8 @@ def _load_top_selection_rows(
           AND ranking.horizon = ?
           AND ranking.ranking_version = ?
           AND ranking.eligible_flag = TRUE
+          AND ranking.final_selection_value >= ?
+          AND COALESCE(prediction.expected_excess_return, 0.0) > 0.0
 {blocking_risk_filters}
         ORDER BY ranking.final_selection_value DESC, ranking.symbol
         LIMIT ?
@@ -318,6 +321,7 @@ def _load_top_selection_rows(
             as_of_date,
             horizon,
             SELECTION_ENGINE_V2_VERSION,
+            DISCORD_EOD_MIN_CANDIDATE_SCORE,
             limit,
         ],
     ).fetchdf()
@@ -735,10 +739,6 @@ def _build_payload_content(
         for index, (_, row) in enumerate(sector_outlook.head(2).iterrows(), start=1):
             lines.append(_format_sector_outlook_line(row, rank=index))
 
-    if not market_news.empty:
-        lines.extend(["", "**시장 뉴스**"])
-        for _, row in market_news.head(2).iterrows():
-            lines.append(f"- {row['title']} ({row['publisher']})")
     return "\n".join(lines)
 
 

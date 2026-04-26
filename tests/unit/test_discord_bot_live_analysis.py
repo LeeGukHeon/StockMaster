@@ -41,35 +41,7 @@ class _FailingKISProvider:
         return None
 
 
-class _FailingNaverNewsProvider:
-    def __init__(self, _settings) -> None:
-        pass
-
-    def search_news(self, *, query: str, limit: int = 3, start: int = 1, sort: str = "date"):
-        raise RuntimeError("news unavailable")
-
-    def close(self) -> None:
-        return None
-
-
-class _FakeNaverNewsProvider:
-    def __init__(self, _settings) -> None:
-        pass
-
-    def search_news(self, *, query: str, limit: int = 3, start: int = 1, sort: str = "date"):
-        assert query == "삼성전자"
-        return {
-            "items": [
-                {"title_plain": "삼성전자 실적 개선"},
-                {"title_plain": "삼성전자 AI 반도체 기대"},
-            ]
-        }
-
-    def close(self) -> None:
-        return None
-
-
-def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
+def test_render_live_stock_analysis_formats_quote_without_news_noise(monkeypatch) -> None:
     snapshot_rows = pd.DataFrame(
         [
             {
@@ -99,7 +71,6 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
         lambda *args, **kwargs: snapshot_rows,
     )
     monkeypatch.setattr("app.discord_bot.live_analysis.KISProvider", _FakeKISProvider)
-    monkeypatch.setattr("app.discord_bot.live_analysis.NaverNewsProvider", _FakeNaverNewsProvider)
     monkeypatch.setattr(
         "app.discord_bot.live_analysis.compute_live_stock_recommendation",
         lambda *args, **kwargs: LiveRecalcResult(
@@ -153,8 +124,7 @@ def test_render_live_stock_analysis_formats_quote_and_news(monkeypatch) -> None:
     assert "신호 추세 강함 · 수급 양호 · 위험 낮음" in rendered
     assert "데이터: KIS 실시간 시세 기준" not in rendered
     assert "가격: 목표 72,500원 · 손절 68,800원" in rendered
-    assert "뉴스: 삼성전자 실적 개선" in rendered
-    assert "삼성전자 AI 반도체 기대" not in rendered
+    assert "뉴스" not in rendered
     assert len(rendered.splitlines()) <= 8
 
 
@@ -194,7 +164,7 @@ def test_build_live_analysis_payload_marks_snapshot_reuse_for_busy_mode() -> Non
 
     assert payload["snapshot_reused_flag"] is True
     assert payload["degradation_mode"] == "busy"
-    assert payload["source_precedence"] == ["snapshot", "quote", "news"]
+    assert payload["source_precedence"] == ["snapshot", "quote"]
     assert payload["d1_head_spec_id"] == "alpha_snapshot_d1"
     assert payload["d5_head_spec_id"] == "alpha_snapshot_d5"
 
@@ -230,9 +200,6 @@ def test_render_live_stock_analysis_degrades_when_external_providers_fail(monkey
     )
     monkeypatch.setattr("app.discord_bot.live_analysis.KISProvider", _FailingKISProvider)
     monkeypatch.setattr(
-        "app.discord_bot.live_analysis.NaverNewsProvider", _FailingNaverNewsProvider
-    )
-    monkeypatch.setattr(
         "app.discord_bot.live_analysis.compute_live_stock_recommendation",
         lambda *args, **kwargs: LiveRecalcResult(pd.DataFrame(), mode="busy", note="배치 점유"),
     )
@@ -242,5 +209,6 @@ def test_render_live_stock_analysis_degrades_when_external_providers_fail(monkey
     assert "005930 삼성전자 · 매수해볼 가치 있음" in rendered
     assert "장마감 D5 A/66.0점 · 기대 +1.00%" in rendered
     assert "상태: busy · snapshot 재사용" in rendered
-    assert "데이터: KIS 실시간 시세 미수신 · Naver 최신 뉴스 미수신" in rendered
+    assert "데이터: KIS 실시간 시세 미수신" in rendered
+    assert "뉴스" not in rendered
     assert len(rendered.splitlines()) <= 7

@@ -100,7 +100,7 @@ def _derive_invalidation_conditions(risk_flags: list[str]) -> list[str]:
         elif risk_flag == "crowding_risk":
             conditions.append("거래 과열이 심해지면 D+1 선행 우위가 빠르게 약해질 수 있습니다.")
     if not conditions:
-        conditions.append("거래대금이 식거나 뉴스 재료가 소멸하면 즉시 재평가합니다.")
+        conditions.append("거래대금이 식거나 가격 추세가 꺾이면 즉시 재평가합니다.")
     return conditions[:3]
 
 
@@ -112,11 +112,10 @@ def build_live_analysis_payload(
     news_basis: str,
 ) -> dict[str, object]:
     live_row = live_result.frame.iloc[0] if not live_result.frame.empty else None
-    source_precedence = (
-        ["live_recalc", "snapshot", "quote", "news"]
-        if live_row is not None
-        else ["snapshot", "quote", "news"]
-    )
+    source_precedence = ["live_recalc", "snapshot", "quote"] if live_row is not None else [
+        "snapshot",
+        "quote",
+    ]
     degradation_mode = (
         "none" if live_result.mode == "live" and live_row is not None else str(live_result.mode)
     )
