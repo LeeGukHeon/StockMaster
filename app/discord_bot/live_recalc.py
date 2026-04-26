@@ -168,10 +168,6 @@ def build_live_analysis_payload(
             "d5_flow_score": d5_explanatory.get("flow_score"),
             "d5_flow_persistence_score": d5_explanatory.get("flow_persistence_score"),
         },
-        "news": {
-            "d1_news_drift_score": d1_explanatory.get("news_drift_score"),
-            "d5_news_drift_score": d5_explanatory.get("news_drift_score"),
-        },
         "crowding_risk": {
             "d1_crowding_penalty_score": d1_explanatory.get("crowding_penalty_score"),
             "d5_crowding_penalty_score": d5_explanatory.get("crowding_penalty_score"),

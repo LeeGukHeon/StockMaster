@@ -9,12 +9,17 @@ def build_reason_tags(row: pd.Series) -> list[str]:
     tags: list[str] = []
     if row.get("trend_momentum_score", 0) >= 65 and row.get("crowding_penalty_score", 0) < 65:
         tags.append("short_term_momentum_strong")
-    if pd.notna(row.get("dist_from_20d_high")) and row.get("dist_from_20d_high", -1) >= -0.05 and row.get("crowding_penalty_score", 0) < 70:
+    if (
+        pd.notna(row.get("dist_from_20d_high"))
+        and row.get("dist_from_20d_high", -1) >= -0.05
+        and row.get("crowding_penalty_score", 0) < 70
+    ):
         tags.append("breakout_near_20d_high")
-    if row.get("turnover_participation_score", 0) >= 65 and row.get("crowding_penalty_score", 0) < 70:
+    if (
+        row.get("turnover_participation_score", 0) >= 65
+        and row.get("crowding_penalty_score", 0) < 70
+    ):
         tags.append("turnover_surge")
-    if row.get("fresh_news_flag", 0) >= 1 or row.get("news_catalyst_score", 0) >= 65:
-        tags.append("fresh_news_catalyst")
     if row.get("quality_score", 0) >= 60:
         tags.append("quality_metrics_supportive")
     if pd.notna(row.get("drawdown_20d")) and row.get("drawdown_20d", -1) >= -0.08:
@@ -32,8 +37,6 @@ def build_risk_flags(row: pd.Series) -> list[str]:
         flags.append("weak_fundamental_coverage")
     if row.get("adv_20_rank_pct", 0) <= 0.15:
         flags.append("thin_liquidity")
-    if row.get("has_news_flag", 0) >= 1 and row.get("news_link_confidence_score", 1.0) < 0.5:
-        flags.append("news_link_low_confidence")
     if row.get("missing_key_feature_count", 0) >= 4 or row.get("data_confidence_score", 100) < 55:
         flags.append("data_missingness_high")
     return flags

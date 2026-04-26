@@ -201,7 +201,6 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
             "volatility_risk",
             "liquidity_turnover",
             "investor_flow",
-            "news_catalyst",
             "fundamentals_quality",
             "value_safety",
             "data_quality",

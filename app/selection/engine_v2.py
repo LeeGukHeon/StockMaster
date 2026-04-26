@@ -60,8 +60,6 @@ SELECTION_V2_WEIGHTS = {
         "trend_momentum_score": 5,
         "quality_score": 7,
         "value_safety_score": 8,
-        "news_catalyst_score": 2,
-        "news_drift_score": 4,
         "regime_fit_score": 6,
         "risk_penalty_score": -6,
         "uncertainty_score": -10,
@@ -98,8 +96,6 @@ SELECTION_V2_TOP5_FOCUS_WEIGHTS = {
         "trend_momentum_score": 2,
         "quality_score": 5,
         "value_safety_score": 5,
-        "news_catalyst_score": 1,
-        "news_drift_score": 3,
         "regime_fit_score": 4,
         "risk_penalty_score": -4,
         "uncertainty_score": -6,
@@ -119,8 +115,6 @@ SELECTION_V2_D5_PRIMARY_WEIGHTS = {
         "trend_momentum_score": 3,
         "quality_score": 7,
         "value_safety_score": 8,
-        "news_catalyst_score": 1,
-        "news_drift_score": 2,
         "regime_fit_score": 6,
         "risk_penalty_score": -5,
         "uncertainty_score": -5,
@@ -141,8 +135,6 @@ SELECTION_V2_D5_BUYABLE_WEIGHTS = {
         "trend_momentum_score": 4,
         "quality_score": 10,
         "value_safety_score": 10,
-        "news_catalyst_score": 2,
-        "news_drift_score": 2,
         "regime_fit_score": 6,
         "risk_penalty_score": -8,
         "uncertainty_score": -8,
@@ -180,8 +172,6 @@ SELECTION_V2_TOPBUCKET_WEIGHTS = {
         "trend_momentum_score": 3,
         "quality_score": 6,
         "value_safety_score": 6,
-        "news_catalyst_score": 2,
-        "news_drift_score": 4,
         "regime_fit_score": 5,
         "risk_penalty_score": -4,
         "uncertainty_score": -5,
@@ -314,8 +304,6 @@ def _augment_reason_tags(row: pd.Series, tags: list[str]) -> list[str]:
         values.append("residual_strength_improving")
     if row.get("flow_persistence_score", 0) >= 60:
         values.append("flow_persistence_supportive")
-    if row.get("news_drift_score", 0) >= 60:
-        values.append("news_drift_underreacted")
     if row.get("crowding_penalty_score", 100) <= 45:
         values.append("crowding_risk_low")
     if row.get("raw_preservation_guardrail_applied", False):
@@ -427,7 +415,6 @@ def _compute_crowding_penalty_score(frame: pd.DataFrame, *, horizon: int) -> pd.
         _feature_rank(frame, "ret_10d"),
         _feature_rank(frame, "dist_from_20d_high"),
         _feature_rank(frame, "turnover_burst_persistence_5d"),
-        _feature_rank(frame, "news_burst_share_1d"),
     )
 
 
@@ -443,24 +430,20 @@ def _compute_late_entry_penalty_score(frame: pd.DataFrame) -> pd.Series:
         frame.get("flow_persistence_score"),
         errors="coerce",
     ).fillna(50.0)
-    news_drift = pd.to_numeric(frame.get("news_drift_score"), errors="coerce").fillna(50.0)
     weakness_score = (
-        alpha_core.rsub(58.0).clip(lower=0.0).div(58.0).mul(0.40)
-        + relative_alpha.rsub(55.0).clip(lower=0.0).div(55.0).mul(0.25)
-        + flow_persistence.rsub(55.0).clip(lower=0.0).div(55.0).mul(0.20)
-        + news_drift.rsub(52.0).clip(lower=0.0).div(52.0).mul(0.15)
+        alpha_core.rsub(58.0).clip(lower=0.0).div(58.0).mul(0.45)
+        + relative_alpha.rsub(55.0).clip(lower=0.0).div(55.0).mul(0.30)
+        + flow_persistence.rsub(55.0).clip(lower=0.0).div(55.0).mul(0.25)
     ).clip(lower=0.0, upper=1.0)
     weak_signal_share = (
         alpha_core.lt(58.0).astype(float)
         + relative_alpha.lt(55.0).astype(float)
         + flow_persistence.lt(55.0).astype(float)
-        + news_drift.lt(52.0).astype(float)
-    ).div(4.0)
+    ).div(3.0)
     alpha_relief = (
-        alpha_core.sub(75.0).clip(lower=0.0).div(25.0).mul(0.45)
-        + relative_alpha.sub(65.0).clip(lower=0.0).div(35.0).mul(0.25)
-        + flow_persistence.sub(60.0).clip(lower=0.0).div(40.0).mul(0.15)
-        + news_drift.sub(60.0).clip(lower=0.0).div(40.0).mul(0.15)
+        alpha_core.sub(75.0).clip(lower=0.0).div(25.0).mul(0.50)
+        + relative_alpha.sub(65.0).clip(lower=0.0).div(35.0).mul(0.30)
+        + flow_persistence.sub(60.0).clip(lower=0.0).div(40.0).mul(0.20)
     ).clip(lower=0.0, upper=0.80)
     crowding_gate = crowding.sub(55.0).clip(lower=0.0).div(45.0).clip(lower=0.0, upper=1.0)
     return (

@@ -36,7 +36,7 @@ def test_reason_tags_prefer_relative_and_persistence_signals():
             {
                 "relative_alpha_score": 75,
                 "flow_persistence_score": 72,
-                "news_drift_score": 68,
+                "news_drift_score": 99,
                 "crowding_penalty_score": 30,
                 "expected_excess_return": 0.02,
                 "fallback_flag": False,
@@ -47,6 +47,7 @@ def test_reason_tags_prefer_relative_and_persistence_signals():
 
     assert "residual_strength_improving" in tags
     assert "flow_persistence_supportive" in tags
+    assert "news_drift_underreacted" not in tags
 
 
 def test_d5_alpha_core_score_uses_magnitude_to_separate_outsized_raw_leader():
@@ -296,6 +297,10 @@ def test_d5_buyable_weights_are_more_conservative_than_return_top5_focus():
     assert buyable_weights["alpha_core_score"] < return_top5_weights["alpha_core_score"]
     assert buyable_weights["quality_score"] > return_top5_weights["quality_score"]
     assert buyable_weights["value_safety_score"] > return_top5_weights["value_safety_score"]
+    assert "news_catalyst_score" not in buyable_weights
+    assert "news_drift_score" not in buyable_weights
+    assert "news_catalyst_score" not in return_top5_weights
+    assert "news_drift_score" not in return_top5_weights
     assert (
         buyable_weights["crowding_penalty_score"]
         < return_top5_weights["crowding_penalty_score"]

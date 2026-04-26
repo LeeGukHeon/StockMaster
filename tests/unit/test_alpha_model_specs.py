@@ -171,6 +171,18 @@ def test_alpha_buyable_d5_v1_is_experimental_and_uses_buyable_target() -> None:
     assert spec.rolling_window_days == 250
     assert spec.active_candidate_flag is False
     assert spec.lifecycle_role == "experimental_candidate"
+    assert spec.feature_groups == (
+        "price_trend",
+        "volatility_risk",
+        "liquidity_turnover",
+        "investor_flow",
+        "fundamentals_quality",
+        "value_safety",
+        "data_quality",
+    )
+    feature_columns = resolve_feature_columns_for_spec(spec)
+    assert "news_count_1d" not in feature_columns
+    assert "news_drift_persistence_score" not in feature_columns
     assert spec.member_names == ("elasticnet", "hist_gbm")
     assert spec.target_variant == "buyable_top5"
     assert spec.training_target_variant == "buyable_top5"
