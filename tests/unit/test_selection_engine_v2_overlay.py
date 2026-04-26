@@ -281,6 +281,51 @@ def test_d5_primary_weights_soften_disagreement_penalty_for_focus_spec():
     assert focus_weights["disagreement_score"] > generic_top5_weights["disagreement_score"]
 
 
+def test_d5_buyable_weights_are_more_conservative_than_return_top5_focus():
+    buyable_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_buyable_d5_v1",
+        target_variant="buyable_top5",
+    )
+    return_top5_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_swing_d5_v2",
+        target_variant="top5_binary",
+    )
+
+    assert buyable_weights["alpha_core_score"] < return_top5_weights["alpha_core_score"]
+    assert buyable_weights["quality_score"] > return_top5_weights["quality_score"]
+    assert buyable_weights["value_safety_score"] > return_top5_weights["value_safety_score"]
+    assert (
+        buyable_weights["crowding_penalty_score"]
+        < return_top5_weights["crowding_penalty_score"]
+    )
+    assert (
+        buyable_weights["late_entry_penalty_score"]
+        < return_top5_weights["late_entry_penalty_score"]
+    )
+
+
+def test_buyable_top5_report_candidate_mask_uses_ranked_top_five():
+    scored = pd.DataFrame(
+        {
+            "symbol": list("ABCDEF"),
+            "eligible_flag": [True, True, True, True, True, True],
+            "final_selection_value": [99.0, 98.0, 97.0, 96.0, 95.0, 94.0],
+            "final_selection_rank_pct": [1.0, 5 / 6, 4 / 6, 3 / 6, 2 / 6, 1 / 6],
+        }
+    )
+
+    mask = _select_report_candidate_mask(
+        scored,
+        model_spec_id="alpha_buyable_d5_v1",
+        target_variant="buyable_top5",
+        horizon=5,
+    )
+
+    assert scored.loc[mask, "symbol"].tolist() == ["A", "B", "C", "D", "E"]
+
+
 def test_top5_binary_report_candidate_mask_uses_ranked_top_five():
     scored = pd.DataFrame(
         {

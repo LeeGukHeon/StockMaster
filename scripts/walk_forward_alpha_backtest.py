@@ -48,8 +48,26 @@ def _date_text(value: object) -> str:
 def _resolve_jobs(
     connection: duckdb.DuckDBPyConnection,
     horizons: Iterable[int],
+    model_spec_ids: list[str] | None,
 ) -> list[BacktestJob]:
     jobs: list[BacktestJob] = []
+    if model_spec_ids:
+        for model_spec_id in model_spec_ids:
+            spec = get_alpha_model_spec(model_spec_id)
+            for horizon in horizons:
+                if supports_horizon_for_spec(spec, horizon=int(horizon)):
+                    jobs.append(
+                        BacktestJob(
+                            horizon=int(horizon),
+                            model_spec_id=model_spec_id,
+                            active_alpha_model_id=None,
+                            source_training_run_id=None,
+                        )
+                    )
+        if not jobs:
+            raise RuntimeError("No requested model spec supports the requested horizons")
+        return jobs
+
     for horizon in horizons:
         active = load_active_alpha_model(connection, as_of_date=date.max, horizon=int(horizon))
         if active is None:
@@ -275,7 +293,7 @@ def run_backtest(args: argparse.Namespace) -> int:
     # read-only. Model artifacts are transient files under scratch_root and are removed per date.
     connection = duckdb.connect(str(db_path), read_only=True)
     bootstrap_core_tables(connection)
-    jobs = _resolve_jobs(connection, args.horizons)
+    jobs = _resolve_jobs(connection, args.horizons, args.model_spec_ids)
     manifest: dict[str, object] = {
         "kind": "walk_forward_alpha_backtest_artifact_only",
         "db_path": str(db_path),
@@ -428,6 +446,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-date", required=True, type=_parse_date)
     parser.add_argument("--end-date", required=True, type=_parse_date)
     parser.add_argument("--horizons", nargs="+", type=int, default=[1, 5])
+    parser.add_argument(
+        "--model-spec-ids",
+        nargs="+",
+        help="Optional experimental specs to backtest instead of currently active specs.",
+    )
     parser.add_argument("--min-train-days", type=int, default=120)
     parser.add_argument("--validation-days", type=int, default=20)
     parser.add_argument("--limit-dates", type=int)

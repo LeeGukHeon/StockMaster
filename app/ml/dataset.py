@@ -116,7 +116,11 @@ def _ensure_feature_snapshots(
             if feature_snapshot_has_required_quality_features(connection, as_of_date=value)
         }
     missing_dates = [value for value in candidate_dates if value not in existing_dates]
-    invalid_dates = [value for value in candidate_dates if value in existing_dates and value not in valid_dates]
+    invalid_dates = [
+        value
+        for value in candidate_dates
+        if value in existing_dates and value not in valid_dates
+    ]
     for missing_date in missing_dates:
         build_feature_store(
             settings,
@@ -138,6 +142,44 @@ def _ensure_feature_snapshots(
         )
     return [*missing_dates, *invalid_dates]
 
+
+def _buyable_candidate_scores(label_rows: pd.DataFrame) -> pd.Series:
+    """Return an outlier-capped, downside-aware target for actually buyable D5 names."""
+    if label_rows.empty:
+        return pd.Series(dtype="float64")
+
+    scores = pd.Series(0.0, index=label_rows.index, dtype="float64")
+    grouped = label_rows.groupby(["as_of_date", "horizon", "market"], sort=False)
+    for _, group in grouped:
+        returns = pd.to_numeric(group["excess_forward_return"], errors="coerce")
+        valid = returns.dropna()
+        if valid.empty:
+            continue
+        lower = max(float(valid.quantile(0.05)), -0.10)
+        upper = min(float(valid.quantile(0.95)), 0.12)
+        if upper <= lower:
+            lower = float(valid.min())
+            upper = float(valid.max())
+        clipped = returns.clip(lower=lower, upper=upper)
+        if upper > lower:
+            scaled_return = clipped.sub(lower).div(upper - lower).clip(0.0, 1.0)
+        else:
+            scaled_return = pd.Series(0.5, index=group.index, dtype="float64")
+        robust_rank = clipped.rank(method="average", pct=True).fillna(0.0)
+        positive = returns.gt(0.0).astype(float)
+        severe_loss_threshold = -0.035 if int(group["horizon"].iloc[0]) <= 1 else -0.07
+        severe_loss = returns.le(severe_loss_threshold)
+        raw = (
+            robust_rank.mul(0.45)
+            .add(positive.mul(0.35))
+            .add(scaled_return.mul(0.20))
+            .clip(0.0, 1.0)
+        )
+        raw = raw.where(returns.gt(0.0), raw.mul(0.35))
+        raw = raw.where(~severe_loss, raw.mul(0.15))
+        raw = raw.where(returns.le(upper), raw.clip(upper=0.90))
+        scores.loc[group.index] = raw.fillna(0.0)
+    return scores
 
 def _load_dataset_frame(
     connection,
@@ -215,6 +257,7 @@ def _load_dataset_frame(
         label_rows.loc[top20_indices, "target_topbucket"] = 0.25
         label_rows.loc[top10_indices, "target_topbucket"] = 0.5
         label_rows.loc[top5_indices, "target_topbucket"] = 1.0
+        label_rows["target_buyable"] = _buyable_candidate_scores(label_rows)
 
         feature_rows = connection.execute(
             f"""
@@ -293,10 +336,22 @@ def _load_dataset_frame(
         )
         .reset_index()
     )
+    buyable_label_matrix = (
+        label_rows.assign(
+            target_name=label_rows["horizon"].map(lambda value: f"target_buyable_h{int(value)}")
+        )
+        .pivot(
+            index=["as_of_date", "symbol"],
+            columns="target_name",
+            values="target_buyable",
+        )
+        .reset_index()
+    )
     dataset = feature_matrix.merge(label_matrix, on=["as_of_date", "symbol"], how="inner")
     dataset = dataset.merge(rank_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(top5_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(topbucket_label_matrix, on=["as_of_date", "symbol"], how="left")
+    dataset = dataset.merge(buyable_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(
         symbol_frame[["symbol", "company_name", "market"]],
         on="symbol",
@@ -320,6 +375,9 @@ def _load_dataset_frame(
     for target_name in [f"target_topbucket_h{int(horizon)}" for horizon in horizons]:
         if target_name not in dataset.columns:
             dataset[target_name] = pd.NA
+    for target_name in [f"target_buyable_h{int(horizon)}" for horizon in horizons]:
+        if target_name not in dataset.columns:
+            dataset[target_name] = pd.NA
     ordered_columns = [
         "as_of_date",
         "symbol",
@@ -330,6 +388,7 @@ def _load_dataset_frame(
         *[f"target_rank_h{int(horizon)}" for horizon in horizons],
         *[f"target_top5_h{int(horizon)}" for horizon in horizons],
         *[f"target_topbucket_h{int(horizon)}" for horizon in horizons],
+        *[f"target_buyable_h{int(horizon)}" for horizon in horizons],
     ]
     return dataset[ordered_columns].sort_values(["as_of_date", "symbol"]).reset_index(drop=True)
 

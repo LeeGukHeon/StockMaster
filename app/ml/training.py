@@ -378,6 +378,15 @@ def _normalise_weights(
             "corr": 1.0,
             "mae": 1.0,
         }
+    elif training_target_variant == "buyable_top5":
+        metric_weights = {
+            "top10_mean_excess_return": 5.0,
+            "top20_mean_excess_return": 4.0,
+            "top5_mean_excess_return": 3.0,
+            "rank_ic": 2.0,
+            "corr": 1.0,
+            "mae": 1.5,
+        }
     else:
         metric_weights = {
             "top5_mean_excess_return": 6.0,

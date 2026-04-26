@@ -9,6 +9,7 @@ import pandas as pd
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import (
+    D5_BUYABLE_MODEL_SPEC_ID,
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
     D5_PRIMARY_OUTPUT_CONTRACT_ROLES,
     SELECTION_ENGINE_VERSION,
@@ -131,6 +132,28 @@ SELECTION_V2_D5_PRIMARY_WEIGHTS = {
     },
 }
 
+SELECTION_V2_D5_BUYABLE_WEIGHTS = {
+    5: {
+        "alpha_core_score": 30,
+        "relative_alpha_score": 16,
+        "flow_persistence_score": 12,
+        "flow_score": 8,
+        "trend_momentum_score": 4,
+        "quality_score": 10,
+        "value_safety_score": 10,
+        "news_catalyst_score": 2,
+        "news_drift_score": 2,
+        "regime_fit_score": 6,
+        "risk_penalty_score": -8,
+        "uncertainty_score": -8,
+        "disagreement_score": -5,
+        "implementation_penalty_score": -7,
+        "crowding_penalty_score": -10,
+        "late_entry_penalty_score": -12,
+        "fallback_penalty": -5,
+    },
+}
+
 SELECTION_V2_TOPBUCKET_WEIGHTS = {
     1: {
         "alpha_core_score": 46,
@@ -173,6 +196,10 @@ D5_RAW_PRESERVATION_PRIORITY_COUNT = 3
 D5_RAW_PRESERVATION_EXTREME_UNCERTAINTY_THRESHOLD = 92.0
 
 
+def _is_d5_focus_model_spec(model_spec_id: str | None) -> bool:
+    return model_spec_id in {D5_PRIMARY_FOCUS_MODEL_SPEC_ID, D5_BUYABLE_MODEL_SPEC_ID}
+
+
 def _resolve_selection_weights(
     *,
     horizon: int,
@@ -180,11 +207,16 @@ def _resolve_selection_weights(
     target_variant: str | None,
 ) -> dict[str, float]:
     if (
+        model_spec_id == D5_BUYABLE_MODEL_SPEC_ID
+        and int(horizon) in SELECTION_V2_D5_BUYABLE_WEIGHTS
+    ):
+        return dict(SELECTION_V2_D5_BUYABLE_WEIGHTS[int(horizon)])
+    if (
         model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID
         and int(horizon) in SELECTION_V2_D5_PRIMARY_WEIGHTS
     ):
         return dict(SELECTION_V2_D5_PRIMARY_WEIGHTS[int(horizon)])
-    if target_variant == "top5_binary":
+    if target_variant in {"top5_binary", "buyable_top5"}:
         return dict(SELECTION_V2_TOP5_FOCUS_WEIGHTS[int(horizon)])
     if target_variant == "top20_weighted":
         return dict(SELECTION_V2_TOPBUCKET_WEIGHTS[int(horizon)])
@@ -242,7 +274,7 @@ def _resolve_report_candidate_limit(
     target_variant: str | None,
     horizon: int,
 ) -> int | None:
-    if target_variant == "top5_binary":
+    if target_variant in {"top5_binary", "buyable_top5"}:
         return 5
     if model_spec_id == "alpha_topbucket_h1_rolling_120_v1" and int(horizon) == 1:
         return 5
@@ -576,9 +608,7 @@ def _score_selection_engine_v2_frame(
 ) -> pd.DataFrame:
     scored = base.merge(prediction_frame, on="symbol", how="left")
     model_spec_id, target_variant = _resolve_model_spec_context(scored)
-    d5_primary_focus = (
-        model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID and int(horizon) == 5
-    )
+    d5_primary_focus = _is_d5_focus_model_spec(model_spec_id) and int(horizon) == 5
     scored["alpha_core_rank_component_score"] = _alpha_core_rank_score(scored)
     scored["alpha_core_magnitude_component_score"] = (
         _alpha_core_magnitude_score(scored)
@@ -689,7 +719,7 @@ def _score_selection_engine_v2_frame(
         )
     )
     scored["grade"] = assign_grades(scored)
-    if d5_primary_focus:
+    if d5_primary_focus and model_spec_id != D5_BUYABLE_MODEL_SPEC_ID:
         scored = _apply_d5_raw_preservation_guardrail(scored)
     else:
         scored["raw_top5_candidate_flag"] = False

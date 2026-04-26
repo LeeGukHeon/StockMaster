@@ -54,6 +54,7 @@ def test_default_spec_keeps_full_feature_space_and_members() -> None:
     assert "hist_gbm" in member_names
     assert "extra_trees" in member_names
 
+
 def test_target_column_resolution_supports_split_h1_h5_specs() -> None:
     assert resolve_target_column_for_spec(DEFAULT_ALPHA_MODEL_SPEC, horizon=1) == "target_h1"
     assert (
@@ -67,6 +68,10 @@ def test_target_column_resolution_supports_split_h1_h5_specs() -> None:
         )
         == "target_top5_h1"
     )
+    assert (
+        resolve_target_column_for_spec(get_alpha_model_spec("alpha_buyable_d5_v1"), horizon=5)
+        == "target_buyable_h5"
+    )
 
 
 def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
@@ -74,10 +79,12 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     h1_spec = get_alpha_model_spec("alpha_topbucket_h1_rolling_120_v1")
     d1_spec = get_alpha_model_spec("alpha_lead_d1_v1")
     d5_focus_spec = get_alpha_model_spec("alpha_swing_d5_v2")
+    d5_buyable_spec = get_alpha_model_spec("alpha_buyable_d5_v1")
     assert h5_spec.active_candidate_flag is False
     assert h1_spec.active_candidate_flag is False
     assert d1_spec.active_candidate_flag is True
     assert d5_focus_spec.active_candidate_flag is True
+    assert d5_buyable_spec.active_candidate_flag is False
     assert supports_horizon_for_spec(h5_spec, horizon=5) is True
     assert supports_horizon_for_spec(h5_spec, horizon=1) is False
     assert supports_horizon_for_spec(h1_spec, horizon=1) is True
@@ -86,6 +93,8 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     assert supports_horizon_for_spec(d1_spec, horizon=5) is False
     assert supports_horizon_for_spec(d5_focus_spec, horizon=5) is True
     assert supports_horizon_for_spec(d5_focus_spec, horizon=1) is False
+    assert supports_horizon_for_spec(d5_buyable_spec, horizon=5) is True
+    assert supports_horizon_for_spec(d5_buyable_spec, horizon=1) is False
 
 
 def test_registry_frame_matches_operational_specs() -> None:
@@ -99,6 +108,7 @@ def test_registry_frame_matches_operational_specs() -> None:
         "alpha_topbucket_h1_rolling_120_v1",
         "alpha_lead_d1_v1",
         "alpha_swing_d5_v2",
+        "alpha_buyable_d5_v1",
     ]
 
 
@@ -152,6 +162,20 @@ def test_alpha_swing_d5_v2_matches_frozen_contract() -> None:
     assert resolve_target_column_for_spec(spec, horizon=5) == "target_top5_h5"
     assert supports_horizon_for_spec(spec, horizon=5) is True
     assert supports_horizon_for_spec(spec, horizon=1) is False
+
+
+def test_alpha_buyable_d5_v1_is_experimental_and_uses_buyable_target() -> None:
+    spec = get_alpha_model_spec("alpha_buyable_d5_v1")
+
+    assert spec.estimation_scheme == "rolling"
+    assert spec.rolling_window_days == 250
+    assert spec.active_candidate_flag is False
+    assert spec.lifecycle_role == "experimental_candidate"
+    assert spec.member_names == ("elasticnet", "hist_gbm")
+    assert spec.target_variant == "buyable_top5"
+    assert spec.training_target_variant == "buyable_top5"
+    assert spec.allowed_horizons == (5,)
+    assert resolve_target_column_for_spec(spec, horizon=5) == "target_buyable_h5"
 
 
 def test_normalise_weights_prioritizes_topk_returns_over_small_mae_gap() -> None:
