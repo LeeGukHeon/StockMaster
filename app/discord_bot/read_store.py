@@ -48,7 +48,8 @@ from app.storage.metadata_postgres import (
 
 BOT_SNAPSHOT_TABLE = "fact_discord_bot_snapshot"
 BOT_PICK_LIMIT = 20
-BOT_D5_CORE_PICK_LIMIT = 1
+BOT_D5_CORE_PICK_LIMIT = 5
+BOT_D5_MAX_PICKS_PER_SECTOR = 2
 BOT_WEEKLY_LIMIT = 4
 BOT_SNAPSHOT_TYPES = ("status", "next_picks", "weekly_report", "stock_summary")
 
@@ -238,7 +239,8 @@ def _build_pick_rows(
         ].sort_values(
             ["buyability_priority_score", "symbol"],
             ascending=[False, True],
-        ).head(BOT_D5_CORE_PICK_LIMIT)
+        )
+        working = _limit_d5_sector_concentration(working, limit=BOT_D5_CORE_PICK_LIMIT)
     else:
         working = working.head(BOT_PICK_LIMIT)
     rows: list[dict[str, object]] = []
@@ -253,13 +255,10 @@ def _build_pick_rows(
             expected_excess_return=getattr(row, "expected_excess_return", None),
             risk_flags=raw_risks,
             evidence_by_band=score_evidence,
+            candidate_selected=is_d5_candidate_surface,
         )
-        display_label = "실전 검토 후보" if is_d5_candidate_surface else judgement.label
-        display_summary = (
-            "차단 리스크 없음 · 불확실성 보정 우선순위 상위"
-            if is_d5_candidate_surface
-            else judgement.summary
-        )
+        display_label = judgement.label
+        display_summary = judgement.summary
         summary_parts = [
             display_label,
             f"점수 {_format_number(getattr(row, 'final_selection_value', None))}",
@@ -268,8 +267,12 @@ def _build_pick_rows(
             f"진입 {_safe_text(getattr(row, 'next_entry_trade_date', None))}",
         ]
         if is_d5_candidate_surface:
+            priority_text = _format_number(
+                getattr(row, "buyability_priority_score", None),
+                decimals=2,
+            )
             summary_parts.append(
-                f"우선순위 {_format_number(getattr(row, 'buyability_priority_score', None), decimals=2)}"
+                f"우선순위 {priority_text}"
             )
         if reasons:
             summary_parts.append(f"핵심 근거 {', '.join(reasons)}")
@@ -315,6 +318,29 @@ def _build_pick_rows(
             )
         )
     return rows
+
+
+def _limit_d5_sector_concentration(frame: pd.DataFrame, *, limit: int) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    selected_indices: list[object] = []
+    sector_counts: dict[str, int] = {}
+    for index, row in frame.iterrows():
+        sector = str(row.get("sector") or row.get("industry") or "-")
+        if sector_counts.get(sector, 0) >= BOT_D5_MAX_PICKS_PER_SECTOR:
+            continue
+        selected_indices.append(index)
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        if len(selected_indices) >= int(limit):
+            break
+    if len(selected_indices) < int(limit):
+        for index in frame.index:
+            if index in selected_indices:
+                continue
+            selected_indices.append(index)
+            if len(selected_indices) >= int(limit):
+                break
+    return frame.loc[selected_indices].head(int(limit)).copy()
 
 
 def _build_weekly_rows(

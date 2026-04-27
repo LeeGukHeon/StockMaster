@@ -43,7 +43,7 @@ def test_fetch_active_job_runs_requires_unreleased_active_lock(monkeypatch) -> N
     assert "active_lock.released_at IS NULL" in query
 
 
-def test_build_pick_rows_uses_single_d5_buyability_candidate() -> None:
+def test_build_pick_rows_uses_d5_buyability_basket_after_hard_blocks() -> None:
     frame = pd.DataFrame(
         [
             {
@@ -133,10 +133,12 @@ def test_build_pick_rows_uses_single_d5_buyability_candidate() -> None:
         source_run_id="test",
     )
 
-    assert len(rows) == 1
+    assert len(rows) == 2
     assert rows[0]["symbol"] == "333333"
     assert rows[0]["sort_order"] == 1
-    assert "실전 검토 후보" in rows[0]["summary"]
+    assert "관찰 우선" in rows[0]["summary"]
+    assert "후보권" in rows[0]["payload_json"]
+    assert rows[1]["symbol"] == "222222"
     assert "매수 보류" not in rows[0]["summary"]
     assert rows[0]["payload_json"]
 

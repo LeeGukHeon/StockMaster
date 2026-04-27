@@ -22,8 +22,8 @@ def test_classify_recommendation_treats_thin_liquidity_as_buyability_blocker() -
         evidence_by_band={"65-75": ScoreBandEvidence("65-75", 120, 0.006, 0.47)},
     )
 
-    assert judgement.label == "관찰 우선"
-    assert "리스크 확인 필요" in judgement.summary
+    assert judgement.label == "매수 보류"
+    assert "차단 리스크" in judgement.summary
 
 
 def test_classify_recommendation_caps_blocking_risk_to_observation() -> None:
@@ -34,8 +34,8 @@ def test_classify_recommendation_caps_blocking_risk_to_observation() -> None:
         evidence_by_band={"65-75": ScoreBandEvidence("65-75", 120, 0.006, 0.47)},
     )
 
-    assert judgement.label == "관찰 우선"
-    assert "리스크 확인 필요" in judgement.summary
+    assert judgement.label == "매수 보류"
+    assert "차단 리스크" in judgement.summary
 
 
 def test_classify_recommendation_rejects_negative_expected_return() -> None:
@@ -80,6 +80,18 @@ def test_classify_recommendation_blocks_buy_when_band_sample_is_too_small() -> N
 
     assert judgement.label == "매수 보류"
     assert "점수대 우위 약함" in judgement.summary
+
+
+def test_classify_recommendation_keeps_selected_candidate_observable_on_sparse_band() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=50,
+        expected_excess_return=0.02,
+        evidence_by_band={"<55": ScoreBandEvidence("<55", 5, 0.01, 0.6)},
+        candidate_selected=True,
+    )
+
+    assert judgement.label == "관찰 우선"
+    assert "후보권" in judgement.summary
 
 
 def test_buyability_priority_score_penalizes_model_risk() -> None:

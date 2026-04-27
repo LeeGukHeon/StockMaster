@@ -41,7 +41,8 @@ DISCORD_MESSAGE_LIMIT = 1800
 DISCORD_EOD_CANDIDATE_HORIZON = 5
 DISCORD_EOD_SECTOR_HORIZON = 5
 DISCORD_EOD_REFERENCE_HORIZON = 1
-DISCORD_EOD_D5_CORE_CANDIDATE_LIMIT = 1
+DISCORD_EOD_D5_CORE_CANDIDATE_LIMIT = 5
+DISCORD_EOD_D5_MAX_CANDIDATES_PER_SECTOR = 2
 DISCORD_EOD_MIN_REFERENCE_SCORE = 55.0
 
 REASON_LABELS = {
@@ -93,19 +94,43 @@ ALPHA_DECISION_REASON_LABELS = {
     "incumbent remained in the superior set": "현재 모델이 우수 후보군에 남음",
     "one challenger survived the superior set": "도전자 1개만 우수 후보군에 남음",
     "combo candidate survived the superior set": "혼합 후보가 우수 후보군에 남음",
-    "multiple challengers survived without a clear winner": "도전자 여러 개가 남았지만 뚜렷한 승자가 없음",
-    "matured shadow self-backtest history is not available": "성숙한 shadow 검증 이력이 아직 부족함",
+    "multiple challengers survived without a clear winner": (
+        "도전자 여러 개가 남았지만 뚜렷한 승자가 없음"
+    ),
+    "matured shadow self-backtest history is not available": (
+        "성숙한 shadow 검증 이력이 아직 부족함"
+    ),
     "shadow self-backtest matrix is incomplete": "shadow 검증 손실 행렬이 아직 불완전함",
-    "no active H5 champion was registered, so the latest candidate initialized serving": "활성 H5 챔피언이 없어 최신 학습 후보로 초기화함",
-    "the latest H5 candidate already matches the active champion": "최신 H5 후보가 이미 현재 챔피언과 같음",
-    "no trained H5 candidate run was available for checkpoint challenge": "H5 체크포인트 비교에 쓸 최신 학습 후보 run이 없음",
-    "the active H5 champion run could not be resolved for checkpoint challenge": "현재 H5 챔피언 run을 불러오지 못해 체크포인트 비교를 중단함",
-    "no matured H5 checkpoint challenge history was available": "성숙한 H5 체크포인트 비교 이력이 부족함",
-    "the latest H5 candidate did not improve selected top5 performance enough": "최신 H5 후보가 selected top5 성과를 충분히 개선하지 못함",
-    "the latest H5 candidate regressed on selection drag": "최신 H5 후보가 selection drag에서 악화됨",
-    "the latest H5 candidate regressed on selected top5 hit rate": "최신 H5 후보가 selected top5 적중률에서 악화됨",
-    "the latest H5 candidate regressed on worst selected top5 loss": "최신 H5 후보가 selected top5 최악 손실에서 악화됨",
-    "the latest H5 candidate cleared checkpoint guardrails and replaced the champion": "최신 H5 후보가 체크포인트 승급 조건을 통과해 챔피언을 교체함",
+    "no active H5 champion was registered, so the latest candidate initialized serving": (
+        "활성 H5 챔피언이 없어 최신 학습 후보로 초기화함"
+    ),
+    "the latest H5 candidate already matches the active champion": (
+        "최신 H5 후보가 이미 현재 챔피언과 같음"
+    ),
+    "no trained H5 candidate run was available for checkpoint challenge": (
+        "H5 체크포인트 비교에 쓸 최신 학습 후보 run이 없음"
+    ),
+    "the active H5 champion run could not be resolved for checkpoint challenge": (
+        "현재 H5 챔피언 run을 불러오지 못해 체크포인트 비교를 중단함"
+    ),
+    "no matured H5 checkpoint challenge history was available": (
+        "성숙한 H5 체크포인트 비교 이력이 부족함"
+    ),
+    "the latest H5 candidate did not improve selected top5 performance enough": (
+        "최신 H5 후보가 selected top5 성과를 충분히 개선하지 못함"
+    ),
+    "the latest H5 candidate regressed on selection drag": (
+        "최신 H5 후보가 selection drag에서 악화됨"
+    ),
+    "the latest H5 candidate regressed on selected top5 hit rate": (
+        "최신 H5 후보가 selected top5 적중률에서 악화됨"
+    ),
+    "the latest H5 candidate regressed on worst selected top5 loss": (
+        "최신 H5 후보가 selected top5 최악 손실에서 악화됨"
+    ),
+    "the latest H5 candidate cleared checkpoint guardrails and replaced the champion": (
+        "최신 H5 후보가 체크포인트 승급 조건을 통과해 챔피언을 교체함"
+    ),
 }
 
 EXECUTION_STYLE_LABELS = {
@@ -306,8 +331,9 @@ def _load_top_selection_rows(
     params.append(expected_floor)
     if is_d5_candidate_surface:
         params.append(BUYABILITY_MIN_PRIORITY_SCORE)
-    params.append(effective_limit)
-    return connection.execute(
+    fetch_limit = effective_limit * 4 if is_d5_candidate_surface else effective_limit
+    params.append(fetch_limit)
+    frame = connection.execute(
         f"""
         WITH active_models AS (
             SELECT
@@ -352,7 +378,10 @@ def _load_top_selection_rows(
                 - COALESCE(prediction.disagreement_score, 0.0) * ?
             ) AS buyability_priority_score,
             COALESCE(active_models.model_spec_id, prediction.model_spec_id) AS model_spec_id,
-            COALESCE(active_models.active_alpha_model_id, prediction.active_alpha_model_id) AS active_alpha_model_id,
+            COALESCE(
+                active_models.active_alpha_model_id,
+                prediction.active_alpha_model_id
+            ) AS active_alpha_model_id,
             daily.close AS selection_close_price
         FROM fact_ranking AS ranking
         JOIN dim_symbol AS symbol
@@ -379,6 +408,32 @@ def _load_top_selection_rows(
         """,
         params,
     ).fetchdf()
+    if is_d5_candidate_surface and not frame.empty:
+        return _limit_d5_sector_concentration(frame, limit=effective_limit)
+    return frame
+
+
+def _limit_d5_sector_concentration(frame: pd.DataFrame, *, limit: int) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    selected_indices: list[object] = []
+    sector_counts: dict[str, int] = {}
+    for index, row in frame.iterrows():
+        sector = str(row.get("sector") or row.get("industry") or "-")
+        if sector_counts.get(sector, 0) >= DISCORD_EOD_D5_MAX_CANDIDATES_PER_SECTOR:
+            continue
+        selected_indices.append(index)
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        if len(selected_indices) >= int(limit):
+            break
+    if len(selected_indices) < int(limit):
+        for index in frame.index:
+            if index in selected_indices:
+                continue
+            selected_indices.append(index)
+            if len(selected_indices) >= int(limit):
+                break
+    return frame.loc[selected_indices].head(int(limit)).copy()
 
 
 def _load_official_target_rows(
@@ -567,22 +622,19 @@ def _format_pick_block(
 ) -> list[str]:
     reasons = _translate_tags(row["top_reason_tags_json"], REASON_LABELS)
     risks = _translate_tags(row["risk_flags_json"], RISK_LABELS)
+    is_d5_buyability_pick = (
+        int(row.get("horizon", 0) or 0) == DISCORD_EOD_CANDIDATE_HORIZON
+        and pd.notna(row.get("buyability_priority_score"))
+    )
     judgement = classify_recommendation(
         final_selection_value=row.get("final_selection_value"),
         expected_excess_return=row.get("expected_excess_return"),
         risk_flags=_raw_tag_list(row.get("risk_flags_json")),
         evidence_by_band=score_evidence,
+        candidate_selected=is_d5_buyability_pick,
     )
-    is_d5_buyability_pick = (
-        int(row.get("horizon", 0) or 0) == DISCORD_EOD_CANDIDATE_HORIZON
-        and pd.notna(row.get("buyability_priority_score"))
-    )
-    display_label = "실전 검토 후보" if is_d5_buyability_pick else judgement.label
-    display_summary = (
-        "차단 리스크 없음 · 불확실성 보정 우선순위 상위"
-        if is_d5_buyability_pick
-        else judgement.summary
-    )
+    display_label = judgement.label
+    display_summary = judgement.summary
     risk_text = "차단 리스크 없음" if risks == "-" else risks
     score = float(row["final_selection_value"])
     expected_text = _pct_text(row.get("expected_excess_return"))
@@ -627,9 +679,12 @@ def _format_official_pick_block(row: pd.Series, *, rank: int) -> list[str]:
         summary_parts.append(f"추천 점수 {float(row['score_value']):+.2f}")
     if pd.notna(row.get("gate_status")):
         summary_parts.append(f"진입 방식 {_translate_execution_style(row['gate_status'])}")
-    lines.append(
-        f"   - 공식 추천안: {' | '.join(summary_parts) if summary_parts else '다음 거래일 공식 추천안에 포함'}"
+    official_summary = (
+        " | ".join(summary_parts)
+        if summary_parts
+        else "다음 거래일 공식 추천안에 포함"
     )
+    lines.append(f"   - 공식 추천안: {official_summary}")
     if pd.notna(row.get("sector")) or pd.notna(row.get("industry")):
         lines.append(
             f"   - 업종: {row.get('industry') or '-'} / 상위 섹터 {row.get('sector') or '-'}"

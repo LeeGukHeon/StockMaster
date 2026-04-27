@@ -603,6 +603,9 @@ def compute_live_stock_recommendation(
                 else d5_prediction_row.get("expected_excess_return"),
                 risk_flags=d5_risk_flags,
                 evidence_by_band=d5_evidence,
+                candidate_selected=bool(
+                    ranking_by_horizon.get(5, {}).get("report_candidate_flag", False)
+                ),
             )
             expected = (
                 None

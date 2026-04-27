@@ -118,7 +118,8 @@ def test_format_pick_block_omits_active_model_id() -> None:
     assert "active serving spec" not in rendered
     assert "fallback baseline" not in rendered
     assert "활성 모델 ID" not in rendered
-    assert "관찰 우선" in rendered
+    assert "매수 보류" in rendered
+    assert "차단 리스크" in rendered
     assert "단기 탄력 강함" in rendered
     assert "고예측 오차와 모델 이견이 동시에 큼" in rendered
     assert "8,860→8,872원" in rendered
@@ -191,7 +192,7 @@ def test_format_pick_block_labels_d5_buyability_candidate_without_score_band_con
 
     rendered = "\n".join(_format_pick_block(row, rank=1))
 
-    assert "실전 검토 후보" in rendered
+    assert "관찰 우선" in rendered
     assert "매수 보류" not in rendered
     assert "차단 리스크 없음" in rendered
-    assert "불확실성 보정 우선순위 상위" in rendered
+    assert "후보권" in rendered

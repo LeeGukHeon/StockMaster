@@ -9,17 +9,26 @@ PREDICTION_ERROR_BUCKET_HIGH_FLAG = "prediction_error_bucket_high"
 MODEL_DISAGREEMENT_HIGH_FLAG = "model_disagreement_high"
 MODEL_JOINT_INSTABILITY_HIGH_FLAG = "model_joint_instability_high"
 
-BUYABILITY_BLOCKING_RISK_FLAGS = frozenset(
+HARD_BUYABILITY_BLOCKING_RISK_FLAGS = frozenset(
     {
         "data_missingness_high",
-        "high_realized_volatility",
-        "large_recent_drawdown",
         "thin_liquidity",
         "prediction_fallback",
-        "implementation_friction_high",
         MODEL_JOINT_INSTABILITY_HIGH_FLAG,
     }
 )
+
+SOFT_BUYABILITY_RISK_FLAGS = frozenset(
+    {
+        "high_realized_volatility",
+        "large_recent_drawdown",
+        "implementation_friction_high",
+        MODEL_DISAGREEMENT_HIGH_FLAG,
+        PREDICTION_ERROR_BUCKET_HIGH_FLAG,
+    }
+)
+
+BUYABILITY_BLOCKING_RISK_FLAGS = HARD_BUYABILITY_BLOCKING_RISK_FLAGS
 
 GRADE_CAPPING_RISK_FLAGS = frozenset(
     {

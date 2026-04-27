@@ -102,6 +102,7 @@ def classify_recommendation(
     expected_excess_return: object = None,
     risk_flags: list[str] | tuple[str, ...] | None = None,
     evidence_by_band: Mapping[str, ScoreBandEvidence] | None = None,
+    candidate_selected: bool = False,
 ) -> RecommendationJudgement:
     score = _float_or_none(final_selection_value)
     expected = _float_or_none(expected_excess_return)
@@ -128,10 +129,26 @@ def classify_recommendation(
             evidence=evidence,
         )
 
+    if has_severe_risk:
+        return RecommendationJudgement(
+            label="매수 보류",
+            summary=f"차단 리스크 우선 확인 · {evidence_text}",
+            score_band=band,
+            evidence=evidence,
+        )
+
     if _evidence_warns_overconfidence(evidence):
         return RecommendationJudgement(
             label="관찰 우선",
             summary=f"고점수 과확신 경고 · {evidence_text}",
+            score_band=band,
+            evidence=evidence,
+        )
+
+    if candidate_selected and expected is not None and expected > 0 and not evidence_ok:
+        return RecommendationJudgement(
+            label="관찰 우선",
+            summary=f"후보권이나 성과 확인 필요 · {evidence_text}",
             score_band=band,
             evidence=evidence,
         )
@@ -141,7 +158,6 @@ def classify_recommendation(
         and expected is not None
         and expected >= 0.04
         and _evidence_supports_aggressive(evidence)
-        and not has_severe_risk
     ):
         return RecommendationJudgement(
             label="적극매수 후보",
@@ -155,7 +171,6 @@ def classify_recommendation(
         and expected is not None
         and expected > 0
         and evidence_ok
-        and not has_severe_risk
     ):
         return RecommendationJudgement(
             label="매수해볼 가치 있음",
@@ -165,10 +180,17 @@ def classify_recommendation(
         )
 
     if score >= 55 and expected is not None and expected > 0 and evidence_ok:
-        caution = "리스크 확인 필요" if has_severe_risk else "분할 접근 권장"
         return RecommendationJudgement(
             label="관찰 우선",
-            summary=f"{caution} · {evidence_text}",
+            summary=f"분할 접근 권장 · {evidence_text}",
+            score_band=band,
+            evidence=evidence,
+        )
+
+    if candidate_selected and expected is not None and expected > 0:
+        return RecommendationJudgement(
+            label="관찰 우선",
+            summary=f"후보권이나 점수대 우위 약함 · {evidence_text}",
             score_band=band,
             evidence=evidence,
         )
@@ -186,7 +208,7 @@ def load_score_band_evidence(
     *,
     horizon: int,
     ranking_version: str,
-    lookback_dates: int = 60,
+    lookback_dates: int = 120,
 ) -> dict[str, ScoreBandEvidence]:
     try:
         frame = connection.execute(
