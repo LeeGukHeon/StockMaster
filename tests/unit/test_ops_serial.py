@@ -3,8 +3,15 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
+import pytest
+
 from app.common.time import now_local
-from app.ops.serial import acquire_serial_lock, release_serial_lock, serial_lock_root
+from app.ops.serial import (
+    SerialLockConflictError,
+    acquire_serial_lock,
+    release_serial_lock,
+    serial_lock_root,
+)
 from tests._ticket003_support import build_test_settings
 
 
@@ -49,3 +56,42 @@ def test_acquire_serial_lock_reclaims_same_host_dead_pid(tmp_path, monkeypatch) 
 
     assert metadata["job_name"] == "daily_close"
     assert metadata["details"]["identity"]["as_of_date"] == "2026-03-11"
+
+
+def test_acquire_serial_lock_reports_conflict_when_stale_reclaim_races(
+    tmp_path, monkeypatch
+) -> None:
+    settings = build_test_settings(tmp_path)
+    lock_dir = serial_lock_root(settings) / "global_write"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    acquired_at = now_local(settings.app.timezone) - timedelta(minutes=240)
+    (lock_dir / "lock.json").write_text(
+        json.dumps(
+            {
+                "lock_key": "global_write",
+                "owner_run_id": "running-daily-close",
+                "job_name": "daily_close",
+                "pid": 999999,
+                "hostname": "other-host",
+                "acquired_at": acquired_at.isoformat(),
+                "details": {"identity": {"as_of_date": "2026-04-27"}},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("app.ops.serial.shutil.rmtree", lambda *args, **kwargs: None)
+
+    with pytest.raises(SerialLockConflictError) as exc_info:
+        acquire_serial_lock(
+            settings,
+            lock_key="global_write",
+            owner_run_id=None,
+            job_name="evaluation",
+            stale_after_minutes=120,
+            details={"identity": {"as_of_date": "2026-04-27"}},
+        )
+
+    assert exc_info.value.lock_key == "global_write"
+    assert exc_info.value.owner_run_id == "running-daily-close"

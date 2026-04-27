@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 import shutil
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -112,7 +112,16 @@ def acquire_serial_lock(
         metadata = _read_lock_metadata(lock_dir)
         if _is_stale(metadata, stale_after_minutes=stale_after_minutes, now_ts=now_ts):
             shutil.rmtree(lock_dir, ignore_errors=True)
-            lock_dir.mkdir(parents=True, exist_ok=False)
+            try:
+                lock_dir.mkdir(parents=True, exist_ok=False)
+            except FileExistsError:
+                refreshed_metadata = _read_lock_metadata(lock_dir)
+                raise SerialLockConflictError(
+                    f"Serial lock is already held for {lock_key}.",
+                    lock_key=lock_key,
+                    owner_run_id=refreshed_metadata.get("owner_run_id"),
+                    details=refreshed_metadata,
+                ) from None
         else:
             raise SerialLockConflictError(
                 f"Serial lock is already held for {lock_key}.",
