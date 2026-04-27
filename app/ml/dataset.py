@@ -303,6 +303,92 @@ def _buyable_candidate_scores(label_rows: pd.DataFrame) -> pd.Series:
         scores.loc[group.index] = raw.fillna(0.0)
     return scores
 
+
+def _numeric_feature_series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(pd.NA, index=frame.index, dtype="Float64")
+    return pd.to_numeric(frame[column], errors="coerce")
+
+
+def _date_market_rank(
+    frame: pd.DataFrame,
+    column: str,
+    *,
+    ascending: bool = True,
+) -> pd.Series:
+    values = _numeric_feature_series(frame, column)
+    return values.groupby([frame["as_of_date"], frame["market"]]).rank(
+        method="average",
+        pct=True,
+        ascending=ascending,
+    )
+
+
+def _practical_excess_return_targets(
+    feature_label_frame: pd.DataFrame,
+    *,
+    horizon: int,
+) -> pd.Series:
+    """Return an excess-return-unit target penalized by point-in-time buyability risk.
+
+    This target keeps the downstream prediction unit as excess return while reducing the
+    training reward for names that only worked as high-risk/low-buyability outliers.
+    Risk inputs are same-date features only; no news or intraday fields are used.
+    """
+
+    target_column = f"target_h{int(horizon)}"
+    if feature_label_frame.empty or target_column not in feature_label_frame.columns:
+        return pd.Series(dtype="float64")
+
+    working = feature_label_frame.copy()
+    returns = pd.to_numeric(working[target_column], errors="coerce")
+    adjusted = pd.Series(0.0, index=working.index, dtype="float64")
+
+    for _, group in working.groupby(["as_of_date", "market"], sort=False):
+        group_returns = returns.reindex(group.index)
+        valid = group_returns.dropna()
+        if valid.empty:
+            continue
+        lower = max(float(valid.quantile(0.05)), -0.10)
+        upper = min(float(valid.quantile(0.95)), 0.12)
+        if upper <= lower:
+            lower = float(valid.min())
+            upper = float(valid.max())
+        adjusted.loc[group.index] = group_returns.clip(lower=lower, upper=upper).fillna(0.0)
+
+    liquidity_rank = _numeric_feature_series(working, "liquidity_rank_pct")
+    adv_rank = _date_market_rank(working, "adv_20", ascending=True)
+    vol_rank = _date_market_rank(working, "realized_vol_20d", ascending=True)
+    drawdown_rank = _date_market_rank(working, "drawdown_20d", ascending=True)
+    max_loss_rank = _date_market_rank(working, "max_loss_20d", ascending=True)
+    missing_count = _numeric_feature_series(working, "missing_key_feature_count").fillna(99.0)
+    data_confidence = _numeric_feature_series(working, "data_confidence_score").fillna(0.0)
+    stale_price = _numeric_feature_series(working, "stale_price_flag").fillna(1.0)
+
+    thin_liquidity = liquidity_rank.le(0.10).fillna(False) | adv_rank.le(0.10).fillna(False)
+    high_volatility = vol_rank.ge(0.90).fillna(False)
+    large_drawdown = drawdown_rank.le(0.10).fillna(False) | max_loss_rank.le(0.10).fillna(False)
+    data_missing = missing_count.ge(2.0) | data_confidence.lt(0.60) | stale_price.gt(0.0)
+
+    positive_penalty = pd.Series(1.0, index=working.index, dtype="float64")
+    positive_penalty = positive_penalty.where(~thin_liquidity, positive_penalty.mul(0.35))
+    positive_penalty = positive_penalty.where(~high_volatility, positive_penalty.mul(0.55))
+    positive_penalty = positive_penalty.where(~large_drawdown, positive_penalty.mul(0.55))
+    positive_penalty = positive_penalty.where(~data_missing, positive_penalty.mul(0.50))
+    risk_count = (
+        thin_liquidity.astype(float)
+        + high_volatility.astype(float)
+        + large_drawdown.astype(float)
+        + data_missing.astype(float)
+    )
+    negative_multiplier = 1.0 + risk_count.mul(0.15)
+
+    return adjusted.where(adjusted <= 0.0, adjusted.mul(positive_penalty)).where(
+        adjusted > 0.0,
+        adjusted.mul(negative_multiplier),
+    )
+
+
 def _load_dataset_frame(
     connection,
     *,
@@ -482,6 +568,11 @@ def _load_dataset_frame(
     dataset["market_is_kospi"] = dataset["market"].eq("KOSPI").astype(float)
     dataset["market_is_kosdaq"] = dataset["market"].eq("KOSDAQ").astype(float)
     dataset = augment_market_regime_features(connection, dataset)
+    for horizon in horizons:
+        dataset[f"target_practical_excess_h{int(horizon)}"] = _practical_excess_return_targets(
+            dataset,
+            horizon=int(horizon),
+        )
     dataset["as_of_date"] = pd.to_datetime(dataset["as_of_date"]).dt.date
     for feature_name in FEATURE_NAMES:
         if feature_name not in dataset.columns:
@@ -501,6 +592,9 @@ def _load_dataset_frame(
     for target_name in [f"target_buyable_h{int(horizon)}" for horizon in horizons]:
         if target_name not in dataset.columns:
             dataset[target_name] = pd.NA
+    for target_name in [f"target_practical_excess_h{int(horizon)}" for horizon in horizons]:
+        if target_name not in dataset.columns:
+            dataset[target_name] = pd.NA
     ordered_columns = [
         "as_of_date",
         "symbol",
@@ -512,6 +606,7 @@ def _load_dataset_frame(
         *[f"target_top5_h{int(horizon)}" for horizon in horizons],
         *[f"target_topbucket_h{int(horizon)}" for horizon in horizons],
         *[f"target_buyable_h{int(horizon)}" for horizon in horizons],
+        *[f"target_practical_excess_h{int(horizon)}" for horizon in horizons],
     ]
     return dataset[ordered_columns].sort_values(["as_of_date", "symbol"]).reset_index(drop=True)
 

@@ -10,6 +10,7 @@ from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import (
     D5_BUYABLE_MODEL_SPEC_ID,
+    D5_PRACTICAL_MODEL_SPEC_ID,
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
     D5_PRIMARY_OUTPUT_CONTRACT_ROLES,
     SELECTION_ENGINE_VERSION,
@@ -199,7 +200,11 @@ D5_INELIGIBLE_GATE_PENALTY = 18.0
 
 
 def _is_d5_focus_model_spec(model_spec_id: str | None) -> bool:
-    return model_spec_id in {D5_PRIMARY_FOCUS_MODEL_SPEC_ID, D5_BUYABLE_MODEL_SPEC_ID}
+    return model_spec_id in {
+        D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+        D5_BUYABLE_MODEL_SPEC_ID,
+        D5_PRACTICAL_MODEL_SPEC_ID,
+    }
 
 
 def _resolve_selection_weights(
@@ -209,7 +214,7 @@ def _resolve_selection_weights(
     target_variant: str | None,
 ) -> dict[str, float]:
     if (
-        model_spec_id == D5_BUYABLE_MODEL_SPEC_ID
+        model_spec_id in {D5_BUYABLE_MODEL_SPEC_ID, D5_PRACTICAL_MODEL_SPEC_ID}
         and int(horizon) in SELECTION_V2_D5_BUYABLE_WEIGHTS
     ):
         return dict(SELECTION_V2_D5_BUYABLE_WEIGHTS[int(horizon)])
@@ -276,7 +281,7 @@ def _resolve_report_candidate_limit(
     target_variant: str | None,
     horizon: int,
 ) -> int | None:
-    if target_variant in {"top5_binary", "buyable_top5"}:
+    if target_variant in {"top5_binary", "buyable_top5", "practical_excess_return"}:
         return 5
     if model_spec_id == "alpha_topbucket_h1_rolling_120_v1" and int(horizon) == 1:
         return 5
@@ -768,7 +773,7 @@ def _score_selection_engine_v2_frame(
         horizon=int(horizon),
     )
     scored["grade"] = assign_grades(scored)
-    if d5_primary_focus and model_spec_id != D5_BUYABLE_MODEL_SPEC_ID:
+    if d5_primary_focus and model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID:
         scored = _apply_d5_raw_preservation_guardrail(scored)
     else:
         scored["raw_top5_candidate_flag"] = False

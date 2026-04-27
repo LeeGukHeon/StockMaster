@@ -468,3 +468,20 @@ def test_d5_buyability_risk_gate_applies_to_active_d5_and_skips_other_specs():
     assert active_gated["final_selection_value"].item() == 56.0
     assert other_gated["d5_buyability_risk_gate_penalty_score"].item() == 0.0
     assert other_gated["final_selection_value"].item() == 70.0
+
+
+def test_d5_practical_weights_use_buyability_profile_without_raw_preservation():
+    practical_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_practical_d5_v1",
+        target_variant="practical_excess_return",
+    )
+    buyable_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_buyable_d5_v1",
+        target_variant="buyable_top5",
+    )
+
+    assert practical_weights == buyable_weights
+    assert practical_weights["quality_score"] == 10
+    assert practical_weights["crowding_penalty_score"] == -10
