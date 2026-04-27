@@ -24,6 +24,13 @@ from app.ml.inference import build_prediction_frame_from_training_run
 from app.ml.registry import load_active_alpha_model
 from app.ml.training import _train_single_horizon
 from app.ranking.explanatory_score import _load_regime_map
+
+NEUTRAL_REGIME_MAP = {
+    "KR_ALL": {"regime_state": "neutral", "regime_score": 50.0},
+    "KOSPI": {"regime_state": "neutral", "regime_score": 50.0},
+    "KOSDAQ": {"regime_state": "neutral", "regime_score": 50.0},
+}
+
 from app.selection.engine_v2 import build_selection_engine_v2_rankings
 from app.settings import load_settings
 from app.storage.bootstrap import bootstrap_core_tables
@@ -148,6 +155,20 @@ def _load_labels(
     return labels
 
 
+def _resolve_regime_map_for_backtest(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    as_of_date: date,
+    allow_missing_regime: bool,
+) -> tuple[dict[str, dict[str, object]], bool]:
+    try:
+        return _load_regime_map(connection, as_of_date=as_of_date), False
+    except RuntimeError:
+        if not allow_missing_regime:
+            raise
+        return NEUTRAL_REGIME_MAP, True
+
+
 def _attach_labels_and_ranking(
     connection: duckdb.DuckDBPyConnection,
     *,
@@ -155,6 +176,7 @@ def _attach_labels_and_ranking(
     as_of_date: date,
     horizon: int,
     prediction_frame: pd.DataFrame,
+    allow_missing_regime: bool = False,
 ) -> pd.DataFrame:
     prediction_frame = prediction_frame.copy()
     prediction_frame["as_of_date"] = pd.to_datetime(prediction_frame["as_of_date"]).dt.date
@@ -165,11 +187,16 @@ def _attach_labels_and_ranking(
     feature_rank = load_feature_matrix(connection, as_of_date=as_of_date, market="ALL")
     if feature_rank.empty:
         return merged
+    regime_map, used_neutral_regime_fallback = _resolve_regime_map_for_backtest(
+        connection,
+        as_of_date=as_of_date,
+        allow_missing_regime=allow_missing_regime,
+    )
     rankings = build_selection_engine_v2_rankings(
         feature_matrix=feature_rank,
         as_of_date=as_of_date,
         horizons=[int(horizon)],
-        regime_map=_load_regime_map(connection, as_of_date=as_of_date),
+        regime_map=regime_map,
         prediction_frames_by_horizon={int(horizon): prediction_frame},
         run_id="walk-forward-alpha-backtest-artifact-only",
         settings=settings,
@@ -190,7 +217,9 @@ def _attach_labels_and_ranking(
     ranking = rankings[0].loc[:, ranking_cols].copy()
     ranking["as_of_date"] = pd.to_datetime(ranking["as_of_date"]).dt.date
     ranking["symbol"] = ranking["symbol"].astype(str).str.zfill(6)
-    return merged.merge(ranking, on=["as_of_date", "symbol", "horizon"], how="left")
+    result = merged.merge(ranking, on=["as_of_date", "symbol", "horizon"], how="left")
+    result["regime_fallback_used"] = bool(used_neutral_regime_fallback)
+    return result
 
 
 def _add_eval_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -305,6 +334,7 @@ def run_backtest(args: argparse.Namespace) -> int:
         "promotion_disabled": True,
         "db_read_only": True,
         "delete_temp_models_per_date": not args.keep_temp_models,
+        "allow_missing_regime_fallback": bool(args.allow_missing_regime_fallback),
         "outputs": [],
         "jobs": [asdict(job) for job in jobs],
     }
@@ -391,6 +421,7 @@ def run_backtest(args: argparse.Namespace) -> int:
                 as_of_date=as_of_date,
                 horizon=job.horizon,
                 prediction_frame=prediction_frame,
+                allow_missing_regime=args.allow_missing_regime_fallback,
             )
             merged["backtest_run_id"] = run_id
             merged["backtest_train_end_date"] = as_of_date
@@ -470,6 +501,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("artifacts/tmp/walk_forward_alpha_backtest"),
     )
     parser.add_argument("--keep-temp-models", action="store_true")
+    parser.add_argument(
+        "--allow-missing-regime-fallback",
+        action="store_true",
+        help=(
+            "Use a neutral market-regime context when old backtest dates lack "
+            "fact_market_regime_snapshot rows; records regime_fallback_used in outputs."
+        ),
+    )
     parser.add_argument("--progress-every", type=int, default=5)
     return parser
 
