@@ -168,15 +168,21 @@ def _policy_frame(base: pd.DataFrame, policy: PolicySpec) -> pd.DataFrame:
     return candidates
 
 
-def _select_top_by_date(frame: pd.DataFrame, *, top_n: int) -> pd.DataFrame:
+def _select_top_by_date(
+    frame: pd.DataFrame,
+    *,
+    top_n: int,
+    group_cols: list[str] | None = None,
+) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
+    grouping = group_cols or ["as_of_date"]
     return (
         frame.sort_values(
             ["as_of_date", "buyability_priority_score", "symbol"],
             ascending=[True, False, True],
         )
-        .groupby("as_of_date", as_index=False, group_keys=False)
+        .groupby(grouping, as_index=False, group_keys=False)
         .head(int(top_n))
         .copy()
     )
@@ -238,7 +244,7 @@ def _summarise(selected: pd.DataFrame, *, top_ns: Iterable[int]) -> pd.DataFrame
 
 
 def _top1_wide(selected: pd.DataFrame) -> pd.DataFrame:
-    top1 = _select_top_by_date(selected, top_n=1)
+    top1 = _select_top_by_date(selected, top_n=1, group_cols=["policy_id", "as_of_date"])
     if top1.empty:
         return pd.DataFrame()
     return top1.pivot_table(
