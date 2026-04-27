@@ -18,7 +18,13 @@ from app.discord_bot.data_views import (
 )
 from app.ml.promotion import load_alpha_promotion_summary
 from app.ops.common import JobStatus, OpsJobResult
-from app.recommendation.buyability import buyability_priority_score, has_buyability_blocker
+from app.recommendation.buyability import (
+    BUYABILITY_MIN_EXPECTED_EXCESS_RETURN,
+    BUYABILITY_MIN_FINAL_SELECTION_VALUE,
+    BUYABILITY_MIN_PRIORITY_SCORE,
+    buyability_priority_score,
+    has_buyability_blocker,
+)
 from app.recommendation.judgement import (
     ScoreBandEvidence,
     classify_recommendation,
@@ -210,9 +216,11 @@ def _build_pick_rows(
             if "eligible_flag" in working.columns
             else pd.Series(True, index=working.index)
         )
+        final_score = pd.to_numeric(working["final_selection_value"], errors="coerce")
         working = working.loc[
             eligible
-            & (expected > 0.0)
+            & (expected > BUYABILITY_MIN_EXPECTED_EXCESS_RETURN)
+            & (final_score >= BUYABILITY_MIN_FINAL_SELECTION_VALUE)
             & ~working["raw_risks_list"].apply(has_buyability_blocker)
         ].copy()
         if working.empty:
@@ -225,7 +233,9 @@ def _build_pick_rows(
             ),
             axis=1,
         )
-        working = working.sort_values(
+        working = working.loc[
+            working["buyability_priority_score"] >= BUYABILITY_MIN_PRIORITY_SCORE
+        ].sort_values(
             ["buyability_priority_score", "symbol"],
             ascending=[False, True],
         ).head(BOT_D5_CORE_PICK_LIMIT)

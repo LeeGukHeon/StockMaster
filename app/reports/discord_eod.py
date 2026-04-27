@@ -21,6 +21,9 @@ from app.ranking.risk_taxonomy import BUYABILITY_BLOCKING_RISK_FLAGS
 from app.recommendation.buyability import (
     BUYABILITY_DISAGREEMENT_PENALTY,
     BUYABILITY_EXPECTED_RETURN_WEIGHT,
+    BUYABILITY_MIN_EXPECTED_EXCESS_RETURN,
+    BUYABILITY_MIN_FINAL_SELECTION_VALUE,
+    BUYABILITY_MIN_PRIORITY_SCORE,
     BUYABILITY_UNCERTAINTY_PENALTY,
 )
 from app.recommendation.judgement import (
@@ -257,10 +260,21 @@ def _load_top_selection_rows(
         f"          AND NOT contains(COALESCE(ranking.risk_flags_json, ''), '\"{flag}\"')"
         for flag in sorted(BUYABILITY_BLOCKING_RISK_FLAGS)
     )
-    score_floor_filter = (
-        ""
+    score_floor_filter = "          AND ranking.final_selection_value >= ?\n"
+    expected_floor = (
+        BUYABILITY_MIN_EXPECTED_EXCESS_RETURN
         if is_d5_candidate_surface
-        else "          AND ranking.final_selection_value >= ?\n"
+        else 0.0
+    )
+    priority_score_expression = (
+        f"(COALESCE(prediction.expected_excess_return, 0.0) * {BUYABILITY_EXPECTED_RETURN_WEIGHT} "
+        f"- COALESCE(prediction.uncertainty_score, 0.0) * {BUYABILITY_UNCERTAINTY_PENALTY} "
+        f"- COALESCE(prediction.disagreement_score, 0.0) * {BUYABILITY_DISAGREEMENT_PENALTY})"
+    )
+    priority_floor_filter = (
+        f"          AND {priority_score_expression} >= ?\n"
+        if is_d5_candidate_surface
+        else ""
     )
     order_expression = (
         "buyability_priority_score DESC, ranking.symbol"
@@ -284,8 +298,14 @@ def _load_top_selection_rows(
         horizon,
         SELECTION_ENGINE_V2_VERSION,
     ]
-    if not is_d5_candidate_surface:
-        params.append(DISCORD_EOD_MIN_REFERENCE_SCORE)
+    params.append(
+        BUYABILITY_MIN_FINAL_SELECTION_VALUE
+        if is_d5_candidate_surface
+        else DISCORD_EOD_MIN_REFERENCE_SCORE
+    )
+    params.append(expected_floor)
+    if is_d5_candidate_surface:
+        params.append(BUYABILITY_MIN_PRIORITY_SCORE)
     params.append(effective_limit)
     return connection.execute(
         f"""
@@ -352,9 +372,9 @@ def _load_top_selection_rows(
           AND ranking.horizon = ?
           AND ranking.ranking_version = ?
           AND ranking.eligible_flag = TRUE
-          AND COALESCE(prediction.expected_excess_return, 0.0) > 0.0
-{score_floor_filter}{blocking_risk_filters}
-        ORDER BY {order_expression}
+{score_floor_filter}          AND COALESCE(prediction.expected_excess_return, 0.0) > ?
+{blocking_risk_filters}
+{priority_floor_filter}        ORDER BY {order_expression}
         LIMIT ?
         """,
         params,
