@@ -26,7 +26,7 @@ def test_classify_recommendation_treats_thin_liquidity_as_buyability_blocker() -
     assert "차단 리스크" in judgement.summary
 
 
-def test_classify_recommendation_caps_blocking_risk_to_observation() -> None:
+def test_classify_recommendation_keeps_joint_model_instability_observable() -> None:
     judgement = classify_recommendation(
         final_selection_value=70,
         expected_excess_return=0.02,
@@ -34,8 +34,8 @@ def test_classify_recommendation_caps_blocking_risk_to_observation() -> None:
         evidence_by_band={"65-75": ScoreBandEvidence("65-75", 120, 0.006, 0.47)},
     )
 
-    assert judgement.label == "매수 보류"
-    assert "차단 리스크" in judgement.summary
+    assert judgement.label == "매수해볼 가치 있음"
+    assert "65-75점대 과거 평균 +0.6%" in judgement.summary
 
 
 def test_classify_recommendation_rejects_negative_expected_return() -> None:
@@ -112,3 +112,5 @@ def test_buyability_priority_score_penalizes_model_risk() -> None:
     assert round(stable, 6) == 2.6
     assert has_buyability_blocker(["thin_liquidity"])
     assert not has_buyability_blocker(["model_disagreement_high"])
+    assert not has_buyability_blocker(["model_joint_instability_high"])
+    assert not has_buyability_blocker(["prediction_fallback"])

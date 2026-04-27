@@ -21,9 +21,7 @@ from app.ranking.risk_taxonomy import BUYABILITY_BLOCKING_RISK_FLAGS
 from app.recommendation.buyability import (
     BUYABILITY_DISAGREEMENT_PENALTY,
     BUYABILITY_EXPECTED_RETURN_WEIGHT,
-    BUYABILITY_MIN_EXPECTED_EXCESS_RETURN,
     BUYABILITY_MIN_FINAL_SELECTION_VALUE,
-    BUYABILITY_MIN_PRIORITY_SCORE,
     BUYABILITY_UNCERTAINTY_PENALTY,
 )
 from app.recommendation.judgement import (
@@ -287,24 +285,77 @@ def _load_top_selection_rows(
     )
     score_floor_filter = "          AND ranking.final_selection_value >= ?\n"
     expected_floor = (
-        BUYABILITY_MIN_EXPECTED_EXCESS_RETURN
+        0.0
         if is_d5_candidate_surface
         else 0.0
     )
-    priority_score_expression = (
-        f"(COALESCE(prediction.expected_excess_return, 0.0) * {BUYABILITY_EXPECTED_RETURN_WEIGHT} "
-        f"- COALESCE(prediction.uncertainty_score, 0.0) * {BUYABILITY_UNCERTAINTY_PENALTY} "
-        f"- COALESCE(prediction.disagreement_score, 0.0) * {BUYABILITY_DISAGREEMENT_PENALTY})"
-    )
-    priority_floor_filter = (
-        f"          AND {priority_score_expression} >= ?\n"
-        if is_d5_candidate_surface
-        else ""
-    )
+    priority_floor_filter = ""
     order_expression = (
-        "buyability_priority_score DESC, ranking.symbol"
+        """
+            CASE
+                WHEN ranking.d5_selection_rank = 1
+                 AND NOT COALESCE(prediction.fallback_flag, FALSE)
+                 AND NOT contains(
+                    COALESCE(ranking.risk_flags_json, ''),
+                    '"model_disagreement_high"'
+                 )
+                 AND NOT contains(
+                    COALESCE(ranking.risk_flags_json, ''),
+                    '"model_joint_instability_high"'
+                 )
+                 AND NOT contains(
+                    COALESCE(ranking.risk_flags_json, ''),
+                    '"prediction_error_bucket_high"'
+                 )
+                 AND COALESCE(prediction.uncertainty_score, 100.0) < 75.0
+                 AND COALESCE(prediction.disagreement_score, 100.0) < 75.0
+                 AND COALESCE(prediction.expected_excess_return, 0.0) > 0.005
+                    THEN 0
+                WHEN ranking.d5_selection_rank BETWEEN 2 AND 6
+                 AND COALESCE(prediction.expected_excess_return, 0.0) > 0.005
+                    THEN 1
+                WHEN ranking.d5_selection_rank BETWEEN 7 AND 10
+                 AND COALESCE(prediction.expected_excess_return, 0.0) > 0.005
+                    THEN 2
+                WHEN ranking.d5_selection_rank BETWEEN 2 AND 6
+                    THEN 3
+                WHEN ranking.d5_selection_rank BETWEEN 7 AND 10
+                    THEN 4
+                ELSE 9
+            END,
+            ranking.d5_selection_rank,
+            ranking.symbol
+        """
         if is_d5_candidate_surface
         else "ranking.final_selection_value DESC, ranking.symbol"
+    )
+    d5_rank_window_filter = (
+        """
+          AND ranking.d5_selection_rank BETWEEN 1 AND 10
+          AND (
+                ranking.d5_selection_rank <> 1
+                OR (
+                    NOT COALESCE(prediction.fallback_flag, FALSE)
+                    AND NOT contains(
+                        COALESCE(ranking.risk_flags_json, ''),
+                        '"model_disagreement_high"'
+                    )
+                    AND NOT contains(
+                        COALESCE(ranking.risk_flags_json, ''),
+                        '"model_joint_instability_high"'
+                    )
+                    AND NOT contains(
+                        COALESCE(ranking.risk_flags_json, ''),
+                        '"prediction_error_bucket_high"'
+                    )
+                    AND COALESCE(prediction.uncertainty_score, 100.0) < 75.0
+                    AND COALESCE(prediction.disagreement_score, 100.0) < 75.0
+                    AND COALESCE(prediction.expected_excess_return, 0.0) > 0.005
+                )
+          )
+        """
+        if is_d5_candidate_surface
+        else ""
     )
     effective_limit = (
         min(int(limit), DISCORD_EOD_D5_CORE_CANDIDATE_LIMIT)
@@ -329,8 +380,6 @@ def _load_top_selection_rows(
         else DISCORD_EOD_MIN_REFERENCE_SCORE
     )
     params.append(expected_floor)
-    if is_d5_candidate_surface:
-        params.append(BUYABILITY_MIN_PRIORITY_SCORE)
     fetch_limit = effective_limit * 4 if is_d5_candidate_surface else effective_limit
     params.append(fetch_limit)
     frame = connection.execute(
@@ -348,6 +397,15 @@ def _load_top_selection_rows(
                 PARTITION BY horizon
                 ORDER BY effective_from_date DESC, created_at DESC, active_alpha_model_id DESC
             ) = 1
+        ),
+        ranked_ranking AS (
+            SELECT
+                ranking.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY ranking.as_of_date, ranking.horizon, ranking.ranking_version
+                    ORDER BY ranking.final_selection_value DESC, ranking.symbol
+                ) AS d5_selection_rank
+            FROM fact_ranking AS ranking
         )
         SELECT
             ranking.as_of_date AS selection_date,
@@ -364,6 +422,7 @@ def _load_top_selection_rows(
             symbol.sector,
             symbol.industry,
             ranking.final_selection_value,
+            ranking.d5_selection_rank,
             ranking.grade,
             ranking.top_reason_tags_json,
             ranking.risk_flags_json,
@@ -383,7 +442,7 @@ def _load_top_selection_rows(
                 prediction.active_alpha_model_id
             ) AS active_alpha_model_id,
             daily.close AS selection_close_price
-        FROM fact_ranking AS ranking
+        FROM ranked_ranking AS ranking
         JOIN dim_symbol AS symbol
           ON ranking.symbol = symbol.symbol
         LEFT JOIN active_models
@@ -401,6 +460,7 @@ def _load_top_selection_rows(
           AND ranking.horizon = ?
           AND ranking.ranking_version = ?
           AND ranking.eligible_flag = TRUE
+{d5_rank_window_filter}
 {score_floor_filter}          AND COALESCE(prediction.expected_excess_return, 0.0) > ?
 {blocking_risk_filters}
 {priority_floor_filter}        ORDER BY {order_expression}

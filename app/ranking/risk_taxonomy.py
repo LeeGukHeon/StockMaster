@@ -13,8 +13,6 @@ HARD_BUYABILITY_BLOCKING_RISK_FLAGS = frozenset(
     {
         "data_missingness_high",
         "thin_liquidity",
-        "prediction_fallback",
-        MODEL_JOINT_INSTABILITY_HIGH_FLAG,
     }
 )
 
@@ -23,7 +21,9 @@ SOFT_BUYABILITY_RISK_FLAGS = frozenset(
         "high_realized_volatility",
         "large_recent_drawdown",
         "implementation_friction_high",
+        "prediction_fallback",
         MODEL_DISAGREEMENT_HIGH_FLAG,
+        MODEL_JOINT_INSTABILITY_HIGH_FLAG,
         PREDICTION_ERROR_BUCKET_HIGH_FLAG,
     }
 )

@@ -118,8 +118,8 @@ def test_format_pick_block_omits_active_model_id() -> None:
     assert "active serving spec" not in rendered
     assert "fallback baseline" not in rendered
     assert "활성 모델 ID" not in rendered
-    assert "매수 보류" in rendered
-    assert "차단 리스크" in rendered
+    assert "매수해볼 가치 있음" in rendered
+    assert "점수대 성과 우위" in rendered
     assert "단기 탄력 강함" in rendered
     assert "고예측 오차와 모델 이견이 동시에 큼" in rendered
     assert "8,860→8,872원" in rendered

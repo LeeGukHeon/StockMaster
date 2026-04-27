@@ -19,10 +19,9 @@ from app.discord_bot.data_views import (
 from app.ml.promotion import load_alpha_promotion_summary
 from app.ops.common import JobStatus, OpsJobResult
 from app.recommendation.buyability import (
-    BUYABILITY_MIN_EXPECTED_EXCESS_RETURN,
     BUYABILITY_MIN_FINAL_SELECTION_VALUE,
-    BUYABILITY_MIN_PRIORITY_SCORE,
     buyability_priority_score,
+    d5_buyability_policy_bucket,
     has_buyability_blocker,
 )
 from app.recommendation.judgement import (
@@ -218,9 +217,13 @@ def _build_pick_rows(
             else pd.Series(True, index=working.index)
         )
         final_score = pd.to_numeric(working["final_selection_value"], errors="coerce")
+        working["d5_selection_rank"] = final_score.rank(
+            ascending=False,
+            method="first",
+        )
         working = working.loc[
             eligible
-            & (expected > BUYABILITY_MIN_EXPECTED_EXCESS_RETURN)
+            & (expected > 0.0)
             & (final_score >= BUYABILITY_MIN_FINAL_SELECTION_VALUE)
             & ~working["raw_risks_list"].apply(has_buyability_blocker)
         ].copy()
@@ -234,11 +237,21 @@ def _build_pick_rows(
             ),
             axis=1,
         )
-        working = working.loc[
-            working["buyability_priority_score"] >= BUYABILITY_MIN_PRIORITY_SCORE
-        ].sort_values(
-            ["buyability_priority_score", "symbol"],
-            ascending=[False, True],
+        working["d5_policy_bucket"] = working.apply(
+            lambda row: d5_buyability_policy_bucket(
+                selection_rank=row.get("d5_selection_rank"),
+                expected_excess_return=row.get("expected_excess_return"),
+                final_selection_value=row.get("final_selection_value"),
+                risk_flags=row.get("raw_risks_list"),
+                fallback_flag=row.get("fallback_flag"),
+                uncertainty_score=row.get("uncertainty_score"),
+                disagreement_score=row.get("disagreement_score"),
+            ),
+            axis=1,
+        )
+        working = working.loc[working["d5_policy_bucket"].notna()].sort_values(
+            ["d5_policy_bucket", "d5_selection_rank", "symbol"],
+            ascending=[True, True, True],
         )
         working = _limit_d5_sector_concentration(working, limit=BOT_D5_CORE_PICK_LIMIT)
     else:

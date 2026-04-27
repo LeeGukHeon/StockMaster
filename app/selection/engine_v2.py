@@ -34,6 +34,7 @@ from app.ranking.risk_taxonomy import (
     has_grade_capping_risk,
     model_risk_flags,
 )
+from app.recommendation.buyability import d5_buyability_policy_bucket
 from app.selection.engine_v1 import _apply_selection_engine_v1
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
@@ -338,6 +339,7 @@ def _select_report_candidate_mask(
     model_spec_id: str | None,
     target_variant: str | None,
     horizon: int,
+    risk_flags: pd.Series | None = None,
 ) -> pd.Series:
     candidate_limit = _resolve_report_candidate_limit(
         model_spec_id=model_spec_id,
@@ -348,6 +350,31 @@ def _select_report_candidate_mask(
         eligible_mask = scored["eligible_flag"].fillna(False).astype(bool)
         return eligible_mask & scored["final_selection_rank_pct"].fillna(0.0).ge(0.85)
     candidate_mask = pd.Series(False, index=scored.index)
+    if model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID and int(horizon) == 5:
+        ordered = scored.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
+        selected: list[tuple[int, int, object]] = []
+        for selection_rank, (index, row) in enumerate(ordered.iterrows(), start=1):
+            row_risk_flags = [] if risk_flags is None else risk_flags.get(index, [])
+            bucket = d5_buyability_policy_bucket(
+                selection_rank=selection_rank,
+                expected_excess_return=row.get("expected_excess_return"),
+                final_selection_value=row.get("final_selection_value"),
+                risk_flags=row_risk_flags,
+                fallback_flag=row.get("fallback_flag"),
+                uncertainty_score=row.get("uncertainty_score"),
+                disagreement_score=row.get("disagreement_score"),
+            )
+            if bucket is None:
+                continue
+            selected.append((int(bucket), int(selection_rank), index))
+        selected_indices = [
+            index
+            for _, _, index in sorted(selected, key=lambda item: (item[0], item[1]))[
+                :candidate_limit
+            ]
+        ]
+        candidate_mask.loc[selected_indices] = True
+        return candidate_mask
     top_candidate_indices = (
         scored.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
         .head(candidate_limit)
@@ -836,6 +863,7 @@ def _score_selection_engine_v2_frame(
         model_spec_id=model_spec_id,
         target_variant=target_variant,
         horizon=int(horizon),
+        risk_flags=risk_flags,
     )
     scored["risk_flags_json"] = risk_flags.map(
         lambda values: json.dumps(values, ensure_ascii=False)

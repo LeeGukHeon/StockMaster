@@ -356,24 +356,30 @@ def test_buyable_top5_report_candidate_mask_uses_ranked_top_five():
     assert scored.loc[mask, "symbol"].tolist() == ["A", "B", "C", "D", "E"]
 
 
-def test_top5_binary_report_candidate_mask_uses_ranked_top_five():
+def test_active_d5_report_candidate_mask_prefers_rank_two_to_six_when_rank_one_risky():
     scored = pd.DataFrame(
         {
             "symbol": list("ABCDEF"),
             "eligible_flag": [True, True, True, True, True, True],
             "final_selection_value": [99.0, 98.0, 97.0, 96.0, 95.0, 94.0],
             "final_selection_rank_pct": [1.0, 5 / 6, 4 / 6, 3 / 6, 2 / 6, 1 / 6],
+            "expected_excess_return": [0.02, 0.02, 0.02, 0.02, 0.02, 0.02],
+            "fallback_flag": [True, False, False, False, False, False],
+            "uncertainty_score": [90.0, 20.0, 20.0, 20.0, 20.0, 20.0],
+            "disagreement_score": [90.0, 20.0, 20.0, 20.0, 20.0, 20.0],
         }
     )
+    risk_flags = pd.Series([["prediction_fallback"], [], [], [], [], []], index=scored.index)
 
     mask = _select_report_candidate_mask(
         scored,
         model_spec_id="alpha_swing_d5_v2",
         target_variant="top5_binary",
         horizon=5,
+        risk_flags=risk_flags,
     )
 
-    assert scored.loc[mask, "symbol"].tolist() == ["A", "B", "C", "D", "E"]
+    assert scored.loc[mask, "symbol"].tolist() == ["B", "C", "D", "E", "F"]
 
 
 def test_non_topk_report_candidate_mask_requires_eligibility_and_rank_threshold():
