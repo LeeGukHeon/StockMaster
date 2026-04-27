@@ -11,6 +11,7 @@ from app.common.time import now_local
 from app.ml.constants import (
     D5_BUYABLE_MODEL_SPEC_ID,
     D5_PRACTICAL_MODEL_SPEC_ID,
+    D5_PRACTICAL_V2_MODEL_SPEC_ID,
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
     D5_PRIMARY_OUTPUT_CONTRACT_ROLES,
     SELECTION_ENGINE_VERSION,
@@ -197,6 +198,7 @@ D5_THIN_LIQUIDITY_GATE_PENALTY = 7.0
 D5_PREDICTION_FALLBACK_GATE_PENALTY = 8.0
 D5_IMPLEMENTATION_FRICTION_GATE_PENALTY = 8.0
 D5_INELIGIBLE_GATE_PENALTY = 18.0
+D5_PRACTICAL_V2_MODEL_DISAGREEMENT_GATE_PENALTY = 45.0
 
 
 def _is_d5_focus_model_spec(model_spec_id: str | None) -> bool:
@@ -204,6 +206,7 @@ def _is_d5_focus_model_spec(model_spec_id: str | None) -> bool:
         D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
         D5_BUYABLE_MODEL_SPEC_ID,
         D5_PRACTICAL_MODEL_SPEC_ID,
+        D5_PRACTICAL_V2_MODEL_SPEC_ID,
     }
 
 
@@ -214,7 +217,12 @@ def _resolve_selection_weights(
     target_variant: str | None,
 ) -> dict[str, float]:
     if (
-        model_spec_id in {D5_BUYABLE_MODEL_SPEC_ID, D5_PRACTICAL_MODEL_SPEC_ID}
+        model_spec_id
+        in {
+            D5_BUYABLE_MODEL_SPEC_ID,
+            D5_PRACTICAL_MODEL_SPEC_ID,
+            D5_PRACTICAL_V2_MODEL_SPEC_ID,
+        }
         and int(horizon) in SELECTION_V2_D5_BUYABLE_WEIGHTS
     ):
         return dict(SELECTION_V2_D5_BUYABLE_WEIGHTS[int(horizon)])
@@ -281,7 +289,12 @@ def _resolve_report_candidate_limit(
     target_variant: str | None,
     horizon: int,
 ) -> int | None:
-    if target_variant in {"top5_binary", "buyable_top5", "practical_excess_return"}:
+    if target_variant in {
+        "top5_binary",
+        "buyable_top5",
+        "practical_excess_return",
+        "practical_excess_return_v2",
+    }:
         return 5
     if model_spec_id == "alpha_topbucket_h1_rolling_120_v1" and int(horizon) == 1:
         return 5
@@ -372,6 +385,7 @@ def _apply_d5_buyability_risk_gate(
 
     data_missingness = _risk_flag_mask(risk_flags, "data_missingness_high")
     joint_model_instability = _risk_flag_mask(risk_flags, "model_joint_instability_high")
+    high_model_disagreement = _risk_flag_mask(risk_flags, "model_disagreement_high")
     high_volatility = _risk_flag_mask(risk_flags, "high_realized_volatility")
     large_drawdown = _risk_flag_mask(risk_flags, "large_recent_drawdown")
     thin_liquidity = _risk_flag_mask(risk_flags, "thin_liquidity")
@@ -392,6 +406,10 @@ def _apply_d5_buyability_risk_gate(
         + implementation_friction.astype(float).mul(D5_IMPLEMENTATION_FRICTION_GATE_PENALTY)
         + ineligible.astype(float).mul(D5_INELIGIBLE_GATE_PENALTY)
     )
+    if model_spec_id == D5_PRACTICAL_V2_MODEL_SPEC_ID:
+        penalty = penalty + high_model_disagreement.astype(float).mul(
+            D5_PRACTICAL_V2_MODEL_DISAGREEMENT_GATE_PENALTY
+        )
     gated["d5_buyability_risk_gate_penalty_score"] = penalty
     gated["final_selection_value"] = (
         pd.to_numeric(gated["final_selection_value"], errors="coerce").fillna(0.0)

@@ -485,3 +485,40 @@ def test_d5_practical_weights_use_buyability_profile_without_raw_preservation():
     assert practical_weights == buyable_weights
     assert practical_weights["quality_score"] == 10
     assert practical_weights["crowding_penalty_score"] == -10
+
+
+def test_d5_practical_v2_quarantines_high_model_disagreement():
+    scored = pd.DataFrame({"symbol": ["A"], "final_selection_value": [70.0]})
+    risk_flags = pd.Series([["model_disagreement_high"]])
+
+    active_gated = _apply_d5_buyability_risk_gate(
+        scored,
+        risk_flags,
+        model_spec_id="alpha_swing_d5_v2",
+        horizon=5,
+    )
+    v2_gated = _apply_d5_buyability_risk_gate(
+        scored,
+        risk_flags,
+        model_spec_id="alpha_practical_d5_v2",
+        horizon=5,
+    )
+
+    assert active_gated["d5_buyability_risk_gate_penalty_score"].item() == 0.0
+    assert v2_gated["d5_buyability_risk_gate_penalty_score"].item() == 45.0
+    assert v2_gated["final_selection_value"].item() == 25.0
+
+
+def test_d5_practical_v2_weights_use_buyability_profile_without_raw_preservation():
+    practical_v2_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_practical_d5_v2",
+        target_variant="practical_excess_return_v2",
+    )
+    buyable_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_buyable_d5_v1",
+        target_variant="buyable_top5",
+    )
+
+    assert practical_v2_weights == buyable_weights

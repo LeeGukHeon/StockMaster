@@ -389,6 +389,68 @@ def _practical_excess_return_targets(
     )
 
 
+def _practical_excess_return_v2_targets(
+    feature_label_frame: pd.DataFrame,
+    *,
+    horizon: int,
+) -> pd.Series:
+    """Return-unit D5 target with gentler winner haircuts and stronger loss ranking.
+
+    V1 improved blocker exposure but weakened the alpha signal by multiplying several
+    positive-return risk haircuts together. V2 keeps the same point-in-time inputs, but
+    applies an additive risk budget so buyable winners remain distinguishable while risky
+    losers are still pushed down.
+    """
+
+    target_column = f"target_h{int(horizon)}"
+    if feature_label_frame.empty or target_column not in feature_label_frame.columns:
+        return pd.Series(dtype="float64")
+
+    working = feature_label_frame.copy()
+    returns = pd.to_numeric(working[target_column], errors="coerce")
+    adjusted = pd.Series(0.0, index=working.index, dtype="float64")
+
+    for _, group in working.groupby(["as_of_date", "market"], sort=False):
+        group_returns = returns.reindex(group.index)
+        valid = group_returns.dropna()
+        if valid.empty:
+            continue
+        lower = max(float(valid.quantile(0.05)), -0.10)
+        upper = min(float(valid.quantile(0.95)), 0.12)
+        if upper <= lower:
+            lower = float(valid.min())
+            upper = float(valid.max())
+        adjusted.loc[group.index] = group_returns.clip(lower=lower, upper=upper).fillna(0.0)
+
+    liquidity_rank = _numeric_feature_series(working, "liquidity_rank_pct")
+    adv_rank = _date_market_rank(working, "adv_20", ascending=True)
+    vol_rank = _date_market_rank(working, "realized_vol_20d", ascending=True)
+    drawdown_rank = _date_market_rank(working, "drawdown_20d", ascending=True)
+    max_loss_rank = _date_market_rank(working, "max_loss_20d", ascending=True)
+    missing_count = _numeric_feature_series(working, "missing_key_feature_count").fillna(99.0)
+    data_confidence = _numeric_feature_series(working, "data_confidence_score").fillna(0.0)
+    stale_price = _numeric_feature_series(working, "stale_price_flag").fillna(1.0)
+
+    thin_liquidity = liquidity_rank.le(0.10).fillna(False) | adv_rank.le(0.10).fillna(False)
+    high_volatility = vol_rank.ge(0.90).fillna(False)
+    large_drawdown = drawdown_rank.le(0.10).fillna(False) | max_loss_rank.le(0.10).fillna(False)
+    data_missing = missing_count.ge(2.0) | data_confidence.lt(0.60) | stale_price.gt(0.0)
+
+    risk_budget = (
+        thin_liquidity.astype(float).mul(0.12)
+        + high_volatility.astype(float).mul(0.09)
+        + large_drawdown.astype(float).mul(0.09)
+        + data_missing.astype(float).mul(0.14)
+    ).clip(lower=0.0, upper=0.42)
+    positive_multiplier = (1.0 - risk_budget).clip(lower=0.58, upper=1.0)
+    negative_multiplier = (1.0 + risk_budget.mul(0.75)).clip(lower=1.0, upper=1.32)
+
+    return adjusted.where(adjusted <= 0.0, adjusted.mul(positive_multiplier)).where(
+        adjusted > 0.0,
+        adjusted.mul(negative_multiplier),
+    )
+
+
 def _load_dataset_frame(
     connection,
     *,
@@ -573,6 +635,12 @@ def _load_dataset_frame(
             dataset,
             horizon=int(horizon),
         )
+        dataset[f"target_practical_excess_v2_h{int(horizon)}"] = (
+            _practical_excess_return_v2_targets(
+                dataset,
+                horizon=int(horizon),
+            )
+        )
     dataset["as_of_date"] = pd.to_datetime(dataset["as_of_date"]).dt.date
     for feature_name in FEATURE_NAMES:
         if feature_name not in dataset.columns:
@@ -595,6 +663,9 @@ def _load_dataset_frame(
     for target_name in [f"target_practical_excess_h{int(horizon)}" for horizon in horizons]:
         if target_name not in dataset.columns:
             dataset[target_name] = pd.NA
+    for target_name in [f"target_practical_excess_v2_h{int(horizon)}" for horizon in horizons]:
+        if target_name not in dataset.columns:
+            dataset[target_name] = pd.NA
     ordered_columns = [
         "as_of_date",
         "symbol",
@@ -607,6 +678,7 @@ def _load_dataset_frame(
         *[f"target_topbucket_h{int(horizon)}" for horizon in horizons],
         *[f"target_buyable_h{int(horizon)}" for horizon in horizons],
         *[f"target_practical_excess_h{int(horizon)}" for horizon in horizons],
+        *[f"target_practical_excess_v2_h{int(horizon)}" for horizon in horizons],
     ]
     return dataset[ordered_columns].sort_values(["as_of_date", "symbol"]).reset_index(drop=True)
 

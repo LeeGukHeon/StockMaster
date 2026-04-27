@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from app.ml.dataset import _buyable_candidate_scores, _practical_excess_return_targets
+from app.ml.dataset import (
+    _buyable_candidate_scores,
+    _practical_excess_return_targets,
+    _practical_excess_return_v2_targets,
+)
 
 
 def test_buyable_candidate_target_caps_outliers_and_penalizes_losses() -> None:
@@ -46,3 +50,29 @@ def test_practical_excess_target_keeps_return_units_and_penalizes_ex_ante_risk()
     assert float(targets.iloc[2]) > float(targets.iloc[3])
     assert float(targets.iloc[4]) <= 0.12
     assert float(targets.iloc[0]) <= 0.04
+
+
+def test_practical_excess_v2_target_uses_gentler_positive_haircuts() -> None:
+    frame = pd.DataFrame(
+        {
+            "as_of_date": ["2026-03-03"] * 5,
+            "market": ["KOSDAQ"] * 5,
+            "target_h5": [0.04, 0.04, -0.04, -0.04, 0.50],
+            "liquidity_rank_pct": [0.50, 0.05, 0.50, 0.05, 0.50],
+            "adv_20": [500, 10, 400, 8, 450],
+            "realized_vol_20d": [0.02, 0.02, 0.02, 0.30, 0.02],
+            "drawdown_20d": [-0.02, -0.02, -0.02, -0.25, -0.02],
+            "max_loss_20d": [-0.02, -0.02, -0.02, -0.20, -0.02],
+            "missing_key_feature_count": [0, 0, 0, 0, 0],
+            "data_confidence_score": [1, 1, 1, 1, 1],
+            "stale_price_flag": [0, 0, 0, 0, 0],
+        }
+    )
+
+    v1_targets = _practical_excess_return_targets(frame, horizon=5)
+    v2_targets = _practical_excess_return_v2_targets(frame, horizon=5)
+
+    assert float(v2_targets.iloc[1]) > float(v1_targets.iloc[1])
+    assert float(v2_targets.iloc[2]) > float(v2_targets.iloc[3])
+    assert float(v2_targets.iloc[4]) <= 0.12
+    assert float(v2_targets.iloc[0]) <= 0.04
