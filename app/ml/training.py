@@ -387,7 +387,11 @@ def _normalise_weights(
             "corr": 1.0,
             "mae": 1.5,
         }
-    elif training_target_variant in {"practical_excess_return", "practical_excess_return_v2"}:
+    elif training_target_variant in {
+        "practical_excess_return",
+        "practical_excess_return_v2",
+        "stable_practical_excess_return",
+    }:
         metric_weights = {
             "top5_mean_excess_return": 6.0,
             "top10_mean_excess_return": 4.0,

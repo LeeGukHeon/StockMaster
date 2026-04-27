@@ -66,7 +66,10 @@ ABC_POLICY_SPECS: tuple[PolicySpec, ...] = (
     PolicySpec(
         policy_id="B_soft_disagreement_penalty_30",
         model_key="practical",
-        description="Keep v1 practical target; apply a fixed -30 score penalty to high disagreement.",
+        description=(
+            "Keep v1 practical target; apply a fixed -30 score penalty to "
+            "high disagreement."
+        ),
         high_disagreement_score_penalty=30.0,
     ),
     PolicySpec(
@@ -100,10 +103,26 @@ CURRENT_POLICY_SPECS: tuple[PolicySpec, ...] = (
         description="Current alpha_practical_d5_v2 practical surface without extra policy tuning.",
     ),
 )
+STABLE_POLICY_SPECS: tuple[PolicySpec, ...] = (
+    PolicySpec(
+        policy_id="active_current",
+        model_key="active",
+        description="Current active alpha_swing_d5_v2 practical surface.",
+    ),
+    PolicySpec(
+        policy_id="stable_buyable_current",
+        model_key="stable",
+        description=(
+            "Experimental alpha_stable_buyable_d5_v1 surface; news-free, "
+            "regime-aware, and trained on stable practical D5 utility."
+        ),
+    ),
+)
 POLICY_SETS: dict[str, tuple[PolicySpec, ...]] = {
     "active_only": ACTIVE_ONLY_POLICY_SPECS,
     "abc": ABC_POLICY_SPECS,
     "current": CURRENT_POLICY_SPECS,
+    "stable": STABLE_POLICY_SPECS,
     "all": (*ABC_POLICY_SPECS, *CURRENT_POLICY_SPECS[1:]),
 }
 
@@ -167,7 +186,9 @@ def _transaction_cost_rate(transaction_cost_bps: float) -> float:
 
 
 def _net_realized_return(frame: pd.DataFrame, *, transaction_cost_bps: float) -> pd.Series:
-    return _safe_numeric(frame, "excess_forward_return") - _transaction_cost_rate(transaction_cost_bps)
+    return _safe_numeric(frame, "excess_forward_return") - _transaction_cost_rate(
+        transaction_cost_bps
+    )
 
 
 def _max_drawdown(returns: pd.Series) -> float | None:
@@ -312,7 +333,12 @@ def _positive_edge_concentration(
     if frame.empty:
         return None, None
     date_edge = (
-        frame.assign(_positive_edge=_net_realized_return(frame, transaction_cost_bps=transaction_cost_bps).clip(lower=0.0))
+        frame.assign(
+            _positive_edge=_net_realized_return(
+                frame,
+                transaction_cost_bps=transaction_cost_bps,
+            ).clip(lower=0.0)
+        )
         .groupby("as_of_date", sort=True)["_positive_edge"]
         .sum()
     )
@@ -637,7 +663,10 @@ def run(args: argparse.Namespace) -> int:
     candidate_policy_count = len(
         [policy for policy in policy_specs if policy.policy_id != args.baseline_policy_id]
     )
-    if args.max_candidate_policy_count >= 0 and candidate_policy_count > args.max_candidate_policy_count:
+    if (
+        args.max_candidate_policy_count >= 0
+        and candidate_policy_count > args.max_candidate_policy_count
+    ):
         raise RuntimeError(
             "Candidate policy count exceeds guardrail: "
             f"{candidate_policy_count} > {args.max_candidate_policy_count}"
@@ -669,7 +698,11 @@ def run(args: argparse.Namespace) -> int:
         candidates = candidates.loc[candidates["split"].ne("gap")].copy()
         selected_frames.append(candidates)
 
-    selected = pd.concat(selected_frames, ignore_index=True, sort=False) if selected_frames else pd.DataFrame()
+    selected = (
+        pd.concat(selected_frames, ignore_index=True, sort=False)
+        if selected_frames
+        else pd.DataFrame()
+    )
     selected_path = output_dir / "policy_candidate_rows.csv"
     selected.to_csv(selected_path, index=False)
 
@@ -822,7 +855,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--transaction-cost-bps",
         type=float,
         default=DEFAULT_TRANSACTION_COST_BPS,
-        help="Round-trip transaction cost deducted from each selected name when computing net metrics.",
+        help=(
+            "Round-trip transaction cost deducted from each selected name when "
+            "computing net metrics."
+        ),
     )
     parser.add_argument(
         "--max-candidate-policy-count",

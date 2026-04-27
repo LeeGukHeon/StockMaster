@@ -81,6 +81,13 @@ def test_target_column_resolution_supports_split_h1_h5_specs() -> None:
         resolve_target_column_for_spec(get_alpha_model_spec("alpha_practical_d5_v2"), horizon=5)
         == "target_practical_excess_v2_h5"
     )
+    assert (
+        resolve_target_column_for_spec(
+            get_alpha_model_spec("alpha_stable_buyable_d5_v1"),
+            horizon=5,
+        )
+        == "target_stable_practical_excess_h5"
+    )
 
 
 def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
@@ -91,6 +98,7 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     d5_buyable_spec = get_alpha_model_spec("alpha_buyable_d5_v1")
     d5_practical_spec = get_alpha_model_spec("alpha_practical_d5_v1")
     d5_practical_v2_spec = get_alpha_model_spec("alpha_practical_d5_v2")
+    d5_stable_spec = get_alpha_model_spec("alpha_stable_buyable_d5_v1")
     assert h5_spec.active_candidate_flag is False
     assert h1_spec.active_candidate_flag is False
     assert d1_spec.active_candidate_flag is True
@@ -98,6 +106,7 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     assert d5_buyable_spec.active_candidate_flag is False
     assert d5_practical_spec.active_candidate_flag is False
     assert d5_practical_v2_spec.active_candidate_flag is False
+    assert d5_stable_spec.active_candidate_flag is False
     assert supports_horizon_for_spec(h5_spec, horizon=5) is True
     assert supports_horizon_for_spec(h5_spec, horizon=1) is False
     assert supports_horizon_for_spec(h1_spec, horizon=1) is True
@@ -112,6 +121,8 @@ def test_split_specs_remain_candidate_enabled_and_horizon_bound() -> None:
     assert supports_horizon_for_spec(d5_practical_spec, horizon=1) is False
     assert supports_horizon_for_spec(d5_practical_v2_spec, horizon=5) is True
     assert supports_horizon_for_spec(d5_practical_v2_spec, horizon=1) is False
+    assert supports_horizon_for_spec(d5_stable_spec, horizon=5) is True
+    assert supports_horizon_for_spec(d5_stable_spec, horizon=1) is False
 
 
 def test_registry_frame_matches_operational_specs() -> None:
@@ -128,6 +139,7 @@ def test_registry_frame_matches_operational_specs() -> None:
         "alpha_buyable_d5_v1",
         "alpha_practical_d5_v1",
         "alpha_practical_d5_v2",
+        "alpha_stable_buyable_d5_v1",
     ]
 
 
@@ -269,6 +281,36 @@ def test_alpha_practical_d5_v2_is_experimental_news_free_and_return_unit() -> No
     assert spec.target_variant == "practical_excess_return_v2"
     assert spec.training_target_variant == "practical_excess_return_v2"
     assert resolve_target_column_for_spec(spec, horizon=5) == "target_practical_excess_v2_h5"
+    assert supports_horizon_for_spec(spec, horizon=5) is True
+    assert supports_horizon_for_spec(spec, horizon=1) is False
+
+
+def test_alpha_stable_buyable_d5_v1_is_experimental_news_free_and_regime_aware() -> None:
+    spec = get_alpha_model_spec("alpha_stable_buyable_d5_v1")
+
+    assert spec.estimation_scheme == "rolling"
+    assert spec.rolling_window_days == 250
+    assert spec.active_candidate_flag is False
+    assert spec.lifecycle_role == "experimental_candidate"
+    assert spec.feature_groups == (
+        "price_trend",
+        "volatility_risk",
+        "liquidity_turnover",
+        "investor_flow",
+        "fundamentals_quality",
+        "value_safety",
+        "market_regime",
+        "data_quality",
+    )
+    feature_columns = resolve_feature_columns_for_spec(spec)
+    assert "news_count_1d" not in feature_columns
+    assert "news_link_confidence_score" not in feature_columns
+    for feature_name in MARKET_REGIME_FEATURE_COLUMNS:
+        assert feature_name in feature_columns
+    assert spec.member_names == ("elasticnet", "hist_gbm")
+    assert spec.target_variant == "stable_practical_excess_return"
+    assert spec.training_target_variant == "stable_practical_excess_return"
+    assert resolve_target_column_for_spec(spec, horizon=5) == "target_stable_practical_excess_h5"
     assert supports_horizon_for_spec(spec, horizon=5) is True
     assert supports_horizon_for_spec(spec, horizon=1) is False
 

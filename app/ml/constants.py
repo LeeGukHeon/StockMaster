@@ -34,6 +34,7 @@ D5_PRIMARY_FOCUS_MODEL_SPEC_ID = "alpha_swing_d5_v2"
 D5_BUYABLE_MODEL_SPEC_ID = "alpha_buyable_d5_v1"
 D5_PRACTICAL_MODEL_SPEC_ID = "alpha_practical_d5_v1"
 D5_PRACTICAL_V2_MODEL_SPEC_ID = "alpha_practical_d5_v2"
+D5_STABLE_BUYABLE_MODEL_SPEC_ID = "alpha_stable_buyable_d5_v1"
 D5_PRIMARY_BUCKET_SEGMENTS: tuple[str, ...] = (
     "bucket_continuation",
     "bucket_reversal_recovery",
@@ -261,6 +262,29 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         promotion_primary_loss_name="loss_top5",
         allowed_horizons=(5,),
     ),
+    AlphaModelSpec(
+        model_spec_id=D5_STABLE_BUYABLE_MODEL_SPEC_ID,
+        estimation_scheme="rolling",
+        rolling_window_days=250,
+        active_candidate_flag=False,
+        lifecycle_role="experimental_candidate",
+        feature_groups=(
+            "price_trend",
+            "volatility_risk",
+            "liquidity_turnover",
+            "investor_flow",
+            "fundamentals_quality",
+            "value_safety",
+            "market_regime",
+            "data_quality",
+        ),
+        member_names=("elasticnet", "hist_gbm"),
+        target_variant="stable_practical_excess_return",
+        training_target_variant="stable_practical_excess_return",
+        validation_primary_metric_name="top5_mean_excess_return",
+        promotion_primary_loss_name="loss_top5",
+        allowed_horizons=(5,),
+    ),
 )
 ALPHA_CANDIDATE_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
     DEFAULT_ALPHA_MODEL_SPEC,
@@ -358,6 +382,8 @@ def resolve_target_column_for_spec(model_spec: AlphaModelSpec, *, horizon: int) 
         return f"target_practical_excess_h{int(horizon)}"
     if target_variant == "practical_excess_return_v2":
         return f"target_practical_excess_v2_h{int(horizon)}"
+    if target_variant == "stable_practical_excess_return":
+        return f"target_stable_practical_excess_h{int(horizon)}"
     return f"target_h{int(horizon)}"
 
 
@@ -373,6 +399,7 @@ def resolve_validation_primary_metric_for_spec(
         "top5_binary",
         "practical_excess_return",
         "practical_excess_return_v2",
+        "stable_practical_excess_return",
     }:
         return "top5_mean_excess_return"
     return "top10_mean_excess_return"

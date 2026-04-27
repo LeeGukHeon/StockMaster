@@ -14,6 +14,7 @@ from app.ml.constants import (
     D5_PRACTICAL_V2_MODEL_SPEC_ID,
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
     D5_PRIMARY_OUTPUT_CONTRACT_ROLES,
+    D5_STABLE_BUYABLE_MODEL_SPEC_ID,
     SELECTION_ENGINE_VERSION,
     get_alpha_model_spec,
 )
@@ -152,6 +153,26 @@ SELECTION_V2_D5_BUYABLE_WEIGHTS = {
     },
 }
 
+SELECTION_V2_D5_STABLE_BUYABLE_WEIGHTS = {
+    5: {
+        "alpha_core_score": 24,
+        "relative_alpha_score": 12,
+        "flow_persistence_score": 12,
+        "flow_score": 8,
+        "trend_momentum_score": 4,
+        "quality_score": 16,
+        "value_safety_score": 12,
+        "regime_fit_score": 8,
+        "risk_penalty_score": -10,
+        "uncertainty_score": -10,
+        "disagreement_score": -8,
+        "implementation_penalty_score": -8,
+        "crowding_penalty_score": -12,
+        "late_entry_penalty_score": -14,
+        "fallback_penalty": -6,
+    },
+}
+
 SELECTION_V2_TOPBUCKET_WEIGHTS = {
     1: {
         "alpha_core_score": 46,
@@ -199,6 +220,7 @@ D5_PREDICTION_FALLBACK_GATE_PENALTY = 8.0
 D5_IMPLEMENTATION_FRICTION_GATE_PENALTY = 8.0
 D5_INELIGIBLE_GATE_PENALTY = 18.0
 D5_PRACTICAL_V2_MODEL_DISAGREEMENT_GATE_PENALTY = 45.0
+D5_STABLE_MODEL_DISAGREEMENT_GATE_PENALTY = 25.0
 
 
 def _is_d5_focus_model_spec(model_spec_id: str | None) -> bool:
@@ -207,6 +229,7 @@ def _is_d5_focus_model_spec(model_spec_id: str | None) -> bool:
         D5_BUYABLE_MODEL_SPEC_ID,
         D5_PRACTICAL_MODEL_SPEC_ID,
         D5_PRACTICAL_V2_MODEL_SPEC_ID,
+        D5_STABLE_BUYABLE_MODEL_SPEC_ID,
     }
 
 
@@ -216,6 +239,11 @@ def _resolve_selection_weights(
     model_spec_id: str | None,
     target_variant: str | None,
 ) -> dict[str, float]:
+    if (
+        model_spec_id == D5_STABLE_BUYABLE_MODEL_SPEC_ID
+        and int(horizon) in SELECTION_V2_D5_STABLE_BUYABLE_WEIGHTS
+    ):
+        return dict(SELECTION_V2_D5_STABLE_BUYABLE_WEIGHTS[int(horizon)])
     if (
         model_spec_id
         in {
@@ -294,6 +322,7 @@ def _resolve_report_candidate_limit(
         "buyable_top5",
         "practical_excess_return",
         "practical_excess_return_v2",
+        "stable_practical_excess_return",
     }:
         return 5
     if model_spec_id == "alpha_topbucket_h1_rolling_120_v1" and int(horizon) == 1:
@@ -409,6 +438,10 @@ def _apply_d5_buyability_risk_gate(
     if model_spec_id == D5_PRACTICAL_V2_MODEL_SPEC_ID:
         penalty = penalty + high_model_disagreement.astype(float).mul(
             D5_PRACTICAL_V2_MODEL_DISAGREEMENT_GATE_PENALTY
+        )
+    if model_spec_id == D5_STABLE_BUYABLE_MODEL_SPEC_ID:
+        penalty = penalty + high_model_disagreement.astype(float).mul(
+            D5_STABLE_MODEL_DISAGREEMENT_GATE_PENALTY
         )
     gated["d5_buyability_risk_gate_penalty_score"] = penalty
     gated["final_selection_value"] = (

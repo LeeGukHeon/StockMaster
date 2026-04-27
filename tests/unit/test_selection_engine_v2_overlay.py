@@ -509,6 +509,21 @@ def test_d5_practical_v2_quarantines_high_model_disagreement():
     assert v2_gated["final_selection_value"].item() == 25.0
 
 
+def test_d5_stable_buyable_penalizes_high_model_disagreement_less_than_v2():
+    scored = pd.DataFrame({"symbol": ["A"], "final_selection_value": [70.0]})
+    risk_flags = pd.Series([["model_disagreement_high"]])
+
+    stable_gated = _apply_d5_buyability_risk_gate(
+        scored,
+        risk_flags,
+        model_spec_id="alpha_stable_buyable_d5_v1",
+        horizon=5,
+    )
+
+    assert stable_gated["d5_buyability_risk_gate_penalty_score"].item() == 25.0
+    assert stable_gated["final_selection_value"].item() == 45.0
+
+
 def test_d5_practical_v2_weights_use_buyability_profile_without_raw_preservation():
     practical_v2_weights = _resolve_selection_weights(
         horizon=5,
@@ -522,3 +537,23 @@ def test_d5_practical_v2_weights_use_buyability_profile_without_raw_preservation
     )
 
     assert practical_v2_weights == buyable_weights
+
+
+def test_d5_stable_buyable_weights_are_more_quality_and_risk_heavy_than_buyable():
+    stable_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_stable_buyable_d5_v1",
+        target_variant="stable_practical_excess_return",
+    )
+    buyable_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_buyable_d5_v1",
+        target_variant="buyable_top5",
+    )
+
+    assert stable_weights["alpha_core_score"] < buyable_weights["alpha_core_score"]
+    assert stable_weights["quality_score"] > buyable_weights["quality_score"]
+    assert stable_weights["risk_penalty_score"] < buyable_weights["risk_penalty_score"]
+    assert stable_weights["late_entry_penalty_score"] < buyable_weights["late_entry_penalty_score"]
+    assert "news_catalyst_score" not in stable_weights
+    assert "news_drift_score" not in stable_weights

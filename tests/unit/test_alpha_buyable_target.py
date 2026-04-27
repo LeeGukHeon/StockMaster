@@ -6,6 +6,7 @@ from app.ml.dataset import (
     _buyable_candidate_scores,
     _practical_excess_return_targets,
     _practical_excess_return_v2_targets,
+    _stable_practical_excess_return_targets,
 )
 
 
@@ -75,3 +76,33 @@ def test_practical_excess_v2_target_preserves_v1_return_unit_contract() -> None:
     pd.testing.assert_series_equal(v2_targets, v1_targets)
     assert float(v2_targets.iloc[2]) > float(v2_targets.iloc[3])
     assert float(v2_targets.iloc[4]) <= 0.12
+
+
+def test_stable_practical_target_tightens_outliers_and_fragile_buyability() -> None:
+    frame = pd.DataFrame(
+        {
+            "as_of_date": ["2026-03-03"] * 6,
+            "market": ["KOSDAQ"] * 6,
+            "target_h5": [0.05, 0.05, -0.04, -0.04, 0.40, -0.12],
+            "liquidity_rank_pct": [0.60, 0.05, 0.60, 0.05, 0.60, 0.05],
+            "adv_20": [500, 10, 400, 8, 450, 6],
+            "realized_vol_20d": [0.02, 0.02, 0.02, 0.30, 0.02, 0.35],
+            "hl_range_1d": [0.02, 0.02, 0.02, 0.18, 0.02, 0.20],
+            "drawdown_20d": [-0.02, -0.02, -0.02, -0.25, -0.02, -0.25],
+            "max_loss_20d": [-0.02, -0.02, -0.02, -0.20, -0.02, -0.25],
+            "dist_from_20d_high": [0.20, 0.20, 0.20, 0.20, 0.98, 0.20],
+            "volume_ratio_1d_vs_20d": [1.0, 1.0, 1.0, 1.0, 4.0, 1.0],
+            "missing_key_feature_count": [0, 0, 0, 0, 0, 0],
+            "data_confidence_score": [1, 1, 1, 1, 1, 1],
+            "stale_price_flag": [0, 0, 0, 0, 0, 0],
+        }
+    )
+
+    practical = _practical_excess_return_targets(frame, horizon=5)
+    stable = _stable_practical_excess_return_targets(frame, horizon=5)
+
+    assert float(stable.iloc[0]) <= float(practical.iloc[0])
+    assert float(stable.iloc[0]) > float(stable.iloc[1])
+    assert float(stable.iloc[2]) > float(stable.iloc[3])
+    assert float(stable.iloc[4]) <= 0.10
+    assert float(stable.iloc[5]) < float(stable.iloc[2])

@@ -403,6 +403,84 @@ def _practical_excess_return_v2_targets(
     return _practical_excess_return_targets(feature_label_frame, horizon=int(horizon))
 
 
+def _stable_practical_excess_return_targets(
+    feature_label_frame: pd.DataFrame,
+    *,
+    horizon: int,
+) -> pd.Series:
+    """Return a tighter D5 utility target for stable, actually-buyable baskets.
+
+    This target is intentionally more conservative than
+    ``_practical_excess_return_targets``. It still uses only point-in-time features,
+    but it caps one-off winners more tightly and amplifies losses when the same-date
+    buyability profile was already fragile. The goal is to train a shadow D5 model
+    for stable top3/top5 basket selection rather than realized-return outlier chasing.
+    """
+
+    target_column = f"target_h{int(horizon)}"
+    if feature_label_frame.empty or target_column not in feature_label_frame.columns:
+        return pd.Series(dtype="float64")
+
+    working = feature_label_frame.copy()
+    returns = pd.to_numeric(working[target_column], errors="coerce")
+    adjusted = pd.Series(0.0, index=working.index, dtype="float64")
+
+    for _, group in working.groupby(["as_of_date", "market"], sort=False):
+        group_returns = returns.reindex(group.index)
+        valid = group_returns.dropna()
+        if valid.empty:
+            continue
+        lower = max(float(valid.quantile(0.08)), -0.08)
+        upper = min(float(valid.quantile(0.92)), 0.10)
+        if upper <= lower:
+            lower = float(valid.min())
+            upper = float(valid.max())
+        adjusted.loc[group.index] = group_returns.clip(lower=lower, upper=upper).fillna(0.0)
+
+    liquidity_rank = _numeric_feature_series(working, "liquidity_rank_pct")
+    adv_rank = _date_market_rank(working, "adv_20", ascending=True)
+    vol_rank = _date_market_rank(working, "realized_vol_20d", ascending=True)
+    day_range_rank = _date_market_rank(working, "hl_range_1d", ascending=True)
+    drawdown_rank = _date_market_rank(working, "drawdown_20d", ascending=True)
+    max_loss_rank = _date_market_rank(working, "max_loss_20d", ascending=True)
+    crowding_rank = _date_market_rank(working, "dist_from_20d_high", ascending=True)
+    turnover_burst_rank = _date_market_rank(working, "volume_ratio_1d_vs_20d", ascending=True)
+    missing_count = _numeric_feature_series(working, "missing_key_feature_count").fillna(99.0)
+    data_confidence = _numeric_feature_series(working, "data_confidence_score").fillna(0.0)
+    stale_price = _numeric_feature_series(working, "stale_price_flag").fillna(1.0)
+
+    thin_liquidity = liquidity_rank.le(0.12).fillna(False) | adv_rank.le(0.12).fillna(False)
+    high_volatility = vol_rank.ge(0.88).fillna(False) | day_range_rank.ge(0.90).fillna(False)
+    large_drawdown = drawdown_rank.le(0.12).fillna(False) | max_loss_rank.le(0.12).fillna(False)
+    late_crowding = crowding_rank.ge(0.90).fillna(False) & turnover_burst_rank.ge(
+        0.85
+    ).fillna(False)
+    data_missing = missing_count.ge(2.0) | data_confidence.lt(0.65) | stale_price.gt(0.0)
+
+    positive_penalty = pd.Series(1.0, index=working.index, dtype="float64")
+    positive_penalty = positive_penalty.where(~thin_liquidity, positive_penalty.mul(0.25))
+    positive_penalty = positive_penalty.where(~high_volatility, positive_penalty.mul(0.45))
+    positive_penalty = positive_penalty.where(~large_drawdown, positive_penalty.mul(0.45))
+    positive_penalty = positive_penalty.where(~late_crowding, positive_penalty.mul(0.60))
+    positive_penalty = positive_penalty.where(~data_missing, positive_penalty.mul(0.35))
+
+    risk_count = (
+        thin_liquidity.astype(float)
+        + high_volatility.astype(float)
+        + large_drawdown.astype(float)
+        + late_crowding.astype(float)
+        + data_missing.astype(float)
+    )
+    severe_loss_threshold = -0.035 if int(horizon) <= 1 else -0.06
+    realized_severe_loss = returns.le(severe_loss_threshold).fillna(False)
+    negative_multiplier = 1.0 + risk_count.mul(0.20) + realized_severe_loss.astype(float).mul(0.30)
+
+    return adjusted.where(adjusted <= 0.0, adjusted.mul(positive_penalty)).where(
+        adjusted > 0.0,
+        adjusted.mul(negative_multiplier),
+    )
+
+
 def _load_dataset_frame(
     connection,
     *,
@@ -593,6 +671,12 @@ def _load_dataset_frame(
                 horizon=int(horizon),
             )
         )
+        dataset[f"target_stable_practical_excess_h{int(horizon)}"] = (
+            _stable_practical_excess_return_targets(
+                dataset,
+                horizon=int(horizon),
+            )
+        )
     dataset["as_of_date"] = pd.to_datetime(dataset["as_of_date"]).dt.date
     for feature_name in FEATURE_NAMES:
         if feature_name not in dataset.columns:
@@ -618,6 +702,11 @@ def _load_dataset_frame(
     for target_name in [f"target_practical_excess_v2_h{int(horizon)}" for horizon in horizons]:
         if target_name not in dataset.columns:
             dataset[target_name] = pd.NA
+    for target_name in [
+        f"target_stable_practical_excess_h{int(horizon)}" for horizon in horizons
+    ]:
+        if target_name not in dataset.columns:
+            dataset[target_name] = pd.NA
     ordered_columns = [
         "as_of_date",
         "symbol",
@@ -631,6 +720,7 @@ def _load_dataset_frame(
         *[f"target_buyable_h{int(horizon)}" for horizon in horizons],
         *[f"target_practical_excess_h{int(horizon)}" for horizon in horizons],
         *[f"target_practical_excess_v2_h{int(horizon)}" for horizon in horizons],
+        *[f"target_stable_practical_excess_h{int(horizon)}" for horizon in horizons],
     ]
     return dataset[ordered_columns].sort_values(["as_of_date", "symbol"]).reset_index(drop=True)
 
