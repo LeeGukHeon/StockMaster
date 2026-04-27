@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from app.ml.dataset import (
     _buyable_candidate_scores,
@@ -40,7 +41,7 @@ def test_practical_excess_target_keeps_return_units_and_penalizes_ex_ante_risk()
             "drawdown_20d": [-0.02, -0.02, -0.02, -0.25, -0.02],
             "max_loss_20d": [-0.02, -0.02, -0.02, -0.20, -0.02],
             "missing_key_feature_count": [0, 0, 0, 0, 0],
-            "data_confidence_score": [1, 1, 1, 1, 1],
+            "data_confidence_score": [100, 100, 100, 100, 100],
             "stale_price_flag": [0, 0, 0, 0, 0],
         }
     )
@@ -51,6 +52,29 @@ def test_practical_excess_target_keeps_return_units_and_penalizes_ex_ante_risk()
     assert float(targets.iloc[2]) > float(targets.iloc[3])
     assert float(targets.iloc[4]) <= 0.12
     assert float(targets.iloc[0]) <= 0.04
+
+
+def test_practical_excess_target_penalizes_low_confidence_on_0_to_100_scale() -> None:
+    frame = pd.DataFrame(
+        {
+            "as_of_date": ["2026-03-03"] * 2,
+            "market": ["KOSDAQ"] * 2,
+            "target_h5": [0.04, 0.04],
+            "liquidity_rank_pct": [0.50, 0.50],
+            "adv_20": [500, 500],
+            "realized_vol_20d": [0.02, 0.02],
+            "drawdown_20d": [-0.02, -0.02],
+            "max_loss_20d": [-0.02, -0.02],
+            "missing_key_feature_count": [0, 0],
+            "data_confidence_score": [100.0, 50.0],
+            "stale_price_flag": [0, 0],
+        }
+    )
+
+    targets = _practical_excess_return_targets(frame, horizon=5)
+
+    assert float(targets.iloc[0]) == 0.04
+    assert float(targets.iloc[1]) == 0.02
 
 
 def test_practical_excess_v2_target_preserves_v1_return_unit_contract() -> None:
@@ -65,7 +89,7 @@ def test_practical_excess_v2_target_preserves_v1_return_unit_contract() -> None:
             "drawdown_20d": [-0.02, -0.02, -0.02, -0.25, -0.02],
             "max_loss_20d": [-0.02, -0.02, -0.02, -0.20, -0.02],
             "missing_key_feature_count": [0, 0, 0, 0, 0],
-            "data_confidence_score": [1, 1, 1, 1, 1],
+            "data_confidence_score": [100, 100, 100, 100, 100],
             "stale_price_flag": [0, 0, 0, 0, 0],
         }
     )
@@ -93,7 +117,7 @@ def test_stable_practical_target_tightens_outliers_and_fragile_buyability() -> N
             "dist_from_20d_high": [0.20, 0.20, 0.20, 0.20, 0.98, 0.20],
             "volume_ratio_1d_vs_20d": [1.0, 1.0, 1.0, 1.0, 4.0, 1.0],
             "missing_key_feature_count": [0, 0, 0, 0, 0, 0],
-            "data_confidence_score": [1, 1, 1, 1, 1, 1],
+            "data_confidence_score": [100, 100, 100, 100, 100, 100],
             "stale_price_flag": [0, 0, 0, 0, 0, 0],
         }
     )
@@ -106,3 +130,29 @@ def test_stable_practical_target_tightens_outliers_and_fragile_buyability() -> N
     assert float(stable.iloc[2]) > float(stable.iloc[3])
     assert float(stable.iloc[4]) <= 0.10
     assert float(stable.iloc[5]) < float(stable.iloc[2])
+
+
+def test_stable_practical_target_penalizes_low_confidence_on_0_to_100_scale() -> None:
+    frame = pd.DataFrame(
+        {
+            "as_of_date": ["2026-03-03"] * 2,
+            "market": ["KOSDAQ"] * 2,
+            "target_h5": [0.05, 0.05],
+            "liquidity_rank_pct": [0.60, 0.60],
+            "adv_20": [500, 500],
+            "realized_vol_20d": [0.02, 0.02],
+            "hl_range_1d": [0.02, 0.02],
+            "drawdown_20d": [-0.02, -0.02],
+            "max_loss_20d": [-0.02, -0.02],
+            "dist_from_20d_high": [0.20, 0.20],
+            "volume_ratio_1d_vs_20d": [1.0, 1.0],
+            "missing_key_feature_count": [0, 0],
+            "data_confidence_score": [100.0, 50.0],
+            "stale_price_flag": [0, 0],
+        }
+    )
+
+    stable = _stable_practical_excess_return_targets(frame, horizon=5)
+
+    assert float(stable.iloc[0]) == 0.05
+    assert float(stable.iloc[1]) == pytest.approx(0.0175)

@@ -368,7 +368,7 @@ def _practical_excess_return_targets(
     thin_liquidity = liquidity_rank.le(0.10).fillna(False) | adv_rank.le(0.10).fillna(False)
     high_volatility = vol_rank.ge(0.90).fillna(False)
     large_drawdown = drawdown_rank.le(0.10).fillna(False) | max_loss_rank.le(0.10).fillna(False)
-    data_missing = missing_count.ge(2.0) | data_confidence.lt(0.60) | stale_price.gt(0.0)
+    data_missing = missing_count.ge(2.0) | data_confidence.lt(60.0) | stale_price.gt(0.0)
 
     positive_penalty = pd.Series(1.0, index=working.index, dtype="float64")
     positive_penalty = positive_penalty.where(~thin_liquidity, positive_penalty.mul(0.35))
@@ -455,7 +455,7 @@ def _stable_practical_excess_return_targets(
     late_crowding = crowding_rank.ge(0.90).fillna(False) & turnover_burst_rank.ge(
         0.85
     ).fillna(False)
-    data_missing = missing_count.ge(2.0) | data_confidence.lt(0.65) | stale_price.gt(0.0)
+    data_missing = missing_count.ge(2.0) | data_confidence.lt(65.0) | stale_price.gt(0.0)
 
     positive_penalty = pd.Series(1.0, index=working.index, dtype="float64")
     positive_penalty = positive_penalty.where(~thin_liquidity, positive_penalty.mul(0.25))
