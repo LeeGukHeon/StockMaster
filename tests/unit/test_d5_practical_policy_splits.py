@@ -140,8 +140,9 @@ def test_gate_fails_when_top5_holdout_edge_is_concentrated() -> None:
         max_single_date_edge_share=0.4,
     )
 
-    assert gate.gate_decision == "stop_lane"
+    assert gate.gate_decision == "proceed_ltr_shadow_baseline_failed"
     assert not gate.passed
+    assert gate.research_continues
     assert "top5_positive_edge_concentration_above_floor" in gate.fail_reasons
 
 
@@ -266,8 +267,9 @@ def test_gate_uses_top5_primary_and_top1_diagnostic_only() -> None:
         max_single_date_edge_share=0.4,
     )
 
-    assert gate.gate_decision == "needs_review"
+    assert gate.gate_decision == "proceed_ltr_shadow_with_warnings"
     assert not gate.passed
+    assert gate.research_continues
     assert gate.fail_reasons == []
     assert "top1_negative" in gate.warning_reasons
     assert "top1_avg_net_below_baseline" in gate.warning_reasons
@@ -306,8 +308,47 @@ def test_gate_passes_when_top5_and_top3_clear_thresholds() -> None:
     payload = gate.as_dict()
     assert gate.gate_decision == "pass_to_ltr"
     assert gate.passed
+    assert gate.research_continues
     assert payload["primary_top_n"] == 5
     assert payload["objective_hierarchy"]["diagnostic"] == "top1"
+
+
+
+def test_safety_fail_stops_lane_even_when_metrics_pass() -> None:
+    rows = []
+    for policy_id in ["active_current", "candidate"]:
+        for top_n in [1, 3, 5]:
+            rows.append(
+                {
+                    "policy_id": policy_id,
+                    "split": "holdout",
+                    "top_n": top_n,
+                    "dates": 10,
+                    "avg_net": 0.02,
+                    "median_net": 0.02,
+                    "p10_net": 0.01,
+                    "hit_net": 0.8,
+                    "max_drawdown_net": -0.01,
+                    "max_positive_edge_share": 0.20,
+                    "max_sector_concentration": 0.4,
+                }
+            )
+
+    gate = _passes_gate(
+        pd.DataFrame(rows),
+        policy_id="candidate",
+        baseline_policy_id="active_current",
+        min_coverage_ratio=0.7,
+        min_median_ratio=0.8,
+        max_high_disagreement_rate=0.1,
+        max_single_date_edge_share=0.4,
+        safety_fail_reasons=["missing_repo_sha"],
+    )
+
+    assert gate.gate_decision == "stop_lane"
+    assert not gate.passed
+    assert not gate.research_continues
+    assert gate.blocking_fail_reasons == ["missing_repo_sha"]
 
 
 def test_run_manifest_includes_server_sha_and_basket_gate_contract(
@@ -375,3 +416,5 @@ def test_run_manifest_includes_server_sha_and_basket_gate_contract(
     assert gate["primary_top_n"] == 5
     assert gate["secondary_top_n"] == 3
     assert gate["diagnostic_top_n"] == 1
+    assert gate["research_continues"] is True
+    assert gate["promotion_eligible"] is False

@@ -55,12 +55,17 @@ class GateResult:
     passed: bool
     fail_reasons: list[str]
     warning_reasons: list[str]
+    blocking_fail_reasons: list[str]
+    research_continues: bool
+    promotion_eligible: bool = False
 
     def as_dict(self) -> dict[str, object]:
         return {
             "policy_id": self.policy_id,
             "gate_decision": self.gate_decision,
             "passed": bool(self.passed),
+            "research_continues": bool(self.research_continues),
+            "promotion_eligible": bool(self.promotion_eligible),
             "primary_top_n": 5,
             "secondary_top_n": 3,
             "diagnostic_top_n": 1,
@@ -71,6 +76,7 @@ class GateResult:
             },
             "fail_reasons": list(self.fail_reasons),
             "warning_reasons": list(self.warning_reasons),
+            "blocking_fail_reasons": list(self.blocking_fail_reasons),
         }
 
 
@@ -740,7 +746,8 @@ def _passes_gate(
         min_median_ratio=float(min_median_ratio),
         max_single_date_edge_share=float(max_single_date_edge_share),
     )
-    fail_reasons = list(safety_fail_reasons or [])
+    blocking_fail_reasons = list(safety_fail_reasons or [])
+    fail_reasons: list[str] = []
     warning_reasons: list[str] = []
 
     candidate_top5 = _gate_row(
@@ -755,8 +762,10 @@ def _passes_gate(
         split_name="holdout",
         top_n=5,
     )
-    if candidate_top5 is None or baseline_top5 is None:
-        fail_reasons.append("missing_top5_holdout_metrics")
+    if baseline_top5 is None:
+        blocking_fail_reasons.append("missing_baseline_top5_holdout_metrics")
+    elif candidate_top5 is None:
+        fail_reasons.append("missing_candidate_top5_holdout_metrics")
     else:
         c_dates = int(candidate_top5.get("dates") or 0)
         b_dates = int(baseline_top5.get("dates") or 0)
@@ -846,19 +855,32 @@ def _passes_gate(
     )
     warning_reasons = sorted(dict.fromkeys(warning_reasons))
     fail_reasons = sorted(dict.fromkeys(fail_reasons))
+    blocking_fail_reasons = sorted(dict.fromkeys(blocking_fail_reasons))
 
-    if fail_reasons:
+    if blocking_fail_reasons:
         decision = "stop_lane"
+        research_continues = False
+    elif fail_reasons:
+        decision = (
+            "proceed_ltr_shadow_with_coverage_warning"
+            if "top5_holdout_coverage_below_floor" in fail_reasons
+            else "proceed_ltr_shadow_baseline_failed"
+        )
+        research_continues = True
     elif warning_reasons:
-        decision = "needs_review"
+        decision = "proceed_ltr_shadow_with_warnings"
+        research_continues = True
     else:
         decision = "pass_to_ltr"
+        research_continues = True
     return GateResult(
         policy_id=policy_id,
         gate_decision=decision,
         passed=decision == "pass_to_ltr",
         fail_reasons=fail_reasons,
         warning_reasons=warning_reasons,
+        blocking_fail_reasons=blocking_fail_reasons,
+        research_continues=research_continues,
     )
 
 
