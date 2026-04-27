@@ -112,7 +112,7 @@ def stable_buyable_candidate_pool_mask(
 
     thin_liquidity = liquidity_rank.le(0.12).fillna(True) | adv_rank.le(0.12).fillna(True)
     large_drawdown = drawdown_rank.le(0.12).fillna(True) | max_loss_rank.le(0.12).fillna(True)
-    data_missing = missing_count.ge(2.0) | data_confidence.lt(0.65) | stale_price.gt(0.0)
+    data_missing = missing_count.ge(2.0) | data_confidence.lt(65.0) | stale_price.gt(0.0)
     hard_blocker = thin_liquidity | large_drawdown | data_missing
     if candidate_pool == "stable_buyable_v1":
         return ~hard_blocker
@@ -317,7 +317,8 @@ def topn_by_rank_score(
     top_ns: Iterable[int] = (3, 5),
     score_column: str = "rank_score",
     horizon: int = 5,
-    portfolio_group_key: str = "as_of_date",
+    portfolio_group_key: str = "as_of_date+market",
+    portfolio_score_mode: str = "raw",
     stable_utility_column: str | None = None,
     relevance_target_column: str | None = None,
 ) -> pd.DataFrame:
@@ -329,6 +330,21 @@ def topn_by_rank_score(
         group_columns = ["as_of_date", "market"]
     else:
         raise ValueError(f"Unsupported portfolio_group_key: {portfolio_group_key}")
+    if portfolio_score_mode not in {"raw", "query_rank_pct"}:
+        raise ValueError(f"Unsupported portfolio_score_mode: {portfolio_score_mode}")
+    if portfolio_group_key == "as_of_date" and portfolio_score_mode == "raw":
+        raise ValueError(
+            "Raw LTR rank scores are query-relative; use portfolio_score_mode=query_rank_pct "
+            "for cross-market daily baskets."
+        )
+    scored = predictions.copy()
+    portfolio_score_column = score_column
+    if portfolio_score_mode == "query_rank_pct":
+        portfolio_score_column = "__portfolio_score"
+        scored[portfolio_score_column] = pd.to_numeric(
+            scored[score_column],
+            errors="coerce",
+        ).groupby(scored["query_group_key"]).rank(method="average", pct=True)
     target_column = f"target_h{int(horizon)}"
     stable_utility_column = stable_utility_column or (
         f"target_stable_practical_excess_h{int(horizon)}"
@@ -337,13 +353,13 @@ def topn_by_rank_score(
         stable_utility_column = relevance_target_column or target_column
     relevance_target_column = relevance_target_column or stable_utility_column
     rows: list[dict[str, object]] = []
-    for group_key, group in predictions.groupby(group_columns, sort=True):
+    for group_key, group in scored.groupby(group_columns, sort=True):
         if portfolio_group_key == "as_of_date":
             as_of_date = group_key[0] if isinstance(group_key, tuple) else group_key
             market = "ALL"
         else:
             as_of_date, market = group_key
-        ordered = group.sort_values([score_column, "symbol"], ascending=[False, True])
+        ordered = group.sort_values([portfolio_score_column, "symbol"], ascending=[False, True])
         for top_n in top_ns:
             top = ordered.head(int(top_n))
             stable_utility = pd.to_numeric(

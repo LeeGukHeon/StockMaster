@@ -114,7 +114,7 @@ def test_stable_buyable_candidate_pool_filters_hard_blockers() -> None:
                 "dist_from_20d_high": -0.10,
                 "volume_ratio_1d_vs_20d": 1.0,
                 "missing_key_feature_count": 0,
-                "data_confidence_score": 1.0,
+                "data_confidence_score": 100.0,
                 "stale_price_flag": 0.0,
             },
             {
@@ -134,7 +134,7 @@ def test_stable_buyable_candidate_pool_filters_hard_blockers() -> None:
                 "dist_from_20d_high": -0.10,
                 "volume_ratio_1d_vs_20d": 1.0,
                 "missing_key_feature_count": 0,
-                "data_confidence_score": 1.0,
+                "data_confidence_score": 100.0,
                 "stale_price_flag": 0.0,
             },
             {
@@ -154,7 +154,7 @@ def test_stable_buyable_candidate_pool_filters_hard_blockers() -> None:
                 "dist_from_20d_high": -0.10,
                 "volume_ratio_1d_vs_20d": 1.0,
                 "missing_key_feature_count": 0,
-                "data_confidence_score": 1.0,
+                "data_confidence_score": 100.0,
                 "stale_price_flag": 1.0,
             },
         ]
@@ -174,13 +174,14 @@ def test_stable_buyable_candidate_pool_filters_hard_blockers() -> None:
     assert prepared["symbol"].tolist() == ["000001"]
 
 
-def test_topn_by_rank_score_defaults_to_daily_top5_not_per_market() -> None:
+def test_topn_by_rank_score_defaults_to_query_aligned_top5() -> None:
     predictions = pd.DataFrame(
         [
             {
                 "as_of_date": date(2026, 4, 1),
                 "symbol": "000001",
                 "market": "KOSPI",
+                "query_group_key": "2026-04-01|h5|KOSPI",
                 "rank_score": 0.9,
                 "target_stable_practical_excess_h5": 0.01,
                 "target_h5": 0.02,
@@ -189,6 +190,7 @@ def test_topn_by_rank_score_defaults_to_daily_top5_not_per_market() -> None:
                 "as_of_date": date(2026, 4, 1),
                 "symbol": "000002",
                 "market": "KOSDAQ",
+                "query_group_key": "2026-04-01|h5|KOSDAQ",
                 "rank_score": 0.8,
                 "target_stable_practical_excess_h5": 0.02,
                 "target_h5": 0.03,
@@ -197,6 +199,7 @@ def test_topn_by_rank_score_defaults_to_daily_top5_not_per_market() -> None:
                 "as_of_date": date(2026, 4, 1),
                 "symbol": "000003",
                 "market": "KOSPI",
+                "query_group_key": "2026-04-01|h5|KOSPI",
                 "rank_score": 0.1,
                 "target_stable_practical_excess_h5": -0.02,
                 "target_h5": -0.01,
@@ -204,18 +207,42 @@ def test_topn_by_rank_score_defaults_to_daily_top5_not_per_market() -> None:
         ]
     )
 
-    daily = topn_by_rank_score(predictions, top_ns=[2], horizon=5)
-    by_market = topn_by_rank_score(
+    by_market = topn_by_rank_score(predictions, top_ns=[2], horizon=5)
+    daily = topn_by_rank_score(
         predictions,
         top_ns=[2],
         horizon=5,
-        portfolio_group_key="as_of_date+market",
+        portfolio_group_key="as_of_date",
+        portfolio_score_mode="query_rank_pct",
     )
 
+    assert len(by_market) == 2
     assert len(daily) == 1
     assert daily.loc[0, "market"] == "ALL"
     assert daily.loc[0, "symbols"] == "000001,000002"
-    assert len(by_market) == 2
+
+
+def test_daily_topn_rejects_raw_cross_query_rank_scores() -> None:
+    predictions = pd.DataFrame(
+        [
+            {
+                "as_of_date": date(2026, 4, 1),
+                "symbol": "000001",
+                "market": "KOSPI",
+                "query_group_key": "2026-04-01|h5|KOSPI",
+                "rank_score": 0.9,
+                "target_stable_practical_excess_h5": 0.01,
+                "target_h5": 0.02,
+            }
+        ]
+    )
+
+    try:
+        topn_by_rank_score(predictions, top_ns=[1], horizon=5, portfolio_group_key="as_of_date")
+    except ValueError as exc:
+        assert "query-relative" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("daily raw rank-score pooling should be rejected")
 
 
 def test_temporal_folds_apply_purge_before_validation() -> None:

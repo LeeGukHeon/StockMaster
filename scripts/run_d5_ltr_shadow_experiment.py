@@ -270,6 +270,7 @@ def run(args: argparse.Namespace) -> int:
         top_ns=[5],
         horizon=int(args.horizon),
         portfolio_group_key=args.portfolio_group_key,
+        portfolio_score_mode=args.portfolio_score_mode,
         relevance_target_column=relevance_target_column,
     )
     topn_by_date = topn_by_rank_score(
@@ -277,6 +278,7 @@ def run(args: argparse.Namespace) -> int:
         top_ns=[3, 5],
         horizon=int(args.horizon),
         portfolio_group_key=args.portfolio_group_key,
+        portfolio_score_mode=args.portfolio_score_mode,
         relevance_target_column=relevance_target_column,
     )
     top5_by_query_group = topn_by_rank_score(
@@ -284,6 +286,7 @@ def run(args: argparse.Namespace) -> int:
         top_ns=[5],
         horizon=int(args.horizon),
         portfolio_group_key="as_of_date+market",
+        portfolio_score_mode="raw",
         relevance_target_column=relevance_target_column,
     )
     topn_summary = summarize_topn(topn_by_date)
@@ -342,6 +345,7 @@ def run(args: argparse.Namespace) -> int:
         "db_read_only": True,
         "query_group_key": args.query_group_key,
         "portfolio_group_key": args.portfolio_group_key,
+        "portfolio_score_mode": args.portfolio_score_mode,
         "candidate_pool": args.candidate_pool,
         "relevance_label": args.relevance_label,
         "target_column": relevance_target_column,
@@ -400,10 +404,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--portfolio-group-key",
         choices=["as_of_date", "as_of_date+market"],
-        default="as_of_date",
+        default="as_of_date+market",
         help=(
-            "Grouping for topN portfolio evaluation. Use as_of_date for the user-facing "
-            "daily Top5 basket; as_of_date+market is retained as a query-group diagnostic."
+            "Grouping for topN portfolio evaluation. as_of_date+market preserves raw LTR "
+            "query-score semantics; as_of_date requires --portfolio-score-mode query_rank_pct."
+        ),
+    )
+    parser.add_argument(
+        "--portfolio-score-mode",
+        choices=["raw", "query_rank_pct"],
+        default="raw",
+        help=(
+            "Score used for topN portfolio sorting. Raw is valid within the LTR query only; "
+            "query_rank_pct normalizes each query to percentile ranks before cross-market "
+            "daily basket pooling."
         ),
     )
     parser.add_argument(
