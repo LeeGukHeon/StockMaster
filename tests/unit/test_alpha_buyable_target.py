@@ -52,7 +52,7 @@ def test_practical_excess_target_keeps_return_units_and_penalizes_ex_ante_risk()
     assert float(targets.iloc[0]) <= 0.04
 
 
-def test_practical_excess_v2_target_uses_gentler_positive_haircuts() -> None:
+def test_practical_excess_v2_target_preserves_v1_return_unit_contract() -> None:
     frame = pd.DataFrame(
         {
             "as_of_date": ["2026-03-03"] * 5,
@@ -72,7 +72,6 @@ def test_practical_excess_v2_target_uses_gentler_positive_haircuts() -> None:
     v1_targets = _practical_excess_return_targets(frame, horizon=5)
     v2_targets = _practical_excess_return_v2_targets(frame, horizon=5)
 
-    assert float(v2_targets.iloc[1]) > float(v1_targets.iloc[1])
+    pd.testing.assert_series_equal(v2_targets, v1_targets)
     assert float(v2_targets.iloc[2]) > float(v2_targets.iloc[3])
     assert float(v2_targets.iloc[4]) <= 0.12
-    assert float(v2_targets.iloc[0]) <= 0.04
