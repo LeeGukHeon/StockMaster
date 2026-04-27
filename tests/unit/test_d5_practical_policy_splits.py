@@ -313,6 +313,127 @@ def test_gate_passes_when_top5_and_top3_clear_thresholds() -> None:
     assert payload["objective_hierarchy"]["diagnostic"] == "top1"
 
 
+def test_buyable_quality_gate_passes_stable_basket_despite_lower_outlier_mean() -> None:
+    rows = []
+    for row in [
+        ("active_current", 5, 13, 0.046690, -0.072991, -0.167773, 0.384615, -0.679239, 5.0),
+        ("active_current", 3, 13, 0.081685, -0.044969, -0.192921, 0.461538, -0.695112, 3.0),
+        ("active_current", 1, 13, -0.015886, -0.123949, -0.248706, 0.230769, -0.834180, 1.0),
+        ("candidate", 5, 10, 0.023297, 0.013639, -0.003796, 0.900000, -0.044710, 3.0),
+        ("candidate", 3, 10, 0.022560, 0.010503, -0.006034, 0.800000, -0.044710, 2.2),
+        ("candidate", 1, 10, 0.036033, 0.029407, 0.001117, 0.900000, -0.054489, 1.0),
+    ]:
+        policy_id, top_n, dates, avg, median, p10, hit, drawdown, avg_names = row
+        rows.append(
+            {
+                "policy_id": policy_id,
+                "split": "holdout",
+                "top_n": top_n,
+                "dates": dates,
+                "avg_net": avg,
+                "median_net": median,
+                "p10_net": p10,
+                "hit_net": hit,
+                "max_drawdown_net": drawdown,
+                "avg_names": avg_names,
+                "max_positive_edge_share": 0.35,
+                "max_sector_concentration": 0.4,
+            }
+        )
+
+    gate = _passes_gate(
+        pd.DataFrame(rows),
+        policy_id="candidate",
+        baseline_policy_id="active_current",
+        min_coverage_ratio=0.7,
+        min_median_ratio=0.8,
+        max_high_disagreement_rate=0.1,
+        max_single_date_edge_share=0.4,
+        gate_profile="buyable_quality",
+    )
+
+    assert gate.gate_profile == "buyable_quality"
+    assert gate.gate_decision == "pass_buyable_shadow"
+    assert gate.passed
+    assert gate.research_continues
+    assert "top5_avg_net_below_baseline_outlier_mean" in gate.warning_reasons
+
+
+def test_buyable_quality_gate_stops_negative_average_candidate() -> None:
+    rows = []
+    for policy_id, avg in [("active_current", 0.02), ("candidate", -0.01)]:
+        for top_n in [1, 3, 5]:
+            rows.append(
+                {
+                    "policy_id": policy_id,
+                    "split": "holdout",
+                    "top_n": top_n,
+                    "dates": 10,
+                    "avg_net": avg,
+                    "median_net": 0.01,
+                    "p10_net": -0.01,
+                    "hit_net": 0.8,
+                    "max_drawdown_net": -0.05,
+                    "avg_names": 5.0 if top_n == 5 else float(top_n),
+                    "max_positive_edge_share": 0.20,
+                    "max_sector_concentration": 0.4,
+                }
+            )
+
+    gate = _passes_gate(
+        pd.DataFrame(rows),
+        policy_id="candidate",
+        baseline_policy_id="active_current",
+        min_coverage_ratio=0.7,
+        min_median_ratio=0.8,
+        max_high_disagreement_rate=0.1,
+        max_single_date_edge_share=0.4,
+        gate_profile="buyable_quality",
+    )
+
+    assert gate.gate_decision == "stop_lane"
+    assert not gate.research_continues
+    assert "top5_holdout_avg_net_nonpositive" in gate.fail_reasons
+
+
+def test_buyable_quality_gate_needs_review_on_coverage_gap() -> None:
+    rows = []
+    for policy_id, dates in [("active_current", 13), ("candidate", 7)]:
+        for top_n in [1, 3, 5]:
+            rows.append(
+                {
+                    "policy_id": policy_id,
+                    "split": "holdout",
+                    "top_n": top_n,
+                    "dates": dates,
+                    "avg_net": 0.02,
+                    "median_net": 0.01,
+                    "p10_net": -0.01,
+                    "hit_net": 0.8,
+                    "max_drawdown_net": -0.05,
+                    "avg_names": 5.0 if top_n == 5 else float(top_n),
+                    "max_positive_edge_share": 0.20,
+                    "max_sector_concentration": 0.4,
+                }
+            )
+
+    gate = _passes_gate(
+        pd.DataFrame(rows),
+        policy_id="candidate",
+        baseline_policy_id="active_current",
+        min_coverage_ratio=0.7,
+        min_median_ratio=0.8,
+        max_high_disagreement_rate=0.1,
+        max_single_date_edge_share=0.4,
+        gate_profile="buyable_quality",
+    )
+
+    assert gate.gate_decision == "needs_review_buyable"
+    assert not gate.passed
+    assert gate.research_continues
+    assert "top5_holdout_coverage_below_floor" in gate.warning_reasons
+
+
 
 def test_safety_fail_stops_lane_even_when_metrics_pass() -> None:
     rows = []
@@ -384,6 +505,7 @@ def test_run_manifest_includes_server_sha_and_basket_gate_contract(
             output_dir=tmp_path / "out",
             policy_set="stable",
             baseline_policy_id="active_current",
+            gate_profile="avg_return_comparator",
             max_candidate_policy_count=2,
             outcome=[("active", active_path), ("stable", stable_path)],
             active_outcomes=None,
@@ -409,12 +531,83 @@ def test_run_manifest_includes_server_sha_and_basket_gate_contract(
     manifest = json.loads((tmp_path / "out" / "manifest.json").read_text())
     gate = manifest["gates"][0]
     assert manifest["server_sha"] == "server-sha-test"
+    assert manifest["gate_profile"] == "avg_return_comparator"
     assert manifest["read_only"] is True
     assert manifest["db_read_only"] is True
     assert manifest["artifact_only"] is True
     assert manifest["promotion_disabled"] is True
     assert gate["primary_top_n"] == 5
+    assert gate["gate_profile"] == "avg_return_comparator"
     assert gate["secondary_top_n"] == 3
     assert gate["diagnostic_top_n"] == 1
     assert gate["research_continues"] is True
     assert gate["promotion_eligible"] is False
+
+
+def test_run_manifest_records_buyable_quality_threshold_schema(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from scripts.evaluate_d5_practical_policy_splits import run
+
+    rows = []
+    for as_of_date in pd.date_range("2026-03-25", periods=12, freq="D"):
+        for index in range(6):
+            rows.append(
+                {
+                    "as_of_date": as_of_date.date().isoformat(),
+                    "symbol": f"{index + 1:06d}",
+                    "risk_flags_json": "[]",
+                    "expected_excess_return": 0.03 - (index * 0.001),
+                    "uncertainty_score": 1.0,
+                    "disagreement_score": 1.0,
+                    "final_selection_value": 80.0,
+                    "excess_forward_return": 0.01 if index < 5 else -0.01,
+                    "market": "KOSDAQ",
+                    "sector": f"sector-{index % 2}",
+                }
+            )
+    active_path = tmp_path / "active.csv"
+    stable_path = tmp_path / "stable.csv"
+    pd.DataFrame(rows).to_csv(active_path, index=False)
+    pd.DataFrame(rows).to_csv(stable_path, index=False)
+    monkeypatch.setenv("SERVER_SHA", "server-sha-test")
+
+    run(
+        SimpleNamespace(
+            output_dir=tmp_path / "out",
+            policy_set="stable",
+            baseline_policy_id="active_current",
+            gate_profile="buyable_quality",
+            max_candidate_policy_count=2,
+            outcome=[("active", active_path), ("stable", stable_path)],
+            active_outcomes=None,
+            practical_outcomes=None,
+            tune_end_date=date(2026, 3, 31),
+            holdout_start_date=date(2026, 4, 1),
+            top_ns=[1, 3, 5],
+            outer_fold_size=5,
+            contaminated_window=[],
+            min_coverage_ratio=0.70,
+            min_median_ratio=0.80,
+            max_high_disagreement_rate=0.10,
+            max_single_date_edge_share=0.40,
+            transaction_cost_bps=30.0,
+            bootstrap_reps=0,
+            bootstrap_block_size=5,
+            bootstrap_seed=20260428,
+        )
+    )
+
+    import json
+
+    manifest = json.loads((tmp_path / "out" / "manifest.json").read_text())
+    thresholds = manifest["gate_thresholds"]
+    gate = manifest["gates"][0]
+
+    assert manifest["gate_profile"] == "buyable_quality"
+    assert gate["gate_profile"] == "buyable_quality"
+    assert thresholds["min_holdout_dates"] == 8
+    assert thresholds["min_avg_names"] == 3.0
+    assert thresholds["min_hit_net"] == 0.55
+    assert thresholds["stop_min_p10_net"] == -0.07
+    assert "top5_avg_net_tolerance" not in thresholds

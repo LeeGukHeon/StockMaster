@@ -49,8 +49,30 @@ class BasketGateThresholds:
 
 
 @dataclass(frozen=True, slots=True)
+class BuyableQualityGateThresholds:
+    min_coverage_ratio: float = 0.70
+    min_holdout_dates: int = 8
+    min_avg_names: float = 3.0
+    min_avg_net: float = 0.0
+    min_avg_net_baseline_ratio: float = 0.25
+    min_median_net: float = 0.0
+    min_hit_net: float = 0.55
+    min_hit_net_baseline_uplift: float = 0.10
+    min_p10_net: float = -0.05
+    min_p10_net_baseline_uplift: float = 0.05
+    min_max_drawdown_net: float = -0.15
+    min_max_drawdown_net_baseline_uplift: float = 0.15
+    stop_min_hit_net: float = 0.50
+    stop_min_p10_net: float = -0.07
+    stop_min_max_drawdown_net: float = -0.20
+    max_single_date_edge_share: float = 0.40
+    top5_max_sector_concentration: float = 0.60
+
+
+@dataclass(frozen=True, slots=True)
 class GateResult:
     policy_id: str
+    gate_profile: str
     gate_decision: str
     passed: bool
     fail_reasons: list[str]
@@ -62,6 +84,7 @@ class GateResult:
     def as_dict(self) -> dict[str, object]:
         return {
             "policy_id": self.policy_id,
+            "gate_profile": self.gate_profile,
             "gate_decision": self.gate_decision,
             "passed": bool(self.passed),
             "research_continues": bool(self.research_continues),
@@ -729,7 +752,7 @@ def _top1_diagnostic_warnings(
     return warnings
 
 
-def _passes_gate(
+def _passes_avg_return_comparator_gate(
     portfolio_summary: pd.DataFrame,
     *,
     policy_id: str,
@@ -875,6 +898,7 @@ def _passes_gate(
         research_continues = True
     return GateResult(
         policy_id=policy_id,
+        gate_profile="avg_return_comparator",
         gate_decision=decision,
         passed=decision == "pass_to_ltr",
         fail_reasons=fail_reasons,
@@ -884,11 +908,239 @@ def _passes_gate(
     )
 
 
+def _passes_buyable_quality_gate(
+    portfolio_summary: pd.DataFrame,
+    *,
+    policy_id: str,
+    baseline_policy_id: str,
+    min_coverage_ratio: float,
+    max_single_date_edge_share: float,
+    safety_fail_reasons: list[str] | None = None,
+) -> GateResult:
+    thresholds = BuyableQualityGateThresholds(
+        min_coverage_ratio=float(min_coverage_ratio),
+        max_single_date_edge_share=float(max_single_date_edge_share),
+    )
+    blocking_fail_reasons = list(safety_fail_reasons or [])
+    fail_reasons: list[str] = []
+    warning_reasons: list[str] = []
+    review_reasons: list[str] = []
+
+    candidate_top5 = _gate_row(
+        portfolio_summary,
+        policy_id=policy_id,
+        split_name="holdout",
+        top_n=5,
+    )
+    baseline_top5 = _gate_row(
+        portfolio_summary,
+        policy_id=baseline_policy_id,
+        split_name="holdout",
+        top_n=5,
+    )
+    if baseline_top5 is None:
+        blocking_fail_reasons.append("missing_baseline_top5_holdout_metrics")
+    elif candidate_top5 is None:
+        fail_reasons.append("missing_candidate_top5_holdout_metrics")
+    else:
+        c_dates = int(candidate_top5.get("dates") or 0)
+        b_dates = int(baseline_top5.get("dates") or 0)
+        avg_names = _field_float(candidate_top5, "avg_names")
+        if c_dates < b_dates * thresholds.min_coverage_ratio:
+            review_reasons.append("top5_holdout_coverage_below_floor")
+        if c_dates < thresholds.min_holdout_dates:
+            review_reasons.append("top5_holdout_dates_below_buyable_floor")
+        if avg_names is None or avg_names < thresholds.min_avg_names:
+            review_reasons.append("top5_avg_names_below_buyable_floor")
+
+        candidate_avg = _field_float(candidate_top5, "avg_net")
+        baseline_avg = _field_float(baseline_top5, "avg_net")
+        if candidate_avg is None:
+            fail_reasons.append("top5_holdout_avg_net_missing")
+        elif candidate_avg <= thresholds.min_avg_net:
+            fail_reasons.append("top5_holdout_avg_net_nonpositive")
+        elif baseline_avg is not None and baseline_avg > 0.0:
+            avg_floor = baseline_avg * thresholds.min_avg_net_baseline_ratio
+            if candidate_avg < avg_floor:
+                fail_reasons.append("top5_holdout_avg_net_below_buyable_floor")
+            elif candidate_avg < baseline_avg:
+                warning_reasons.append("top5_avg_net_below_baseline_outlier_mean")
+
+        candidate_median = _field_float(candidate_top5, "median_net")
+        if candidate_median is None:
+            fail_reasons.append("top5_holdout_median_net_missing")
+        elif candidate_median <= thresholds.min_median_net:
+            fail_reasons.append("top5_holdout_median_net_nonpositive")
+
+        candidate_hit = _field_float(candidate_top5, "hit_net")
+        baseline_hit = _field_float(baseline_top5, "hit_net")
+        if candidate_hit is None:
+            fail_reasons.append("top5_holdout_hit_net_missing")
+        else:
+            hit_floor = thresholds.min_hit_net
+            if baseline_hit is not None:
+                hit_floor = max(hit_floor, baseline_hit + thresholds.min_hit_net_baseline_uplift)
+            if candidate_hit < thresholds.stop_min_hit_net:
+                fail_reasons.append("top5_holdout_hit_net_below_stop_floor")
+            elif candidate_hit < hit_floor:
+                review_reasons.append("top5_holdout_hit_net_below_buyable_floor")
+
+        candidate_p10 = _field_float(candidate_top5, "p10_net")
+        baseline_p10 = _field_float(baseline_top5, "p10_net")
+        if candidate_p10 is None:
+            fail_reasons.append("top5_holdout_p10_net_missing")
+        else:
+            p10_floor = thresholds.min_p10_net
+            if baseline_p10 is not None:
+                p10_floor = max(p10_floor, baseline_p10 + thresholds.min_p10_net_baseline_uplift)
+            if candidate_p10 < thresholds.stop_min_p10_net:
+                fail_reasons.append("top5_holdout_p10_net_below_stop_floor")
+            elif candidate_p10 < p10_floor:
+                review_reasons.append("top5_holdout_p10_net_below_buyable_floor")
+
+        candidate_drawdown = _field_float(candidate_top5, "max_drawdown_net")
+        baseline_drawdown = _field_float(baseline_top5, "max_drawdown_net")
+        if candidate_drawdown is None:
+            fail_reasons.append("top5_holdout_max_drawdown_net_missing")
+        else:
+            drawdown_floor = thresholds.min_max_drawdown_net
+            if baseline_drawdown is not None:
+                drawdown_floor = max(
+                    drawdown_floor,
+                    baseline_drawdown + thresholds.min_max_drawdown_net_baseline_uplift,
+                )
+            if candidate_drawdown < thresholds.stop_min_max_drawdown_net:
+                fail_reasons.append("top5_holdout_max_drawdown_net_below_stop_floor")
+            elif candidate_drawdown < drawdown_floor:
+                review_reasons.append("top5_holdout_max_drawdown_net_below_buyable_floor")
+
+        edge_share = _field_float(candidate_top5, "max_positive_edge_share")
+        if edge_share is None:
+            warning_reasons.append("top5_positive_edge_concentration_missing")
+        elif edge_share > thresholds.max_single_date_edge_share:
+            review_reasons.append("top5_positive_edge_concentration_above_floor")
+
+        sector_concentration = _field_float(candidate_top5, "max_sector_concentration")
+        if sector_concentration is None:
+            warning_reasons.append("top5_sector_concentration_missing")
+        elif sector_concentration > thresholds.top5_max_sector_concentration:
+            review_reasons.append("top5_sector_concentration_above_floor")
+
+    candidate_top3 = _gate_row(
+        portfolio_summary,
+        policy_id=policy_id,
+        split_name="holdout",
+        top_n=3,
+    )
+    if candidate_top3 is None:
+        warning_reasons.append("missing_top3_holdout_metrics")
+    else:
+        top3_avg = _field_float(candidate_top3, "avg_net")
+        top3_median = _field_float(candidate_top3, "median_net")
+        top3_hit = _field_float(candidate_top3, "hit_net")
+        top3_p10 = _field_float(candidate_top3, "p10_net")
+        if top3_avg is not None and top3_avg <= 0.0:
+            warning_reasons.append("top3_holdout_avg_net_nonpositive")
+        if top3_median is not None and top3_median <= 0.0:
+            warning_reasons.append("top3_holdout_median_net_nonpositive")
+        if top3_hit is not None and top3_hit < thresholds.stop_min_hit_net:
+            warning_reasons.append("top3_holdout_hit_net_below_stop_floor")
+        if top3_p10 is not None and top3_p10 < thresholds.stop_min_p10_net:
+            warning_reasons.append("top3_holdout_p10_net_below_stop_floor")
+
+    warning_reasons.extend(
+        _top1_diagnostic_warnings(
+            portfolio_summary,
+            policy_id=policy_id,
+            baseline_policy_id=baseline_policy_id,
+        )
+    )
+    warning_reasons = sorted(dict.fromkeys(warning_reasons))
+    fail_reasons = sorted(dict.fromkeys(fail_reasons))
+    review_reasons = sorted(dict.fromkeys(review_reasons))
+    blocking_fail_reasons = sorted(dict.fromkeys(blocking_fail_reasons))
+
+    if blocking_fail_reasons or fail_reasons:
+        decision = "stop_lane"
+        research_continues = False
+    elif review_reasons:
+        decision = "needs_review_buyable"
+        research_continues = True
+        warning_reasons = sorted(dict.fromkeys([*warning_reasons, *review_reasons]))
+    else:
+        decision = "pass_buyable_shadow"
+        research_continues = True
+    return GateResult(
+        policy_id=policy_id,
+        gate_profile="buyable_quality",
+        gate_decision=decision,
+        passed=decision == "pass_buyable_shadow",
+        fail_reasons=fail_reasons,
+        warning_reasons=warning_reasons,
+        blocking_fail_reasons=blocking_fail_reasons,
+        research_continues=research_continues,
+    )
+
+
+def _passes_gate(
+    portfolio_summary: pd.DataFrame,
+    *,
+    policy_id: str,
+    baseline_policy_id: str,
+    min_coverage_ratio: float,
+    min_median_ratio: float,
+    max_high_disagreement_rate: float | None = None,
+    max_single_date_edge_share: float,
+    safety_fail_reasons: list[str] | None = None,
+    gate_profile: str = "avg_return_comparator",
+) -> GateResult:
+    if gate_profile == "avg_return_comparator":
+        return _passes_avg_return_comparator_gate(
+            portfolio_summary,
+            policy_id=policy_id,
+            baseline_policy_id=baseline_policy_id,
+            min_coverage_ratio=min_coverage_ratio,
+            min_median_ratio=min_median_ratio,
+            max_high_disagreement_rate=max_high_disagreement_rate,
+            max_single_date_edge_share=max_single_date_edge_share,
+            safety_fail_reasons=safety_fail_reasons,
+        )
+    if gate_profile == "buyable_quality":
+        return _passes_buyable_quality_gate(
+            portfolio_summary,
+            policy_id=policy_id,
+            baseline_policy_id=baseline_policy_id,
+            min_coverage_ratio=min_coverage_ratio,
+            max_single_date_edge_share=max_single_date_edge_share,
+            safety_fail_reasons=safety_fail_reasons,
+        )
+    raise ValueError(f"Unknown gate_profile: {gate_profile}")
+
+
 def _resolve_policy_specs(policy_set: str) -> tuple[PolicySpec, ...]:
     try:
         return POLICY_SETS[policy_set]
     except KeyError as exc:
         raise ValueError(f"Unknown policy set: {policy_set}") from exc
+
+
+def _gate_threshold_payload(args: argparse.Namespace) -> dict[str, object]:
+    if args.gate_profile == "avg_return_comparator":
+        return asdict(
+            BasketGateThresholds(
+                min_coverage_ratio=args.min_coverage_ratio,
+                min_median_ratio=args.min_median_ratio,
+                max_single_date_edge_share=args.max_single_date_edge_share,
+            )
+        )
+    if args.gate_profile == "buyable_quality":
+        return asdict(
+            BuyableQualityGateThresholds(
+                min_coverage_ratio=args.min_coverage_ratio,
+                max_single_date_edge_share=args.max_single_date_edge_share,
+            )
+        )
+    raise ValueError(f"Unknown gate_profile: {args.gate_profile}")
 
 
 def _resolve_outcome_paths(args: argparse.Namespace) -> dict[str, Path]:
@@ -1018,6 +1270,7 @@ def run(args: argparse.Namespace) -> int:
             max_high_disagreement_rate=args.max_high_disagreement_rate,
             max_single_date_edge_share=args.max_single_date_edge_share,
             safety_fail_reasons=safety_fail_reasons,
+            gate_profile=args.gate_profile,
         )
         gates.append(gate_result.as_dict())
     manifest = {
@@ -1028,6 +1281,7 @@ def run(args: argparse.Namespace) -> int:
         "outer_fold_size": args.outer_fold_size,
         "contaminated_windows": args.contaminated_window,
         "baseline_policy_id": args.baseline_policy_id,
+        "gate_profile": args.gate_profile,
         "policy_set": args.policy_set,
         "candidate_policy_count": candidate_policy_count,
         "max_candidate_policy_count": args.max_candidate_policy_count,
@@ -1045,13 +1299,7 @@ def run(args: argparse.Namespace) -> int:
         "bootstrap_reps": args.bootstrap_reps,
         "bootstrap_block_size": args.bootstrap_block_size,
         "bootstrap_seed": args.bootstrap_seed,
-        "gate_thresholds": asdict(
-            BasketGateThresholds(
-                min_coverage_ratio=args.min_coverage_ratio,
-                min_median_ratio=args.min_median_ratio,
-                max_single_date_edge_share=args.max_single_date_edge_share,
-            )
-        ),
+        "gate_thresholds": _gate_threshold_payload(args),
         "repo_sha": repo_sha,
         "server_sha": server_sha,
         "promotion_disabled": True,
@@ -1102,6 +1350,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--holdout-start-date", type=_parse_date, default=date(2026, 4, 1))
     parser.add_argument("--top-ns", nargs="+", type=int, default=[1, 3, 5])
     parser.add_argument("--baseline-policy-id", default="active_current")
+    parser.add_argument(
+        "--gate-profile",
+        choices=["avg_return_comparator", "buyable_quality"],
+        default="avg_return_comparator",
+        help=(
+            "Gate profile. avg_return_comparator preserves the original baseline-average "
+            "comparison; buyable_quality prioritizes median/hit/downside/drawdown for "
+            "actually-buyable Top5 baskets."
+        ),
+    )
     parser.add_argument("--outer-fold-size", type=int, default=0)
     parser.add_argument(
         "--contaminated-window",
