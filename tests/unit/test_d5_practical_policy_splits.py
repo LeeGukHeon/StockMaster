@@ -103,66 +103,35 @@ def test_outer_fold_summary_uses_temporal_blocks() -> None:
     assert folds["dates"].tolist() == [2, 2]
 
 
-def test_gate_fails_when_holdout_edge_is_concentrated() -> None:
-    summary = pd.DataFrame(
+def test_gate_fails_when_top5_holdout_edge_is_concentrated() -> None:
+    portfolio_summary = pd.DataFrame(
         [
             {
-                "policy_id": "active_current",
+                "policy_id": policy_id,
                 "split": "holdout",
-                "top_n": 1,
-                "dates": 2,
-                "avg": 0.01,
-                "median": 0.01,
-                "p10": -0.01,
-                "hit": 0.5,
-                "blocker_rate": 0.0,
-                "high_disagreement_rate": 0.0,
-                "max_positive_edge_share": 0.40,
-            },
-            {
-                "policy_id": "candidate",
-                "split": "holdout",
-                "top_n": 1,
-                "dates": 2,
-                "avg": 0.02,
-                "median": 0.02,
-                "p10": -0.005,
-                "hit": 0.5,
-                "blocker_rate": 0.0,
-                "high_disagreement_rate": 0.0,
-                "max_positive_edge_share": 0.90,
-            },
-            {
-                "policy_id": "active_current",
-                "split": "tune",
-                "top_n": 1,
-                "dates": 2,
-                "avg": 0.01,
-                "median": 0.01,
-                "p10": -0.01,
-                "hit": 0.5,
-                "blocker_rate": 0.0,
-                "high_disagreement_rate": 0.0,
-                "max_positive_edge_share": 0.40,
-            },
-            {
-                "policy_id": "candidate",
-                "split": "tune",
-                "top_n": 1,
-                "dates": 2,
-                "avg": 0.02,
-                "median": 0.02,
-                "p10": -0.005,
-                "hit": 0.5,
-                "blocker_rate": 0.0,
-                "high_disagreement_rate": 0.0,
-                "max_positive_edge_share": 0.90,
-            },
+                "top_n": top_n,
+                "dates": 4,
+                "avg_net": 0.02,
+                "median_net": 0.02,
+                "p10_net": 0.01,
+                "hit_net": 1.0,
+                "max_drawdown_net": 0.0,
+                "max_positive_edge_share": edge_share,
+                "max_sector_concentration": 0.4,
+            }
+            for policy_id, top_n, edge_share in [
+                ("active_current", 5, 0.40),
+                ("active_current", 3, 0.40),
+                ("active_current", 1, 0.40),
+                ("candidate", 5, 0.90),
+                ("candidate", 3, 0.40),
+                ("candidate", 1, 0.40),
+            ]
         ]
     )
 
-    passed, reasons = _passes_gate(
-        summary,
+    gate = _passes_gate(
+        portfolio_summary,
         policy_id="candidate",
         baseline_policy_id="active_current",
         min_coverage_ratio=0.7,
@@ -171,8 +140,9 @@ def test_gate_fails_when_holdout_edge_is_concentrated() -> None:
         max_single_date_edge_share=0.4,
     )
 
-    assert not passed
-    assert "holdout_positive_edge_concentration_above_floor" in reasons
+    assert gate.gate_decision == "stop_lane"
+    assert not gate.passed
+    assert "top5_positive_edge_concentration_above_floor" in gate.fail_reasons
 
 
 def test_summary_includes_positive_edge_concentration() -> None:
@@ -234,3 +204,174 @@ def test_candidate_count_guard_rejects_large_policy_sets(tmp_path: Path) -> None
         assert "Candidate policy count exceeds guardrail" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("guard should reject abc policy set by default")
+
+
+def test_gate_uses_top5_primary_and_top1_diagnostic_only() -> None:
+    rows = []
+    for policy_id in ["active_current", "candidate"]:
+        for top_n in [3, 5]:
+            rows.append(
+                {
+                    "policy_id": policy_id,
+                    "split": "holdout",
+                    "top_n": top_n,
+                    "dates": 10,
+                    "avg_net": 0.02,
+                    "median_net": 0.02,
+                    "p10_net": 0.01,
+                    "hit_net": 0.8,
+                    "max_drawdown_net": -0.01,
+                    "max_positive_edge_share": 0.20,
+                    "max_sector_concentration": 0.4,
+                }
+            )
+    rows.extend(
+        [
+            {
+                "policy_id": "active_current",
+                "split": "holdout",
+                "top_n": 1,
+                "dates": 10,
+                "avg_net": 0.03,
+                "median_net": 0.03,
+                "p10_net": 0.01,
+                "hit_net": 0.9,
+                "max_drawdown_net": 0.0,
+                "max_positive_edge_share": 0.20,
+                "max_sector_concentration": 0.2,
+            },
+            {
+                "policy_id": "candidate",
+                "split": "holdout",
+                "top_n": 1,
+                "dates": 10,
+                "avg_net": -0.01,
+                "median_net": -0.01,
+                "p10_net": -0.03,
+                "hit_net": 0.2,
+                "max_drawdown_net": -0.1,
+                "max_positive_edge_share": 0.20,
+                "max_sector_concentration": 0.2,
+            },
+        ]
+    )
+
+    gate = _passes_gate(
+        pd.DataFrame(rows),
+        policy_id="candidate",
+        baseline_policy_id="active_current",
+        min_coverage_ratio=0.7,
+        min_median_ratio=0.8,
+        max_high_disagreement_rate=0.1,
+        max_single_date_edge_share=0.4,
+    )
+
+    assert gate.gate_decision == "needs_review"
+    assert not gate.passed
+    assert gate.fail_reasons == []
+    assert "top1_negative" in gate.warning_reasons
+    assert "top1_avg_net_below_baseline" in gate.warning_reasons
+
+
+def test_gate_passes_when_top5_and_top3_clear_thresholds() -> None:
+    rows = []
+    for policy_id in ["active_current", "candidate"]:
+        for top_n in [1, 3, 5]:
+            rows.append(
+                {
+                    "policy_id": policy_id,
+                    "split": "holdout",
+                    "top_n": top_n,
+                    "dates": 10,
+                    "avg_net": 0.02,
+                    "median_net": 0.02,
+                    "p10_net": 0.01,
+                    "hit_net": 0.8,
+                    "max_drawdown_net": -0.01,
+                    "max_positive_edge_share": 0.20,
+                    "max_sector_concentration": 0.4,
+                }
+            )
+
+    gate = _passes_gate(
+        pd.DataFrame(rows),
+        policy_id="candidate",
+        baseline_policy_id="active_current",
+        min_coverage_ratio=0.7,
+        min_median_ratio=0.8,
+        max_high_disagreement_rate=0.1,
+        max_single_date_edge_share=0.4,
+    )
+
+    payload = gate.as_dict()
+    assert gate.gate_decision == "pass_to_ltr"
+    assert gate.passed
+    assert payload["primary_top_n"] == 5
+    assert payload["objective_hierarchy"]["diagnostic"] == "top1"
+
+
+def test_run_manifest_includes_server_sha_and_basket_gate_contract(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from scripts.evaluate_d5_practical_policy_splits import run
+
+    rows = []
+    for as_of_date in pd.date_range("2026-03-25", periods=12, freq="D"):
+        for index in range(6):
+            rows.append(
+                {
+                    "as_of_date": as_of_date.date().isoformat(),
+                    "symbol": f"{index + 1:06d}",
+                    "risk_flags_json": "[]",
+                    "expected_excess_return": 0.03 - (index * 0.001),
+                    "uncertainty_score": 1.0,
+                    "disagreement_score": 1.0,
+                    "final_selection_value": 80.0,
+                    "excess_forward_return": 0.01 if index < 5 else -0.01,
+                    "market": "KOSDAQ",
+                    "sector": f"sector-{index % 2}",
+                }
+            )
+    active_path = tmp_path / "active.csv"
+    stable_path = tmp_path / "stable.csv"
+    pd.DataFrame(rows).to_csv(active_path, index=False)
+    pd.DataFrame(rows).to_csv(stable_path, index=False)
+    monkeypatch.setenv("SERVER_SHA", "server-sha-test")
+
+    run(
+        SimpleNamespace(
+            output_dir=tmp_path / "out",
+            policy_set="stable",
+            baseline_policy_id="active_current",
+            max_candidate_policy_count=2,
+            outcome=[("active", active_path), ("stable", stable_path)],
+            active_outcomes=None,
+            practical_outcomes=None,
+            tune_end_date=date(2026, 3, 31),
+            holdout_start_date=date(2026, 4, 1),
+            top_ns=[1, 3, 5],
+            outer_fold_size=5,
+            contaminated_window=[],
+            min_coverage_ratio=0.70,
+            min_median_ratio=0.80,
+            max_high_disagreement_rate=0.10,
+            max_single_date_edge_share=0.40,
+            transaction_cost_bps=30.0,
+            bootstrap_reps=0,
+            bootstrap_block_size=5,
+            bootstrap_seed=20260428,
+        )
+    )
+
+    import json
+
+    manifest = json.loads((tmp_path / "out" / "manifest.json").read_text())
+    gate = manifest["gates"][0]
+    assert manifest["server_sha"] == "server-sha-test"
+    assert manifest["read_only"] is True
+    assert manifest["db_read_only"] is True
+    assert manifest["artifact_only"] is True
+    assert manifest["promotion_disabled"] is True
+    assert gate["primary_top_n"] == 5
+    assert gate["secondary_top_n"] == 3
+    assert gate["diagnostic_top_n"] == 1

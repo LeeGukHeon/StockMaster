@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -29,6 +30,48 @@ from app.recommendation.buyability import (
 
 HIGH_DISAGREEMENT_FLAG = "model_disagreement_high"
 DEFAULT_TRANSACTION_COST_BPS = 15.0
+
+
+@dataclass(frozen=True, slots=True)
+class BasketGateThresholds:
+    min_coverage_ratio: float = 0.70
+    min_median_ratio: float = 0.80
+    max_single_date_edge_share: float = 0.40
+    top5_avg_net_tolerance: float = -0.001
+    top5_median_net_tolerance: float = -0.001
+    top5_p10_net_tolerance: float = -0.005
+    top5_hit_net_tolerance: float = -0.05
+    top5_max_drawdown_net_tolerance: float = -0.05
+    top5_max_sector_concentration: float = 0.60
+    top3_avg_net_tolerance: float = -0.002
+    top3_p10_net_tolerance: float = -0.0075
+    top3_hit_net_tolerance: float = -0.07
+
+
+@dataclass(frozen=True, slots=True)
+class GateResult:
+    policy_id: str
+    gate_decision: str
+    passed: bool
+    fail_reasons: list[str]
+    warning_reasons: list[str]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "policy_id": self.policy_id,
+            "gate_decision": self.gate_decision,
+            "passed": bool(self.passed),
+            "primary_top_n": 5,
+            "secondary_top_n": 3,
+            "diagnostic_top_n": 1,
+            "objective_hierarchy": {
+                "primary": "top5",
+                "secondary": "top3",
+                "diagnostic": "top1",
+            },
+            "fail_reasons": list(self.fail_reasons),
+            "warning_reasons": list(self.warning_reasons),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +392,27 @@ def _positive_edge_concentration(
     return float(date_edge.loc[max_date] / total), pd.Timestamp(max_date).date().isoformat()
 
 
+def _positive_edge_concentration_from_returns(
+    frame: pd.DataFrame,
+    *,
+    date_column: str,
+    return_column: str,
+) -> tuple[float | None, str | None]:
+    if frame.empty or date_column not in frame.columns or return_column not in frame.columns:
+        return None, None
+    working = frame[[date_column, return_column]].copy()
+    working["_positive_edge"] = pd.to_numeric(
+        working[return_column],
+        errors="coerce",
+    ).clip(lower=0.0)
+    date_edge = working.groupby(date_column, sort=True)["_positive_edge"].sum()
+    total = float(date_edge.sum())
+    if total <= 0.0 or date_edge.empty:
+        return None, None
+    max_date = date_edge.idxmax()
+    return float(date_edge.loc[max_date] / total), pd.Timestamp(max_date).date().isoformat()
+
+
 def _metric_row(
     frame: pd.DataFrame,
     *,
@@ -546,6 +610,11 @@ def _portfolio_summary(
             block_size=int(bootstrap_block_size),
             seed=int(bootstrap_seed),
         )
+        max_edge_share, top_edge_date = _positive_edge_concentration_from_returns(
+            ordered,
+            date_column="as_of_date",
+            return_column="portfolio_net_excess_return",
+        )
         rows.append(
             {
                 "policy_id": str(policy_id),
@@ -564,6 +633,8 @@ def _portfolio_summary(
                 "mean_net_ci05": ci_low,
                 "mean_net_ci95": ci_high,
                 "avg_names": float(pd.to_numeric(ordered["n_names"], errors="coerce").mean()),
+                "max_positive_edge_share": max_edge_share,
+                "top_positive_edge_date": top_edge_date,
                 "avg_market_concentration": None
                 if "market_concentration" not in ordered.columns
                 else float(pd.to_numeric(ordered["market_concentration"], errors="coerce").mean()),
@@ -581,57 +652,214 @@ def _portfolio_summary(
     return pd.DataFrame(rows)
 
 
+def _gate_row(
+    portfolio_summary: pd.DataFrame,
+    *,
+    policy_id: str,
+    split_name: str,
+    top_n: int,
+) -> pd.Series | None:
+    if portfolio_summary.empty:
+        return None
+    rows = portfolio_summary.loc[
+        portfolio_summary["policy_id"].eq(policy_id)
+        & portfolio_summary["split"].eq(split_name)
+        & portfolio_summary["top_n"].eq(int(top_n))
+    ]
+    if rows.empty:
+        return None
+    return rows.iloc[0]
+
+
+def _field_float(row: pd.Series, field: str) -> float | None:
+    value = row.get(field)
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
+
+
+def _top1_diagnostic_warnings(
+    portfolio_summary: pd.DataFrame,
+    *,
+    policy_id: str,
+    baseline_policy_id: str,
+) -> list[str]:
+    candidate = _gate_row(
+        portfolio_summary,
+        policy_id=policy_id,
+        split_name="holdout",
+        top_n=1,
+    )
+    baseline = _gate_row(
+        portfolio_summary,
+        policy_id=baseline_policy_id,
+        split_name="holdout",
+        top_n=1,
+    )
+    if candidate is None or baseline is None:
+        return ["top1_diagnostic_missing"]
+    warnings: list[str] = []
+    candidate_avg = _field_float(candidate, "avg_net")
+    baseline_avg = _field_float(baseline, "avg_net")
+    candidate_hit = _field_float(candidate, "hit_net")
+    baseline_hit = _field_float(baseline, "hit_net")
+    edge_share = _field_float(candidate, "max_positive_edge_share")
+    if candidate_avg is not None and candidate_avg < 0.0:
+        warnings.append("top1_negative")
+    if (
+        candidate_avg is not None
+        and baseline_avg is not None
+        and candidate_avg < baseline_avg
+    ):
+        warnings.append("top1_avg_net_below_baseline")
+    if (
+        candidate_hit is not None
+        and baseline_hit is not None
+        and candidate_hit < baseline_hit
+    ):
+        warnings.append("top1_hit_net_below_baseline")
+    if edge_share is not None and edge_share > 0.40:
+        warnings.append("top1_concentrated")
+    return warnings
+
+
 def _passes_gate(
-    summary: pd.DataFrame,
+    portfolio_summary: pd.DataFrame,
     *,
     policy_id: str,
     baseline_policy_id: str,
     min_coverage_ratio: float,
     min_median_ratio: float,
-    max_high_disagreement_rate: float,
+    max_high_disagreement_rate: float | None = None,
     max_single_date_edge_share: float,
-) -> tuple[bool, list[str]]:
-    focus = summary.loc[summary["top_n"].eq(1)]
-    holdout = focus.loc[focus["split"].eq("holdout")]
-    tune = focus.loc[focus["split"].eq("tune")]
-    candidate_h = holdout.loc[holdout["policy_id"].eq(policy_id)]
-    baseline_h = holdout.loc[holdout["policy_id"].eq(baseline_policy_id)]
-    candidate_t = tune.loc[tune["policy_id"].eq(policy_id)]
-    baseline_t = tune.loc[tune["policy_id"].eq(baseline_policy_id)]
-    reasons: list[str] = []
-    if candidate_h.empty or baseline_h.empty:
-        return False, ["missing_holdout_metrics"]
-    c = candidate_h.iloc[0]
-    b = baseline_h.iloc[0]
-    if int(c["dates"] or 0) < int(b["dates"] or 0) * min_coverage_ratio:
-        reasons.append("holdout_coverage_below_floor")
-    if pd.isna(c["avg"]) or pd.isna(b["avg"]) or float(c["avg"]) < float(b["avg"]):
-        reasons.append("holdout_avg_below_active")
-    baseline_median = float(b["median"]) if pd.notna(b["median"]) else 0.0
-    candidate_median = float(c["median"]) if pd.notna(c["median"]) else float("-inf")
-    median_floor = baseline_median * min_median_ratio if baseline_median > 0 else baseline_median
-    if candidate_median < median_floor:
-        reasons.append("holdout_median_below_floor")
-    if pd.isna(c["p10"]) or pd.isna(b["p10"]) or float(c["p10"]) < float(b["p10"]):
-        reasons.append("holdout_p10_worse_than_active")
-    if pd.isna(c["hit"]) or pd.isna(b["hit"]) or float(c["hit"]) < float(b["hit"]):
-        reasons.append("holdout_hit_below_active")
-    if float(c["high_disagreement_rate"] or 0.0) > max_high_disagreement_rate:
-        reasons.append("holdout_high_disagreement_above_floor")
-    if float(c["blocker_rate"] or 0.0) > 0.0:
-        reasons.append("holdout_blocker_not_zero")
-    if (
-        pd.notna(c.get("max_positive_edge_share"))
-        and float(c["max_positive_edge_share"]) > max_single_date_edge_share
-    ):
-        reasons.append("holdout_positive_edge_concentration_above_floor")
+    safety_fail_reasons: list[str] | None = None,
+) -> GateResult:
+    del max_high_disagreement_rate  # Top5 basket gates no longer use top1 disagreement rate.
+    thresholds = BasketGateThresholds(
+        min_coverage_ratio=float(min_coverage_ratio),
+        min_median_ratio=float(min_median_ratio),
+        max_single_date_edge_share=float(max_single_date_edge_share),
+    )
+    fail_reasons = list(safety_fail_reasons or [])
+    warning_reasons: list[str] = []
 
-    if not candidate_t.empty and not baseline_t.empty:
-        ct = candidate_t.iloc[0]
-        bt = baseline_t.iloc[0]
-        if pd.notna(ct["p10"]) and pd.notna(bt["p10"]) and float(ct["p10"]) < float(bt["p10"]):
-            reasons.append("tune_p10_worse_than_active")
-    return not reasons, reasons
+    candidate_top5 = _gate_row(
+        portfolio_summary,
+        policy_id=policy_id,
+        split_name="holdout",
+        top_n=5,
+    )
+    baseline_top5 = _gate_row(
+        portfolio_summary,
+        policy_id=baseline_policy_id,
+        split_name="holdout",
+        top_n=5,
+    )
+    if candidate_top5 is None or baseline_top5 is None:
+        fail_reasons.append("missing_top5_holdout_metrics")
+    else:
+        c_dates = int(candidate_top5.get("dates") or 0)
+        b_dates = int(baseline_top5.get("dates") or 0)
+        if c_dates < b_dates * thresholds.min_coverage_ratio:
+            fail_reasons.append("top5_holdout_coverage_below_floor")
+
+        checks = (
+            ("avg_net", thresholds.top5_avg_net_tolerance, "top5_holdout_avg_net_below_tolerance"),
+            ("p10_net", thresholds.top5_p10_net_tolerance, "top5_holdout_p10_net_below_tolerance"),
+            ("hit_net", thresholds.top5_hit_net_tolerance, "top5_holdout_hit_net_below_tolerance"),
+            (
+                "max_drawdown_net",
+                thresholds.top5_max_drawdown_net_tolerance,
+                "top5_holdout_max_drawdown_net_below_tolerance",
+            ),
+        )
+        for field, tolerance, reason in checks:
+            candidate_value = _field_float(candidate_top5, field)
+            baseline_value = _field_float(baseline_top5, field)
+            if (
+                candidate_value is None
+                or baseline_value is None
+                or candidate_value < baseline_value + tolerance
+            ):
+                fail_reasons.append(reason)
+
+        candidate_median = _field_float(candidate_top5, "median_net")
+        baseline_median = _field_float(baseline_top5, "median_net")
+        if candidate_median is None or baseline_median is None:
+            fail_reasons.append("top5_holdout_median_net_missing")
+        else:
+            median_floor = (
+                baseline_median * thresholds.min_median_ratio
+                if baseline_median > 0.0
+                else baseline_median + thresholds.top5_median_net_tolerance
+            )
+            if candidate_median < median_floor:
+                fail_reasons.append("top5_holdout_median_net_below_floor")
+
+        edge_share = _field_float(candidate_top5, "max_positive_edge_share")
+        if edge_share is None:
+            warning_reasons.append("top5_positive_edge_concentration_missing")
+        elif edge_share > thresholds.max_single_date_edge_share:
+            fail_reasons.append("top5_positive_edge_concentration_above_floor")
+
+        sector_concentration = _field_float(candidate_top5, "max_sector_concentration")
+        if sector_concentration is None:
+            warning_reasons.append("top5_sector_concentration_missing")
+        elif sector_concentration > thresholds.top5_max_sector_concentration:
+            fail_reasons.append("top5_sector_concentration_above_floor")
+
+    candidate_top3 = _gate_row(
+        portfolio_summary,
+        policy_id=policy_id,
+        split_name="holdout",
+        top_n=3,
+    )
+    baseline_top3 = _gate_row(
+        portfolio_summary,
+        policy_id=baseline_policy_id,
+        split_name="holdout",
+        top_n=3,
+    )
+    if candidate_top3 is None or baseline_top3 is None:
+        warning_reasons.append("missing_top3_holdout_metrics")
+    else:
+        for field, tolerance, reason in (
+            ("avg_net", thresholds.top3_avg_net_tolerance, "top3_holdout_avg_net_below_tolerance"),
+            ("p10_net", thresholds.top3_p10_net_tolerance, "top3_holdout_p10_net_below_tolerance"),
+            ("hit_net", thresholds.top3_hit_net_tolerance, "top3_holdout_hit_net_below_tolerance"),
+        ):
+            candidate_value = _field_float(candidate_top3, field)
+            baseline_value = _field_float(baseline_top3, field)
+            if (
+                candidate_value is None
+                or baseline_value is None
+                or candidate_value < baseline_value + tolerance
+            ):
+                warning_reasons.append(reason)
+
+    warning_reasons.extend(
+        _top1_diagnostic_warnings(
+            portfolio_summary,
+            policy_id=policy_id,
+            baseline_policy_id=baseline_policy_id,
+        )
+    )
+    warning_reasons = sorted(dict.fromkeys(warning_reasons))
+    fail_reasons = sorted(dict.fromkeys(fail_reasons))
+
+    if fail_reasons:
+        decision = "stop_lane"
+    elif warning_reasons:
+        decision = "needs_review"
+    else:
+        decision = "pass_to_ltr"
+    return GateResult(
+        policy_id=policy_id,
+        gate_decision=decision,
+        passed=decision == "pass_to_ltr",
+        fail_reasons=fail_reasons,
+        warning_reasons=warning_reasons,
+    )
 
 
 def _resolve_policy_specs(policy_set: str) -> tuple[PolicySpec, ...]:
@@ -747,26 +975,29 @@ def run(args: argparse.Namespace) -> int:
     portfolio_summary_path = output_dir / "policy_portfolio_summary.csv"
     portfolio_summary.to_csv(portfolio_summary_path, index=False)
 
+    repo_sha = _git_sha()
+    server_sha = os.environ.get("SERVER_SHA") or repo_sha
+    safety_fail_reasons: list[str] = []
+    if not repo_sha:
+        safety_fail_reasons.append("missing_repo_sha")
+    if not server_sha:
+        safety_fail_reasons.append("missing_server_sha")
+
     gates: list[dict[str, object]] = []
     for policy in policy_specs:
         if policy.policy_id == args.baseline_policy_id:
             continue
-        passed, reasons = _passes_gate(
-            summary,
+        gate_result = _passes_gate(
+            portfolio_summary,
             policy_id=policy.policy_id,
             baseline_policy_id=args.baseline_policy_id,
             min_coverage_ratio=args.min_coverage_ratio,
             min_median_ratio=args.min_median_ratio,
             max_high_disagreement_rate=args.max_high_disagreement_rate,
             max_single_date_edge_share=args.max_single_date_edge_share,
+            safety_fail_reasons=safety_fail_reasons,
         )
-        gates.append(
-            {
-                "policy_id": policy.policy_id,
-                "passed": passed,
-                "fail_reasons": reasons,
-            }
-        )
+        gates.append(gate_result.as_dict())
     manifest = {
         "kind": "d5_practical_policy_split_evaluation",
         "outcomes": {key: str(path.resolve()) for key, path in sorted(outcome_paths.items())},
@@ -792,8 +1023,18 @@ def run(args: argparse.Namespace) -> int:
         "bootstrap_reps": args.bootstrap_reps,
         "bootstrap_block_size": args.bootstrap_block_size,
         "bootstrap_seed": args.bootstrap_seed,
-        "repo_sha": _git_sha(),
+        "gate_thresholds": asdict(
+            BasketGateThresholds(
+                min_coverage_ratio=args.min_coverage_ratio,
+                min_median_ratio=args.min_median_ratio,
+                max_single_date_edge_share=args.max_single_date_edge_share,
+            )
+        ),
+        "repo_sha": repo_sha,
+        "server_sha": server_sha,
         "promotion_disabled": True,
+        "artifact_only": True,
+        "read_only": True,
         "db_read_only": True,
     }
     manifest_path = output_dir / "manifest.json"
