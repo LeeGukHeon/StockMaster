@@ -94,3 +94,12 @@ Use this order every time:
 8. result validation
 9. contract validation
 10. only then close or escalate the lane
+
+## 7) Grounded answers and pre-implementation research gate
+
+For every future StockMaster lane, answers and implementation starts must be grounded before action:
+
+- **Code questions require code inspection first.** When the user asks how code works, why behavior happens, what data/logic is used, or whether a code path supports something, inspect the relevant repository code directly before answering. Do not answer from memory or assumptions when the code can be read.
+- **Ambiguous implementation scope requires clarification before coding.** When the user asks to implement/fix/change something but the implementation boundary, acceptance criteria, rollout target, or risk tolerance is materially ambiguous, ask focused clarification questions before editing code. Continue autonomously only after the scope is specific enough to verify.
+- **Research-dependent implementation requires a candidate review before execution.** If external research/web search is needed before implementation, search directly, summarize the credible candidate approaches/sources for the user first, wait for the user's selection or approval, then create the implementation plan and execute. Do not silently choose among researched alternatives when that choice materially shapes the system.
+- **Separate facts, candidates, and plan.** For research-backed work, keep the sequence explicit: verified facts/sources -> candidate options -> user decision -> plan/artifacts -> implementation -> verification.
