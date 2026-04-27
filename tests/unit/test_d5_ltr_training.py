@@ -5,12 +5,15 @@ from datetime import date
 import pandas as pd
 
 from app.ml.ltr_training import (
+    D5_LTR_CANDIDATE_POOLS,
     D5_LTR_CONTRACT,
     add_query_group_key,
     add_stable_d5_utility_relevance,
     build_temporal_folds,
     group_sizes,
     prepare_ltr_frame,
+    stable_buyable_candidate_pool_mask,
+    topn_by_rank_score,
 )
 
 
@@ -72,6 +75,147 @@ def test_prepare_ltr_frame_preserves_rank_score_only_contract() -> None:
     assert "expected_excess_return" not in prepared.columns
     assert D5_LTR_CONTRACT["score_semantics"] == "relative_rank_score_only"
     assert group_sizes(prepared) == [len(prepared)]
+
+
+def test_prepare_ltr_frame_accepts_alternate_target_and_relevance_label() -> None:
+    frame = _ltr_frame().assign(target_buyable_h5=lambda value: value["target_h5"].clip(lower=0.0))
+
+    prepared, _ = prepare_ltr_frame(
+        frame,
+        horizon=5,
+        feature_columns=["feature_a"],
+        target_column="target_buyable_h5",
+        relevance_column="buyable_d5_relevance",
+    )
+
+    assert "target_buyable_h5" in prepared.columns
+    assert "target_stable_practical_excess_h5" in prepared.columns
+    assert "buyable_d5_relevance" in prepared.columns
+    assert prepared["buyable_d5_relevance"].max() == 4
+
+
+def test_stable_buyable_candidate_pool_filters_hard_blockers() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "as_of_date": date(2026, 4, 1),
+                "symbol": "000001",
+                "company_name": "pass",
+                "market": "KOSDAQ",
+                "feature_a": 1.0,
+                "target_h5": 0.05,
+                "target_stable_practical_excess_h5": 0.05,
+                "liquidity_rank_pct": 0.50,
+                "adv_20": 100_000_000.0,
+                "realized_vol_20d": 0.02,
+                "hl_range_1d": 0.02,
+                "drawdown_20d": -0.01,
+                "max_loss_20d": -0.01,
+                "dist_from_20d_high": -0.10,
+                "volume_ratio_1d_vs_20d": 1.0,
+                "missing_key_feature_count": 0,
+                "data_confidence_score": 1.0,
+                "stale_price_flag": 0.0,
+            },
+            {
+                "as_of_date": date(2026, 4, 1),
+                "symbol": "000002",
+                "company_name": "thin",
+                "market": "KOSDAQ",
+                "feature_a": 2.0,
+                "target_h5": 0.10,
+                "target_stable_practical_excess_h5": 0.10,
+                "liquidity_rank_pct": 0.05,
+                "adv_20": 1_000.0,
+                "realized_vol_20d": 0.02,
+                "hl_range_1d": 0.02,
+                "drawdown_20d": 0.0,
+                "max_loss_20d": 0.0,
+                "dist_from_20d_high": -0.10,
+                "volume_ratio_1d_vs_20d": 1.0,
+                "missing_key_feature_count": 0,
+                "data_confidence_score": 1.0,
+                "stale_price_flag": 0.0,
+            },
+            {
+                "as_of_date": date(2026, 4, 1),
+                "symbol": "000003",
+                "company_name": "stale",
+                "market": "KOSDAQ",
+                "feature_a": 3.0,
+                "target_h5": 0.20,
+                "target_stable_practical_excess_h5": 0.20,
+                "liquidity_rank_pct": 0.60,
+                "adv_20": 90_000_000.0,
+                "realized_vol_20d": 0.02,
+                "hl_range_1d": 0.02,
+                "drawdown_20d": 0.0,
+                "max_loss_20d": 0.0,
+                "dist_from_20d_high": -0.10,
+                "volume_ratio_1d_vs_20d": 1.0,
+                "missing_key_feature_count": 0,
+                "data_confidence_score": 1.0,
+                "stale_price_flag": 1.0,
+            },
+        ]
+    )
+
+    keyed = add_query_group_key(frame, horizon=5)
+    mask = stable_buyable_candidate_pool_mask(keyed, candidate_pool="stable_buyable_v1")
+    prepared, _ = prepare_ltr_frame(
+        frame,
+        horizon=5,
+        feature_columns=["feature_a"],
+        candidate_pool="stable_buyable_v1",
+    )
+
+    assert set(D5_LTR_CANDIDATE_POOLS) == {"full", "stable_buyable_v1", "stable_buyable_strict"}
+    assert mask.tolist() == [True, False, False]
+    assert prepared["symbol"].tolist() == ["000001"]
+
+
+def test_topn_by_rank_score_defaults_to_daily_top5_not_per_market() -> None:
+    predictions = pd.DataFrame(
+        [
+            {
+                "as_of_date": date(2026, 4, 1),
+                "symbol": "000001",
+                "market": "KOSPI",
+                "rank_score": 0.9,
+                "target_stable_practical_excess_h5": 0.01,
+                "target_h5": 0.02,
+            },
+            {
+                "as_of_date": date(2026, 4, 1),
+                "symbol": "000002",
+                "market": "KOSDAQ",
+                "rank_score": 0.8,
+                "target_stable_practical_excess_h5": 0.02,
+                "target_h5": 0.03,
+            },
+            {
+                "as_of_date": date(2026, 4, 1),
+                "symbol": "000003",
+                "market": "KOSPI",
+                "rank_score": 0.1,
+                "target_stable_practical_excess_h5": -0.02,
+                "target_h5": -0.01,
+            },
+        ]
+    )
+
+    daily = topn_by_rank_score(predictions, top_ns=[2], horizon=5)
+    by_market = topn_by_rank_score(
+        predictions,
+        top_ns=[2],
+        horizon=5,
+        portfolio_group_key="as_of_date+market",
+    )
+
+    assert len(daily) == 1
+    assert daily.loc[0, "market"] == "ALL"
+    assert daily.loc[0, "symbols"] == "000001,000002"
+    assert len(by_market) == 2
 
 
 def test_temporal_folds_apply_purge_before_validation() -> None:

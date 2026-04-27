@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.ml.dataset import load_training_dataset
 from app.ml.ltr_training import (
+    D5_LTR_CANDIDATE_POOLS,
     D5_LTR_CONTRACT,
     build_temporal_folds,
     clean_feature_matrix,
@@ -124,6 +125,7 @@ def _fit_lightgbm_fold(
     validation: pd.DataFrame,
     *,
     feature_columns: list[str],
+    relevance_column: str,
     hyperparameters: dict[str, Any],
 ) -> pd.DataFrame:
     try:
@@ -134,7 +136,7 @@ def _fit_lightgbm_fold(
     train_sorted = train.sort_values(["query_group_key", "symbol"]).copy()
     valid_sorted = validation.sort_values(["query_group_key", "symbol"]).copy()
     y_train = pd.to_numeric(
-        train_sorted["stable_d5_utility_relevance"],
+        train_sorted[relevance_column],
         errors="coerce",
     ).fillna(0).astype(int)
     if y_train.nunique() < 2:
@@ -193,7 +195,10 @@ def run(args: argparse.Namespace) -> int:
         dataset,
         horizon=int(args.horizon),
         query_group_key=args.query_group_key,
-        target_column=f"target_stable_practical_excess_h{int(args.horizon)}",
+        target_column=args.target_column
+        or f"target_stable_practical_excess_h{int(args.horizon)}",
+        relevance_column=args.relevance_label,
+        candidate_pool=args.candidate_pool,
     )
     dates = sorted(prepared["as_of_date"].dropna().unique())
     folds = build_temporal_folds(
@@ -233,10 +238,16 @@ def run(args: argparse.Namespace) -> int:
             train,
             validation,
             feature_columns=feature_columns,
+            relevance_column=args.relevance_label,
             hyperparameters=hyperparameters,
         )
         predictions["fold_id"] = fold.fold_id
-        ndcg5 = mean_ndcg_at_k(predictions, score_column="rank_score", k=5)
+        ndcg5 = mean_ndcg_at_k(
+            predictions,
+            score_column="rank_score",
+            relevance_column=args.relevance_label,
+            k=5,
+        )
         fold_row = fold.as_dict()
         fold_row.update(
             {
@@ -251,8 +262,30 @@ def run(args: argparse.Namespace) -> int:
 
     predictions = pd.concat(prediction_frames, ignore_index=True, sort=False)
     fold_summary = pd.DataFrame(fold_rows)
-    top5_by_date = topn_by_rank_score(predictions, top_ns=[5], horizon=int(args.horizon))
-    topn_by_date = topn_by_rank_score(predictions, top_ns=[3, 5], horizon=int(args.horizon))
+    relevance_target_column = args.target_column or (
+        f"target_stable_practical_excess_h{int(args.horizon)}"
+    )
+    top5_by_date = topn_by_rank_score(
+        predictions,
+        top_ns=[5],
+        horizon=int(args.horizon),
+        portfolio_group_key=args.portfolio_group_key,
+        relevance_target_column=relevance_target_column,
+    )
+    topn_by_date = topn_by_rank_score(
+        predictions,
+        top_ns=[3, 5],
+        horizon=int(args.horizon),
+        portfolio_group_key=args.portfolio_group_key,
+        relevance_target_column=relevance_target_column,
+    )
+    top5_by_query_group = topn_by_rank_score(
+        predictions,
+        top_ns=[5],
+        horizon=int(args.horizon),
+        portfolio_group_key="as_of_date+market",
+        relevance_target_column=relevance_target_column,
+    )
     topn_summary = summarize_topn(topn_by_date)
 
     schema_boundary = {
@@ -308,12 +341,20 @@ def run(args: argparse.Namespace) -> int:
         "read_only": True,
         "db_read_only": True,
         "query_group_key": args.query_group_key,
+        "portfolio_group_key": args.portfolio_group_key,
+        "candidate_pool": args.candidate_pool,
         "relevance_label": args.relevance_label,
+        "target_column": relevance_target_column,
         "eval_metric": args.eval_metric,
         "purge_days": int(args.purge_days),
         "embargo_days": int(args.embargo_days),
         "feature_count": int(len(feature_columns)),
         "fold_count": int(len(folds)),
+        "input_row_count": int(len(dataset)),
+        "prepared_row_count": int(len(prepared)),
+        "query_group_count": int(prepared["query_group_key"].nunique()),
+        "min_query_group_size": int(prepared.groupby("query_group_key").size().min()),
+        "median_query_group_size": float(prepared.groupby("query_group_key").size().median()),
         "ltr_contract": D5_LTR_CONTRACT,
         "implementation": schema_boundary["model_family_json"]["implementation"],
         "gate_decision": gate_decision,
@@ -325,6 +366,7 @@ def run(args: argparse.Namespace) -> int:
         "manifest": output_dir / "lane2_ltr_lightgbm_manifest.json",
         "fold_summary": output_dir / "lane2_ltr_lightgbm_fold_summary.csv",
         "top5_by_date": output_dir / "lane2_ltr_lightgbm_top5_by_date.csv",
+        "top5_by_query_group": output_dir / "lane2_ltr_lightgbm_top5_by_query_group.csv",
         "vs_baselines": output_dir / "lane2_ltr_lightgbm_vs_baselines.csv",
         "gate": output_dir / "lane2_ltr_lightgbm_gate_decision.json",
         "predictions": output_dir / "lane2_ltr_lightgbm_rank_scores.csv",
@@ -332,6 +374,7 @@ def run(args: argparse.Namespace) -> int:
     predictions.to_csv(paths["predictions"], index=False)
     fold_summary.to_csv(paths["fold_summary"], index=False)
     top5_by_date.to_csv(paths["top5_by_date"], index=False)
+    top5_by_query_group.to_csv(paths["top5_by_query_group"], index=False)
     topn_summary.to_csv(paths["vs_baselines"], index=False)
     _write_json(paths["schema"], schema_boundary)
     _write_json(paths["gate"], gate_decision)
@@ -354,7 +397,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--horizon", type=int, default=5)
     parser.add_argument("--engine", choices=["lightgbm"], default="lightgbm")
     parser.add_argument("--query-group-key", default="as_of_date+horizon+market")
+    parser.add_argument(
+        "--portfolio-group-key",
+        choices=["as_of_date", "as_of_date+market"],
+        default="as_of_date",
+        help=(
+            "Grouping for topN portfolio evaluation. Use as_of_date for the user-facing "
+            "daily Top5 basket; as_of_date+market is retained as a query-group diagnostic."
+        ),
+    )
+    parser.add_argument(
+        "--candidate-pool",
+        choices=list(D5_LTR_CANDIDATE_POOLS),
+        default="full",
+        help=(
+            "Point-in-time candidate pool for the artifact-only LTR experiment. "
+            "full preserves the original universe; stable_buyable_v1/strict apply "
+            "predeclared buyability filters before label ranking."
+        ),
+    )
     parser.add_argument("--relevance-label", default="stable_d5_utility_relevance")
+    parser.add_argument(
+        "--target-column",
+        help=(
+            "Column used to derive ordinal relevance. Defaults to "
+            "target_stable_practical_excess_h<horizon>."
+        ),
+    )
     parser.add_argument("--eval-metric", default="ndcg@5")
     parser.add_argument("--purge-days", type=int, default=5)
     parser.add_argument("--embargo-days", type=int, default=5)
