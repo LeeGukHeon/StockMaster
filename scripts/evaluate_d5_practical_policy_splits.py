@@ -41,7 +41,7 @@ class PolicySpec:
     conditional_priority_floor: float = 0.0
 
 
-POLICY_SPECS: tuple[PolicySpec, ...] = (
+ABC_POLICY_SPECS: tuple[PolicySpec, ...] = (
     PolicySpec(
         policy_id="active_current",
         model_key="active",
@@ -73,10 +73,52 @@ POLICY_SPECS: tuple[PolicySpec, ...] = (
         conditional_priority_floor=0.0,
     ),
 )
+CURRENT_POLICY_SPECS: tuple[PolicySpec, ...] = (
+    PolicySpec(
+        policy_id="active_current",
+        model_key="active",
+        description="Current active alpha_swing_d5_v2 practical surface.",
+    ),
+    PolicySpec(
+        policy_id="practical_v1_current",
+        model_key="practical_v1",
+        description="Current alpha_practical_d5_v1 practical surface without extra policy tuning.",
+    ),
+    PolicySpec(
+        policy_id="practical_v2_current",
+        model_key="practical_v2",
+        description="Current alpha_practical_d5_v2 practical surface without extra policy tuning.",
+    ),
+)
+POLICY_SETS: dict[str, tuple[PolicySpec, ...]] = {
+    "abc": ABC_POLICY_SPECS,
+    "current": CURRENT_POLICY_SPECS,
+    "all": (*ABC_POLICY_SPECS, *CURRENT_POLICY_SPECS[1:]),
+}
 
 
 def _parse_date(value: str) -> date:
     return date.fromisoformat(value)
+
+
+def _parse_key_path(value: str) -> tuple[str, Path]:
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("Expected KEY=PATH")
+    key, path = value.split("=", 1)
+    key = key.strip()
+    if not key:
+        raise argparse.ArgumentTypeError("Outcome key must not be empty")
+    return key, Path(path)
+
+
+def _parse_window(value: str) -> dict[str, str]:
+    parts = value.split(":")
+    if len(parts) != 3:
+        raise argparse.ArgumentTypeError("Expected NAME:START_DATE:END_DATE")
+    name, start, end = parts
+    _parse_date(start)
+    _parse_date(end)
+    return {"name": name, "start_date": start, "end_date": end}
 
 
 def _json_list(value: object) -> list[str]:
@@ -188,7 +230,28 @@ def _select_top_by_date(
     )
 
 
-def _metric_row(frame: pd.DataFrame, *, policy_id: str, split_name: str, top_n: int) -> dict[str, object]:
+def _positive_edge_concentration(frame: pd.DataFrame) -> tuple[float | None, str | None]:
+    if frame.empty:
+        return None, None
+    date_edge = (
+        frame.assign(_positive_edge=_safe_numeric(frame, "excess_forward_return").clip(lower=0.0))
+        .groupby("as_of_date", sort=True)["_positive_edge"]
+        .sum()
+    )
+    total = float(date_edge.sum())
+    if total <= 0.0 or date_edge.empty:
+        return None, None
+    max_date = date_edge.idxmax()
+    return float(date_edge.loc[max_date] / total), pd.Timestamp(max_date).date().isoformat()
+
+
+def _metric_row(
+    frame: pd.DataFrame,
+    *,
+    policy_id: str,
+    split_name: str,
+    top_n: int,
+) -> dict[str, object]:
     if frame.empty:
         return {
             "policy_id": policy_id,
@@ -204,8 +267,11 @@ def _metric_row(frame: pd.DataFrame, *, policy_id: str, split_name: str, top_n: 
             "blocker_rate": None,
             "high_disagreement_rate": None,
             "avg_pred": None,
+            "max_positive_edge_share": None,
+            "top_positive_edge_date": None,
         }
     realized = _safe_numeric(frame, "excess_forward_return")
+    max_edge_share, top_edge_date = _positive_edge_concentration(frame)
     return {
         "policy_id": policy_id,
         "split": split_name,
@@ -220,6 +286,8 @@ def _metric_row(frame: pd.DataFrame, *, policy_id: str, split_name: str, top_n: 
         "blocker_rate": float(frame["policy_blocked"].mean()),
         "high_disagreement_rate": float(frame["high_model_disagreement"].mean()),
         "avg_pred": float(_safe_numeric(frame, "expected_excess_return").mean()),
+        "max_positive_edge_share": max_edge_share,
+        "top_positive_edge_date": top_edge_date,
     }
 
 
@@ -255,6 +323,39 @@ def _top1_wide(selected: pd.DataFrame) -> pd.DataFrame:
     ).reset_index()
 
 
+def _outer_fold_summary(
+    selected: pd.DataFrame,
+    *,
+    top_ns: Iterable[int],
+    outer_fold_size: int,
+) -> pd.DataFrame:
+    if selected.empty or outer_fold_size <= 0:
+        return pd.DataFrame()
+    ordered_dates = sorted(pd.Timestamp(value).date() for value in selected["as_of_date"].unique())
+    rows: list[dict[str, object]] = []
+    for fold_index, start in enumerate(range(0, len(ordered_dates), int(outer_fold_size)), start=1):
+        fold_dates = set(ordered_dates[start : start + int(outer_fold_size)])
+        if not fold_dates:
+            continue
+        fold_name = f"outer_fold_{fold_index:02d}"
+        prior_dates = ordered_dates[:start]
+        fold_frame = selected.loc[selected["as_of_date"].isin(fold_dates)]
+        for policy_id, policy_frame in fold_frame.groupby("policy_id", sort=False):
+            for top_n in top_ns:
+                top = _select_top_by_date(policy_frame, top_n=int(top_n))
+                row = _metric_row(
+                    top,
+                    policy_id=str(policy_id),
+                    split_name=fold_name,
+                    top_n=int(top_n),
+                )
+                row["fold_start_date"] = min(fold_dates).isoformat()
+                row["fold_end_date"] = max(fold_dates).isoformat()
+                row["prior_date_count"] = len(prior_dates)
+                rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def _passes_gate(
     summary: pd.DataFrame,
     *,
@@ -263,6 +364,7 @@ def _passes_gate(
     min_coverage_ratio: float,
     min_median_ratio: float,
     max_high_disagreement_rate: float,
+    max_single_date_edge_share: float,
 ) -> tuple[bool, list[str]]:
     focus = summary.loc[summary["top_n"].eq(1)]
     holdout = focus.loc[focus["split"].eq("holdout")]
@@ -293,6 +395,11 @@ def _passes_gate(
         reasons.append("holdout_high_disagreement_above_floor")
     if float(c["blocker_rate"] or 0.0) > 0.0:
         reasons.append("holdout_blocker_not_zero")
+    if (
+        pd.notna(c.get("max_positive_edge_share"))
+        and float(c["max_positive_edge_share"]) > max_single_date_edge_share
+    ):
+        reasons.append("holdout_positive_edge_concentration_above_floor")
 
     if not candidate_t.empty and not baseline_t.empty:
         ct = candidate_t.iloc[0]
@@ -302,16 +409,46 @@ def _passes_gate(
     return not reasons, reasons
 
 
+def _resolve_policy_specs(policy_set: str) -> tuple[PolicySpec, ...]:
+    try:
+        return POLICY_SETS[policy_set]
+    except KeyError as exc:
+        raise ValueError(f"Unknown policy set: {policy_set}") from exc
+
+
+def _resolve_outcome_paths(args: argparse.Namespace) -> dict[str, Path]:
+    paths: dict[str, Path] = {}
+    for key, path in args.outcome:
+        paths[key] = path
+    if args.active_outcomes is not None:
+        paths["active"] = args.active_outcomes
+    if args.practical_outcomes is not None:
+        paths.setdefault("practical_v1", args.practical_outcomes)
+        paths.setdefault("practical", args.practical_outcomes)
+    if "practical_v1" in paths:
+        paths.setdefault("practical", paths["practical_v1"])
+    return paths
+
+
 def run(args: argparse.Namespace) -> int:
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    policy_specs = _resolve_policy_specs(args.policy_set)
+    outcome_paths = _resolve_outcome_paths(args)
+    required_keys = {policy.model_key for policy in policy_specs}
+    missing_keys = sorted(key for key in required_keys if key not in outcome_paths)
+    if missing_keys:
+        raise RuntimeError(
+            "Missing outcome path(s) for policy set "
+            f"{args.policy_set}: {', '.join(missing_keys)}"
+        )
     frames_by_key = {
-        "active": _load_outcome_frame(args.active_outcomes.resolve(), model_key="active"),
-        "practical": _load_outcome_frame(args.practical_outcomes.resolve(), model_key="practical"),
+        key: _load_outcome_frame(outcome_paths[key].resolve(), model_key=key)
+        for key in sorted(required_keys)
     }
     selected_frames: list[pd.DataFrame] = []
-    for policy in POLICY_SPECS:
+    for policy in policy_specs:
         candidates = _policy_frame(frames_by_key[policy.model_key], policy)
         if candidates.empty:
             continue
@@ -337,8 +474,16 @@ def run(args: argparse.Namespace) -> int:
     wide_path = output_dir / "policy_top1_by_date.csv"
     wide.to_csv(wide_path, index=False)
 
+    fold_summary = _outer_fold_summary(
+        selected,
+        top_ns=args.top_ns,
+        outer_fold_size=args.outer_fold_size,
+    )
+    fold_summary_path = output_dir / "policy_outer_fold_summary.csv"
+    fold_summary.to_csv(fold_summary_path, index=False)
+
     gates: list[dict[str, object]] = []
-    for policy in POLICY_SPECS:
+    for policy in policy_specs:
         if policy.policy_id == args.baseline_policy_id:
             continue
         passed, reasons = _passes_gate(
@@ -348,6 +493,7 @@ def run(args: argparse.Namespace) -> int:
             min_coverage_ratio=args.min_coverage_ratio,
             min_median_ratio=args.min_median_ratio,
             max_high_disagreement_rate=args.max_high_disagreement_rate,
+            max_single_date_edge_share=args.max_single_date_edge_share,
         )
         gates.append(
             {
@@ -358,14 +504,19 @@ def run(args: argparse.Namespace) -> int:
         )
     manifest = {
         "kind": "d5_practical_policy_split_evaluation",
-        "active_outcomes": str(args.active_outcomes.resolve()),
-        "practical_outcomes": str(args.practical_outcomes.resolve()),
+        "outcomes": {key: str(path.resolve()) for key, path in sorted(outcome_paths.items())},
         "tune_end_date": args.tune_end_date.isoformat(),
         "holdout_start_date": args.holdout_start_date.isoformat(),
+        "outer_fold_size": args.outer_fold_size,
+        "contaminated_windows": args.contaminated_window,
         "baseline_policy_id": args.baseline_policy_id,
-        "policies": [asdict(policy) for policy in POLICY_SPECS],
+        "policy_set": args.policy_set,
+        "candidate_policy_count": len(
+            [policy for policy in policy_specs if policy.policy_id != args.baseline_policy_id]
+        ),
+        "policies": [asdict(policy) for policy in policy_specs],
         "gates": gates,
-        "outputs": [str(summary_path), str(wide_path), str(selected_path)],
+        "outputs": [str(summary_path), str(wide_path), str(fold_summary_path), str(selected_path)],
         "promotion_disabled": True,
         "db_read_only": True,
     }
@@ -373,6 +524,7 @@ def run(args: argparse.Namespace) -> int:
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"summary={summary_path}")
     print(f"top1_by_date={wide_path}")
+    print(f"outer_folds={fold_summary_path}")
     print(f"manifest={manifest_path}")
     print(json.dumps({"gates": gates}, ensure_ascii=False, indent=2))
     return 0
@@ -385,16 +537,42 @@ def build_parser() -> argparse.ArgumentParser:
             "This is artifact-only: it reads walk-forward outcome CSVs and never touches DB state."
         )
     )
-    parser.add_argument("--active-outcomes", required=True, type=Path)
-    parser.add_argument("--practical-outcomes", required=True, type=Path)
+    parser.add_argument("--active-outcomes", type=Path)
+    parser.add_argument("--practical-outcomes", type=Path)
+    parser.add_argument(
+        "--outcome",
+        action="append",
+        default=[],
+        type=_parse_key_path,
+        metavar="KEY=PATH",
+        help=(
+            "Outcome CSV keyed by model/policy source. Required keys depend on --policy-set; "
+            "for current use active=..., practical_v1=..., practical_v2=..."
+        ),
+    )
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument(
+        "--policy-set",
+        choices=sorted(POLICY_SETS),
+        default="abc",
+        help="Predeclared policy set to evaluate. Use 'current' for baseline-only reruns.",
+    )
     parser.add_argument("--tune-end-date", type=_parse_date, default=date(2026, 3, 31))
     parser.add_argument("--holdout-start-date", type=_parse_date, default=date(2026, 4, 1))
     parser.add_argument("--top-ns", nargs="+", type=int, default=[1, 3, 5])
     parser.add_argument("--baseline-policy-id", default="active_current")
+    parser.add_argument("--outer-fold-size", type=int, default=0)
+    parser.add_argument(
+        "--contaminated-window",
+        action="append",
+        default=[],
+        type=_parse_window,
+        metavar="NAME:START:END",
+    )
     parser.add_argument("--min-coverage-ratio", type=float, default=0.70)
     parser.add_argument("--min-median-ratio", type=float, default=0.80)
     parser.add_argument("--max-high-disagreement-rate", type=float, default=0.10)
+    parser.add_argument("--max-single-date-edge-share", type=float, default=0.40)
     return parser
 
 
