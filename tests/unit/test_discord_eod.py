@@ -162,3 +162,36 @@ def test_format_pick_block_translates_d5_reason_tags_to_korean() -> None:
     assert "상대 강도가 살아나는 흐름" in rendered
     assert "원점수 상위 신호를 최대한 보존함" in rendered
     assert "raw_alpha_leader_preserved" not in rendered
+
+
+def test_format_pick_block_labels_d5_buyability_candidate_without_score_band_conflict() -> None:
+    row = pd.Series(
+        {
+            "horizon": 5,
+            "symbol": "403870",
+            "company_name": "HPSP",
+            "market": "KOSDAQ",
+            "industry": "반도체",
+            "sector": "기술",
+            "final_selection_value": 36.5,
+            "grade": "C",
+            "selection_date": "2026-04-24 00:00:00",
+            "next_entry_trade_date": "2026-04-27 00:00:00",
+            "selection_close_price": 30000,
+            "expected_excess_return": 0.018,
+            "buyability_priority_score": 1.42,
+            "lower_band": -0.02,
+            "upper_band": 0.04,
+            "model_spec_id": "alpha_swing_d5_v2",
+            "active_alpha_model_id": "freeze_alpha_active_model-xxx",
+            "top_reason_tags_json": '["residual_strength_improving"]',
+            "risk_flags_json": "[]",
+        }
+    )
+
+    rendered = "\n".join(_format_pick_block(row, rank=1))
+
+    assert "실전 검토 후보" in rendered
+    assert "매수 보류" not in rendered
+    assert "차단 리스크 없음" in rendered
+    assert "불확실성 보정 우선순위 상위" in rendered

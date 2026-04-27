@@ -18,6 +18,7 @@ from app.discord_bot.data_views import (
 )
 from app.ml.promotion import load_alpha_promotion_summary
 from app.ops.common import JobStatus, OpsJobResult
+from app.recommendation.buyability import buyability_priority_score, has_buyability_blocker
 from app.recommendation.judgement import (
     ScoreBandEvidence,
     classify_recommendation,
@@ -41,6 +42,7 @@ from app.storage.metadata_postgres import (
 
 BOT_SNAPSHOT_TABLE = "fact_discord_bot_snapshot"
 BOT_PICK_LIMIT = 20
+BOT_D5_CORE_PICK_LIMIT = 1
 BOT_WEEKLY_LIMIT = 4
 BOT_SNAPSHOT_TYPES = ("status", "next_picks", "weekly_report", "stock_summary")
 
@@ -199,9 +201,41 @@ def _build_pick_rows(
     working = frame.loc[pd.to_numeric(frame["horizon"], errors="coerce") == int(horizon)].copy()
     if working.empty:
         return []
+    is_d5_candidate_surface = int(horizon) == 5
+    if is_d5_candidate_surface:
+        working["raw_risks_list"] = working["risks"].apply(_parse_raw_json_list)
+        expected = pd.to_numeric(working["expected_excess_return"], errors="coerce")
+        eligible = (
+            working["eligible_flag"].astype(bool)
+            if "eligible_flag" in working.columns
+            else pd.Series(True, index=working.index)
+        )
+        working = working.loc[
+            eligible
+            & (expected > 0.0)
+            & ~working["raw_risks_list"].apply(has_buyability_blocker)
+        ].copy()
+        if working.empty:
+            return []
+        working["buyability_priority_score"] = working.apply(
+            lambda row: buyability_priority_score(
+                expected_excess_return=row.get("expected_excess_return"),
+                uncertainty_score=row.get("uncertainty_score"),
+                disagreement_score=row.get("disagreement_score"),
+            ),
+            axis=1,
+        )
+        working = working.sort_values(
+            ["buyability_priority_score", "symbol"],
+            ascending=[False, True],
+        ).head(BOT_D5_CORE_PICK_LIMIT)
+    else:
+        working = working.head(BOT_PICK_LIMIT)
     rows: list[dict[str, object]] = []
-    for rank, row in enumerate(working.head(BOT_PICK_LIMIT).itertuples(index=False), start=1):
-        raw_risks = _parse_raw_json_list(getattr(row, "risks", "[]"))
+    for rank, row in enumerate(working.itertuples(index=False), start=1):
+        raw_risks = getattr(row, "raw_risks_list", None)
+        if raw_risks is None:
+            raw_risks = _parse_raw_json_list(getattr(row, "risks", "[]"))
         reasons = _parse_json_list(getattr(row, "reasons", "[]"), REASON_LABELS)[:2]
         risks = _parse_json_list(getattr(row, "risks", "[]"), RISK_LABELS)[:2]
         judgement = classify_recommendation(
@@ -210,28 +244,41 @@ def _build_pick_rows(
             risk_flags=raw_risks,
             evidence_by_band=score_evidence,
         )
+        display_label = "실전 검토 후보" if is_d5_candidate_surface else judgement.label
+        display_summary = (
+            "차단 리스크 없음 · 불확실성 보정 우선순위 상위"
+            if is_d5_candidate_surface
+            else judgement.summary
+        )
         summary_parts = [
-            judgement.label,
+            display_label,
             f"점수 {_format_number(getattr(row, 'final_selection_value', None))}",
             f"등급 {_safe_text(getattr(row, 'grade', None))}",
             f"기대 {_format_percent(getattr(row, 'expected_excess_return', None), signed=True)}",
             f"진입 {_safe_text(getattr(row, 'next_entry_trade_date', None))}",
         ]
+        if is_d5_candidate_surface:
+            summary_parts.append(
+                f"우선순위 {_format_number(getattr(row, 'buyability_priority_score', None), decimals=2)}"
+            )
         if reasons:
             summary_parts.append(f"핵심 근거 {', '.join(reasons)}")
         if risks:
             summary_parts.append(f"유의할 리스크 {', '.join(risks)}")
+        else:
+            summary_parts.append("차단 리스크 없음")
         payload = {
             "selection_date": _safe_text(getattr(row, "selection_date", None)),
             "next_entry_trade_date": _safe_text(getattr(row, "next_entry_trade_date", None)),
             "grade": _safe_text(getattr(row, "grade", None)),
             "expected_excess_return": getattr(row, "expected_excess_return", None),
             "final_selection_value": getattr(row, "final_selection_value", None),
+            "buyability_priority_score": getattr(row, "buyability_priority_score", None),
             "industry": _safe_text(getattr(row, "industry", None)),
             "sector": _safe_text(getattr(row, "sector", None)),
             "model_spec_id": _model_label(getattr(row, "model_spec_id", None)),
-            "judgement_label": judgement.label,
-            "judgement_summary": judgement.summary,
+            "judgement_label": display_label,
+            "judgement_summary": display_summary,
             "score_band": judgement.score_band,
             "reasons": reasons,
             "risks": risks,
@@ -417,7 +464,6 @@ def _build_stock_summary_rows(
                 f"D5 {d5_grade}",
                 f"기대 {_format_percent(d5_expected, signed=True)}",
                 f"5일수익 {_format_percent(getattr(item, 'ret_5d', None), signed=True)}",
-                f"뉴스 {_format_number(getattr(item, 'news_count_3d', None), decimals=0)}건",
             ]
         )
         payload = {

@@ -18,6 +18,11 @@ from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ml.promotion import load_alpha_promotion_summary
 from app.ranking.risk_taxonomy import BUYABILITY_BLOCKING_RISK_FLAGS
+from app.recommendation.buyability import (
+    BUYABILITY_DISAGREEMENT_PENALTY,
+    BUYABILITY_EXPECTED_RETURN_WEIGHT,
+    BUYABILITY_UNCERTAINTY_PENALTY,
+)
 from app.recommendation.judgement import (
     ScoreBandEvidence,
     classify_recommendation,
@@ -33,7 +38,8 @@ DISCORD_MESSAGE_LIMIT = 1800
 DISCORD_EOD_CANDIDATE_HORIZON = 5
 DISCORD_EOD_SECTOR_HORIZON = 5
 DISCORD_EOD_REFERENCE_HORIZON = 1
-DISCORD_EOD_MIN_CANDIDATE_SCORE = 55.0
+DISCORD_EOD_D5_CORE_CANDIDATE_LIMIT = 1
+DISCORD_EOD_MIN_REFERENCE_SCORE = 55.0
 
 REASON_LABELS = {
     "ml_alpha_supportive": "최근 흐름과 모델 판단이 함께 받쳐줌",
@@ -246,10 +252,41 @@ def _load_top_selection_rows(
     horizon: int,
     limit: int,
 ) -> pd.DataFrame:
+    is_d5_candidate_surface = int(horizon) == DISCORD_EOD_CANDIDATE_HORIZON
     blocking_risk_filters = "\n".join(
         f"          AND NOT contains(COALESCE(ranking.risk_flags_json, ''), '\"{flag}\"')"
         for flag in sorted(BUYABILITY_BLOCKING_RISK_FLAGS)
     )
+    score_floor_filter = (
+        ""
+        if is_d5_candidate_surface
+        else "          AND ranking.final_selection_value >= ?\n"
+    )
+    order_expression = (
+        "buyability_priority_score DESC, ranking.symbol"
+        if is_d5_candidate_surface
+        else "ranking.final_selection_value DESC, ranking.symbol"
+    )
+    effective_limit = (
+        min(int(limit), DISCORD_EOD_D5_CORE_CANDIDATE_LIMIT)
+        if is_d5_candidate_surface
+        else int(limit)
+    )
+    params: list[object] = [
+        as_of_date,
+        as_of_date,
+        BUYABILITY_EXPECTED_RETURN_WEIGHT,
+        BUYABILITY_UNCERTAINTY_PENALTY,
+        BUYABILITY_DISAGREEMENT_PENALTY,
+        ALPHA_PREDICTION_VERSION,
+        SELECTION_ENGINE_V2_VERSION,
+        as_of_date,
+        horizon,
+        SELECTION_ENGINE_V2_VERSION,
+    ]
+    if not is_d5_candidate_surface:
+        params.append(DISCORD_EOD_MIN_REFERENCE_SCORE)
+    params.append(effective_limit)
     return connection.execute(
         f"""
         WITH active_models AS (
@@ -274,6 +311,7 @@ def _load_top_selection_rows(
                 WHERE calendar.trading_date > ranking.as_of_date
                   AND calendar.is_trading_day
             ) AS next_entry_trade_date,
+            ranking.horizon,
             ranking.symbol,
             symbol.company_name,
             symbol.market,
@@ -286,6 +324,13 @@ def _load_top_selection_rows(
             prediction.expected_excess_return,
             prediction.lower_band,
             prediction.upper_band,
+            prediction.uncertainty_score,
+            prediction.disagreement_score,
+            (
+                COALESCE(prediction.expected_excess_return, 0.0) * ?
+                - COALESCE(prediction.uncertainty_score, 0.0) * ?
+                - COALESCE(prediction.disagreement_score, 0.0) * ?
+            ) AS buyability_priority_score,
             COALESCE(active_models.model_spec_id, prediction.model_spec_id) AS model_spec_id,
             COALESCE(active_models.active_alpha_model_id, prediction.active_alpha_model_id) AS active_alpha_model_id,
             daily.close AS selection_close_price
@@ -307,23 +352,12 @@ def _load_top_selection_rows(
           AND ranking.horizon = ?
           AND ranking.ranking_version = ?
           AND ranking.eligible_flag = TRUE
-          AND ranking.final_selection_value >= ?
           AND COALESCE(prediction.expected_excess_return, 0.0) > 0.0
-{blocking_risk_filters}
-        ORDER BY ranking.final_selection_value DESC, ranking.symbol
+{score_floor_filter}{blocking_risk_filters}
+        ORDER BY {order_expression}
         LIMIT ?
         """,
-        [
-            as_of_date,
-            as_of_date,
-            ALPHA_PREDICTION_VERSION,
-            SELECTION_ENGINE_V2_VERSION,
-            as_of_date,
-            horizon,
-            SELECTION_ENGINE_V2_VERSION,
-            DISCORD_EOD_MIN_CANDIDATE_SCORE,
-            limit,
-        ],
+        params,
     ).fetchdf()
 
 
@@ -519,9 +553,20 @@ def _format_pick_block(
         risk_flags=_raw_tag_list(row.get("risk_flags_json")),
         evidence_by_band=score_evidence,
     )
+    is_d5_buyability_pick = (
+        int(row.get("horizon", 0) or 0) == DISCORD_EOD_CANDIDATE_HORIZON
+        and pd.notna(row.get("buyability_priority_score"))
+    )
+    display_label = "실전 검토 후보" if is_d5_buyability_pick else judgement.label
+    display_summary = (
+        "차단 리스크 없음 · 불확실성 보정 우선순위 상위"
+        if is_d5_buyability_pick
+        else judgement.summary
+    )
+    risk_text = "차단 리스크 없음" if risks == "-" else risks
     score = float(row["final_selection_value"])
     expected_text = _pct_text(row.get("expected_excess_return"))
-    detail = f"   - {judgement.summary} | 근거 {reasons} | 리스크 {risks}"
+    detail = f"   - {display_summary} | 근거 {reasons} | 리스크 {risk_text}"
     if pd.notna(row.get("selection_close_price")) and pd.notna(
         row.get("expected_excess_return")
     ):
@@ -530,7 +575,7 @@ def _format_pick_block(
         detail += f" | {base_price:,.0f}→{target_price:,.0f}원"
     return [
         (
-            f"{rank}. `{row['symbol']}` {row['company_name']} · {judgement.label}"
+            f"{rank}. `{row['symbol']}` {row['company_name']} · {display_label}"
             f" | 점수 {score:.1f}/{row['grade']} | 기대 {expected_text}"
         ),
         detail,

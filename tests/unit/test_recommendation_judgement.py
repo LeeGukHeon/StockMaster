@@ -80,3 +80,23 @@ def test_classify_recommendation_blocks_buy_when_band_sample_is_too_small() -> N
 
     assert judgement.label == "매수 보류"
     assert "점수대 우위 약함" in judgement.summary
+
+
+def test_buyability_priority_score_penalizes_model_risk() -> None:
+    from app.recommendation.buyability import buyability_priority_score, has_buyability_blocker
+
+    stable = buyability_priority_score(
+        expected_excess_return=0.03,
+        uncertainty_score=5,
+        disagreement_score=10,
+    )
+    unstable = buyability_priority_score(
+        expected_excess_return=0.03,
+        uncertainty_score=80,
+        disagreement_score=90,
+    )
+
+    assert stable > unstable
+    assert round(stable, 6) == 2.6
+    assert has_buyability_blocker(["thin_liquidity"])
+    assert not has_buyability_blocker(["model_disagreement_high"])

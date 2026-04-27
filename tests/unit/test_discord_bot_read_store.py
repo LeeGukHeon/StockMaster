@@ -41,3 +41,113 @@ def test_fetch_active_job_runs_requires_unreleased_active_lock(monkeypatch) -> N
     assert "JOIN fact_active_lock AS active_lock" in query
     assert "active_lock.owner_run_id = job.run_id" in query
     assert "active_lock.released_at IS NULL" in query
+
+
+def test_build_pick_rows_uses_single_d5_buyability_candidate() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "horizon": 5,
+                "eligible_flag": True,
+                "symbol": "111111",
+                "company_name": "차단종목",
+                "market": "KOSDAQ",
+                "industry": "바이오",
+                "sector": "헬스케어",
+                "final_selection_value": 90.0,
+                "grade": "A",
+                "selection_date": "2026-04-24",
+                "next_entry_trade_date": "2026-04-27",
+                "expected_excess_return": 0.20,
+                "uncertainty_score": 1.0,
+                "disagreement_score": 1.0,
+                "model_spec_id": "alpha_swing_d5_v2",
+                "reasons": '["residual_strength_improving"]',
+                "risks": '["thin_liquidity"]',
+            },
+            {
+                "horizon": 5,
+                "eligible_flag": True,
+                "symbol": "222222",
+                "company_name": "고불확실",
+                "market": "KOSDAQ",
+                "industry": "소재",
+                "sector": "산업재",
+                "final_selection_value": 82.0,
+                "grade": "B",
+                "selection_date": "2026-04-24",
+                "next_entry_trade_date": "2026-04-27",
+                "expected_excess_return": 0.04,
+                "uncertainty_score": 95.0,
+                "disagreement_score": 90.0,
+                "model_spec_id": "alpha_swing_d5_v2",
+                "reasons": '["raw_alpha_leader_preserved"]',
+                "risks": '["model_disagreement_high"]',
+            },
+            {
+                "horizon": 5,
+                "eligible_flag": True,
+                "symbol": "333333",
+                "company_name": "안정후보",
+                "market": "KOSDAQ",
+                "industry": "반도체",
+                "sector": "기술",
+                "final_selection_value": 48.0,
+                "grade": "C",
+                "selection_date": "2026-04-24",
+                "next_entry_trade_date": "2026-04-27",
+                "expected_excess_return": 0.03,
+                "uncertainty_score": 2.0,
+                "disagreement_score": 3.0,
+                "model_spec_id": "alpha_swing_d5_v2",
+                "reasons": '["residual_strength_improving"]',
+                "risks": "[]",
+            },
+        ]
+    )
+
+    rows = read_store._build_pick_rows(
+        frame,
+        horizon=5,
+        built_at="2026-04-27T00:00:00+09:00",
+        as_of_date="2026-04-24",
+        source_run_id="test",
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "333333"
+    assert rows[0]["sort_order"] == 1
+    assert "실전 검토 후보" in rows[0]["summary"]
+    assert "매수 보류" not in rows[0]["summary"]
+    assert rows[0]["payload_json"]
+
+
+def test_build_stock_summary_rows_omits_news_noise() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "symbol": "005930",
+                "company_name": "삼성전자",
+                "market": "KOSPI",
+                "d1_selection_v2_grade": "B",
+                "d5_selection_v2_grade": "C",
+                "d5_alpha_expected_excess_return": 0.01,
+                "d5_selection_v2_value": 60.0,
+                "ret_5d": 0.02,
+                "ret_20d": 0.03,
+                "news_count_3d": 99,
+                "d5_alpha_uncertainty_score": 1.0,
+            }
+        ]
+    )
+
+    rows = read_store._build_stock_summary_rows(
+        summary_frame=frame,
+        live_frame=pd.DataFrame(),
+        built_at="2026-04-27T00:00:00+09:00",
+        as_of_date="2026-04-24",
+        source_run_id="test",
+    )
+
+    assert len(rows) == 1
+    assert "뉴스" not in rows[0]["summary"]

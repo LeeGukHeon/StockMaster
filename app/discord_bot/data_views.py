@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
-
 import duckdb
 import pandas as pd
 
@@ -111,6 +109,7 @@ def leaderboard_frame(
             symbol.sector,
             symbol.industry,
             ranking.horizon,
+            ranking.eligible_flag,
             ranking.final_selection_value,
             ranking.final_selection_rank_pct,
             ranking.grade,
