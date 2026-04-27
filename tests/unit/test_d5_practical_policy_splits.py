@@ -178,3 +178,54 @@ def test_summary_includes_positive_edge_concentration() -> None:
 
     assert all_row["max_positive_edge_share"] == 0.25
     assert all_row["top_positive_edge_date"] == "2026-03-30"
+
+
+def test_portfolio_summary_uses_equal_weight_net_returns() -> None:
+    from scripts.evaluate_d5_practical_policy_splits import _portfolio_by_date, _portfolio_summary
+
+    selected = pd.DataFrame(
+        {
+            "policy_id": ["active_current", "active_current", "active_current", "active_current"],
+            "split": ["holdout", "holdout", "holdout", "holdout"],
+            "as_of_date": [date(2026, 4, 1), date(2026, 4, 1), date(2026, 4, 2), date(2026, 4, 2)],
+            "symbol": ["000001", "000002", "000001", "000002"],
+            "buyability_priority_score": [2.0, 1.0, 2.0, 1.0],
+            "excess_forward_return": [0.03, 0.01, -0.01, 0.02],
+            "market": ["KOSPI", "KOSDAQ", "KOSPI", "KOSPI"],
+        }
+    )
+
+    daily = _portfolio_by_date(selected, top_ns=[2], transaction_cost_bps=10.0)
+    summary = _portfolio_summary(
+        daily,
+        bootstrap_reps=0,
+        bootstrap_block_size=2,
+        bootstrap_seed=1,
+    )
+
+    assert daily["portfolio_net_excess_return"].round(3).tolist() == [0.019, 0.004]
+    row = summary.iloc[0]
+    assert round(row["avg_net"], 4) == 0.0115
+    assert round(row["cumulative_net"], 6) == round((1.019 * 1.004) - 1.0, 6)
+    assert row["max_market_concentration"] == 1.0
+
+
+def test_candidate_count_guard_rejects_large_policy_sets(tmp_path: Path) -> None:
+    from scripts.evaluate_d5_practical_policy_splits import run
+
+    args = SimpleNamespace(
+        output_dir=tmp_path,
+        policy_set="abc",
+        baseline_policy_id="active_current",
+        max_candidate_policy_count=2,
+        outcome=[],
+        active_outcomes=None,
+        practical_outcomes=None,
+    )
+
+    try:
+        run(args)
+    except RuntimeError as exc:
+        assert "Candidate policy count exceeds guardrail" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("guard should reject abc policy set by default")

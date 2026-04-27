@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +28,7 @@ from app.recommendation.buyability import (
 )
 
 HIGH_DISAGREEMENT_FLAG = "model_disagreement_high"
+DEFAULT_TRANSACTION_COST_BPS = 15.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +142,69 @@ def _safe_numeric(frame: pd.DataFrame, column: str, *, default: float = 0.0) -> 
     return pd.to_numeric(frame[column], errors="coerce").fillna(default)
 
 
+def _git_sha() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def _transaction_cost_rate(transaction_cost_bps: float) -> float:
+    return max(float(transaction_cost_bps), 0.0) / 10_000.0
+
+
+def _net_realized_return(frame: pd.DataFrame, *, transaction_cost_bps: float) -> pd.Series:
+    return _safe_numeric(frame, "excess_forward_return") - _transaction_cost_rate(transaction_cost_bps)
+
+
+def _max_drawdown(returns: pd.Series) -> float | None:
+    values = pd.to_numeric(returns, errors="coerce").dropna()
+    if values.empty:
+        return None
+    equity = (1.0 + values).cumprod()
+    drawdown = equity.div(equity.cummax()).sub(1.0)
+    return float(drawdown.min())
+
+
+def _max_group_concentration(frame: pd.DataFrame, column: str) -> float | None:
+    if column not in frame.columns or frame.empty:
+        return None
+    values = frame[column].fillna("UNKNOWN").astype(str)
+    if values.empty:
+        return None
+    return float(values.value_counts(normalize=True).max())
+
+
+def _bootstrap_mean_ci(
+    values: pd.Series,
+    *,
+    reps: int,
+    block_size: int,
+    seed: int,
+) -> tuple[float | None, float | None]:
+    clean = pd.to_numeric(values, errors="coerce").dropna().to_numpy(dtype=float)
+    if len(clean) == 0 or reps <= 0:
+        return None, None
+    if len(clean) == 1:
+        single = float(clean[0])
+        return single, single
+    block = max(1, min(int(block_size), len(clean)))
+    rng = np.random.default_rng(int(seed))
+    means: list[float] = []
+    for _ in range(int(reps)):
+        sampled: list[float] = []
+        while len(sampled) < len(clean):
+            start = int(rng.integers(0, len(clean)))
+            sampled.extend(float(clean[(start + offset) % len(clean)]) for offset in range(block))
+        means.append(float(np.mean(sampled[: len(clean)])))
+    return float(np.quantile(means, 0.05)), float(np.quantile(means, 0.95))
+
+
 def _load_outcome_frame(path: Path, *, model_key: str) -> pd.DataFrame:
     frame = pd.read_csv(path, low_memory=False)
     if frame.empty:
@@ -230,11 +296,15 @@ def _select_top_by_date(
     )
 
 
-def _positive_edge_concentration(frame: pd.DataFrame) -> tuple[float | None, str | None]:
+def _positive_edge_concentration(
+    frame: pd.DataFrame,
+    *,
+    transaction_cost_bps: float,
+) -> tuple[float | None, str | None]:
     if frame.empty:
         return None, None
     date_edge = (
-        frame.assign(_positive_edge=_safe_numeric(frame, "excess_forward_return").clip(lower=0.0))
+        frame.assign(_positive_edge=_net_realized_return(frame, transaction_cost_bps=transaction_cost_bps).clip(lower=0.0))
         .groupby("as_of_date", sort=True)["_positive_edge"]
         .sum()
     )
@@ -251,6 +321,7 @@ def _metric_row(
     policy_id: str,
     split_name: str,
     top_n: int,
+    transaction_cost_bps: float = 0.0,
 ) -> dict[str, object]:
     if frame.empty:
         return {
@@ -264,6 +335,12 @@ def _metric_row(
             "hit": None,
             "p25": None,
             "p10": None,
+            "p5": None,
+            "avg_net": None,
+            "median_net": None,
+            "p10_net": None,
+            "p5_net": None,
+            "hit_net": None,
             "blocker_rate": None,
             "high_disagreement_rate": None,
             "avg_pred": None,
@@ -271,7 +348,11 @@ def _metric_row(
             "top_positive_edge_date": None,
         }
     realized = _safe_numeric(frame, "excess_forward_return")
-    max_edge_share, top_edge_date = _positive_edge_concentration(frame)
+    net_realized = _net_realized_return(frame, transaction_cost_bps=transaction_cost_bps)
+    max_edge_share, top_edge_date = _positive_edge_concentration(
+        frame,
+        transaction_cost_bps=transaction_cost_bps,
+    )
     return {
         "policy_id": policy_id,
         "split": split_name,
@@ -283,6 +364,12 @@ def _metric_row(
         "hit": float(realized.gt(0.0).mean()),
         "p25": float(realized.quantile(0.25)),
         "p10": float(realized.quantile(0.10)),
+        "p5": float(realized.quantile(0.05)),
+        "avg_net": float(net_realized.mean()),
+        "median_net": float(net_realized.median()),
+        "p10_net": float(net_realized.quantile(0.10)),
+        "p5_net": float(net_realized.quantile(0.05)),
+        "hit_net": float(net_realized.gt(0.0).mean()),
         "blocker_rate": float(frame["policy_blocked"].mean()),
         "high_disagreement_rate": float(frame["high_model_disagreement"].mean()),
         "avg_pred": float(_safe_numeric(frame, "expected_excess_return").mean()),
@@ -291,7 +378,12 @@ def _metric_row(
     }
 
 
-def _summarise(selected: pd.DataFrame, *, top_ns: Iterable[int]) -> pd.DataFrame:
+def _summarise(
+    selected: pd.DataFrame,
+    *,
+    top_ns: Iterable[int],
+    transaction_cost_bps: float = 0.0,
+) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for policy_id, policy_frame in selected.groupby("policy_id", sort=False):
         for split_name in ("all", "tune", "holdout"):
@@ -306,6 +398,7 @@ def _summarise(selected: pd.DataFrame, *, top_ns: Iterable[int]) -> pd.DataFrame
                         policy_id=str(policy_id),
                         split_name=split_name,
                         top_n=int(top_n),
+                        transaction_cost_bps=transaction_cost_bps,
                     )
                 )
     return pd.DataFrame(rows)
@@ -328,6 +421,7 @@ def _outer_fold_summary(
     *,
     top_ns: Iterable[int],
     outer_fold_size: int,
+    transaction_cost_bps: float = 0.0,
 ) -> pd.DataFrame:
     if selected.empty or outer_fold_size <= 0:
         return pd.DataFrame()
@@ -348,11 +442,108 @@ def _outer_fold_summary(
                     policy_id=str(policy_id),
                     split_name=fold_name,
                     top_n=int(top_n),
+                    transaction_cost_bps=transaction_cost_bps,
                 )
                 row["fold_start_date"] = min(fold_dates).isoformat()
                 row["fold_end_date"] = max(fold_dates).isoformat()
                 row["prior_date_count"] = len(prior_dates)
                 rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _portfolio_by_date(
+    selected: pd.DataFrame,
+    *,
+    top_ns: Iterable[int],
+    transaction_cost_bps: float,
+) -> pd.DataFrame:
+    if selected.empty:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for (policy_id, split_name, as_of_date), group in selected.groupby(
+        ["policy_id", "split", "as_of_date"],
+        sort=True,
+        dropna=False,
+    ):
+        for top_n in top_ns:
+            top = _select_top_by_date(group, top_n=int(top_n))
+            if top.empty:
+                continue
+            gross = _safe_numeric(top, "excess_forward_return")
+            net = _net_realized_return(top, transaction_cost_bps=transaction_cost_bps)
+            rows.append(
+                {
+                    "policy_id": str(policy_id),
+                    "split": str(split_name),
+                    "as_of_date": pd.Timestamp(as_of_date).date().isoformat(),
+                    "top_n": int(top_n),
+                    "n_names": int(len(top)),
+                    "portfolio_gross_excess_return": float(gross.mean()),
+                    "portfolio_net_excess_return": float(net.mean()),
+                    "portfolio_hit_rate": float(net.gt(0.0).mean()),
+                    "market_concentration": _max_group_concentration(top, "market"),
+                    "sector_concentration": _max_group_concentration(top, "sector"),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _portfolio_summary(
+    portfolio_by_date: pd.DataFrame,
+    *,
+    bootstrap_reps: int,
+    bootstrap_block_size: int,
+    bootstrap_seed: int,
+) -> pd.DataFrame:
+    if portfolio_by_date.empty:
+        return pd.DataFrame()
+    rows: list[dict[str, object]] = []
+    for (policy_id, split_name, top_n), group in portfolio_by_date.groupby(
+        ["policy_id", "split", "top_n"],
+        sort=True,
+        dropna=False,
+    ):
+        ordered = group.sort_values("as_of_date")
+        gross = pd.to_numeric(ordered["portfolio_gross_excess_return"], errors="coerce")
+        net = pd.to_numeric(ordered["portfolio_net_excess_return"], errors="coerce")
+        ci_low, ci_high = _bootstrap_mean_ci(
+            net,
+            reps=int(bootstrap_reps),
+            block_size=int(bootstrap_block_size),
+            seed=int(bootstrap_seed),
+        )
+        rows.append(
+            {
+                "policy_id": str(policy_id),
+                "split": str(split_name),
+                "top_n": int(top_n),
+                "dates": int(ordered["as_of_date"].nunique()),
+                "avg_gross": float(gross.mean()),
+                "avg_net": float(net.mean()),
+                "median_net": float(net.median()),
+                "p25_net": float(net.quantile(0.25)),
+                "p10_net": float(net.quantile(0.10)),
+                "p5_net": float(net.quantile(0.05)),
+                "hit_net": float(net.gt(0.0).mean()),
+                "cumulative_net": float((1.0 + net).prod() - 1.0),
+                "max_drawdown_net": _max_drawdown(net),
+                "mean_net_ci05": ci_low,
+                "mean_net_ci95": ci_high,
+                "avg_names": float(pd.to_numeric(ordered["n_names"], errors="coerce").mean()),
+                "avg_market_concentration": None
+                if "market_concentration" not in ordered.columns
+                else float(pd.to_numeric(ordered["market_concentration"], errors="coerce").mean()),
+                "max_market_concentration": None
+                if "market_concentration" not in ordered.columns
+                else float(pd.to_numeric(ordered["market_concentration"], errors="coerce").max()),
+                "avg_sector_concentration": None
+                if "sector_concentration" not in ordered.columns
+                else float(pd.to_numeric(ordered["sector_concentration"], errors="coerce").mean()),
+                "max_sector_concentration": None
+                if "sector_concentration" not in ordered.columns
+                else float(pd.to_numeric(ordered["sector_concentration"], errors="coerce").max()),
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -435,6 +626,14 @@ def run(args: argparse.Namespace) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     policy_specs = _resolve_policy_specs(args.policy_set)
+    candidate_policy_count = len(
+        [policy for policy in policy_specs if policy.policy_id != args.baseline_policy_id]
+    )
+    if args.max_candidate_policy_count >= 0 and candidate_policy_count > args.max_candidate_policy_count:
+        raise RuntimeError(
+            "Candidate policy count exceeds guardrail: "
+            f"{candidate_policy_count} > {args.max_candidate_policy_count}"
+        )
     outcome_paths = _resolve_outcome_paths(args)
     required_keys = {policy.model_key for policy in policy_specs}
     missing_keys = sorted(key for key in required_keys if key not in outcome_paths)
@@ -466,7 +665,15 @@ def run(args: argparse.Namespace) -> int:
     selected_path = output_dir / "policy_candidate_rows.csv"
     selected.to_csv(selected_path, index=False)
 
-    summary = _summarise(selected, top_ns=args.top_ns) if not selected.empty else pd.DataFrame()
+    summary = (
+        _summarise(
+            selected,
+            top_ns=args.top_ns,
+            transaction_cost_bps=args.transaction_cost_bps,
+        )
+        if not selected.empty
+        else pd.DataFrame()
+    )
     summary_path = output_dir / "policy_split_summary.csv"
     summary.to_csv(summary_path, index=False)
 
@@ -478,9 +685,26 @@ def run(args: argparse.Namespace) -> int:
         selected,
         top_ns=args.top_ns,
         outer_fold_size=args.outer_fold_size,
+        transaction_cost_bps=args.transaction_cost_bps,
     )
     fold_summary_path = output_dir / "policy_outer_fold_summary.csv"
     fold_summary.to_csv(fold_summary_path, index=False)
+
+    portfolio_daily = _portfolio_by_date(
+        selected,
+        top_ns=args.top_ns,
+        transaction_cost_bps=args.transaction_cost_bps,
+    )
+    portfolio_daily_path = output_dir / "policy_portfolio_by_date.csv"
+    portfolio_daily.to_csv(portfolio_daily_path, index=False)
+    portfolio_summary = _portfolio_summary(
+        portfolio_daily,
+        bootstrap_reps=args.bootstrap_reps,
+        bootstrap_block_size=args.bootstrap_block_size,
+        bootstrap_seed=args.bootstrap_seed,
+    )
+    portfolio_summary_path = output_dir / "policy_portfolio_summary.csv"
+    portfolio_summary.to_csv(portfolio_summary_path, index=False)
 
     gates: list[dict[str, object]] = []
     for policy in policy_specs:
@@ -511,12 +735,23 @@ def run(args: argparse.Namespace) -> int:
         "contaminated_windows": args.contaminated_window,
         "baseline_policy_id": args.baseline_policy_id,
         "policy_set": args.policy_set,
-        "candidate_policy_count": len(
-            [policy for policy in policy_specs if policy.policy_id != args.baseline_policy_id]
-        ),
+        "candidate_policy_count": candidate_policy_count,
+        "max_candidate_policy_count": args.max_candidate_policy_count,
         "policies": [asdict(policy) for policy in policy_specs],
         "gates": gates,
-        "outputs": [str(summary_path), str(wide_path), str(fold_summary_path), str(selected_path)],
+        "outputs": [
+            str(summary_path),
+            str(wide_path),
+            str(fold_summary_path),
+            str(selected_path),
+            str(portfolio_daily_path),
+            str(portfolio_summary_path),
+        ],
+        "transaction_cost_bps": args.transaction_cost_bps,
+        "bootstrap_reps": args.bootstrap_reps,
+        "bootstrap_block_size": args.bootstrap_block_size,
+        "bootstrap_seed": args.bootstrap_seed,
+        "repo_sha": _git_sha(),
         "promotion_disabled": True,
         "db_read_only": True,
     }
@@ -525,6 +760,8 @@ def run(args: argparse.Namespace) -> int:
     print(f"summary={summary_path}")
     print(f"top1_by_date={wide_path}")
     print(f"outer_folds={fold_summary_path}")
+    print(f"portfolio_by_date={portfolio_daily_path}")
+    print(f"portfolio_summary={portfolio_summary_path}")
     print(f"manifest={manifest_path}")
     print(json.dumps({"gates": gates}, ensure_ascii=False, indent=2))
     return 0
@@ -573,6 +810,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-median-ratio", type=float, default=0.80)
     parser.add_argument("--max-high-disagreement-rate", type=float, default=0.10)
     parser.add_argument("--max-single-date-edge-share", type=float, default=0.40)
+    parser.add_argument(
+        "--transaction-cost-bps",
+        type=float,
+        default=DEFAULT_TRANSACTION_COST_BPS,
+        help="Round-trip transaction cost deducted from each selected name when computing net metrics.",
+    )
+    parser.add_argument(
+        "--max-candidate-policy-count",
+        type=int,
+        default=2,
+        help="Fail fast if more non-baseline policies are evaluated; use -1 to disable.",
+    )
+    parser.add_argument("--bootstrap-reps", type=int, default=1000)
+    parser.add_argument("--bootstrap-block-size", type=int, default=5)
+    parser.add_argument("--bootstrap-seed", type=int, default=20260427)
     return parser
 
 
