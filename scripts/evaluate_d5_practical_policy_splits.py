@@ -44,6 +44,13 @@ class PolicySpec:
     conditional_priority_floor: float = 0.0
 
 
+ACTIVE_ONLY_POLICY_SPECS: tuple[PolicySpec, ...] = (
+    PolicySpec(
+        policy_id="active_current",
+        model_key="active",
+        description="Current active D5 practical surface only; no challenger policies.",
+    ),
+)
 ABC_POLICY_SPECS: tuple[PolicySpec, ...] = (
     PolicySpec(
         policy_id="active_current",
@@ -94,6 +101,7 @@ CURRENT_POLICY_SPECS: tuple[PolicySpec, ...] = (
     ),
 )
 POLICY_SETS: dict[str, tuple[PolicySpec, ...]] = {
+    "active_only": ACTIVE_ONLY_POLICY_SPECS,
     "abc": ABC_POLICY_SPECS,
     "current": CURRENT_POLICY_SPECS,
     "all": (*ABC_POLICY_SPECS, *CURRENT_POLICY_SPECS[1:]),

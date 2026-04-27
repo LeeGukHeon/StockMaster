@@ -13,7 +13,6 @@ from scripts.evaluate_d5_practical_policy_splits import (
     _policy_frame,
     _resolve_outcome_paths,
     _resolve_policy_specs,
-    _select_top_by_date,
     _summarise,
     _top1_wide,
 )
@@ -42,6 +41,12 @@ def _frame() -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(rows)
+
+
+def test_active_only_policy_set_has_no_challengers() -> None:
+    specs = _resolve_policy_specs("active_only")
+
+    assert [spec.policy_id for spec in specs] == ["active_current"]
 
 
 def test_current_policy_set_is_baseline_only() -> None:
