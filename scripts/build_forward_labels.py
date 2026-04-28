@@ -36,6 +36,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--market", default="ALL", choices=["ALL", "KOSPI", "KOSDAQ"])
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--skip-bootstrap",
+        action="store_true",
+        help="Skip DuckDB schema bootstrap when the production schema is already current.",
+    )
     return parser
 
 
@@ -55,6 +60,7 @@ def main() -> int:
         market=args.market,
         force=args.force,
         dry_run=args.dry_run,
+        bootstrap=not args.skip_bootstrap,
     )
     logger.info(
         "Forward label build completed.",

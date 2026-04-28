@@ -376,12 +376,14 @@ def build_forward_labels(
     market: str = "ALL",
     force: bool = False,
     dry_run: bool = False,
+    bootstrap: bool = True,
 ) -> ForwardLabelBuildResult:
     ensure_storage_layout(settings)
 
     with activate_run_context("build_forward_labels", as_of_date=end_date) as run_context:
         with duckdb_connection(settings.paths.duckdb_path) as connection:
-            bootstrap_core_tables(connection)
+            if bootstrap:
+                bootstrap_core_tables(connection)
             record_run_start(
                 connection,
                 run_id=run_context.run_id,
