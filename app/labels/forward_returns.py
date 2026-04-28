@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+import numpy as np
 import pandas as pd
 
 from app.common.run_context import activate_run_context
@@ -98,15 +99,37 @@ def _build_market_baseline_frame(
     return pd.DataFrame(baseline_rows)
 
 
-def _first_touch_date(path_frame: pd.DataFrame, column: str, threshold: float, *, above: bool):
-    if path_frame.empty or column not in path_frame:
+def _build_symbol_path_lookup(
+    price_frame: pd.DataFrame,
+) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    lookup: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    for symbol, group in price_frame.sort_values(["symbol", "trading_date"]).groupby(
+        "symbol", sort=False
+    ):
+        lookup[str(symbol).zfill(6)] = (
+            pd.to_datetime(group["trading_date"]).to_numpy(dtype="datetime64[D]"),
+            pd.to_numeric(group["high"], errors="coerce").to_numpy(dtype=float),
+            pd.to_numeric(group["low"], errors="coerce").to_numpy(dtype=float),
+        )
+    return lookup
+
+
+def _first_touch_date_from_returns(
+    dates: np.ndarray,
+    returns: np.ndarray,
+    threshold: float,
+    *,
+    above: bool,
+):
+    if len(dates) == 0 or len(returns) == 0:
         return None
-    values = pd.to_numeric(path_frame[column], errors="coerce")
-    mask = values.ge(threshold) if above else values.le(threshold)
-    touched = path_frame.loc[mask.fillna(False), "trading_date"]
-    if touched.empty:
+    finite_returns = np.asarray(returns, dtype=float)
+    finite_mask = np.isfinite(finite_returns)
+    touch_mask = finite_returns >= threshold if above else finite_returns <= threshold
+    indices = np.flatnonzero(finite_mask & touch_mask)
+    if len(indices) == 0:
         return None
-    return pd.Timestamp(touched.iloc[0]).date()
+    return pd.Timestamp(dates[int(indices[0])]).date()
 
 
 def _conservative_barrier_return(
@@ -133,7 +156,7 @@ def _conservative_barrier_return(
 
 
 def _path_return_metrics(
-    price_lookup: pd.DataFrame,
+    path_lookup: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
     *,
     symbol: str,
     entry_date: date,
@@ -141,24 +164,44 @@ def _path_return_metrics(
     entry_price: float,
     gross_forward_return: float,
 ) -> dict[str, object]:
-    path_slice = price_lookup.loc[
-        (slice(entry_date, exit_date), symbol),
-        ["high", "low", "close"],
-    ].reset_index()
-    high_return = pd.to_numeric(path_slice["high"], errors="coerce").div(entry_price).sub(1.0)
-    low_return = pd.to_numeric(path_slice["low"], errors="coerce").div(entry_price).sub(1.0)
-    path_slice = path_slice.assign(high_return=high_return, low_return=low_return)
-    take_profit_3_date = _first_touch_date(
-        path_slice, "high_return", TAKE_PROFIT_3_RETURN, above=True
+    dates, highs, lows = path_lookup.get(str(symbol).zfill(6), (None, None, None))
+    if dates is None or highs is None or lows is None:
+        return {
+            "max_forward_return": pd.NA,
+            "min_forward_return": pd.NA,
+            "take_profit_3_hit": False,
+            "take_profit_3_date": pd.NA,
+            "take_profit_5_hit": False,
+            "take_profit_5_date": pd.NA,
+            "stop_loss_3_hit": False,
+            "stop_loss_3_date": pd.NA,
+            "stop_loss_5_hit": False,
+            "stop_loss_5_date": pd.NA,
+            "path_return_tp3_sl3_conservative": float(gross_forward_return),
+            "path_return_tp5_sl3_conservative": float(gross_forward_return),
+        }
+    start_index = int(np.searchsorted(dates, np.datetime64(entry_date), side="left"))
+    end_index = int(np.searchsorted(dates, np.datetime64(exit_date), side="right"))
+    high_return = highs[start_index:end_index] / float(entry_price) - 1.0
+    low_return = lows[start_index:end_index] / float(entry_price) - 1.0
+    path_dates = dates[start_index:end_index]
+    take_profit_3_date = _first_touch_date_from_returns(
+        path_dates, high_return, TAKE_PROFIT_3_RETURN, above=True
     )
-    take_profit_5_date = _first_touch_date(
-        path_slice, "high_return", TAKE_PROFIT_5_RETURN, above=True
+    take_profit_5_date = _first_touch_date_from_returns(
+        path_dates, high_return, TAKE_PROFIT_5_RETURN, above=True
     )
-    stop_loss_3_date = _first_touch_date(path_slice, "low_return", STOP_LOSS_3_RETURN, above=False)
-    stop_loss_5_date = _first_touch_date(path_slice, "low_return", STOP_LOSS_5_RETURN, above=False)
+    stop_loss_3_date = _first_touch_date_from_returns(
+        path_dates, low_return, STOP_LOSS_3_RETURN, above=False
+    )
+    stop_loss_5_date = _first_touch_date_from_returns(
+        path_dates, low_return, STOP_LOSS_5_RETURN, above=False
+    )
+    has_high = bool(np.isfinite(high_return).any())
+    has_low = bool(np.isfinite(low_return).any())
     return {
-        "max_forward_return": float(high_return.max()) if high_return.notna().any() else pd.NA,
-        "min_forward_return": float(low_return.min()) if low_return.notna().any() else pd.NA,
+        "max_forward_return": float(np.nanmax(high_return)) if has_high else pd.NA,
+        "min_forward_return": float(np.nanmin(low_return)) if has_low else pd.NA,
         "take_profit_3_hit": take_profit_3_date is not None,
         "take_profit_3_date": take_profit_3_date,
         "take_profit_5_hit": take_profit_5_date is not None,
@@ -441,6 +484,7 @@ def build_forward_labels(
                 price_lookup = price_frame.set_index(["trading_date", "symbol"])[
                     ["open", "high", "low", "close"]
                 ].sort_index()
+                path_lookup = _build_symbol_path_lookup(price_frame)
                 market_baseline = _build_market_baseline_frame(
                     price_frame,
                     as_of_dates=as_of_dates,
@@ -535,7 +579,7 @@ def build_forward_labels(
                             )
                             label_row.update(
                                 _path_return_metrics(
-                                    price_lookup,
+                                    path_lookup,
                                     symbol=symbol,
                                     entry_date=entry_date,
                                     exit_date=exit_date,
