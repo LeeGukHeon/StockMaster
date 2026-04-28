@@ -280,3 +280,70 @@ def test_build_stock_summary_rows_uses_buyability_priority_for_d5_candidate() ->
     assert "매수해볼 가치 있음" not in rows[0]["summary"]
     assert "추천권·분할 접근" in rows[0]["payload_json"]
     assert "buyability_priority_score" in rows[0]["payload_json"]
+
+
+def test_build_stock_summary_rows_uses_d5_display_rank_not_raw_score_rank() -> None:
+    summary_frame = pd.DataFrame(
+        [
+            {
+                "symbol": symbol,
+                "company_name": symbol,
+                "market": "KOSPI",
+                "sector": "조선" if symbol == "009540" else "기타",
+                "industry": "조선" if symbol == "009540" else "기타",
+                "d1_selection_v2_grade": "B",
+                "d5_selection_v2_grade": "A",
+                "d5_alpha_expected_excess_return": expected,
+                "d5_selection_v2_value": score,
+                "ret_5d": 0.0,
+                "ret_20d": 0.0,
+                "news_count_3d": 0,
+                "d5_alpha_uncertainty_score": uncertainty,
+                "d5_alpha_disagreement_score": disagreement,
+            }
+            for symbol, score, expected, uncertainty, disagreement in [
+                ("000001", 90.0, 0.001, 10.0, 10.0),
+                ("000002", 80.0, 0.001, 10.0, 10.0),
+                ("000003", 70.0, 0.001, 10.0, 10.0),
+                ("009540", 56.5, 0.0065, 17.3, 33.7),
+            ]
+        ]
+    )
+    live_frame = pd.DataFrame(
+        [
+            {
+                "symbol": symbol,
+                "live_d5_selection_v2_grade": "A",
+                "live_d5_expected_excess_return": expected,
+                "live_d5_selection_v2_value": score,
+                "live_d5_selection_rank": rank,
+                "live_d5_uncertainty_score": uncertainty,
+                "live_d5_disagreement_score": disagreement,
+                "live_d5_risk_flags_json": "[]",
+                "live_d5_top_reason_tags_json": '["residual_strength_improving"]',
+                "live_d5_eligible_flag": True,
+            }
+            for rank, (symbol, score, expected, uncertainty, disagreement) in enumerate(
+                [
+                    ("000001", 90.0, 0.001, 10.0, 10.0),
+                    ("000002", 80.0, 0.001, 10.0, 10.0),
+                    ("000003", 70.0, 0.001, 10.0, 10.0),
+                    ("009540", 56.5, 0.0065, 17.3, 33.7),
+                ],
+                start=1,
+            )
+        ]
+    )
+
+    rows = read_store._build_stock_summary_rows(
+        summary_frame=summary_frame,
+        live_frame=live_frame,
+        built_at="2026-04-28T00:00:00+09:00",
+        as_of_date="2026-04-28",
+        source_run_id="test",
+    )
+
+    target = next(row for row in rows if row["symbol"] == "009540")
+    assert "매수검토" in target["summary"]
+    assert "후순위 후보" not in target["payload_json"]
+    assert '"d5_display_rank": 1' in target["payload_json"]

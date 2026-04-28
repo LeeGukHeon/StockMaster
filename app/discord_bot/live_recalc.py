@@ -35,7 +35,12 @@ from app.ml.inference import (
     build_prediction_frame_from_training_run,
 )
 from app.ml.shadow import _load_regime_map
-from app.recommendation.buyability import buyability_priority_score
+from app.recommendation.buyability import (
+    BUYABILITY_MIN_FINAL_SELECTION_VALUE,
+    buyability_priority_score,
+    d5_buyability_policy_bucket,
+    has_buyability_blocker,
+)
 from app.recommendation.judgement import classify_recommendation, load_score_band_evidence
 from app.selection.engine_v2 import build_selection_engine_v2_rankings
 from app.settings import Settings
@@ -577,6 +582,7 @@ def compute_live_stock_recommendation(
             )
 
             ranking_by_horizon: dict[int, pd.Series] = {}
+            d5_display_rank_by_symbol: dict[str, int] = {}
             for frame in ranking_frames:
                 if int(frame["horizon"].iloc[0]) == 5:
                     frame = frame.copy()
@@ -588,6 +594,60 @@ def compute_live_stock_recommendation(
                         .rank(ascending=False, method="first")
                         .astype("Int64")
                     )
+                    frame["risk_flag_list"] = frame["risk_flags_json"].map(_json_list)
+                    frame["expected_excess_return"] = pd.to_numeric(
+                        frame["expected_excess_return"], errors="coerce"
+                    )
+                    frame["final_selection_value"] = pd.to_numeric(
+                        frame["final_selection_value"], errors="coerce"
+                    )
+                    frame["buyability_priority_score"] = frame.apply(
+                        lambda row: buyability_priority_score(
+                            expected_excess_return=row.get("expected_excess_return"),
+                            uncertainty_score=row.get("uncertainty_score"),
+                            disagreement_score=row.get("disagreement_score"),
+                        ),
+                        axis=1,
+                    )
+                    frame["d5_policy_bucket"] = frame.apply(
+                        lambda row: d5_buyability_policy_bucket(
+                            selection_rank=row.get("d5_selection_rank"),
+                            expected_excess_return=row.get("expected_excess_return"),
+                            final_selection_value=row.get("final_selection_value"),
+                            risk_flags=row.get("risk_flag_list"),
+                            fallback_flag=row.get("fallback_flag"),
+                            uncertainty_score=row.get("uncertainty_score"),
+                            disagreement_score=row.get("disagreement_score"),
+                        ),
+                        axis=1,
+                    )
+                    display_candidates = frame.loc[
+                        frame["eligible_flag"].fillna(False).astype(bool)
+                        & frame["expected_excess_return"].gt(0.0)
+                        & frame["final_selection_value"].ge(BUYABILITY_MIN_FINAL_SELECTION_VALUE)
+                        & frame["d5_policy_bucket"].notna()
+                        & ~frame["risk_flag_list"].apply(has_buyability_blocker)
+                    ].copy()
+                    if not display_candidates.empty:
+                        display_candidates["d5_policy_bucket"] = display_candidates[
+                            "d5_policy_bucket"
+                        ].astype(int)
+                        display_candidates = display_candidates.sort_values(
+                            [
+                                "d5_policy_bucket",
+                                "buyability_priority_score",
+                                "d5_selection_rank",
+                                "symbol",
+                            ],
+                            ascending=[True, False, True, True],
+                        ).head(5)
+                        d5_display_rank_by_symbol = {
+                            str(row.symbol): int(rank)
+                            for rank, row in enumerate(
+                                display_candidates.itertuples(index=False),
+                                start=1,
+                            )
+                        }
                 symbol_row = frame.loc[frame["symbol"].astype(str) == normalized_symbol]
                 if symbol_row.empty:
                     continue
@@ -623,6 +683,7 @@ def compute_live_stock_recommendation(
                     disagreement_score=ranking_by_horizon.get(5, {}).get("disagreement_score"),
                 )
             )
+            d5_display_rank = d5_display_rank_by_symbol.get(normalized_symbol)
             d5_judgement = classify_recommendation(
                 final_selection_value=ranking_by_horizon.get(5, {}).get("final_selection_value"),
                 expected_excess_return=None
@@ -630,10 +691,8 @@ def compute_live_stock_recommendation(
                 else d5_prediction_row.get("expected_excess_return"),
                 risk_flags=d5_risk_flags,
                 evidence_by_band=d5_evidence,
-                candidate_selected=bool(
-                    ranking_by_horizon.get(5, {}).get("report_candidate_flag", False)
-                ),
-                candidate_rank=ranking_by_horizon.get(5, {}).get("d5_selection_rank"),
+                candidate_selected=d5_display_rank is not None,
+                candidate_rank=d5_display_rank,
                 buyability_priority_score=d5_buyability_priority_score,
             )
             expected = (
@@ -692,6 +751,7 @@ def compute_live_stock_recommendation(
                         "live_d5_report_candidate_flag": ranking_by_horizon.get(5, {}).get(
                             "report_candidate_flag"
                         ),
+                        "live_d5_display_rank": d5_display_rank,
                         "live_d5_model_spec_id": None
                         if d5_prediction_row is None
                         else d5_prediction_row.get("model_spec_id"),

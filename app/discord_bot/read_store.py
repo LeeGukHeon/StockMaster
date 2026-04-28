@@ -479,6 +479,10 @@ def _build_stock_summary_rows(
     live_by_symbol = {
         str(row.symbol): row for row in live_frame.itertuples(index=False)
     } if not live_frame.empty else {}
+    d5_display_rank_by_symbol = _d5_display_rank_by_symbol(
+        summary_frame=summary_frame,
+        live_frame=live_frame,
+    )
     rows: list[dict[str, object]] = []
     for item in summary_frame.itertuples(index=False):
         symbol = _safe_text(getattr(item, "symbol", None))
@@ -533,16 +537,15 @@ def _build_stock_summary_rows(
             )
         except (TypeError, ValueError):
             d5_candidate_rank = None
-        is_d5_candidate = bool(
-            d5_candidate_rank is not None and d5_candidate_rank <= 5
-        ) if live is not None else False
+        d5_display_rank = d5_display_rank_by_symbol.get(symbol)
+        is_d5_candidate = d5_display_rank is not None
         judgement = classify_recommendation(
             final_selection_value=d5_score,
             expected_excess_return=d5_expected,
             risk_flags=raw_d5_risks,
             evidence_by_band=score_evidence,
             candidate_selected=is_d5_candidate,
-            candidate_rank=d5_candidate_rank,
+            candidate_rank=d5_display_rank,
             buyability_priority_score=d5_buyability_priority,
         )
         summary = " · ".join(
@@ -575,6 +578,7 @@ def _build_stock_summary_rows(
             "d5_judgement_summary": judgement.summary,
             "d5_report_candidate_flag": is_d5_candidate,
             "d5_selection_rank": d5_candidate_rank,
+            "d5_display_rank": d5_display_rank,
             "buyability_priority_score": d5_buyability_priority,
             "d5_reason_tags": raw_d5_reasons[:2],
             "risk_flags": raw_d5_risks[:3],
@@ -601,6 +605,74 @@ def _build_stock_summary_rows(
             )
         )
     return rows
+
+
+def _d5_display_rank_by_symbol(
+    *,
+    summary_frame: pd.DataFrame,
+    live_frame: pd.DataFrame,
+) -> dict[str, int]:
+    if live_frame.empty:
+        return {}
+    working = live_frame.copy()
+    sector_columns = [
+        column for column in ("symbol", "sector", "industry") if column in summary_frame.columns
+    ]
+    sectors = summary_frame[sector_columns].copy()
+    working = working.merge(sectors, on="symbol", how="left")
+    working["raw_risks_list"] = working["live_d5_risk_flags_json"].apply(_parse_raw_json_list)
+    working["expected_excess_return"] = pd.to_numeric(
+        working["live_d5_expected_excess_return"], errors="coerce"
+    )
+    working["final_selection_value"] = pd.to_numeric(
+        working["live_d5_selection_v2_value"], errors="coerce"
+    )
+    working["d5_selection_rank"] = pd.to_numeric(
+        working["live_d5_selection_rank"], errors="coerce"
+    )
+    working["buyability_priority_score"] = working.apply(
+        lambda row: buyability_priority_score(
+            expected_excess_return=row.get("live_d5_expected_excess_return"),
+            uncertainty_score=row.get("live_d5_uncertainty_score"),
+            disagreement_score=row.get("live_d5_disagreement_score"),
+        ),
+        axis=1,
+    )
+    working["d5_policy_bucket"] = working.apply(
+        lambda row: d5_buyability_policy_bucket(
+            selection_rank=row.get("d5_selection_rank"),
+            expected_excess_return=row.get("expected_excess_return"),
+            final_selection_value=row.get("final_selection_value"),
+            risk_flags=row.get("raw_risks_list"),
+            uncertainty_score=row.get("live_d5_uncertainty_score"),
+            disagreement_score=row.get("live_d5_disagreement_score"),
+        ),
+        axis=1,
+    )
+    eligible = (
+        working["live_d5_eligible_flag"].astype(bool)
+        if "live_d5_eligible_flag" in working.columns
+        else pd.Series(True, index=working.index)
+    )
+    working = working.loc[
+        eligible
+        & working["expected_excess_return"].gt(0.0)
+        & working["final_selection_value"].ge(BUYABILITY_MIN_FINAL_SELECTION_VALUE)
+        & working["d5_policy_bucket"].notna()
+        & ~working["raw_risks_list"].apply(has_buyability_blocker)
+    ].copy()
+    if working.empty:
+        return {}
+    working["d5_policy_bucket"] = working["d5_policy_bucket"].astype(int)
+    working = working.sort_values(
+        ["d5_policy_bucket", "buyability_priority_score", "d5_selection_rank", "symbol"],
+        ascending=[True, False, True, True],
+    )
+    selected = _limit_d5_sector_concentration(working, limit=BOT_D5_CORE_PICK_LIMIT)
+    return {
+        str(row.symbol): int(rank)
+        for rank, row in enumerate(selected.itertuples(index=False), start=1)
+    }
 
 
 def _delete_snapshot_types(settings: Settings, snapshot_types: list[str]) -> None:
