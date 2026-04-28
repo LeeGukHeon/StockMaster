@@ -106,6 +106,18 @@ def test_classify_recommendation_keeps_selected_d5_candidate_buyable_with_sparse
     assert "추천권" in judgement.summary
 
 
+def test_classify_recommendation_keeps_selected_d5_candidate_buyable_with_mature_mid_band() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=58,
+        expected_excess_return=0.002,
+        evidence_by_band={"55-65": ScoreBandEvidence("55-65", 120, 0.004, 0.49)},
+        candidate_selected=True,
+    )
+
+    assert judgement.label == "매수해볼 가치 있음"
+    assert "추천권" in judgement.summary
+
+
 def test_classify_recommendation_does_not_buy_selected_candidate_on_bad_band_evidence() -> None:
     judgement = classify_recommendation(
         final_selection_value=58,

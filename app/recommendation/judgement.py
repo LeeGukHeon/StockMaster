@@ -154,14 +154,21 @@ def classify_recommendation(
             evidence=evidence,
         )
 
+    if (
+        candidate_selected
+        and expected is not None
+        and expected > 0
+        and score >= 55
+        and not _evidence_blocks_selected_candidate(evidence)
+    ):
+        return RecommendationJudgement(
+            label="매수해볼 가치 있음",
+            summary=f"추천권·성과 확인 중 · {evidence_text}",
+            score_band=band,
+            evidence=evidence,
+        )
+
     if candidate_selected and expected is not None and expected > 0 and not evidence_ok:
-        if score >= 55 and not _evidence_blocks_selected_candidate(evidence):
-            return RecommendationJudgement(
-                label="매수해볼 가치 있음",
-                summary=f"추천권·성과 확인 중 · {evidence_text}",
-                score_band=band,
-                evidence=evidence,
-            )
         return RecommendationJudgement(
             label="관찰 우선",
             summary=f"후보권이나 성과 확인 필요 · {evidence_text}",
