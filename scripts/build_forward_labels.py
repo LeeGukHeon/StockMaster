@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip DuckDB schema bootstrap when the production schema is already current.",
     )
+    parser.add_argument(
+        "--path-overlay-only",
+        action="store_true",
+        help="Write only path-return overlay labels and leave endpoint label rows untouched.",
+    )
     return parser
 
 
@@ -61,6 +66,7 @@ def main() -> int:
         force=args.force,
         dry_run=args.dry_run,
         bootstrap=not args.skip_bootstrap,
+        path_overlay_only=args.path_overlay_only,
     )
     logger.info(
         "Forward label build completed.",

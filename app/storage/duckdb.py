@@ -225,6 +225,31 @@ CORE_TABLE_DDL: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS fact_forward_return_path_label (
+        run_id VARCHAR NOT NULL,
+        as_of_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        horizon INTEGER NOT NULL,
+        max_forward_return DOUBLE,
+        min_forward_return DOUBLE,
+        take_profit_3_hit BOOLEAN,
+        take_profit_3_date DATE,
+        take_profit_5_hit BOOLEAN,
+        take_profit_5_date DATE,
+        stop_loss_3_hit BOOLEAN,
+        stop_loss_3_date DATE,
+        stop_loss_5_hit BOOLEAN,
+        stop_loss_5_date DATE,
+        path_return_tp3_sl3_conservative DOUBLE,
+        path_return_tp5_sl3_conservative DOUBLE,
+        path_excess_return_tp3_sl3_conservative DOUBLE,
+        path_excess_return_tp5_sl3_conservative DOUBLE,
+        label_available_flag BOOLEAN NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, symbol, horizon)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS fact_market_regime_snapshot (
         run_id VARCHAR NOT NULL,
         as_of_date DATE NOT NULL,

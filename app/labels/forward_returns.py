@@ -356,6 +356,76 @@ def upsert_forward_labels(connection, frame: pd.DataFrame) -> None:
     connection.unregister("forward_label_stage")
 
 
+def ensure_forward_path_label_table(connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fact_forward_return_path_label (
+            run_id VARCHAR NOT NULL,
+            as_of_date DATE NOT NULL,
+            symbol VARCHAR NOT NULL,
+            horizon INTEGER NOT NULL,
+            max_forward_return DOUBLE,
+            min_forward_return DOUBLE,
+            take_profit_3_hit BOOLEAN,
+            take_profit_3_date DATE,
+            take_profit_5_hit BOOLEAN,
+            take_profit_5_date DATE,
+            stop_loss_3_hit BOOLEAN,
+            stop_loss_3_date DATE,
+            stop_loss_5_hit BOOLEAN,
+            stop_loss_5_date DATE,
+            path_return_tp3_sl3_conservative DOUBLE,
+            path_return_tp5_sl3_conservative DOUBLE,
+            path_excess_return_tp3_sl3_conservative DOUBLE,
+            path_excess_return_tp5_sl3_conservative DOUBLE,
+            label_available_flag BOOLEAN NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (as_of_date, symbol, horizon)
+        )
+        """
+    )
+
+
+def upsert_forward_path_labels(connection, frame: pd.DataFrame) -> None:
+    if frame.empty:
+        return
+    ensure_forward_path_label_table(connection)
+    stage_columns = [
+        "run_id",
+        "as_of_date",
+        "symbol",
+        "horizon",
+        "max_forward_return",
+        "min_forward_return",
+        "take_profit_3_hit",
+        "take_profit_3_date",
+        "take_profit_5_hit",
+        "take_profit_5_date",
+        "stop_loss_3_hit",
+        "stop_loss_3_date",
+        "stop_loss_5_hit",
+        "stop_loss_5_date",
+        "path_return_tp3_sl3_conservative",
+        "path_return_tp5_sl3_conservative",
+        "path_excess_return_tp3_sl3_conservative",
+        "path_excess_return_tp5_sl3_conservative",
+        "label_available_flag",
+        "created_at",
+    ]
+    connection.register("forward_path_label_stage", frame[stage_columns])
+    try:
+        column_list = ", ".join(stage_columns)
+        connection.execute(
+            f"""
+            INSERT OR REPLACE INTO fact_forward_return_path_label ({column_list})
+            SELECT {column_list}
+            FROM forward_path_label_stage
+            """
+        )
+    finally:
+        connection.unregister("forward_path_label_stage")
+
+
 def build_forward_labels(
     settings: Settings,
     *,
@@ -368,6 +438,7 @@ def build_forward_labels(
     force: bool = False,
     dry_run: bool = False,
     bootstrap: bool = True,
+    path_overlay_only: bool = False,
 ) -> ForwardLabelBuildResult:
     ensure_storage_layout(settings)
 
@@ -603,7 +674,10 @@ def build_forward_labels(
                         - label_frame["baseline_forward_return"]
                     )
 
-                upsert_forward_labels(connection, label_frame)
+                if path_overlay_only:
+                    upsert_forward_path_labels(connection, label_frame)
+                else:
+                    upsert_forward_labels(connection, label_frame)
 
                 artifact_paths: list[str] = []
                 for partition_date, partition_frame in label_frame.groupby("as_of_date", sort=True):

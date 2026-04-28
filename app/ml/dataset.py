@@ -620,20 +620,30 @@ def _load_dataset_frame(
         label_rows = connection.execute(
             f"""
             SELECT
-                as_of_date,
-                symbol,
-                market,
-                horizon,
-                excess_forward_return,
-                path_excess_return_tp3_sl3_conservative,
-                path_excess_return_tp5_sl3_conservative
-            FROM fact_forward_return_label
-            WHERE as_of_date <= ?
-              AND horizon IN ({horizon_placeholders})
-              AND label_available_flag
-              AND exit_date <= ?
-              AND symbol IN (SELECT symbol FROM model_training_symbol_stage)
-            ORDER BY as_of_date, symbol, horizon
+                label.as_of_date,
+                label.symbol,
+                label.market,
+                label.horizon,
+                label.excess_forward_return,
+                COALESCE(
+                    path.path_excess_return_tp3_sl3_conservative,
+                    label.path_excess_return_tp3_sl3_conservative
+                ) AS path_excess_return_tp3_sl3_conservative,
+                COALESCE(
+                    path.path_excess_return_tp5_sl3_conservative,
+                    label.path_excess_return_tp5_sl3_conservative
+                ) AS path_excess_return_tp5_sl3_conservative
+            FROM fact_forward_return_label AS label
+            LEFT JOIN fact_forward_return_path_label AS path
+              ON label.as_of_date = path.as_of_date
+             AND label.symbol = path.symbol
+             AND label.horizon = path.horizon
+            WHERE label.as_of_date <= ?
+              AND label.horizon IN ({horizon_placeholders})
+              AND label.label_available_flag
+              AND label.exit_date <= ?
+              AND label.symbol IN (SELECT symbol FROM model_training_symbol_stage)
+            ORDER BY label.as_of_date, label.symbol, label.horizon
             """,
             [train_end_date, *horizons, train_end_date],
         ).fetchdf()
@@ -891,6 +901,7 @@ def build_model_training_dataset(
                 input_sources=[
                     "fact_feature_snapshot",
                     "fact_forward_return_label",
+                    "fact_forward_return_path_label",
                     "fact_market_regime_snapshot",
                     "dim_symbol",
                 ],
