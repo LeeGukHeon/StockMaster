@@ -73,9 +73,9 @@ def test_classify_recommendation_treats_sparse_bad_75_band_as_overconfidence() -
 
 def test_classify_recommendation_blocks_buy_when_band_sample_is_too_small() -> None:
     judgement = classify_recommendation(
-        final_selection_value=68,
+        final_selection_value=58,
         expected_excess_return=0.02,
-        evidence_by_band={"65-75": ScoreBandEvidence("65-75", 5, 0.01, 0.6)},
+        evidence_by_band={"55-65": ScoreBandEvidence("55-65", 5, 0.01, 0.6)},
     )
 
     assert judgement.label == "매수 보류"
@@ -108,9 +108,9 @@ def test_classify_recommendation_keeps_selected_d5_candidate_buyable_with_sparse
 
 def test_classify_recommendation_does_not_buy_selected_candidate_on_bad_band_evidence() -> None:
     judgement = classify_recommendation(
-        final_selection_value=68,
+        final_selection_value=58,
         expected_excess_return=0.02,
-        evidence_by_band={"65-75": ScoreBandEvidence("65-75", 12, -0.01, 0.35)},
+        evidence_by_band={"55-65": ScoreBandEvidence("55-65", 12, -0.01, 0.35)},
         candidate_selected=True,
     )
 

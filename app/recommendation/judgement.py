@@ -155,7 +155,7 @@ def classify_recommendation(
         )
 
     if candidate_selected and expected is not None and expected > 0 and not evidence_ok:
-        if score >= 65 and not _evidence_blocks_selected_candidate(evidence):
+        if score >= 55 and not _evidence_blocks_selected_candidate(evidence):
             return RecommendationJudgement(
                 label="매수해볼 가치 있음",
                 summary=f"추천권·성과 확인 중 · {evidence_text}",
