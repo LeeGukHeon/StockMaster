@@ -8,6 +8,7 @@ import pandas as pd
 
 from scripts.evaluate_d5_practical_policy_splits import (
     CURRENT_POLICY_SPECS,
+    ROBUST_POLICY_SPECS,
     _outer_fold_summary,
     _passes_gate,
     _policy_frame,
@@ -57,6 +58,17 @@ def test_current_policy_set_is_baseline_only() -> None:
         "active_current",
         "practical_v1_current",
         "practical_v2_current",
+    ]
+
+
+def test_robust_policy_set_compares_active_practical_v2_and_robust() -> None:
+    specs = _resolve_policy_specs("robust")
+
+    assert specs == ROBUST_POLICY_SPECS
+    assert [spec.policy_id for spec in specs] == [
+        "active_current",
+        "practical_v2_current",
+        "robust_buyable_current",
     ]
 
 

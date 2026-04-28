@@ -530,6 +530,21 @@ def test_d5_stable_buyable_penalizes_high_model_disagreement_less_than_v2():
     assert stable_gated["final_selection_value"].item() == 45.0
 
 
+def test_d5_robust_buyable_penalizes_high_model_disagreement_like_stable():
+    scored = pd.DataFrame({"symbol": ["A"], "final_selection_value": [70.0]})
+    risk_flags = pd.Series([["model_disagreement_high"]])
+
+    robust_gated = _apply_d5_buyability_risk_gate(
+        scored,
+        risk_flags,
+        model_spec_id="alpha_robust_buyable_d5_v1",
+        horizon=5,
+    )
+
+    assert robust_gated["d5_buyability_risk_gate_penalty_score"].item() == 25.0
+    assert robust_gated["final_selection_value"].item() == 45.0
+
+
 def test_d5_practical_v2_weights_use_buyability_profile_without_raw_preservation():
     practical_v2_weights = _resolve_selection_weights(
         horizon=5,
@@ -563,3 +578,23 @@ def test_d5_stable_buyable_weights_are_more_quality_and_risk_heavy_than_buyable(
     assert stable_weights["late_entry_penalty_score"] < buyable_weights["late_entry_penalty_score"]
     assert "news_catalyst_score" not in stable_weights
     assert "news_drift_score" not in stable_weights
+
+
+def test_d5_robust_buyable_weights_are_more_quality_and_risk_heavy_than_stable():
+    robust_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_robust_buyable_d5_v1",
+        target_variant="robust_buyable_excess_return",
+    )
+    stable_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_stable_buyable_d5_v1",
+        target_variant="stable_practical_excess_return",
+    )
+
+    assert robust_weights["alpha_core_score"] < stable_weights["alpha_core_score"]
+    assert robust_weights["quality_score"] > stable_weights["quality_score"]
+    assert robust_weights["risk_penalty_score"] < stable_weights["risk_penalty_score"]
+    assert robust_weights["regime_fit_score"] > stable_weights["regime_fit_score"]
+    assert "news_catalyst_score" not in robust_weights
+    assert "news_drift_score" not in robust_weights

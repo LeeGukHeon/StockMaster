@@ -190,12 +190,33 @@ STABLE_POLICY_SPECS: tuple[PolicySpec, ...] = (
         ),
     ),
 )
+ROBUST_POLICY_SPECS: tuple[PolicySpec, ...] = (
+    PolicySpec(
+        policy_id="active_current",
+        model_key="active",
+        description="Current active alpha_swing_d5_v2 practical surface.",
+    ),
+    PolicySpec(
+        policy_id="practical_v2_current",
+        model_key="practical_v2",
+        description="Current alpha_practical_d5_v2 practical surface without extra policy tuning.",
+    ),
+    PolicySpec(
+        policy_id="robust_buyable_current",
+        model_key="robust",
+        description=(
+            "Experimental alpha_robust_buyable_d5_v1 surface; news-free, "
+            "regime-aware, tighter outlier-capped, and trained for robust D5 buyability."
+        ),
+    ),
+)
 POLICY_SETS: dict[str, tuple[PolicySpec, ...]] = {
     "active_only": ACTIVE_ONLY_POLICY_SPECS,
     "abc": ABC_POLICY_SPECS,
     "current": CURRENT_POLICY_SPECS,
     "stable": STABLE_POLICY_SPECS,
-    "all": (*ABC_POLICY_SPECS, *CURRENT_POLICY_SPECS[1:]),
+    "robust": ROBUST_POLICY_SPECS,
+    "all": (*ABC_POLICY_SPECS, *CURRENT_POLICY_SPECS[1:], ROBUST_POLICY_SPECS[-1]),
 }
 
 

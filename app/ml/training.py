@@ -391,6 +391,7 @@ def _normalise_weights(
         "practical_excess_return",
         "practical_excess_return_v2",
         "stable_practical_excess_return",
+        "robust_buyable_excess_return",
     }:
         metric_weights = {
             "top5_mean_excess_return": 6.0,
