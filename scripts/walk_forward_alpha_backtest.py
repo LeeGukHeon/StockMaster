@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 from dataclasses import asdict, dataclass
@@ -43,6 +44,40 @@ class BacktestJob:
     active_alpha_model_id: str | None
     source_training_run_id: str | None
 
+
+def _safe_file_token(value: object) -> str:
+    token = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value).strip())
+    token = token.strip(".-_")
+    if not token:
+        raise ValueError(f"Cannot build output filename token from {value!r}")
+    return token
+
+
+def _needs_model_spec_output_token(jobs: Iterable[BacktestJob]) -> bool:
+    horizon_counts: dict[int, int] = {}
+    for job in jobs:
+        horizon = int(job.horizon)
+        horizon_counts[horizon] = horizon_counts.get(horizon, 0) + 1
+    return any(count > 1 for count in horizon_counts.values())
+
+
+def _job_output_stem(job: BacktestJob, *, include_model_spec: bool) -> str:
+    if include_model_spec:
+        return f"h{int(job.horizon)}_{_safe_file_token(job.model_spec_id)}_walk_forward"
+    return f"h{int(job.horizon)}_walk_forward"
+
+
+def _job_output_paths(
+    output_dir: Path,
+    job: BacktestJob,
+    *,
+    include_model_spec: bool,
+) -> dict[str, Path]:
+    stem = _job_output_stem(job, include_model_spec=include_model_spec)
+    return {
+        "predictions_outcomes": output_dir / f"{stem}_predictions_outcomes.csv",
+        "metrics": output_dir / f"{stem}_metrics.csv",
+    }
 
 def _parse_date(value: str) -> date:
     return date.fromisoformat(value)
@@ -325,6 +360,7 @@ def run_backtest(args: argparse.Namespace) -> int:
     connection = duckdb.connect(str(db_path), read_only=True)
     bootstrap_core_tables(connection)
     jobs = _resolve_jobs(connection, args.horizons, args.model_spec_ids)
+    include_model_spec_in_outputs = _needs_model_spec_output_token(jobs)
     manifest: dict[str, object] = {
         "kind": "walk_forward_alpha_backtest_artifact_only",
         "db_path": str(db_path),
@@ -335,7 +371,9 @@ def run_backtest(args: argparse.Namespace) -> int:
         "db_read_only": True,
         "delete_temp_models_per_date": not args.keep_temp_models,
         "allow_missing_regime_fallback": bool(args.allow_missing_regime_fallback),
+        "model_spec_output_disambiguation": include_model_spec_in_outputs,
         "outputs": [],
+        "job_outputs": [],
         "jobs": [asdict(job) for job in jobs],
     }
 
@@ -363,11 +401,15 @@ def run_backtest(args: argparse.Namespace) -> int:
             flush=True,
         )
         for idx, as_of_date in enumerate(dates, start=1):
-            run_id = f"walk_forward_alpha_backtest-{as_of_date.isoformat()}-h{job.horizon}"
+            run_id = (
+                "walk_forward_alpha_backtest-"
+                f"{as_of_date.isoformat()}-h{job.horizon}-{_safe_file_token(job.model_spec_id)}"
+            )
             date_scratch = (
                 scratch_root
                 / f"as_of_date={as_of_date.isoformat()}"
                 / f"horizon={job.horizon}"
+                / f"model_spec_id={_safe_file_token(job.model_spec_id)}"
             )
             date_scratch.mkdir(parents=True, exist_ok=True)
             dataset = _load_dataset_frame(
@@ -448,14 +490,24 @@ def run_backtest(args: argparse.Namespace) -> int:
         if not horizon_frames:
             continue
         evaluated = _add_eval_columns(pd.concat(horizon_frames, ignore_index=True))
-        predictions_path = output_dir / f"h{job.horizon}_walk_forward_predictions_outcomes.csv"
-        metrics_path = output_dir / f"h{job.horizon}_walk_forward_metrics.csv"
+        output_paths = _job_output_paths(
+            output_dir,
+            job,
+            include_model_spec=include_model_spec_in_outputs,
+        )
+        predictions_path = output_paths["predictions_outcomes"]
+        metrics_path = output_paths["metrics"]
         evaluated.to_csv(predictions_path, index=False)
         metrics = _build_metrics(evaluated, job=job)
         metrics.to_csv(metrics_path, index=False)
         summary = metrics.loc[metrics["slice"].eq("overall")].copy()
         summary_frames.append(summary)
-        manifest["outputs"].extend([str(predictions_path), str(metrics_path)])
+        job_output_payload = {
+            **asdict(job),
+            "outputs": {key: str(path) for key, path in output_paths.items()},
+        }
+        manifest["job_outputs"].append(job_output_payload)
+        manifest["outputs"].extend(str(path) for path in output_paths.values())
 
     summary_path = output_dir / "summary.csv"
     if summary_frames:
