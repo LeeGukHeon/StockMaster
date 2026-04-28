@@ -385,11 +385,15 @@ def ensure_forward_path_label_table(connection) -> None:
             path_excess_return_tp3_sl3_conservative DOUBLE,
             path_excess_return_tp5_sl3_conservative DOUBLE,
             label_available_flag BOOLEAN NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL,
-            PRIMARY KEY (as_of_date, symbol, horizon)
+            created_at TIMESTAMPTZ NOT NULL
         )
         """
     )
+
+
+def recreate_forward_path_label_table(connection) -> None:
+    connection.execute("DROP TABLE IF EXISTS fact_forward_return_path_label")
+    ensure_forward_path_label_table(connection)
 
 
 def upsert_forward_path_labels(connection, frame: pd.DataFrame) -> None:
@@ -422,8 +426,17 @@ def upsert_forward_path_labels(connection, frame: pd.DataFrame) -> None:
     try:
         column_list = ", ".join(stage_columns)
         connection.execute(
+            """
+            DELETE FROM fact_forward_return_path_label AS target
+            USING forward_path_label_stage AS stage
+            WHERE target.as_of_date = stage.as_of_date
+              AND target.symbol = stage.symbol
+              AND target.horizon = stage.horizon
+            """
+        )
+        connection.execute(
             f"""
-            INSERT OR REPLACE INTO fact_forward_return_path_label ({column_list})
+            INSERT INTO fact_forward_return_path_label ({column_list})
             SELECT {column_list}
             FROM forward_path_label_stage
             """
@@ -446,13 +459,18 @@ def build_forward_labels(
     bootstrap: bool = True,
     path_overlay_only: bool = False,
     chunk_trading_days: int | None = None,
+    recreate_path_overlay_table: bool = False,
 ) -> ForwardLabelBuildResult:
     ensure_storage_layout(settings)
+    if recreate_path_overlay_table and not path_overlay_only:
+        raise ValueError("recreate_path_overlay_table requires path_overlay_only=True.")
 
     with activate_run_context("build_forward_labels", as_of_date=end_date) as run_context:
         with duckdb_connection(settings.paths.duckdb_path) as connection:
             if bootstrap:
                 bootstrap_core_tables(connection)
+            if recreate_path_overlay_table:
+                recreate_forward_path_label_table(connection)
             record_run_start(
                 connection,
                 run_id=run_context.run_id,

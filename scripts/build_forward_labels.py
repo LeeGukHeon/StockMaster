@@ -54,6 +54,14 @@ def build_parser() -> argparse.ArgumentParser:
             "Useful for production path-overlay rebuilds to reduce peak Python/DuckDB write memory."
         ),
     )
+    parser.add_argument(
+        "--recreate-path-overlay-table",
+        action="store_true",
+        help=(
+            "Drop and recreate the derived path-overlay label table before rebuilding it. "
+            "Only valid with --path-overlay-only."
+        ),
+    )
     return parser
 
 
@@ -76,6 +84,7 @@ def main() -> int:
         bootstrap=not args.skip_bootstrap,
         path_overlay_only=args.path_overlay_only,
         chunk_trading_days=args.chunk_trading_days,
+        recreate_path_overlay_table=args.recreate_path_overlay_table,
     )
     logger.info(
         "Forward label build completed.",

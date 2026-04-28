@@ -634,7 +634,19 @@ def _load_dataset_frame(
                     label.path_excess_return_tp5_sl3_conservative
                 ) AS path_excess_return_tp5_sl3_conservative
             FROM fact_forward_return_label AS label
-            LEFT JOIN fact_forward_return_path_label AS path
+            LEFT JOIN (
+                SELECT
+                    as_of_date,
+                    symbol,
+                    horizon,
+                    path_excess_return_tp3_sl3_conservative,
+                    path_excess_return_tp5_sl3_conservative
+                FROM fact_forward_return_path_label
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY as_of_date, symbol, horizon
+                    ORDER BY created_at DESC, run_id DESC
+                ) = 1
+            ) AS path
               ON label.as_of_date = path.as_of_date
              AND label.symbol = path.symbol
              AND label.horizon = path.horizon

@@ -245,8 +245,7 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         path_excess_return_tp3_sl3_conservative DOUBLE,
         path_excess_return_tp5_sl3_conservative DOUBLE,
         label_available_flag BOOLEAN NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL,
-        PRIMARY KEY (as_of_date, symbol, horizon)
+        created_at TIMESTAMPTZ NOT NULL
     )
     """,
     """
