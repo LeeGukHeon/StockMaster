@@ -508,11 +508,17 @@ def _build_stock_summary_rows(
         raw_d5_reasons = _parse_raw_json_list(
             getattr(live, "live_d5_top_reason_tags_json", "[]") if live else "[]"
         )
-        d5_candidate_rank = (
+        raw_d5_candidate_rank = (
             getattr(live, "live_d5_selection_rank", None) if live is not None else None
         )
+        try:
+            d5_candidate_rank = (
+                None if raw_d5_candidate_rank is None else int(float(raw_d5_candidate_rank))
+            )
+        except (TypeError, ValueError):
+            d5_candidate_rank = None
         is_d5_candidate = bool(
-            d5_candidate_rank is not None and int(float(d5_candidate_rank)) <= 5
+            d5_candidate_rank is not None and d5_candidate_rank <= 5
         ) if live is not None else False
         judgement = classify_recommendation(
             final_selection_value=d5_score,
