@@ -337,14 +337,18 @@ def _build_metrics(frame: pd.DataFrame, *, job: BacktestJob) -> pd.DataFrame:
     return metrics
 
 
-def _safe_remove_tree(path: Path) -> None:
+def _safe_remove_tree(path: Path, *, scratch_root: Path) -> None:
     if not path.exists():
         return
-    # Scratch roots are caller-provided, but must still be recognizably walk-forward
-    # temporary model artifacts before recursive cleanup is allowed.
-    if "walk_forward" not in str(path):
-        raise RuntimeError(f"Refusing to remove unexpected artifact path: {path}")
-    shutil.rmtree(path)
+    resolved_path = path.resolve()
+    resolved_scratch_root = scratch_root.resolve()
+    if resolved_path == resolved_scratch_root:
+        raise RuntimeError(f"Refusing to remove scratch root itself: {path}")
+    try:
+        resolved_path.relative_to(resolved_scratch_root)
+    except ValueError as exc:
+        raise RuntimeError(f"Refusing to remove unexpected artifact path: {path}") from exc
+    shutil.rmtree(resolved_path)
 
 
 def run_backtest(args: argparse.Namespace) -> int:
@@ -483,7 +487,7 @@ def run_backtest(args: argparse.Namespace) -> int:
             merged["backtest_training_run_id"] = str(training_run_row["training_run_id"])
             horizon_frames.append(merged)
             if not args.keep_temp_models:
-                _safe_remove_tree(date_scratch)
+                _safe_remove_tree(date_scratch, scratch_root=scratch_root)
             if idx % args.progress_every == 0 or idx == len(dates):
                 print(f"h{job.horizon}: processed {idx}/{len(dates)}", flush=True)
 

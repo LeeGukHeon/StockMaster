@@ -7,6 +7,7 @@ from scripts.walk_forward_alpha_backtest import (
     _job_output_paths,
     _needs_model_spec_output_token,
     _safe_file_token,
+    _safe_remove_tree,
 )
 
 
@@ -61,3 +62,27 @@ def test_safe_file_token_sanitizes_values_and_rejects_empty_tokens() -> None:
     assert _safe_file_token(" alpha/practical d5 ") == "alpha-practical-d5"
     with pytest.raises(ValueError):
         _safe_file_token(" /// ")
+
+
+def test_safe_remove_tree_allows_any_descendant_of_scratch_root(tmp_path: Path) -> None:
+    scratch_root = tmp_path / "tmp" / "d5_wf_short_name"
+    date_scratch = scratch_root / "as_of_date=2026-03-03" / "horizon=5"
+    date_scratch.mkdir(parents=True)
+    (date_scratch / "artifact.txt").write_text("temporary")
+
+    _safe_remove_tree(date_scratch, scratch_root=scratch_root)
+
+    assert not date_scratch.exists()
+    assert scratch_root.exists()
+
+
+def test_safe_remove_tree_rejects_scratch_root_and_outside_paths(tmp_path: Path) -> None:
+    scratch_root = tmp_path / "scratch"
+    scratch_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    with pytest.raises(RuntimeError, match="scratch root itself"):
+        _safe_remove_tree(scratch_root, scratch_root=scratch_root)
+    with pytest.raises(RuntimeError, match="unexpected artifact path"):
+        _safe_remove_tree(outside, scratch_root=scratch_root)
