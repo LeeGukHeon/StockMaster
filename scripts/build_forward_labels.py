@@ -46,6 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write only path-return overlay labels and leave endpoint label rows untouched.",
     )
+    parser.add_argument(
+        "--chunk-trading-days",
+        type=int,
+        help=(
+            "Process labels in bounded trading-day chunks inside one run. "
+            "Useful for production path-overlay rebuilds to reduce peak Python/DuckDB write memory."
+        ),
+    )
     return parser
 
 
@@ -67,6 +75,7 @@ def main() -> int:
         dry_run=args.dry_run,
         bootstrap=not args.skip_bootstrap,
         path_overlay_only=args.path_overlay_only,
+        chunk_trading_days=args.chunk_trading_days,
     )
     logger.info(
         "Forward label build completed.",

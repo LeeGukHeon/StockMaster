@@ -105,9 +105,11 @@ def test_path_overlay_only_writes_lightweight_label_table(tmp_path):
         symbols=["005930"],
         force=True,
         path_overlay_only=True,
+        chunk_trading_days=1,
     )
 
     assert result.available_row_count == 1
+    assert result.artifact_paths == []
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         overlay_row = connection.execute(
             """

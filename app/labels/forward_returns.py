@@ -34,6 +34,12 @@ class ForwardLabelBuildResult:
     label_version: str
 
 
+def _chunk_dates(values: list[date], chunk_size: int | None) -> list[list[date]]:
+    if chunk_size is None or chunk_size <= 0 or chunk_size >= len(values):
+        return [values]
+    return [values[index : index + chunk_size] for index in range(0, len(values), chunk_size)]
+
+
 def _build_market_baseline_frame(
     price_frame: pd.DataFrame,
     *,
@@ -439,6 +445,7 @@ def build_forward_labels(
     dry_run: bool = False,
     bootstrap: bool = True,
     path_overlay_only: bool = False,
+    chunk_trading_days: int | None = None,
 ) -> ForwardLabelBuildResult:
     ensure_storage_layout(settings)
 
@@ -496,7 +503,8 @@ def build_forward_labels(
                 if dry_run:
                     notes = (
                         f"Dry run only. range={start_date.isoformat()}..{end_date.isoformat()} "
-                        f"dates={len(as_of_dates)} symbols={len(symbol_frame)}"
+                        f"dates={len(as_of_dates)} symbols={len(symbol_frame)} "
+                        f"chunk_trading_days={chunk_trading_days or 'all'}"
                     )
                     record_run_finish(
                         connection,
@@ -556,148 +564,168 @@ def build_forward_labels(
                     trading_day_index=trading_day_index,
                 )
 
-                rows: list[dict[str, object]] = []
-                for as_of_date in as_of_dates:
-                    as_of_index = trading_day_index.get(as_of_date)
-                    if as_of_index is None:
-                        continue
-                    entry_index = as_of_index + 1
-                    entry_date = (
-                        trading_days[entry_index] if entry_index < len(trading_days) else None
-                    )
-                    for horizon in horizons:
-                        exit_index = entry_index + (horizon - 1)
-                        exit_date = (
-                            trading_days[exit_index] if exit_index < len(trading_days) else None
+                artifact_paths: list[str] = []
+                row_count = 0
+                available_row_count = 0
+                date_chunks = _chunk_dates(as_of_dates, chunk_trading_days)
+                for chunk_dates in date_chunks:
+                    rows: list[dict[str, object]] = []
+                    for as_of_date in chunk_dates:
+                        as_of_index = trading_day_index.get(as_of_date)
+                        if as_of_index is None:
+                            continue
+                        entry_index = as_of_index + 1
+                        entry_date = (
+                            trading_days[entry_index] if entry_index < len(trading_days) else None
                         )
-                        for row in symbol_frame.itertuples(index=False):
-                            symbol = str(row.symbol).zfill(6)
-                            market_name = str(row.market)
-                            label_row = {
-                                "run_id": run_context.run_id,
-                                "as_of_date": as_of_date,
-                                "symbol": symbol,
-                                "horizon": int(horizon),
-                                "market": market_name,
-                                "entry_date": entry_date,
-                                "exit_date": exit_date,
-                                "entry_basis": "next_open",
-                                "exit_basis": "same_day_close" if horizon == 1 else "future_close",
-                                "entry_price": pd.NA,
-                                "exit_price": pd.NA,
-                                "gross_forward_return": pd.NA,
-                                "max_forward_return": pd.NA,
-                                "min_forward_return": pd.NA,
-                                "take_profit_3_hit": pd.NA,
-                                "take_profit_3_date": pd.NA,
-                                "take_profit_5_hit": pd.NA,
-                                "take_profit_5_date": pd.NA,
-                                "stop_loss_3_hit": pd.NA,
-                                "stop_loss_3_date": pd.NA,
-                                "stop_loss_5_hit": pd.NA,
-                                "stop_loss_5_date": pd.NA,
-                                "path_return_tp3_sl3_conservative": pd.NA,
-                                "path_return_tp5_sl3_conservative": pd.NA,
-                                "baseline_type": "same_market_equal_weight",
-                                "baseline_forward_return": pd.NA,
-                                "excess_forward_return": pd.NA,
-                                "path_excess_return_tp3_sl3_conservative": pd.NA,
-                                "path_excess_return_tp5_sl3_conservative": pd.NA,
-                                "label_available_flag": False,
-                                "exclusion_reason": None,
-                                "notes_json": pd.NA,
-                                "created_at": pd.Timestamp.utcnow(),
-                            }
-                            if entry_date is None or exit_date is None:
-                                label_row["exclusion_reason"] = "insufficient_future_trading_days"
-                                rows.append(label_row)
-                                continue
-
-                            entry_key = (entry_date, symbol)
-                            exit_key = (exit_date, symbol)
-                            if entry_key not in price_lookup.index:
-                                label_row["exclusion_reason"] = "missing_entry_day_ohlcv"
-                                rows.append(label_row)
-                                continue
-                            if exit_key not in price_lookup.index:
-                                label_row["exclusion_reason"] = "missing_exit_day_ohlcv"
-                                rows.append(label_row)
-                                continue
-
-                            entry_price = price_lookup.loc[entry_key, "open"]
-                            exit_price = price_lookup.loc[exit_key, "close"]
-                            if pd.isna(entry_price) or entry_price <= 0:
-                                label_row["exclusion_reason"] = "invalid_entry_open"
-                                rows.append(label_row)
-                                continue
-                            if pd.isna(exit_price) or exit_price <= 0:
-                                label_row["exclusion_reason"] = "invalid_exit_close"
-                                rows.append(label_row)
-                                continue
-
-                            label_row["entry_price"] = float(entry_price)
-                            label_row["exit_price"] = float(exit_price)
-                            label_row["gross_forward_return"] = float(
-                                exit_price / entry_price - 1.0
+                        for horizon in horizons:
+                            exit_index = entry_index + (horizon - 1)
+                            exit_date = (
+                                trading_days[exit_index]
+                                if exit_index < len(trading_days)
+                                else None
                             )
-                            label_row.update(
-                                _path_return_metrics(
-                                    path_lookup,
-                                    symbol=symbol,
-                                    entry_date=entry_date,
-                                    exit_date=exit_date,
-                                    entry_price=float(entry_price),
-                                    gross_forward_return=float(label_row["gross_forward_return"]),
+                            for row in symbol_frame.itertuples(index=False):
+                                symbol = str(row.symbol).zfill(6)
+                                market_name = str(row.market)
+                                label_row = {
+                                    "run_id": run_context.run_id,
+                                    "as_of_date": as_of_date,
+                                    "symbol": symbol,
+                                    "horizon": int(horizon),
+                                    "market": market_name,
+                                    "entry_date": entry_date,
+                                    "exit_date": exit_date,
+                                    "entry_basis": "next_open",
+                                    "exit_basis": (
+                                        "same_day_close" if horizon == 1 else "future_close"
+                                    ),
+                                    "entry_price": pd.NA,
+                                    "exit_price": pd.NA,
+                                    "gross_forward_return": pd.NA,
+                                    "max_forward_return": pd.NA,
+                                    "min_forward_return": pd.NA,
+                                    "take_profit_3_hit": pd.NA,
+                                    "take_profit_3_date": pd.NA,
+                                    "take_profit_5_hit": pd.NA,
+                                    "take_profit_5_date": pd.NA,
+                                    "stop_loss_3_hit": pd.NA,
+                                    "stop_loss_3_date": pd.NA,
+                                    "stop_loss_5_hit": pd.NA,
+                                    "stop_loss_5_date": pd.NA,
+                                    "path_return_tp3_sl3_conservative": pd.NA,
+                                    "path_return_tp5_sl3_conservative": pd.NA,
+                                    "baseline_type": "same_market_equal_weight",
+                                    "baseline_forward_return": pd.NA,
+                                    "excess_forward_return": pd.NA,
+                                    "path_excess_return_tp3_sl3_conservative": pd.NA,
+                                    "path_excess_return_tp5_sl3_conservative": pd.NA,
+                                    "label_available_flag": False,
+                                    "exclusion_reason": None,
+                                    "notes_json": pd.NA,
+                                    "created_at": pd.Timestamp.utcnow(),
+                                }
+                                if entry_date is None or exit_date is None:
+                                    label_row["exclusion_reason"] = (
+                                        "insufficient_future_trading_days"
+                                    )
+                                    rows.append(label_row)
+                                    continue
+
+                                entry_key = (entry_date, symbol)
+                                exit_key = (exit_date, symbol)
+                                if entry_key not in price_lookup.index:
+                                    label_row["exclusion_reason"] = "missing_entry_day_ohlcv"
+                                    rows.append(label_row)
+                                    continue
+                                if exit_key not in price_lookup.index:
+                                    label_row["exclusion_reason"] = "missing_exit_day_ohlcv"
+                                    rows.append(label_row)
+                                    continue
+
+                                entry_price = price_lookup.loc[entry_key, "open"]
+                                exit_price = price_lookup.loc[exit_key, "close"]
+                                if pd.isna(entry_price) or entry_price <= 0:
+                                    label_row["exclusion_reason"] = "invalid_entry_open"
+                                    rows.append(label_row)
+                                    continue
+                                if pd.isna(exit_price) or exit_price <= 0:
+                                    label_row["exclusion_reason"] = "invalid_exit_close"
+                                    rows.append(label_row)
+                                    continue
+
+                                label_row["entry_price"] = float(entry_price)
+                                label_row["exit_price"] = float(exit_price)
+                                label_row["gross_forward_return"] = float(
+                                    exit_price / entry_price - 1.0
+                                )
+                                label_row.update(
+                                    _path_return_metrics(
+                                        path_lookup,
+                                        symbol=symbol,
+                                        entry_date=entry_date,
+                                        exit_date=exit_date,
+                                        entry_price=float(entry_price),
+                                        gross_forward_return=float(
+                                            label_row["gross_forward_return"]
+                                        ),
+                                    )
+                                )
+                                label_row["label_available_flag"] = True
+                                rows.append(label_row)
+
+                    label_frame = pd.DataFrame(rows)
+                    if label_frame.empty:
+                        continue
+                    if not market_baseline.empty:
+                        label_frame = label_frame.drop(columns=["baseline_forward_return"])
+                        label_frame = label_frame.merge(
+                            market_baseline.loc[market_baseline["as_of_date"].isin(chunk_dates)],
+                            on=["as_of_date", "horizon", "market"],
+                            how="left",
+                        )
+                        label_frame["excess_forward_return"] = (
+                            label_frame["gross_forward_return"]
+                            - label_frame["baseline_forward_return"]
+                        )
+                        label_frame["path_excess_return_tp3_sl3_conservative"] = (
+                            label_frame["path_return_tp3_sl3_conservative"]
+                            - label_frame["baseline_forward_return"]
+                        )
+                        label_frame["path_excess_return_tp5_sl3_conservative"] = (
+                            label_frame["path_return_tp5_sl3_conservative"]
+                            - label_frame["baseline_forward_return"]
+                        )
+
+                    if path_overlay_only:
+                        upsert_forward_path_labels(connection, label_frame)
+                    else:
+                        upsert_forward_labels(connection, label_frame)
+                        for partition_date, partition_frame in label_frame.groupby(
+                            "as_of_date", sort=True
+                        ):
+                            artifact_paths.append(
+                                str(
+                                    write_parquet(
+                                        partition_frame,
+                                        base_dir=settings.paths.curated_dir,
+                                        dataset="labels",
+                                        partitions={"as_of_date": partition_date.isoformat()},
+                                        filename="forward_return_labels.parquet",
+                                    )
                                 )
                             )
-                            label_row["label_available_flag"] = True
-                            rows.append(label_row)
-
-                label_frame = pd.DataFrame(rows)
-                if not market_baseline.empty:
-                    label_frame = label_frame.drop(columns=["baseline_forward_return"])
-                    label_frame = label_frame.merge(
-                        market_baseline,
-                        on=["as_of_date", "horizon", "market"],
-                        how="left",
-                    )
-                    label_frame["excess_forward_return"] = (
-                        label_frame["gross_forward_return"] - label_frame["baseline_forward_return"]
-                    )
-                    label_frame["path_excess_return_tp3_sl3_conservative"] = (
-                        label_frame["path_return_tp3_sl3_conservative"]
-                        - label_frame["baseline_forward_return"]
-                    )
-                    label_frame["path_excess_return_tp5_sl3_conservative"] = (
-                        label_frame["path_return_tp5_sl3_conservative"]
-                        - label_frame["baseline_forward_return"]
-                    )
-
-                if path_overlay_only:
-                    upsert_forward_path_labels(connection, label_frame)
-                else:
-                    upsert_forward_labels(connection, label_frame)
-
-                artifact_paths: list[str] = []
-                for partition_date, partition_frame in label_frame.groupby("as_of_date", sort=True):
-                    artifact_paths.append(
-                        str(
-                            write_parquet(
-                                partition_frame,
-                                base_dir=settings.paths.curated_dir,
-                                dataset="labels",
-                                partitions={"as_of_date": partition_date.isoformat()},
-                                filename="forward_return_labels.parquet",
-                            )
-                        )
-                    )
+                    row_count += len(label_frame)
+                    available_row_count += int(label_frame["label_available_flag"].sum())
 
                 notes = (
                     "Forward label build completed. "
                     f"range={start_date.isoformat()}..{end_date.isoformat()}, "
-                    f"rows={len(label_frame)}, "
-                    f"available={int(label_frame['label_available_flag'].sum())}, "
-                    f"symbols={len(symbol_frame)}"
+                    f"rows={row_count}, "
+                    f"available={available_row_count}, "
+                    f"symbols={len(symbol_frame)}, "
+                    f"chunks={len(date_chunks)}, "
+                    f"chunk_trading_days={chunk_trading_days or 'all'}"
                 )
                 record_run_finish(
                     connection,
@@ -711,8 +739,8 @@ def build_forward_labels(
                     run_id=run_context.run_id,
                     start_date=start_date,
                     end_date=end_date,
-                    row_count=len(label_frame),
-                    available_row_count=int(label_frame["label_available_flag"].sum()),
+                    row_count=row_count,
+                    available_row_count=available_row_count,
                     artifact_paths=artifact_paths,
                     notes=notes,
                     label_version=LABEL_VERSION,
