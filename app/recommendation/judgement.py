@@ -76,6 +76,15 @@ def _evidence_warns_overconfidence(evidence: ScoreBandEvidence | None) -> bool:
     return evidence.hit_rate is not None and evidence.hit_rate < 0.45
 
 
+
+
+def _evidence_blocks_selected_candidate(evidence: ScoreBandEvidence | None) -> bool:
+    if evidence is None:
+        return False
+    if evidence.avg_excess_return is not None and evidence.avg_excess_return <= 0.0:
+        return True
+    return evidence.hit_rate is not None and evidence.hit_rate < 0.40
+
 def _evidence_supports_aggressive(evidence: ScoreBandEvidence | None) -> bool:
     if evidence is None:
         return False
@@ -146,6 +155,13 @@ def classify_recommendation(
         )
 
     if candidate_selected and expected is not None and expected > 0 and not evidence_ok:
+        if score >= 65 and not _evidence_blocks_selected_candidate(evidence):
+            return RecommendationJudgement(
+                label="매수해볼 가치 있음",
+                summary=f"추천권·성과 확인 중 · {evidence_text}",
+                score_band=band,
+                evidence=evidence,
+            )
         return RecommendationJudgement(
             label="관찰 우선",
             summary=f"후보권이나 성과 확인 필요 · {evidence_text}",

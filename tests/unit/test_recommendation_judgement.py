@@ -82,11 +82,35 @@ def test_classify_recommendation_blocks_buy_when_band_sample_is_too_small() -> N
     assert "점수대 우위 약함" in judgement.summary
 
 
-def test_classify_recommendation_keeps_selected_candidate_observable_on_sparse_band() -> None:
+def test_classify_recommendation_keeps_low_score_selected_candidate_observable() -> None:
     judgement = classify_recommendation(
         final_selection_value=50,
         expected_excess_return=0.02,
         evidence_by_band={"<55": ScoreBandEvidence("<55", 5, 0.01, 0.6)},
+        candidate_selected=True,
+    )
+
+    assert judgement.label == "관찰 우선"
+    assert "후보권" in judgement.summary
+
+
+def test_classify_recommendation_keeps_selected_d5_candidate_buyable_with_sparse_band() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=68,
+        expected_excess_return=0.02,
+        evidence_by_band={"65-75": ScoreBandEvidence("65-75", 5, 0.01, 0.6)},
+        candidate_selected=True,
+    )
+
+    assert judgement.label == "매수해볼 가치 있음"
+    assert "추천권" in judgement.summary
+
+
+def test_classify_recommendation_does_not_buy_selected_candidate_on_bad_band_evidence() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=68,
+        expected_excess_return=0.02,
+        evidence_by_band={"65-75": ScoreBandEvidence("65-75", 12, -0.01, 0.35)},
         candidate_selected=True,
     )
 

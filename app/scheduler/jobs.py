@@ -20,7 +20,7 @@ from app.evaluation.validation import validate_evaluation_pipeline
 from app.features.feature_store import build_feature_store
 from app.ml.active import freeze_alpha_active_model
 from app.ml.constants import (
-    D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+    D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID,
     DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS,
     get_alpha_model_spec,
 )
@@ -57,8 +57,8 @@ def _candidate_model_specs_for_daily_pipeline(*, active_d5_swing: bool):
     if not active_d5_swing:
         return DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS
     specs = list(DEFAULT_TRAIN_ALPHA_CANDIDATE_MODEL_SPECS)
-    if all(spec.model_spec_id != D5_PRIMARY_FOCUS_MODEL_SPEC_ID for spec in specs):
-        specs.append(get_alpha_model_spec(D5_PRIMARY_FOCUS_MODEL_SPEC_ID))
+    if all(spec.model_spec_id != D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID for spec in specs):
+        specs.append(get_alpha_model_spec(D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID))
     return tuple(specs)
 
 
@@ -306,8 +306,8 @@ def run_daily_pipeline_job(
             )
             if same_day_ohlcv_count <= 0:
                 raise RuntimeError(
-                    "Daily pipeline aborted because same-day OHLCV is empty after sync_daily_ohlcv. "
-                    f"trading_date={pipeline_date.isoformat()}"
+                    "Daily pipeline aborted because same-day OHLCV is empty after "
+                    f"sync_daily_ohlcv. trading_date={pipeline_date.isoformat()}"
                 )
             fundamentals_result = sync_fundamentals_snapshot(
                 settings,
@@ -394,18 +394,19 @@ def run_daily_pipeline_job(
                         as_of_date=pipeline_date,
                         source="daily_close_active_d5_swing_init",
                         note=(
-                            "Daily close initialized the active H5 swing model because "
+                            "Daily close initialized the active H5 buyable model because "
                             "no active checkpoint champion was registered yet."
                         ),
                         horizons=[5],
-                        model_spec_id=D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+                        model_spec_id=D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID,
                         train_end_date=pipeline_date,
                         promotion_type="MANUAL_FREEZE",
                     )
                     if int(d5_active_freeze_result.row_count) <= 0:
                         raise RuntimeError(
-                            "Daily pipeline could not initialize the active D5 swing H5 "
-                            "model because no valid alpha_swing_d5_v2 training run was available."
+                            "Daily pipeline could not initialize the active D5 buyable H5 "
+                            f"model because no valid {D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID} "
+                            "training run was available."
                         )
             alpha_prediction_result = materialize_alpha_predictions_v1(
                 settings,
@@ -472,10 +473,15 @@ def run_daily_pipeline_job(
                 if d5_active_freeze_result
                 else 0
             )
+            eligible_symbol_count = getattr(
+                ohlcv_result,
+                "eligible_symbol_count",
+                ohlcv_result.requested_symbol_count,
+            )
             notes = (
                 f"Daily pipeline completed for {pipeline_date.isoformat()}. "
                 f"ohlcv_rows={ohlcv_result.row_count}, "
-                f"ohlcv_eligible_symbols={getattr(ohlcv_result, 'eligible_symbol_count', ohlcv_result.requested_symbol_count)}, "
+                f"ohlcv_eligible_symbols={eligible_symbol_count}, "
                 f"ohlcv_provider_empty={getattr(ohlcv_result, 'provider_empty_symbol_count', 0)}, "
                 f"ohlcv_provider_error={getattr(ohlcv_result, 'provider_error_symbol_count', 0)}, "
                 f"fundamentals_rows={fundamentals_result.row_count}, "
@@ -604,8 +610,8 @@ def run_evaluation_job(
                 )
             if same_day_ohlcv_count <= 0:
                 raise RuntimeError(
-                    "Evaluation pipeline aborted because same-day OHLCV is empty after sync_daily_ohlcv. "
-                    f"trading_date={selection_end_date.isoformat()}"
+                    "Evaluation pipeline aborted because same-day OHLCV is empty after "
+                    f"sync_daily_ohlcv. trading_date={selection_end_date.isoformat()}"
                 )
 
             outcome_result = materialize_selection_outcomes(

@@ -18,7 +18,7 @@ from app.ml.constants import (
     D5_CHECKPOINT_PROMOTION_MAX_WORST_CASE_DETERIORATION,
     D5_CHECKPOINT_PROMOTION_MIN_SAMPLE_COUNT,
     D5_CHECKPOINT_PROMOTION_MIN_SELECTED_TOP5_UPLIFT,
-    D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+    D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID,
     MCS_ALPHA,
     MCS_BLOCK_LENGTH,
     MCS_BOOTSTRAP_REPS,
@@ -59,6 +59,7 @@ MODEL_SPEC_LABELS: dict[str, str] = {
     "alpha_topbucket_h1_rolling_120_v1": "topbucket h1 rolling 120d",
     "alpha_lead_d1_v1": "lead d1 v1",
     "alpha_swing_d5_v2": "swing d5 top5 v2",
+    "alpha_practical_d5_v2": "practical d5 buyable v2",
     "alpha_recursive_rolling_combo": "recursive+rolling combo",
 }
 DECISION_LABELS: dict[str, str] = {
@@ -74,16 +75,32 @@ DECISION_REASON_LABELS: dict[str, str] = {
     "no_matured_shadow_history": "matured shadow self-backtest history is not available",
     "no_complete_loss_matrix": "shadow self-backtest matrix is incomplete",
     "shadow_validation_failed": "shadow validation failed for the promoted challenger",
-    "checkpoint_no_active_registry": "no active H5 champion was registered, so the latest candidate initialized serving",
-    "checkpoint_candidate_matches_active": "the latest H5 candidate already matches the active champion",
-    "checkpoint_no_candidate_training_run": "no trained H5 candidate run was available for checkpoint challenge",
-    "checkpoint_incumbent_training_run_missing": "the active H5 champion run could not be resolved for checkpoint challenge",
-    "checkpoint_no_matured_shadow_history": "no matured H5 checkpoint challenge history was available",
-    "checkpoint_selected_top5_not_improved": "the latest H5 candidate did not improve selected top5 performance enough",
+    "checkpoint_no_active_registry": (
+        "no active H5 champion was registered, so the latest candidate initialized serving"
+    ),
+    "checkpoint_candidate_matches_active": (
+        "the latest H5 candidate already matches the active champion"
+    ),
+    "checkpoint_no_candidate_training_run": (
+        "no trained H5 candidate run was available for checkpoint challenge"
+    ),
+    "checkpoint_incumbent_training_run_missing": (
+        "the active H5 champion run could not be resolved for checkpoint challenge"
+    ),
+    "checkpoint_no_matured_shadow_history": (
+        "no matured H5 checkpoint challenge history was available"
+    ),
+    "checkpoint_selected_top5_not_improved": (
+        "the latest H5 candidate did not improve selected top5 performance enough"
+    ),
     "checkpoint_drag_regressed": "the latest H5 candidate regressed on selection drag",
     "checkpoint_hit_rate_regressed": "the latest H5 candidate regressed on selected top5 hit rate",
-    "checkpoint_left_tail_regressed": "the latest H5 candidate regressed on worst selected top5 loss",
-    "checkpoint_candidate_promoted": "the latest H5 candidate cleared checkpoint guardrails and replaced the champion",
+    "checkpoint_left_tail_regressed": (
+        "the latest H5 candidate regressed on worst selected top5 loss"
+    ),
+    "checkpoint_candidate_promoted": (
+        "the latest H5 candidate cleared checkpoint guardrails and replaced the champion"
+    ),
 }
 
 
@@ -717,7 +734,7 @@ def _run_h5_checkpoint_promotion(
     bootstrap_reps: int,
     block_length: int,
 ) -> CheckpointPromotionEvaluation:
-    challenger_model_spec_id = D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+    challenger_model_spec_id = D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID
     challenger_training_run = load_latest_training_run(
         connection,
         horizon=5,
