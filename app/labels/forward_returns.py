@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from dataclasses import dataclass
 from datetime import date
 
@@ -543,50 +544,52 @@ def build_forward_labels(
                         label_version=LABEL_VERSION,
                     )
 
-                future_end_index = max(
-                    trading_day_index[date_value] + max(horizons)
-                    for date_value in as_of_dates
-                    if date_value in trading_day_index
-                )
-                relevant_end = trading_days[min(future_end_index, len(trading_days) - 1)]
-                price_frame = connection.execute(
-                    """
-                    SELECT
-                        price.trading_date,
-                        price.symbol,
-                        price.open,
-                        price.high,
-                        price.low,
-                        price.close,
-                        symbol.market
-                    FROM fact_daily_ohlcv AS price
-                    JOIN dim_symbol AS symbol
-                      ON price.symbol = symbol.symbol
-                    WHERE price.trading_date BETWEEN ? AND ?
-                      AND symbol.market IN ('KOSPI', 'KOSDAQ')
-                    """,
-                    [start_date, relevant_end],
-                ).fetchdf()
-
-                price_frame["trading_date"] = pd.to_datetime(price_frame["trading_date"]).dt.date
-                price_frame["symbol"] = price_frame["symbol"].astype(str).str.zfill(6)
-                price_lookup = price_frame.set_index(["trading_date", "symbol"])[
-                    ["open", "high", "low", "close"]
-                ].sort_index()
-                path_lookup = _build_symbol_path_lookup(price_frame)
-                market_baseline = _build_market_baseline_frame(
-                    price_frame,
-                    as_of_dates=as_of_dates,
-                    horizons=horizons,
-                    trading_days=trading_days,
-                    trading_day_index=trading_day_index,
-                )
-
                 artifact_paths: list[str] = []
                 row_count = 0
                 available_row_count = 0
                 date_chunks = _chunk_dates(as_of_dates, chunk_trading_days)
                 for chunk_dates in date_chunks:
+                    chunk_start = min(chunk_dates)
+                    future_end_index = max(
+                        trading_day_index[date_value] + max(horizons)
+                        for date_value in chunk_dates
+                        if date_value in trading_day_index
+                    )
+                    relevant_end = trading_days[min(future_end_index, len(trading_days) - 1)]
+                    price_frame = connection.execute(
+                        """
+                        SELECT
+                            price.trading_date,
+                            price.symbol,
+                            price.open,
+                            price.high,
+                            price.low,
+                            price.close,
+                            symbol.market
+                        FROM fact_daily_ohlcv AS price
+                        JOIN dim_symbol AS symbol
+                          ON price.symbol = symbol.symbol
+                        WHERE price.trading_date BETWEEN ? AND ?
+                          AND symbol.market IN ('KOSPI', 'KOSDAQ')
+                        """,
+                        [chunk_start, relevant_end],
+                    ).fetchdf()
+
+                    price_frame["trading_date"] = pd.to_datetime(
+                        price_frame["trading_date"]
+                    ).dt.date
+                    price_frame["symbol"] = price_frame["symbol"].astype(str).str.zfill(6)
+                    price_lookup = price_frame.set_index(["trading_date", "symbol"])[
+                        ["open", "high", "low", "close"]
+                    ].sort_index()
+                    path_lookup = _build_symbol_path_lookup(price_frame)
+                    market_baseline = _build_market_baseline_frame(
+                        price_frame,
+                        as_of_dates=chunk_dates,
+                        horizons=horizons,
+                        trading_days=trading_days,
+                        trading_day_index=trading_day_index,
+                    )
                     rows: list[dict[str, object]] = []
                     for as_of_date in chunk_dates:
                         as_of_index = trading_day_index.get(as_of_date)
@@ -694,6 +697,15 @@ def build_forward_labels(
 
                     label_frame = pd.DataFrame(rows)
                     if label_frame.empty:
+                        del (
+                            label_frame,
+                            rows,
+                            market_baseline,
+                            path_lookup,
+                            price_lookup,
+                            price_frame,
+                        )
+                        gc.collect()
                         continue
                     if not market_baseline.empty:
                         label_frame = label_frame.drop(columns=["baseline_forward_return"])
@@ -735,6 +747,8 @@ def build_forward_labels(
                             )
                     row_count += len(label_frame)
                     available_row_count += int(label_frame["label_available_flag"].sum())
+                    del label_frame, rows, market_baseline, path_lookup, price_lookup, price_frame
+                    gc.collect()
 
                 notes = (
                     "Forward label build completed. "
