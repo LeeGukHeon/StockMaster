@@ -490,6 +490,13 @@ def build_summaries(replay_rows: pd.DataFrame, daily: pd.DataFrame) -> dict[str,
     }
 
 
+
+def _table_text(frame: pd.DataFrame, *, max_rows: int | None = None) -> str:
+    if frame.empty:
+        return "_empty_"
+    shown = frame if max_rows is None else frame.head(max_rows)
+    return "```text\n" + shown.to_string(index=False) + "\n```"
+
 def _write_report(
     path: Path,
     *,
@@ -510,17 +517,17 @@ def _write_report(
         "",
         "## Summary",
         "",
-        summaries["summary"].to_markdown(index=False),
+        _table_text(summaries["summary"]),
         "",
     ]
     for name in ("label_summary", "rank_summary", "band_summary"):
         frame = summaries.get(name, pd.DataFrame())
         lines.extend([f"## {name}", ""])
-        lines.append("_empty_" if frame.empty else frame.to_markdown(index=False))
+        lines.append(_table_text(frame))
         lines.append("")
     if not daily.empty:
         lines.extend(["## Recent daily replay tail", ""])
-        lines.append(daily.tail(15).to_markdown(index=False))
+        lines.append(_table_text(daily.tail(15)))
         lines.append("")
     lines.extend(
         [
