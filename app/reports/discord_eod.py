@@ -25,6 +25,7 @@ from app.recommendation.buyability import (
     BUYABILITY_UNCERTAINTY_PENALTY,
 )
 from app.recommendation.judgement import (
+    RecommendationJudgement,
     ScoreBandEvidence,
     classify_recommendation,
     load_score_band_evidence,
@@ -42,6 +43,7 @@ DISCORD_EOD_REFERENCE_HORIZON = 1
 DISCORD_EOD_D5_CORE_CANDIDATE_LIMIT = 5
 DISCORD_EOD_D5_MAX_CANDIDATES_PER_SECTOR = 2
 DISCORD_EOD_MIN_REFERENCE_SCORE = 55.0
+D5_ACTIONABLE_JUDGEMENT_LABELS = {"매수검토", "매수해볼 가치 있음"}
 
 REASON_LABELS = {
     "ml_alpha_supportive": "최근 흐름과 모델 판단이 함께 받쳐줌",
@@ -686,6 +688,51 @@ def _compact_pick_text(value: str, *, fallback: str) -> str:
     return text.split(", ", 1)[0]
 
 
+def _pick_judgement(
+    row: pd.Series,
+    *,
+    rank: int,
+    score_evidence: dict[str, ScoreBandEvidence] | None = None,
+) -> RecommendationJudgement:
+    horizon = int(
+        row.get("horizon", DISCORD_EOD_CANDIDATE_HORIZON)
+        or DISCORD_EOD_CANDIDATE_HORIZON
+    )
+    is_d5_buyability_pick = (
+        horizon == DISCORD_EOD_CANDIDATE_HORIZON
+        and pd.notna(row.get("buyability_priority_score"))
+    )
+    return classify_recommendation(
+        final_selection_value=row.get("final_selection_value"),
+        expected_excess_return=row.get("expected_excess_return"),
+        risk_flags=_raw_tag_list(row.get("risk_flags_json")),
+        evidence_by_band=score_evidence,
+        candidate_selected=is_d5_buyability_pick,
+        candidate_rank=rank if is_d5_buyability_pick else None,
+        buyability_priority_score=row.get("buyability_priority_score"),
+    )
+
+
+def _has_actionable_d5_candidate(
+    frame: pd.DataFrame,
+    *,
+    score_evidence: dict[str, ScoreBandEvidence] | None = None,
+) -> bool:
+    if frame.empty:
+        return False
+    for rank, (_, row) in enumerate(frame.iterrows(), start=1):
+        horizon = int(
+            row.get("horizon", DISCORD_EOD_CANDIDATE_HORIZON)
+            or DISCORD_EOD_CANDIDATE_HORIZON
+        )
+        if horizon != DISCORD_EOD_CANDIDATE_HORIZON:
+            continue
+        judgement = _pick_judgement(row, rank=rank, score_evidence=score_evidence)
+        if judgement.label in D5_ACTIONABLE_JUDGEMENT_LABELS:
+            return True
+    return False
+
+
 def _format_pick_block(
     row: pd.Series,
     *,
@@ -698,19 +745,7 @@ def _format_pick_block(
         row.get("horizon", DISCORD_EOD_CANDIDATE_HORIZON)
         or DISCORD_EOD_CANDIDATE_HORIZON
     )
-    is_d5_buyability_pick = (
-        horizon == DISCORD_EOD_CANDIDATE_HORIZON
-        and pd.notna(row.get("buyability_priority_score"))
-    )
-    judgement = classify_recommendation(
-        final_selection_value=row.get("final_selection_value"),
-        expected_excess_return=row.get("expected_excess_return"),
-        risk_flags=_raw_tag_list(row.get("risk_flags_json")),
-        evidence_by_band=score_evidence,
-        candidate_selected=is_d5_buyability_pick,
-        candidate_rank=rank if is_d5_buyability_pick else None,
-        buyability_priority_score=row.get("buyability_priority_score"),
-    )
+    judgement = _pick_judgement(row, rank=rank, score_evidence=score_evidence)
     display_label = judgement.label
     display_summary = judgement.summary
     risk_text = (
@@ -883,11 +918,6 @@ def _build_payload_content(
     reference_basis = (
         _horizon_hold_basis_label(reference_horizon) if reference_horizon is not None else None
     )
-    primary_candidate_title = (
-        f"**2~5거래일 스윙 후보 | {candidate_basis} (D+{int(candidate_horizon)})**"
-        if int(candidate_horizon) == 5
-        else f"**다음 거래일 후보 | {candidate_basis} (D+{int(candidate_horizon)})**"
-    )
     sector_title = (
         f"**강세 예상 업종 | {sector_basis} (D+{int(sector_horizon)})**"
     )
@@ -902,6 +932,26 @@ def _build_payload_content(
         str(market_pulse.get("regime_state")),
         market_pulse.get("regime_state") or "미확인",
     )
+    has_actionable_primary_d5 = (
+        int(candidate_horizon) == 5
+        and _has_actionable_d5_candidate(
+            single_buy_candidates,
+            score_evidence=primary_score_evidence,
+        )
+    )
+    if int(candidate_horizon) == 5:
+        primary_candidate_title = (
+            f"**2~5거래일 스윙 후보 | {candidate_basis} (D+{int(candidate_horizon)})**"
+            if has_actionable_primary_d5 or single_buy_candidates.empty
+            else (
+                f"**2~5거래일 관찰 후보 | 매수검토 이상 없음 | "
+                f"{candidate_basis} (D+{int(candidate_horizon)})**"
+            )
+        )
+    else:
+        primary_candidate_title = (
+            f"**다음 거래일 후보 | {candidate_basis} (D+{int(candidate_horizon)})**"
+        )
     lines = [
         f"**StockMaster 장마감 추천 요약 | {as_of_date.isoformat()}**",
         (
@@ -918,6 +968,11 @@ def _build_payload_content(
     if single_buy_candidates.empty:
         lines.append("- 상위 후보가 아직 없습니다.")
     else:
+        if int(candidate_horizon) == 5 and not has_actionable_primary_d5:
+            lines.append(
+                "- 오늘은 매수검토 이상 기준을 통과한 D5 후보가 없어 "
+                "관찰 후보만 표시합니다."
+            )
         for index, (_, row) in enumerate(single_buy_candidates.iterrows(), start=1):
             lines.extend(
                 _format_pick_block(row, rank=index, score_evidence=primary_score_evidence)

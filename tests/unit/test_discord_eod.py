@@ -89,6 +89,45 @@ def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> Non
     assert "메인 후보는 5거래일 보유 기준(D+5) 중심" in content
 
 
+def test_build_payload_content_marks_d5_section_as_observation_when_no_actionable_pick() -> None:
+    content = _build_payload_content(
+        as_of_date=date(2026, 4, 27),
+        sector_horizon=5,
+        candidate_horizon=5,
+        market_pulse={},
+        alpha_promotion=pd.DataFrame(),
+        selection_gap=pd.DataFrame(),
+        sector_outlook=pd.DataFrame(),
+        single_buy_candidates=pd.DataFrame(
+            [
+                {
+                    "horizon": 5,
+                    "symbol": "054050",
+                    "company_name": "농우바이오",
+                    "market": "KOSDAQ",
+                    "industry": "농업",
+                    "sector": "소비재",
+                    "final_selection_value": 54.7,
+                    "grade": "A",
+                    "selection_date": "2026-04-27 00:00:00",
+                    "next_entry_trade_date": "2026-04-28 00:00:00",
+                    "selection_close_price": 8150,
+                    "expected_excess_return": 0.0018,
+                    "buyability_priority_score": -0.55,
+                    "top_reason_tags_json": '["flow_persistence_supportive"]',
+                    "risk_flags_json": "[]",
+                }
+            ]
+        ),
+        market_news=pd.DataFrame(),
+    )
+
+    assert "**2~5거래일 관찰 후보 | 매수검토 이상 없음" in content
+    assert "오늘은 매수검토 이상 기준을 통과한 D5 후보가 없어" in content
+    assert "054050" in content
+    assert "관찰 우선" in content
+
+
 def test_format_pick_block_omits_active_model_id() -> None:
     row = pd.Series(
         {
