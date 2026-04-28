@@ -255,7 +255,8 @@ def summarize_split_daily(
             continue
         summary.insert(1, "split", split_name)
         rows.append(summary)
-    return pd.concat(rows, ignore_index=True, sort=False) if rows else pd.DataFrame()
+    cleaned = [row.dropna(axis=1, how="all") for row in rows if not row.empty]
+    return pd.concat(cleaned, ignore_index=True, sort=False) if cleaned else pd.DataFrame()
 
 
 def run(args: argparse.Namespace) -> int:
