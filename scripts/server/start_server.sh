@@ -38,8 +38,12 @@ if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:
   log "bootstrapping metadata store"
   "${WORKER_VENV}/bin/python" "${PROJECT_ROOT}/scripts/bootstrap_metadata_store.py"
 
-  log "running initial metadata migration if postgres target is empty"
-  "${WORKER_VENV}/bin/python" "${PROJECT_ROOT}/scripts/migrate_duckdb_metadata_to_postgres.py" --truncate-first --if-target-empty
+  if [[ "${METADATA_DB_BOOTSTRAP_FROM_DUCKDB:-false}" == "true" ]]; then
+    log "running initial metadata migration if postgres target is empty"
+    "${WORKER_VENV}/bin/python" "${PROJECT_ROOT}/scripts/migrate_duckdb_metadata_to_postgres.py" --truncate-first --if-target-empty
+  else
+    log "skipping DuckDB metadata migration; set METADATA_DB_BOOTSTRAP_FROM_DUCKDB=true to run it"
+  fi
 fi
 
 log "running bootstrap"
