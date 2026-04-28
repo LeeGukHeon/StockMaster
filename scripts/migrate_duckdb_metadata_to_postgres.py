@@ -41,17 +41,17 @@ def main() -> int:
         return 0
     selected_tables = tuple(args.tables) if args.tables else METADATA_TABLES
     if args.if_target_empty:
-        source_counts = duckdb_metadata_row_counts(settings, tables=selected_tables)
-        source_total = sum(source_counts.values())
-        if source_total == 0:
-            print("Metadata migration skipped. DuckDB metadata source is empty.")
-            return 0
         target_counts = postgres_metadata_row_counts(settings, tables=selected_tables)
         target_total = sum(target_counts.values())
         if target_total > 0:
             print(
                 "Metadata migration skipped. Postgres metadata store already contains rows."
             )
+            return 0
+        source_counts = duckdb_metadata_row_counts(settings, tables=selected_tables)
+        source_total = sum(source_counts.values())
+        if source_total == 0:
+            print("Metadata migration skipped. DuckDB metadata source is empty.")
             return 0
     results = copy_duckdb_metadata_to_postgres(
         settings,

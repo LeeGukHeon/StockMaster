@@ -281,16 +281,7 @@ def upsert_forward_labels(connection, frame: pd.DataFrame) -> None:
     connection.register("forward_label_stage", frame)
     connection.execute(
         """
-        DELETE FROM fact_forward_return_label
-        WHERE (as_of_date, symbol, horizon) IN (
-            SELECT as_of_date, symbol, horizon
-            FROM forward_label_stage
-        )
-        """
-    )
-    connection.execute(
-        """
-        INSERT INTO fact_forward_return_label (
+        INSERT OR REPLACE INTO fact_forward_return_label (
             run_id,
             as_of_date,
             symbol,
@@ -612,11 +603,6 @@ def build_forward_labels(
                         - label_frame["baseline_forward_return"]
                     )
 
-                if force:
-                    connection.execute(
-                        "DELETE FROM fact_forward_return_label WHERE as_of_date BETWEEN ? AND ?",
-                        [start_date, end_date],
-                    )
                 upsert_forward_labels(connection, label_frame)
 
                 artifact_paths: list[str] = []
