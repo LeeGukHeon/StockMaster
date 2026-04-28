@@ -13,6 +13,7 @@ from app.recommendation.buyability import (
 )
 
 D5_SELECTED_STRONG_PRIORITY_SCORE = 0.0
+D5_SELECTED_ACTIONABLE_RANK_END = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +158,13 @@ def _selected_d5_judgement(
         return RecommendationJudgement(
             label="관찰 우선",
             summary=f"후보권이나 성과 확인 필요 · {evidence_text}",
+            score_band=score_band_for_value(score),
+            evidence=evidence,
+        )
+    if rank is not None and rank > D5_SELECTED_ACTIONABLE_RANK_END:
+        return RecommendationJudgement(
+            label="관찰 우선",
+            summary=f"후순위 후보는 관찰 우선 · {evidence_text}",
             score_band=score_band_for_value(score),
             evidence=evidence,
         )

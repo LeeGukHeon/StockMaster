@@ -205,3 +205,31 @@ def test_buyability_priority_score_penalizes_model_risk() -> None:
     assert not has_buyability_blocker(["model_disagreement_high"])
     assert not has_buyability_blocker(["model_joint_instability_high"])
     assert not has_buyability_blocker(["prediction_fallback"])
+
+
+def test_classify_recommendation_blocks_marginal_priority_after_replay_tightening() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=58,
+        expected_excess_return=0.007,
+        evidence_by_band={"55-65": ScoreBandEvidence("55-65", 120, 0.004, 0.49)},
+        candidate_selected=True,
+        candidate_rank=2,
+        buyability_priority_score=-0.9,
+    )
+
+    assert judgement.label == "관찰 우선"
+    assert "모델위험 대비 보상 부족" in judgement.summary
+
+
+def test_classify_recommendation_keeps_late_rank_d5_candidate_observable() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=62,
+        expected_excess_return=0.02,
+        evidence_by_band={"55-65": ScoreBandEvidence("55-65", 120, 0.004, 0.49)},
+        candidate_selected=True,
+        candidate_rank=4,
+        buyability_priority_score=0.5,
+    )
+
+    assert judgement.label == "관찰 우선"
+    assert "후순위 후보" in judgement.summary
