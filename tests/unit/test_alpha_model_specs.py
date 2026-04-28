@@ -10,18 +10,32 @@ from app.ml.constants import (
     CHALLENGER_ALPHA_MODEL_SPECS,
     DEFAULT_ALPHA_MODEL_SPEC,
     MARKET_REGIME_FEATURE_COLUMNS,
+    AlphaModelSpec,
     get_alpha_model_spec,
     resolve_feature_columns_for_spec,
     resolve_member_names_for_spec,
     resolve_target_column_for_spec,
     supports_horizon_for_spec,
 )
+from app.ml.registry import load_model_artifact
 from app.ml.training import (
     _metric_rows,
     _normalise_weights,
     _train_single_horizon,
     build_alpha_model_spec_registry_frame,
 )
+
+
+class _RowCountRegressor:
+    def __init__(self) -> None:
+        self.fit_row_count = 0
+
+    def fit(self, x_frame: pd.DataFrame, y_series: pd.Series) -> "_RowCountRegressor":
+        self.fit_row_count = len(x_frame)
+        return self
+
+    def predict(self, x_frame: pd.DataFrame) -> list[float]:
+        return [0.0] * len(x_frame)
 
 
 def test_challenger_specs_use_distinct_feature_profiles() -> None:
@@ -485,3 +499,60 @@ def test_train_single_horizon_empty_dataset_keeps_spec_metadata(tmp_path) -> Non
     assert member_predictions.empty
     assert metric_frame.empty
     assert artifact_path is None
+
+
+def test_train_single_horizon_refits_artifact_members_on_validation_inclusive_frame(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    model_spec = AlphaModelSpec(
+        model_spec_id="unit_refit_spec",
+        estimation_scheme="rolling",
+        rolling_window_days=10,
+        member_names=("row_count",),
+        allowed_horizons=(1,),
+    )
+    dataset = pd.DataFrame(
+        {
+            "as_of_date": [
+                date(2026, 3, 2),
+                date(2026, 3, 2),
+                date(2026, 3, 3),
+                date(2026, 3, 3),
+                date(2026, 3, 4),
+                date(2026, 3, 4),
+            ],
+            "symbol": ["000001", "000002", "000001", "000002", "000001", "000002"],
+            "market": ["KOSPI"] * 6,
+            "target_h1": [0.01, -0.01, 0.02, -0.02, 0.03, -0.03],
+            "ret_5d": [0.1, 0.0, 0.2, 0.0, 0.3, 0.0],
+        }
+    )
+
+    monkeypatch.setattr(
+        "app.ml.training._select_model_builders",
+        lambda train_dates, *, member_names: {"row_count": _RowCountRegressor()},
+    )
+
+    row, member_predictions, metric_frame, artifact_path = _train_single_horizon(
+        dataset,
+        run_id="run-refit",
+        train_end_date=date(2026, 3, 10),
+        horizon=1,
+        min_train_days=1,
+        validation_days=1,
+        artifact_root=Path(tmp_path),
+        model_spec=model_spec,
+    )
+
+    artifact = load_model_artifact(artifact_path)
+
+    assert artifact_path is not None
+    assert row["train_row_count"] == 4
+    assert row["validation_row_count"] == 2
+    assert "final_fit_rows=6" in row["notes"]
+    assert artifact["validation_holdout_refit_flag"] is True
+    assert artifact["final_fit_row_count"] == 6
+    assert artifact["members"]["row_count"].fit_row_count == 6
+    assert not member_predictions.empty
+    assert not metric_frame.empty

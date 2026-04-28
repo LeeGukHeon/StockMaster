@@ -661,6 +661,9 @@ def _train_single_horizon(
         errors="coerce",
     )
     y_validation = pd.to_numeric(validation_frame["target"], errors="coerce")
+    final_fit_frame = training_frame.copy()
+    X_final_fit = final_fit_frame[active_feature_columns].apply(pd.to_numeric, errors="coerce")
+    y_final_fit = pd.to_numeric(final_fit_frame["target"], errors="coerce")
 
     model_builders = _select_model_builders(
         sorted(dict.fromkeys(train_dates)),
@@ -676,6 +679,14 @@ def _train_single_horizon(
         "ensemble_weights": {},
         "fallback_flag": bool(fallback_flag),
         "fallback_reason": fallback_reason,
+        "validation_holdout_refit_flag": True,
+        "final_fit_window_start": (
+            min(final_fit_frame["as_of_date"]).isoformat() if not final_fit_frame.empty else None
+        ),
+        "final_fit_window_end": (
+            max(final_fit_frame["as_of_date"]).isoformat() if not final_fit_frame.empty else None
+        ),
+        "final_fit_row_count": int(len(final_fit_frame)),
         "calibration": [],
         "members": {},
     }
@@ -693,7 +704,6 @@ def _train_single_horizon(
             dtype="float64",
         )
         validation_predictions[member_name] = valid_pred
-        artifact_payload["members"][member_name] = model
         metric_rows.extend(
             _metric_rows(
                 training_run_id=training_run_id,
@@ -802,6 +812,9 @@ def _train_single_horizon(
     artifact_payload["training_target_variant"] = resolve_training_target_variant_for_spec(
         model_spec
     )
+    for member_name, model in model_builders.items():
+        model.fit(X_final_fit, y_final_fit)
+        artifact_payload["members"][member_name] = model
 
     artifact_path = (
         artifact_root
@@ -844,6 +857,7 @@ def _train_single_horizon(
         "notes": (
             f"model_spec_id={model_spec.model_spec_id} "
             f"train_rows={len(train_frame)} validation_rows={len(validation_frame)} "
+            f"final_fit_rows={len(final_fit_frame)} "
             f"fallback={bool(fallback_flag)}"
         ),
         "status": "success",
