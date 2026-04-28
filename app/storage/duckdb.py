@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 from contextlib import contextmanager
@@ -3348,15 +3349,28 @@ def connect_duckdb(
 ) -> duckdb.DuckDBPyConnection:
     ensure_directory(db_path.parent)
     try:
-        return duckdb.connect(str(db_path), read_only=read_only)
+        connection = duckdb.connect(str(db_path), read_only=read_only)
+        _apply_duckdb_runtime_pragmas(connection)
+        return connection
     except duckdb.ConnectionException as exc:
         # Within a single process, bundle runners can hold an existing read/write
         # connection and then call helper paths that attempt a read-only attach.
         # DuckDB rejects mixing configs for the same database file, so fall back
         # to a regular connection for that nested case only.
         if read_only and "different configuration" in str(exc).lower():
-            return duckdb.connect(str(db_path), read_only=False)
+            connection = duckdb.connect(str(db_path), read_only=False)
+            _apply_duckdb_runtime_pragmas(connection)
+            return connection
         raise
+
+
+def _apply_duckdb_runtime_pragmas(connection: duckdb.DuckDBPyConnection) -> None:
+    memory_limit = os.environ.get("STOCKMASTER_DUCKDB_MEMORY_LIMIT")
+    if memory_limit:
+        connection.execute("SET memory_limit = ?", [memory_limit])
+    threads = os.environ.get("STOCKMASTER_DUCKDB_THREADS")
+    if threads:
+        connection.execute(f"SET threads = {max(1, int(threads))}")
 
 
 def _is_read_only_conflict(exc: BaseException) -> bool:
