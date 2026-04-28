@@ -329,6 +329,8 @@ def stock_workbench_live_snapshot_frame(
                 prediction_src.model_spec_id AS live_d5_model_spec_id,
                 prediction_src.active_alpha_model_id AS live_d5_active_alpha_model_id,
                 prediction_src.expected_excess_return AS live_d5_expected_excess_return,
+                prediction_src.uncertainty_score AS live_d5_uncertainty_score,
+                prediction_src.disagreement_score AS live_d5_disagreement_score,
                 prediction_src.lower_band,
                 prediction_src.upper_band
             FROM fact_prediction AS prediction_src
@@ -380,6 +382,8 @@ def stock_workbench_live_snapshot_frame(
             prediction.live_d5_model_spec_id,
             prediction.live_d5_active_alpha_model_id,
             prediction.live_d5_expected_excess_return,
+            prediction.live_d5_uncertainty_score,
+            prediction.live_d5_disagreement_score,
             CASE
                 WHEN reference_price.live_reference_price IS NULL
                   OR prediction.live_d5_expected_excess_return IS NULL THEN NULL

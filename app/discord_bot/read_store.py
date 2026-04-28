@@ -512,6 +512,21 @@ def _build_stock_summary_rows(
         raw_d5_candidate_rank = (
             getattr(live, "live_d5_selection_rank", None) if live is not None else None
         )
+        d5_uncertainty = (
+            getattr(live, "live_d5_uncertainty_score", None) if live is not None else None
+        )
+        if d5_uncertainty is None:
+            d5_uncertainty = getattr(item, "d5_alpha_uncertainty_score", None)
+        d5_disagreement = (
+            getattr(live, "live_d5_disagreement_score", None) if live is not None else None
+        )
+        if d5_disagreement is None:
+            d5_disagreement = getattr(item, "d5_alpha_disagreement_score", None)
+        d5_buyability_priority = buyability_priority_score(
+            expected_excess_return=d5_expected,
+            uncertainty_score=d5_uncertainty,
+            disagreement_score=d5_disagreement,
+        )
         try:
             d5_candidate_rank = (
                 None if raw_d5_candidate_rank is None else int(float(raw_d5_candidate_rank))
@@ -528,7 +543,7 @@ def _build_stock_summary_rows(
             evidence_by_band=score_evidence,
             candidate_selected=is_d5_candidate,
             candidate_rank=d5_candidate_rank,
-            buyability_priority_score=None,
+            buyability_priority_score=d5_buyability_priority,
         )
         summary = " · ".join(
             [
@@ -560,12 +575,14 @@ def _build_stock_summary_rows(
             "d5_judgement_summary": judgement.summary,
             "d5_report_candidate_flag": is_d5_candidate,
             "d5_selection_rank": d5_candidate_rank,
+            "buyability_priority_score": d5_buyability_priority,
             "d5_reason_tags": raw_d5_reasons[:2],
             "risk_flags": raw_d5_risks[:3],
             "ret_5d": getattr(item, "ret_5d", None),
             "ret_20d": getattr(item, "ret_20d", None),
             "news_count_3d": getattr(item, "news_count_3d", None),
-            "d5_alpha_uncertainty_score": getattr(item, "d5_alpha_uncertainty_score", None),
+            "d5_alpha_uncertainty_score": d5_uncertainty,
+            "d5_alpha_disagreement_score": d5_disagreement,
         }
         rows.append(
             _snapshot_row(
