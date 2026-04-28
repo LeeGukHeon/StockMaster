@@ -314,8 +314,8 @@ def _rank_and_filter_day(day: pd.DataFrame) -> pd.DataFrame:
         return candidates
     candidates["d5_policy_bucket"] = candidates["d5_policy_bucket"].astype(int)
     return candidates.sort_values(
-        ["d5_policy_bucket", "d5_selection_rank", "symbol"],
-        ascending=[True, True, True],
+        ["d5_policy_bucket", "buyability_priority_score", "d5_selection_rank", "symbol"],
+        ascending=[True, False, True, True],
     ).reset_index(drop=True)
 
 
@@ -351,6 +351,7 @@ def _classify_row(
     row: pd.Series,
     *,
     evidence_by_band: dict[str, ScoreBandEvidence],
+    display_rank: int | None,
 ) -> RecommendationJudgement:
     return classify_recommendation(
         final_selection_value=row.get("final_selection_value"),
@@ -358,7 +359,7 @@ def _classify_row(
         risk_flags=row.get("risk_flag_list"),
         evidence_by_band=evidence_by_band,
         candidate_selected=True,
-        candidate_rank=row.get("d5_selection_rank"),
+        candidate_rank=display_rank,
         buyability_priority_score=row.get("buyability_priority_score"),
     )
 
@@ -391,11 +392,15 @@ def replay_policy(
         )
         if not selected.empty:
             selected = selected.copy()
+            selected["replay_rank"] = range(1, len(selected) + 1)
             judgements = [
-                _classify_row(row, evidence_by_band=evidence)
+                _classify_row(
+                    row,
+                    evidence_by_band=evidence,
+                    display_rank=int(row["replay_rank"]),
+                )
                 for _, row in selected.iterrows()
             ]
-            selected["replay_rank"] = range(1, len(selected) + 1)
             selected["judgement_label"] = [item.label for item in judgements]
             selected["judgement_summary"] = [item.summary for item in judgements]
             selected["score_band"] = [item.score_band for item in judgements]
