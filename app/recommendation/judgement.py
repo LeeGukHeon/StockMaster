@@ -91,7 +91,7 @@ def _evidence_blocks_selected_candidate(evidence: ScoreBandEvidence | None) -> b
         return False
     if evidence.avg_excess_return is not None and evidence.avg_excess_return <= -0.005:
         return True
-    return evidence.hit_rate is not None and evidence.hit_rate < 0.40
+    return evidence.hit_rate is not None and evidence.hit_rate < 0.35
 
 def _evidence_supports_aggressive(evidence: ScoreBandEvidence | None) -> bool:
     if evidence is None:
