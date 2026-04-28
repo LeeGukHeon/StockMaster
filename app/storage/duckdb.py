@@ -3348,8 +3348,9 @@ def connect_duckdb(
     read_only: bool = False,
 ) -> duckdb.DuckDBPyConnection:
     ensure_directory(db_path.parent)
+    config = _duckdb_runtime_config()
     try:
-        connection = duckdb.connect(str(db_path), read_only=read_only)
+        connection = duckdb.connect(str(db_path), read_only=read_only, config=config)
         _apply_duckdb_runtime_pragmas(connection)
         return connection
     except duckdb.ConnectionException as exc:
@@ -3358,10 +3359,21 @@ def connect_duckdb(
         # DuckDB rejects mixing configs for the same database file, so fall back
         # to a regular connection for that nested case only.
         if read_only and "different configuration" in str(exc).lower():
-            connection = duckdb.connect(str(db_path), read_only=False)
+            connection = duckdb.connect(str(db_path), read_only=False, config=config)
             _apply_duckdb_runtime_pragmas(connection)
             return connection
         raise
+
+
+def _duckdb_runtime_config() -> dict[str, str]:
+    config: dict[str, str] = {}
+    memory_limit = os.environ.get("STOCKMASTER_DUCKDB_MEMORY_LIMIT")
+    if memory_limit:
+        config["memory_limit"] = memory_limit
+    threads = os.environ.get("STOCKMASTER_DUCKDB_THREADS")
+    if threads:
+        config["threads"] = str(max(1, int(threads)))
+    return config
 
 
 def _apply_duckdb_runtime_pragmas(connection: duckdb.DuckDBPyConnection) -> None:
