@@ -145,6 +145,76 @@ def _load_matured_rows(
     ).fetchdf()
 
 
+
+def _load_source_csv(path: Path) -> pd.DataFrame:
+    frame = pd.read_csv(path, low_memory=False)
+    result = frame.copy()
+    if "selection_date" not in result.columns and "as_of_date" in result.columns:
+        result["selection_date"] = result["as_of_date"]
+    if "evaluation_date" not in result.columns:
+        result["evaluation_date"] = result.get("exit_date")
+    if "company_name" not in result.columns:
+        result["company_name"] = result.get("symbol")
+    if "sector" not in result.columns:
+        result["sector"] = None
+    if "industry" not in result.columns:
+        result["industry"] = None
+    if "eligible_flag" not in result.columns:
+        result["eligible_flag"] = True
+    if "realized_excess_return" not in result.columns:
+        if "net_return" in result.columns:
+            result["realized_excess_return"] = result["net_return"]
+        elif "excess_forward_return" in result.columns:
+            result["realized_excess_return"] = result["excess_forward_return"]
+        else:
+            raise ValueError(
+                f"{path} must contain realized_excess_return, net_return, "
+                "or excess_forward_return"
+            )
+    if "realized_return" not in result.columns:
+        result["realized_return"] = result["realized_excess_return"]
+    if "direction_hit_flag" not in result.columns:
+        if "direction_hit" in result.columns:
+            result["direction_hit_flag"] = result["direction_hit"]
+        else:
+            result["direction_hit_flag"] = pd.to_numeric(
+                result["realized_excess_return"], errors="coerce"
+            ).gt(0.0)
+    if "outcome_status" not in result.columns:
+        result["outcome_status"] = "matured"
+    if "ranking_version" not in result.columns:
+        result["ranking_version"] = SELECTION_ENGINE_VERSION
+    required_defaults = {
+        "grade": None,
+        "selection_percentile": None,
+        "expected_excess_return": None,
+        "uncertainty_score": None,
+        "disagreement_score": None,
+        "fallback_flag": False,
+        "risk_flags_json": "[]",
+        "top_reason_tags_json": "[]",
+        "model_spec_id": None,
+        "active_alpha_model_id": None,
+        "market": None,
+    }
+    for column, default in required_defaults.items():
+        if column not in result.columns:
+            result[column] = default
+    required = {
+        "selection_date",
+        "symbol",
+        "horizon",
+        "ranking_version",
+        "eligible_flag",
+        "final_selection_value",
+        "expected_excess_return",
+        "realized_excess_return",
+    }
+    missing = sorted(required.difference(result.columns))
+    if missing:
+        raise ValueError(f"{path} missing required columns after normalization: {missing}")
+    return result
+
 def _score_band_evidence_from_history(
     history: pd.DataFrame,
     *,
@@ -559,11 +629,21 @@ def run(args: argparse.Namespace) -> int:
     settings = load_settings(project_root=PROJECT_ROOT)
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    connection = duckdb.connect(str(settings.paths.duckdb_path), read_only=True)
-    try:
-        source = _load_matured_rows(connection, config=config)
-    finally:
-        connection.close()
+    if args.source_csv is not None:
+        source = _load_source_csv(args.source_csv.resolve())
+        source = source.loc[pd.to_numeric(source["horizon"], errors="coerce").eq(config.horizon)]
+        if config.start_date is not None:
+            dates = pd.to_datetime(source["selection_date"]).dt.date
+            source = source.loc[dates >= config.start_date].copy()
+        if config.end_date is not None:
+            dates = pd.to_datetime(source["selection_date"]).dt.date
+            source = source.loc[dates <= config.end_date].copy()
+    else:
+        connection = duckdb.connect(str(settings.paths.duckdb_path), read_only=True)
+        try:
+            source = _load_matured_rows(connection, config=config)
+        finally:
+            connection.close()
     replay_rows, daily = replay_policy(source, config=config)
     summaries = build_summaries(replay_rows, daily)
     outputs = {
@@ -594,6 +674,7 @@ def run(args: argparse.Namespace) -> int:
         "promotion_disabled": True,
         "artifact_only": True,
         "db_read_only": True,
+        "source_csv": None if args.source_csv is None else str(args.source_csv.resolve()),
         "source_row_count": int(len(source)),
         "source_date_count": int(source["selection_date"].nunique()) if not source.empty else 0,
         "replay_row_count": int(len(replay_rows)),
@@ -625,6 +706,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Replay the current D5 EOD buyability policy over matured historical outcomes."
     )
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument(
+        "--source-csv",
+        type=Path,
+        help="Optional CSV artifact source instead of DuckDB fact_selection_outcome.",
+    )
     parser.add_argument("--start-date", type=_parse_date)
     parser.add_argument("--end-date", type=_parse_date)
     parser.add_argument("--horizon", type=int, default=5)
