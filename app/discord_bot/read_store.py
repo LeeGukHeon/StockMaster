@@ -650,7 +650,7 @@ def _d5_display_rank_by_symbol(
         axis=1,
     )
     eligible = (
-        working["live_d5_eligible_flag"].astype(bool)
+        working["live_d5_eligible_flag"].fillna(False).astype(bool)
         if "live_d5_eligible_flag" in working.columns
         else pd.Series(True, index=working.index)
     )
