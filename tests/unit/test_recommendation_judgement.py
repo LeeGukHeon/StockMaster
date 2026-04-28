@@ -138,7 +138,7 @@ def test_classify_recommendation_blocks_selected_candidate_when_priority_is_nega
         evidence_by_band={"65-75": ScoreBandEvidence("65-75", 120, 0.006, 0.47)},
         candidate_selected=True,
         candidate_rank=2,
-        buyability_priority_score=-0.1,
+        buyability_priority_score=-1.1,
     )
 
     assert judgement.label == "관찰 우선"
