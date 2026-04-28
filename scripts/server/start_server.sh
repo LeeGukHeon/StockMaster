@@ -46,8 +46,12 @@ if [[ "${METADATA_DB_ENABLED:-false}" == "true" ]] && [[ "${METADATA_DB_BACKEND:
   fi
 fi
 
-log "running bootstrap"
-"${WORKER_VENV}/bin/python" "${PROJECT_ROOT}/scripts/bootstrap.py"
+if [[ "${STOCKMASTER_BOOTSTRAP_ON_START:-false}" == "true" ]]; then
+  log "running bootstrap"
+  "${WORKER_VENV}/bin/python" "${PROJECT_ROOT}/scripts/bootstrap.py"
+else
+  log "skipping DuckDB bootstrap; set STOCKMASTER_BOOTSTRAP_ON_START=true to run it"
+fi
 
 log "starting metadata-only server stack"
 compose up -d metadata_db
