@@ -270,16 +270,12 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     )
     risk_flags = _translate_tag_list(analysis_payload.get("risk_flags"), LIVE_RISK_LABELS, limit=2)
     risk_text = _short_list_text(risk_flags, empty="특이 리스크 없음", limit=1)
-    if live_result.mode == "closed":
-        reason_text = "장마감 추천 기준"
-    else:
-        reason_text = _short_list_text(
-            _translated_why_now(analysis_payload).split(" · "),
-            empty="근거 제한",
-            limit=2,
-            show_suffix=False,
-        )
-    signal_text = _render_signal_summary(analysis_payload.get("signal_decomposition", {}))
+    reason_text = _short_list_text(
+        _translated_why_now(analysis_payload).split(" · "),
+        empty="장마감 추천 기준" if live_result.mode == "closed" else "근거 제한",
+        limit=2,
+        show_suffix=False,
+    )
 
     lines = [
         f"**{symbol} {company_name} · {stable_judgement_label}**",
@@ -297,10 +293,7 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
             else live_judgement_label
         )
         lines.append(f"실시간: 점수 {live_d5_score}점 · {live_label}")
-    reason_line = f"근거: {reason_text}"
-    if signal_text != "확인 제한":
-        reason_line += f" · 신호 {signal_text}"
-    lines.append(reason_line)
+    lines.append(f"근거: {reason_text}")
     if risk_flags or live_result.mode != "closed":
         lines.append(f"주의: {risk_text}")
     if live_row is not None:

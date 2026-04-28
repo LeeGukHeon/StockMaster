@@ -122,7 +122,7 @@ def test_format_pick_block_omits_active_model_id() -> None:
     assert "점수대 성과 우위" in rendered
     assert "단기 탄력 강함" in rendered
     assert "고예측 오차와 모델 이견이 동시에 큼" in rendered
-    assert "8,860→8,872원" in rendered
+    assert "목표 8,872원" in rendered
 
 
 def test_format_pick_block_translates_d5_reason_tags_to_korean() -> None:
@@ -159,9 +159,9 @@ def test_format_pick_block_translates_d5_reason_tags_to_korean() -> None:
     )
 
     assert "매수해볼 가치 있음" in rendered
-    assert "65-75점대 과거 평균 +0.6%" in rendered
+    assert "판단 점수대 성과 우위" in rendered
     assert "상대 강도가 살아나는 흐름" in rendered
-    assert "원점수 상위 신호를 최대한 보존함" in rendered
+    assert "원점수 상위 신호를 최대한 보존함" not in rendered
     assert "raw_alpha_leader_preserved" not in rendered
 
 
@@ -194,5 +194,5 @@ def test_format_pick_block_labels_d5_buyability_candidate_without_score_band_con
 
     assert "관찰 우선" in rendered
     assert "매수 보류" not in rendered
-    assert "차단 리스크 없음" in rendered
+    assert "특이 리스크 없음" in rendered
     assert "후보권" in rendered

@@ -121,7 +121,7 @@ def test_render_live_stock_analysis_formats_quote_without_news_noise(monkeypatch
     assert "raw_alpha_leader_preserved" not in rendered
     assert "주의: 모델 이견" in rendered
     assert "외 1" not in rendered
-    assert "신호 추세 강함 · 수급 양호 · 위험 낮음" in rendered
+    assert "신호 추세 강함 · 수급 양호 · 위험 낮음" not in rendered
     assert "데이터: KIS 실시간 시세 기준" not in rendered
     assert "가격: 목표 72,500원 · 손절 68,800원" in rendered
     assert "뉴스" not in rendered

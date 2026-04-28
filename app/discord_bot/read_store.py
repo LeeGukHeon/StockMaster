@@ -250,8 +250,8 @@ def _build_pick_rows(
             axis=1,
         )
         working = working.loc[working["d5_policy_bucket"].notna()].sort_values(
-            ["d5_policy_bucket", "d5_selection_rank", "symbol"],
-            ascending=[True, True, True],
+            ["d5_policy_bucket", "buyability_priority_score", "d5_selection_rank", "symbol"],
+            ascending=[True, False, True, True],
         )
         working = _limit_d5_sector_concentration(working, limit=BOT_D5_CORE_PICK_LIMIT)
     else:
@@ -501,10 +501,21 @@ def _build_stock_summary_rows(
             if live is not None
             else getattr(item, "d5_selection_v2_value", None)
         )
+        raw_d5_risks = _parse_raw_json_list(
+            getattr(live, "live_d5_risk_flags_json", "[]") if live else "[]"
+        )
+        raw_d5_reasons = _parse_raw_json_list(
+            getattr(live, "live_d5_top_reason_tags_json", "[]") if live else "[]"
+        )
+        is_d5_candidate = bool(
+            getattr(live, "live_d5_report_candidate_flag", False)
+        ) if live is not None else False
         judgement = classify_recommendation(
             final_selection_value=d5_score,
             expected_excess_return=d5_expected,
+            risk_flags=raw_d5_risks,
             evidence_by_band=score_evidence,
+            candidate_selected=is_d5_candidate,
         )
         summary = " · ".join(
             [
@@ -534,6 +545,9 @@ def _build_stock_summary_rows(
             "d5_final_selection_value": d5_score,
             "d5_judgement_label": judgement.label,
             "d5_judgement_summary": judgement.summary,
+            "d5_report_candidate_flag": is_d5_candidate,
+            "d5_reason_tags": raw_d5_reasons[:2],
+            "risk_flags": raw_d5_risks[:3],
             "ret_5d": getattr(item, "ret_5d", None),
             "ret_20d": getattr(item, "ret_20d", None),
             "news_count_3d": getattr(item, "news_count_3d", None),

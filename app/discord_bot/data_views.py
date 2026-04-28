@@ -310,6 +310,9 @@ def stock_workbench_live_snapshot_frame(
                 final_selection_value AS live_d5_selection_v2_value,
                 grade AS live_d5_selection_v2_grade,
                 eligible_flag AS live_d5_eligible_flag,
+                top_reason_tags_json AS live_d5_top_reason_tags_json,
+                risk_flags_json AS live_d5_risk_flags_json,
+                explanatory_score_json AS live_d5_explanatory_score_json,
                 (COALESCE(eligible_flag, FALSE) AND COALESCE(final_selection_rank_pct, 0.0) >= 0.85)
                     AS live_d5_report_candidate_flag
             FROM fact_ranking
@@ -367,13 +370,19 @@ def stock_workbench_live_snapshot_frame(
             d5.live_d5_selection_v2_grade,
             d5.live_d5_eligible_flag,
             d5.live_d5_report_candidate_flag,
+            d5.live_d5_top_reason_tags_json,
+            d5.live_d5_risk_flags_json,
+            d5.live_d5_explanatory_score_json,
             prediction.live_d5_model_spec_id,
             prediction.live_d5_active_alpha_model_id,
             prediction.live_d5_expected_excess_return,
             CASE
                 WHEN reference_price.live_reference_price IS NULL
                   OR prediction.live_d5_expected_excess_return IS NULL THEN NULL
-                ELSE reference_price.live_reference_price * (1.0 + prediction.live_d5_expected_excess_return)
+                ELSE (
+                    reference_price.live_reference_price
+                    * (1.0 + prediction.live_d5_expected_excess_return)
+                )
             END AS live_d5_target_price,
             CASE
                 WHEN reference_price.live_reference_price IS NULL

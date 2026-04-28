@@ -674,6 +674,18 @@ def _pct_text(value: object) -> str:
     return f"{float(value):.1%}"
 
 
+def _compact_judgement_summary(summary: str) -> str:
+    text = str(summary or "-")
+    return text.split(" · ", 1)[0] if " · " in text else text
+
+
+def _compact_pick_text(value: str, *, fallback: str) -> str:
+    text = str(value or "-")
+    if text == "-":
+        return fallback
+    return text.split(", ", 1)[0]
+
+
 def _format_pick_block(
     row: pd.Series,
     *,
@@ -695,20 +707,28 @@ def _format_pick_block(
     )
     display_label = judgement.label
     display_summary = judgement.summary
-    risk_text = "차단 리스크 없음" if risks == "-" else risks
+    risk_text = (
+        "특이 리스크 없음"
+        if risks == "-"
+        else _compact_pick_text(risks, fallback="특이 리스크 없음")
+    )
+    reason_text = _compact_pick_text(reasons, fallback="근거 제한")
     score = float(row["final_selection_value"])
     expected_text = _pct_text(row.get("expected_excess_return"))
-    detail = f"   - {display_summary} | 근거 {reasons} | 리스크 {risk_text}"
+    detail = (
+        f"   - 판단 {_compact_judgement_summary(display_summary)}"
+        f" | 근거 {reason_text} | 주의 {risk_text}"
+    )
     if pd.notna(row.get("selection_close_price")) and pd.notna(
         row.get("expected_excess_return")
     ):
         base_price = float(row["selection_close_price"])
         target_price = base_price * (1.0 + float(row["expected_excess_return"]))
-        detail += f" | {base_price:,.0f}→{target_price:,.0f}원"
+        detail += f" | 목표 {target_price:,.0f}원"
     return [
         (
             f"{rank}. `{row['symbol']}` {row['company_name']} · {display_label}"
-            f" | 점수 {score:.1f}/{row['grade']} | 기대 {expected_text}"
+            f" | D5 {score:.1f}/{row['grade']} | 기대 {expected_text}"
         ),
         detail,
     ]

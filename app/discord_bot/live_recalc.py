@@ -139,11 +139,14 @@ def build_live_analysis_payload(
     )
     d5_reasons = _json_list(
         None if live_row is None else live_row.get("live_d5_top_reason_tags_json")
-    )
+    ) or _json_list(snapshot_payload.get("d5_reason_tags"))
     risk_flags = list(
         dict.fromkeys(
             _json_list(None if live_row is None else live_row.get("live_d1_risk_flags_json"))
-            + _json_list(None if live_row is None else live_row.get("live_d5_risk_flags_json"))
+            + (
+                _json_list(None if live_row is None else live_row.get("live_d5_risk_flags_json"))
+                or _json_list(snapshot_payload.get("risk_flags"))
+            )
         )
     )
     d1_explanatory = _json_dict(
