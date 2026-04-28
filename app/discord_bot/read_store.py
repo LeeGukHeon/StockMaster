@@ -269,6 +269,7 @@ def _build_pick_rows(
             risk_flags=raw_risks,
             evidence_by_band=score_evidence,
             candidate_selected=is_d5_candidate_surface,
+            candidate_rank=rank if is_d5_candidate_surface else None,
         )
         display_label = judgement.label
         display_summary = judgement.summary
@@ -507,8 +508,11 @@ def _build_stock_summary_rows(
         raw_d5_reasons = _parse_raw_json_list(
             getattr(live, "live_d5_top_reason_tags_json", "[]") if live else "[]"
         )
+        d5_candidate_rank = (
+            getattr(live, "live_d5_selection_rank", None) if live is not None else None
+        )
         is_d5_candidate = bool(
-            getattr(live, "live_d5_report_candidate_flag", False)
+            d5_candidate_rank is not None and int(float(d5_candidate_rank)) <= 5
         ) if live is not None else False
         judgement = classify_recommendation(
             final_selection_value=d5_score,
@@ -516,6 +520,7 @@ def _build_stock_summary_rows(
             risk_flags=raw_d5_risks,
             evidence_by_band=score_evidence,
             candidate_selected=is_d5_candidate,
+            candidate_rank=d5_candidate_rank,
         )
         summary = " · ".join(
             [
@@ -546,6 +551,7 @@ def _build_stock_summary_rows(
             "d5_judgement_label": judgement.label,
             "d5_judgement_summary": judgement.summary,
             "d5_report_candidate_flag": is_d5_candidate,
+            "d5_selection_rank": d5_candidate_rank,
             "d5_reason_tags": raw_d5_reasons[:2],
             "risk_flags": raw_d5_risks[:3],
             "ret_5d": getattr(item, "ret_5d", None),

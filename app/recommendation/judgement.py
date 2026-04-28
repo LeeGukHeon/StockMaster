@@ -54,6 +54,14 @@ def _float_or_none(value: object) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _int_or_none(value: object) -> int | None:
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return number
+
+
 def _evidence_supports_buy(evidence: ScoreBandEvidence | None) -> bool:
     if evidence is None:
         return True
@@ -81,7 +89,7 @@ def _evidence_warns_overconfidence(evidence: ScoreBandEvidence | None) -> bool:
 def _evidence_blocks_selected_candidate(evidence: ScoreBandEvidence | None) -> bool:
     if evidence is None:
         return False
-    if evidence.avg_excess_return is not None and evidence.avg_excess_return <= 0.0:
+    if evidence.avg_excess_return is not None and evidence.avg_excess_return <= -0.005:
         return True
     return evidence.hit_rate is not None and evidence.hit_rate < 0.40
 
@@ -112,9 +120,11 @@ def classify_recommendation(
     risk_flags: list[str] | tuple[str, ...] | None = None,
     evidence_by_band: Mapping[str, ScoreBandEvidence] | None = None,
     candidate_selected: bool = False,
+    candidate_rank: object = None,
 ) -> RecommendationJudgement:
     score = _float_or_none(final_selection_value)
     expected = _float_or_none(expected_excess_return)
+    rank = _int_or_none(candidate_rank)
     band = score_band_for_value(final_selection_value)
     evidence = (evidence_by_band or {}).get(band)
     risks = {str(flag) for flag in (risk_flags or [])}
@@ -158,12 +168,12 @@ def classify_recommendation(
         candidate_selected
         and expected is not None
         and expected > 0
-        and score >= 55
         and not _evidence_blocks_selected_candidate(evidence)
+        and (score >= 55 or (rank is not None and rank <= 5))
     ):
         return RecommendationJudgement(
             label="매수해볼 가치 있음",
-            summary=f"추천권·성과 확인 중 · {evidence_text}",
+            summary=f"추천권·분할 접근 · {evidence_text}",
             score_band=band,
             evidence=evidence,
         )

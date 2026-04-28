@@ -704,6 +704,7 @@ def _format_pick_block(
         risk_flags=_raw_tag_list(row.get("risk_flags_json")),
         evidence_by_band=score_evidence,
         candidate_selected=is_d5_buyability_pick,
+        candidate_rank=rank if is_d5_buyability_pick else None,
     )
     display_label = judgement.label
     display_summary = judgement.summary

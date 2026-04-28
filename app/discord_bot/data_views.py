@@ -313,6 +313,9 @@ def stock_workbench_live_snapshot_frame(
                 top_reason_tags_json AS live_d5_top_reason_tags_json,
                 risk_flags_json AS live_d5_risk_flags_json,
                 explanatory_score_json AS live_d5_explanatory_score_json,
+                ROW_NUMBER() OVER (
+                    ORDER BY final_selection_value DESC, symbol
+                ) AS live_d5_selection_rank,
                 (COALESCE(eligible_flag, FALSE) AND COALESCE(final_selection_rank_pct, 0.0) >= 0.85)
                     AS live_d5_report_candidate_flag
             FROM fact_ranking
@@ -370,6 +373,7 @@ def stock_workbench_live_snapshot_frame(
             d5.live_d5_selection_v2_grade,
             d5.live_d5_eligible_flag,
             d5.live_d5_report_candidate_flag,
+            d5.live_d5_selection_rank,
             d5.live_d5_top_reason_tags_json,
             d5.live_d5_risk_flags_json,
             d5.live_d5_explanatory_score_json,

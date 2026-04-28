@@ -75,6 +75,13 @@ def _pct_text(value: object, *, signed: bool = True) -> str:
         return _safe_text(value)
 
 
+
+
+def _compact_judgement_text(value: object) -> str:
+    text = _safe_text(value)
+    return text.split(" · ", 1)[0] if " · " in text else text
+
+
 def _score_text(value: object) -> str:
     if value in (None, "", "-"):
         return "-"
@@ -284,7 +291,7 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
             f"· 기대 {_pct_text(stable_d5_expected)} "
             f"· 현재 {current_price}원 ({change_rate})"
         ),
-        f"판단: {stable_judgement_summary}",
+        f"판단: {_compact_judgement_text(stable_judgement_summary)}",
     ]
     if live_row is not None and live_d5_score != stable_d5_score:
         live_label = (
