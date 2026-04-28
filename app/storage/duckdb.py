@@ -3402,6 +3402,13 @@ def _duckdb_runtime_config() -> dict[str, str]:
 
 
 def _apply_duckdb_runtime_pragmas(connection: duckdb.DuckDBPyConnection) -> None:
+    if os.environ.get("STOCKMASTER_DUCKDB_DISABLE_CHECKPOINT_ON_SHUTDOWN", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        connection.execute("PRAGMA disable_checkpoint_on_shutdown")
     memory_limit = os.environ.get("STOCKMASTER_DUCKDB_MEMORY_LIMIT")
     if memory_limit:
         connection.execute("SET memory_limit = ?", [memory_limit])
