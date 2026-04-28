@@ -103,3 +103,12 @@ For every future StockMaster lane, answers and implementation starts must be gro
 - **Ambiguous implementation scope requires clarification before coding.** When the user asks to implement/fix/change something but the implementation boundary, acceptance criteria, rollout target, or risk tolerance is materially ambiguous, ask focused clarification questions before editing code. Continue autonomously only after the scope is specific enough to verify.
 - **Research-dependent implementation requires a candidate review before execution.** If external research/web search is needed before implementation, search directly, summarize the credible candidate approaches/sources for the user first, wait for the user's selection or approval, then create the implementation plan and execute. Do not silently choose among researched alternatives when that choice materially shapes the system.
 - **Separate facts, candidates, and plan.** For research-backed work, keep the sequence explicit: verified facts/sources -> candidate options -> user decision -> plan/artifacts -> implementation -> verification.
+
+## 8) EOD/read-store selection rematerialization horizon rule
+
+When repairing, rerunning, or force-materializing selection rows for EOD reports, Discord read-store, or daily-close recovery:
+
+- Never run H5-only selection force for an EOD/read-store date-level repair.
+- Use `scripts/materialize_selection_engine_v2.py --as-of-date <DATE> --horizons 1 5 --force`.
+- Reason: selection materialization is date/version scoped; forcing only H5 can delete or supersede same-date H1/D1 ranking rows, leaving the EOD D1 reference section empty.
+- After any active model change or selection repair, verify in order: predictions -> selection for H1/H5 -> read-store regeneration -> EOD dry-run preview -> Discord/live render.

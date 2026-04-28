@@ -148,3 +148,33 @@ journalctl -u stockmaster-daily-close.service -n 200 --no-pager
 - 다음날 평가가 또 자동으로 쌓이는 상태
 
 여기까지 되면 StockMaster는 사실상 "서버에서 혼자 도는 연구/리포트 플랫폼" 상태가 된다.
+
+## 13. EOD/read-store 수동 복구 시 selection horizon 규칙
+
+EOD 리포트, Discord read-store, daily-close 복구 목적으로 selection을 다시 만들 때는 **H5만 단독 force 하면 안 된다.**
+
+금지:
+
+```bash
+python scripts/materialize_selection_engine_v2.py --as-of-date YYYY-MM-DD --horizons 5 --force
+```
+
+필수:
+
+```bash
+python scripts/materialize_selection_engine_v2.py --as-of-date YYYY-MM-DD --horizons 1 5 --force
+```
+
+이유:
+
+- selection materialize는 같은 날짜/version 단위로 기존 ranking row를 정리한다.
+- H5만 force하면 같은 날짜의 H1/D1 ranking row가 비어서 EOD의 D1 참고 섹션이 사라질 수 있다.
+- active model 변경, 예측 재생성, read-store 복구 후에는 항상 `H1 + H5` selection을 같이 복구한다.
+
+복구 검증 순서:
+
+1. alpha prediction 생성 여부 확인
+2. `--horizons 1 5 --force`로 selection 재생성
+3. Discord read-store 재생성
+4. EOD dry-run preview 확인
+5. 즉석 종목분석/live render 확인
