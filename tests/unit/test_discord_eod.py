@@ -165,6 +165,34 @@ def test_format_pick_block_translates_d5_reason_tags_to_korean() -> None:
     assert "raw_alpha_leader_preserved" not in rendered
 
 
+def test_format_pick_block_uses_row_horizon_label() -> None:
+    row = pd.Series(
+        {
+            "horizon": 1,
+            "symbol": "094840",
+            "company_name": "슈프리마에이치큐",
+            "market": "KOSDAQ",
+            "industry": "-",
+            "sector": "-",
+            "final_selection_value": 57.4,
+            "grade": "A",
+            "selection_date": "2026-04-27 00:00:00",
+            "next_entry_trade_date": "2026-04-28 00:00:00",
+            "selection_close_price": 11720,
+            "expected_excess_return": 0.004,
+            "model_spec_id": "alpha_lead_d1_v1",
+            "active_alpha_model_id": "freeze-alpha-d1",
+            "top_reason_tags_json": '["residual_strength_improving"]',
+            "risk_flags_json": "[]",
+        }
+    )
+
+    rendered = "\n".join(_format_pick_block(row, rank=1))
+
+    assert "D1 57.4/A" in rendered
+    assert "D5 57.4/A" not in rendered
+
+
 def test_format_pick_block_labels_d5_buyability_candidate_without_score_band_conflict() -> None:
     row = pd.Series(
         {

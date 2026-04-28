@@ -694,8 +694,12 @@ def _format_pick_block(
 ) -> list[str]:
     reasons = _translate_tags(row["top_reason_tags_json"], REASON_LABELS)
     risks = _translate_tags(row["risk_flags_json"], RISK_LABELS)
+    horizon = int(
+        row.get("horizon", DISCORD_EOD_CANDIDATE_HORIZON)
+        or DISCORD_EOD_CANDIDATE_HORIZON
+    )
     is_d5_buyability_pick = (
-        int(row.get("horizon", 0) or 0) == DISCORD_EOD_CANDIDATE_HORIZON
+        horizon == DISCORD_EOD_CANDIDATE_HORIZON
         and pd.notna(row.get("buyability_priority_score"))
     )
     judgement = classify_recommendation(
@@ -730,7 +734,7 @@ def _format_pick_block(
     return [
         (
             f"{rank}. `{row['symbol']}` {row['company_name']} · {display_label}"
-            f" | D5 {score:.1f}/{row['grade']} | 기대 {expected_text}"
+            f" | D{horizon} {score:.1f}/{row['grade']} | 기대 {expected_text}"
         ),
         detail,
     ]
