@@ -270,6 +270,7 @@ def _build_pick_rows(
             evidence_by_band=score_evidence,
             candidate_selected=is_d5_candidate_surface,
             candidate_rank=rank if is_d5_candidate_surface else None,
+            buyability_priority_score=getattr(row, "buyability_priority_score", None),
         )
         display_label = judgement.label
         display_summary = judgement.summary
@@ -527,6 +528,7 @@ def _build_stock_summary_rows(
             evidence_by_band=score_evidence,
             candidate_selected=is_d5_candidate,
             candidate_rank=d5_candidate_rank,
+            buyability_priority_score=None,
         )
         summary = " · ".join(
             [

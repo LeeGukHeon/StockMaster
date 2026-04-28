@@ -143,6 +143,64 @@ def test_build_pick_rows_uses_d5_buyability_basket_after_hard_blocks() -> None:
     assert rows[0]["payload_json"]
 
 
+def test_build_pick_rows_labels_weak_d5_candidate_as_observation() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "horizon": 5,
+                "eligible_flag": True,
+                "symbol": "999999",
+                "company_name": "강한후보",
+                "market": "KOSDAQ",
+                "industry": "-",
+                "sector": "-",
+                "final_selection_value": 60.0,
+                "grade": "A",
+                "selection_date": "2026-04-27",
+                "next_entry_trade_date": "2026-04-28",
+                "expected_excess_return": 0.012,
+                "uncertainty_score": 1.0,
+                "disagreement_score": 1.0,
+                "model_spec_id": "alpha_practical_d5_v2",
+                "reasons": '["flow_persistence_supportive"]',
+                "risks": "[]",
+            },
+            {
+                "horizon": 5,
+                "eligible_flag": True,
+                "symbol": "054050",
+                "company_name": "농우바이오",
+                "market": "KOSDAQ",
+                "industry": "-",
+                "sector": "-",
+                "final_selection_value": 54.7,
+                "grade": "A",
+                "selection_date": "2026-04-27",
+                "next_entry_trade_date": "2026-04-28",
+                "expected_excess_return": 0.0018,
+                "uncertainty_score": 17.5,
+                "disagreement_score": 1.5,
+                "model_spec_id": "alpha_practical_d5_v2",
+                "reasons": '["flow_persistence_supportive"]',
+                "risks": "[]",
+            }
+        ]
+    )
+
+    rows = read_store._build_pick_rows(
+        frame,
+        horizon=5,
+        built_at="2026-04-28T00:00:00+09:00",
+        as_of_date="2026-04-27",
+        source_run_id="test",
+    )
+
+    weak_row = next(row for row in rows if row["symbol"] == "054050")
+    assert "관찰 우선" in weak_row["summary"]
+    assert "매수해볼 가치 있음" not in weak_row["summary"]
+    assert "D5 기대값 약함" in weak_row["payload_json"]
+
+
 def test_build_stock_summary_rows_omits_news_noise() -> None:
     frame = pd.DataFrame(
         [

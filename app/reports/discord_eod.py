@@ -705,6 +705,7 @@ def _format_pick_block(
         evidence_by_band=score_evidence,
         candidate_selected=is_d5_buyability_pick,
         candidate_rank=rank if is_d5_buyability_pick else None,
+        buyability_priority_score=row.get("buyability_priority_score"),
     )
     display_label = judgement.label
     display_summary = judgement.summary

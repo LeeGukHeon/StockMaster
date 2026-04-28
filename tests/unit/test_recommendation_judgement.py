@@ -106,7 +106,7 @@ def test_classify_recommendation_keeps_selected_d5_candidate_buyable_with_sparse
     assert "추천권" in judgement.summary
 
 
-def test_classify_recommendation_keeps_selected_d5_candidate_buyable_with_mature_mid_band() -> None:
+def test_classify_recommendation_keeps_weak_selected_d5_candidate_observable() -> None:
     judgement = classify_recommendation(
         final_selection_value=58,
         expected_excess_return=0.002,
@@ -114,17 +114,45 @@ def test_classify_recommendation_keeps_selected_d5_candidate_buyable_with_mature
         candidate_selected=True,
     )
 
-    assert judgement.label == "매수해볼 가치 있음"
-    assert "추천권" in judgement.summary
+    assert judgement.label == "관찰 우선"
+    assert "D5 기대값 약함" in judgement.summary
 
 
-def test_classify_recommendation_uses_pick_rank_when_practical_score_band_is_weak() -> None:
+def test_classify_recommendation_uses_pick_rank_but_keeps_weak_d5_edge_observable() -> None:
     judgement = classify_recommendation(
         final_selection_value=54.7,
         expected_excess_return=0.0018,
         evidence_by_band={"<55": ScoreBandEvidence("<55", 1000, -0.0002, 0.388)},
         candidate_selected=True,
         candidate_rank=1,
+    )
+
+    assert judgement.label == "관찰 우선"
+    assert "D5 기대값 약함" in judgement.summary
+
+
+def test_classify_recommendation_blocks_selected_candidate_when_priority_is_negative() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=68,
+        expected_excess_return=0.012,
+        evidence_by_band={"65-75": ScoreBandEvidence("65-75", 120, 0.006, 0.47)},
+        candidate_selected=True,
+        candidate_rank=2,
+        buyability_priority_score=-0.1,
+    )
+
+    assert judgement.label == "관찰 우선"
+    assert "모델위험 대비 보상 부족" in judgement.summary
+
+
+def test_classify_recommendation_buys_selected_candidate_with_strong_priority() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=58,
+        expected_excess_return=0.012,
+        evidence_by_band={"55-65": ScoreBandEvidence("55-65", 120, 0.004, 0.49)},
+        candidate_selected=True,
+        candidate_rank=2,
+        buyability_priority_score=0.3,
     )
 
     assert judgement.label == "매수해볼 가치 있음"

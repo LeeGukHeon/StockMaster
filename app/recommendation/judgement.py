@@ -7,6 +7,10 @@ from typing import Mapping
 import duckdb
 
 from app.ranking.risk_taxonomy import BUYABILITY_BLOCKING_RISK_FLAGS
+from app.recommendation.buyability import (
+    BUYABILITY_MIN_DISPLAY_PRIORITY_SCORE,
+    BUYABILITY_MIN_EXPECTED_EXCESS_RETURN,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +97,22 @@ def _evidence_blocks_selected_candidate(evidence: ScoreBandEvidence | None) -> b
         return True
     return evidence.hit_rate is not None and evidence.hit_rate < 0.35
 
+
+def _selected_candidate_has_buyable_edge(
+    *,
+    expected: float | None,
+    buyability_priority: float | None,
+) -> bool:
+    if expected is None or expected < BUYABILITY_MIN_EXPECTED_EXCESS_RETURN:
+        return False
+    if (
+        buyability_priority is not None
+        and buyability_priority < BUYABILITY_MIN_DISPLAY_PRIORITY_SCORE
+    ):
+        return False
+    return True
+
+
 def _evidence_supports_aggressive(evidence: ScoreBandEvidence | None) -> bool:
     if evidence is None:
         return False
@@ -121,10 +141,12 @@ def classify_recommendation(
     evidence_by_band: Mapping[str, ScoreBandEvidence] | None = None,
     candidate_selected: bool = False,
     candidate_rank: object = None,
+    buyability_priority_score: object = None,
 ) -> RecommendationJudgement:
     score = _float_or_none(final_selection_value)
     expected = _float_or_none(expected_excess_return)
     rank = _int_or_none(candidate_rank)
+    buyability_priority = _float_or_none(buyability_priority_score)
     band = score_band_for_value(final_selection_value)
     evidence = (evidence_by_band or {}).get(band)
     risks = {str(flag) for flag in (risk_flags or [])}
@@ -167,7 +189,10 @@ def classify_recommendation(
     if (
         candidate_selected
         and expected is not None
-        and expected > 0
+        and _selected_candidate_has_buyable_edge(
+            expected=expected,
+            buyability_priority=buyability_priority,
+        )
         and not _evidence_blocks_selected_candidate(evidence)
         and (score >= 55 or (rank is not None and rank <= 5))
     ):
@@ -177,6 +202,25 @@ def classify_recommendation(
             score_band=band,
             evidence=evidence,
         )
+
+    if candidate_selected and expected is not None and expected > 0:
+        if expected < BUYABILITY_MIN_EXPECTED_EXCESS_RETURN:
+            return RecommendationJudgement(
+                label="관찰 우선",
+                summary=f"D5 기대값 약함 · {evidence_text}",
+                score_band=band,
+                evidence=evidence,
+            )
+        if (
+            buyability_priority is not None
+            and buyability_priority < BUYABILITY_MIN_DISPLAY_PRIORITY_SCORE
+        ):
+            return RecommendationJudgement(
+                label="관찰 우선",
+                summary=f"모델위험 대비 보상 부족 · {evidence_text}",
+                score_band=band,
+                evidence=evidence,
+            )
 
     if candidate_selected and expected is not None and expected > 0 and not evidence_ok:
         return RecommendationJudgement(
