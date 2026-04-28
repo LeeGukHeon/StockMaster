@@ -394,13 +394,29 @@ def _practical_excess_return_v2_targets(
     *,
     horizon: int,
 ) -> pd.Series:
-    """Return-unit D5 target for the v2 practical-selection experiment.
+    """Path-aware return-unit D5 target for the v2 practical-selection experiment.
 
-    The first v2 pass tried gentler target haircuts, but server walk-forward showed that
-    weakening the target hurt practical picks. Keep the proven v1 return-unit target and
-    isolate the v2 experiment to selection-time ensemble disagreement quarantine.
+    A fixed D+5 close target does not match how the product is used: users can take
+    profit before the vertical time barrier. When available, train v2 on the
+    conservative +5% take-profit / -3% stop-loss path label while preserving the
+    existing practical risk haircut. Older databases without path columns fall back
+    to the endpoint target.
     """
-    return _practical_excess_return_targets(feature_label_frame, horizon=int(horizon))
+    path_column = f"path_excess_tp5_sl3_h{int(horizon)}"
+    endpoint_column = f"target_h{int(horizon)}"
+    if path_column not in feature_label_frame.columns:
+        return _practical_excess_return_targets(feature_label_frame, horizon=int(horizon))
+    working = feature_label_frame.copy()
+    path_target = pd.to_numeric(working[path_column], errors="coerce")
+    if path_target.notna().sum() == 0:
+        return _practical_excess_return_targets(feature_label_frame, horizon=int(horizon))
+    if endpoint_column not in working.columns:
+        working[endpoint_column] = path_target
+    else:
+        working[endpoint_column] = path_target.combine_first(
+            pd.to_numeric(working[endpoint_column], errors="coerce")
+        )
+    return _practical_excess_return_targets(working, horizon=int(horizon))
 
 
 def _stable_practical_excess_return_targets(
@@ -608,7 +624,9 @@ def _load_dataset_frame(
                 symbol,
                 market,
                 horizon,
-                excess_forward_return
+                excess_forward_return,
+                path_excess_return_tp3_sl3_conservative,
+                path_excess_return_tp5_sl3_conservative
             FROM fact_forward_return_label
             WHERE as_of_date <= ?
               AND horizon IN ({horizon_placeholders})
@@ -745,11 +763,25 @@ def _load_dataset_frame(
         )
         .reset_index()
     )
+    path_tp5_sl3_label_matrix = (
+        label_rows.assign(
+            target_name=label_rows["horizon"].map(
+                lambda value: f"path_excess_tp5_sl3_h{int(value)}"
+            )
+        )
+        .pivot(
+            index=["as_of_date", "symbol"],
+            columns="target_name",
+            values="path_excess_return_tp5_sl3_conservative",
+        )
+        .reset_index()
+    )
     dataset = feature_matrix.merge(label_matrix, on=["as_of_date", "symbol"], how="inner")
     dataset = dataset.merge(rank_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(top5_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(topbucket_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(buyable_label_matrix, on=["as_of_date", "symbol"], how="left")
+    dataset = dataset.merge(path_tp5_sl3_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(
         symbol_frame[["symbol", "company_name", "market"]],
         on="symbol",

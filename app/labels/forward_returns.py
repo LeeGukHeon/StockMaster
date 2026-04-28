@@ -15,6 +15,10 @@ from app.storage.manifests import record_run_finish, record_run_start
 from app.storage.parquet_io import write_parquet
 
 LABEL_VERSION = "forward_label_v1"
+TAKE_PROFIT_3_RETURN = 0.03
+TAKE_PROFIT_5_RETURN = 0.05
+STOP_LOSS_3_RETURN = -0.03
+STOP_LOSS_5_RETURN = -0.05
 
 
 @dataclass(slots=True)
@@ -94,6 +98,92 @@ def _build_market_baseline_frame(
     return pd.DataFrame(baseline_rows)
 
 
+def _first_touch_date(path_frame: pd.DataFrame, column: str, threshold: float, *, above: bool):
+    if path_frame.empty or column not in path_frame:
+        return None
+    values = pd.to_numeric(path_frame[column], errors="coerce")
+    mask = values.ge(threshold) if above else values.le(threshold)
+    touched = path_frame.loc[mask.fillna(False), "trading_date"]
+    if touched.empty:
+        return None
+    return pd.Timestamp(touched.iloc[0]).date()
+
+
+def _conservative_barrier_return(
+    *,
+    gross_forward_return: float,
+    take_profit: float,
+    stop_loss: float,
+    take_profit_date,
+    stop_loss_date,
+) -> float:
+    """Return a daily-OHLC conservative triple-barrier trade outcome.
+
+    Daily bars do not reveal whether high or low touched first inside the same session,
+    so same-day take-profit/stop-loss collisions are treated as stop-loss first.
+    """
+
+    if stop_loss_date is not None and (
+        take_profit_date is None or stop_loss_date <= take_profit_date
+    ):
+        return float(stop_loss)
+    if take_profit_date is not None:
+        return float(take_profit)
+    return float(gross_forward_return)
+
+
+def _path_return_metrics(
+    price_lookup: pd.DataFrame,
+    *,
+    symbol: str,
+    entry_date: date,
+    exit_date: date,
+    entry_price: float,
+    gross_forward_return: float,
+) -> dict[str, object]:
+    path_slice = price_lookup.loc[
+        (slice(entry_date, exit_date), symbol),
+        ["high", "low", "close"],
+    ].reset_index()
+    high_return = pd.to_numeric(path_slice["high"], errors="coerce").div(entry_price).sub(1.0)
+    low_return = pd.to_numeric(path_slice["low"], errors="coerce").div(entry_price).sub(1.0)
+    path_slice = path_slice.assign(high_return=high_return, low_return=low_return)
+    take_profit_3_date = _first_touch_date(
+        path_slice, "high_return", TAKE_PROFIT_3_RETURN, above=True
+    )
+    take_profit_5_date = _first_touch_date(
+        path_slice, "high_return", TAKE_PROFIT_5_RETURN, above=True
+    )
+    stop_loss_3_date = _first_touch_date(path_slice, "low_return", STOP_LOSS_3_RETURN, above=False)
+    stop_loss_5_date = _first_touch_date(path_slice, "low_return", STOP_LOSS_5_RETURN, above=False)
+    return {
+        "max_forward_return": float(high_return.max()) if high_return.notna().any() else pd.NA,
+        "min_forward_return": float(low_return.min()) if low_return.notna().any() else pd.NA,
+        "take_profit_3_hit": take_profit_3_date is not None,
+        "take_profit_3_date": take_profit_3_date,
+        "take_profit_5_hit": take_profit_5_date is not None,
+        "take_profit_5_date": take_profit_5_date,
+        "stop_loss_3_hit": stop_loss_3_date is not None,
+        "stop_loss_3_date": stop_loss_3_date,
+        "stop_loss_5_hit": stop_loss_5_date is not None,
+        "stop_loss_5_date": stop_loss_5_date,
+        "path_return_tp3_sl3_conservative": _conservative_barrier_return(
+            gross_forward_return=gross_forward_return,
+            take_profit=TAKE_PROFIT_3_RETURN,
+            stop_loss=STOP_LOSS_3_RETURN,
+            take_profit_date=take_profit_3_date,
+            stop_loss_date=stop_loss_3_date,
+        ),
+        "path_return_tp5_sl3_conservative": _conservative_barrier_return(
+            gross_forward_return=gross_forward_return,
+            take_profit=TAKE_PROFIT_5_RETURN,
+            stop_loss=STOP_LOSS_3_RETURN,
+            take_profit_date=take_profit_5_date,
+            stop_loss_date=stop_loss_3_date,
+        ),
+    }
+
+
 def _load_label_symbol_frame(
     connection,
     *,
@@ -170,9 +260,23 @@ def upsert_forward_labels(connection, frame: pd.DataFrame) -> None:
             entry_price,
             exit_price,
             gross_forward_return,
+            max_forward_return,
+            min_forward_return,
+            take_profit_3_hit,
+            take_profit_3_date,
+            take_profit_5_hit,
+            take_profit_5_date,
+            stop_loss_3_hit,
+            stop_loss_3_date,
+            stop_loss_5_hit,
+            stop_loss_5_date,
+            path_return_tp3_sl3_conservative,
+            path_return_tp5_sl3_conservative,
             baseline_type,
             baseline_forward_return,
             excess_forward_return,
+            path_excess_return_tp3_sl3_conservative,
+            path_excess_return_tp5_sl3_conservative,
             label_available_flag,
             exclusion_reason,
             notes_json,
@@ -191,9 +295,23 @@ def upsert_forward_labels(connection, frame: pd.DataFrame) -> None:
             entry_price,
             exit_price,
             gross_forward_return,
+            max_forward_return,
+            min_forward_return,
+            take_profit_3_hit,
+            take_profit_3_date,
+            take_profit_5_hit,
+            take_profit_5_date,
+            stop_loss_3_hit,
+            stop_loss_3_date,
+            stop_loss_5_hit,
+            stop_loss_5_date,
+            path_return_tp3_sl3_conservative,
+            path_return_tp5_sl3_conservative,
             baseline_type,
             baseline_forward_return,
             excess_forward_return,
+            path_excess_return_tp3_sl3_conservative,
+            path_excess_return_tp5_sl3_conservative,
             label_available_flag,
             exclusion_reason,
             notes_json,
@@ -304,6 +422,8 @@ def build_forward_labels(
                         price.trading_date,
                         price.symbol,
                         price.open,
+                        price.high,
+                        price.low,
                         price.close,
                         symbol.market
                     FROM fact_daily_ohlcv AS price
@@ -318,7 +438,9 @@ def build_forward_labels(
 
                 price_frame["trading_date"] = pd.to_datetime(price_frame["trading_date"]).dt.date
                 price_frame["symbol"] = price_frame["symbol"].astype(str).str.zfill(6)
-                price_lookup = price_frame.set_index(["trading_date", "symbol"])[["open", "close"]]
+                price_lookup = price_frame.set_index(["trading_date", "symbol"])[
+                    ["open", "high", "low", "close"]
+                ].sort_index()
                 market_baseline = _build_market_baseline_frame(
                     price_frame,
                     as_of_dates=as_of_dates,
@@ -357,9 +479,23 @@ def build_forward_labels(
                                 "entry_price": pd.NA,
                                 "exit_price": pd.NA,
                                 "gross_forward_return": pd.NA,
+                                "max_forward_return": pd.NA,
+                                "min_forward_return": pd.NA,
+                                "take_profit_3_hit": pd.NA,
+                                "take_profit_3_date": pd.NA,
+                                "take_profit_5_hit": pd.NA,
+                                "take_profit_5_date": pd.NA,
+                                "stop_loss_3_hit": pd.NA,
+                                "stop_loss_3_date": pd.NA,
+                                "stop_loss_5_hit": pd.NA,
+                                "stop_loss_5_date": pd.NA,
+                                "path_return_tp3_sl3_conservative": pd.NA,
+                                "path_return_tp5_sl3_conservative": pd.NA,
                                 "baseline_type": "same_market_equal_weight",
                                 "baseline_forward_return": pd.NA,
                                 "excess_forward_return": pd.NA,
+                                "path_excess_return_tp3_sl3_conservative": pd.NA,
+                                "path_excess_return_tp5_sl3_conservative": pd.NA,
                                 "label_available_flag": False,
                                 "exclusion_reason": None,
                                 "notes_json": pd.NA,
@@ -397,6 +533,16 @@ def build_forward_labels(
                             label_row["gross_forward_return"] = float(
                                 exit_price / entry_price - 1.0
                             )
+                            label_row.update(
+                                _path_return_metrics(
+                                    price_lookup,
+                                    symbol=symbol,
+                                    entry_date=entry_date,
+                                    exit_date=exit_date,
+                                    entry_price=float(entry_price),
+                                    gross_forward_return=float(label_row["gross_forward_return"]),
+                                )
+                            )
                             label_row["label_available_flag"] = True
                             rows.append(label_row)
 
@@ -410,6 +556,14 @@ def build_forward_labels(
                     )
                     label_frame["excess_forward_return"] = (
                         label_frame["gross_forward_return"] - label_frame["baseline_forward_return"]
+                    )
+                    label_frame["path_excess_return_tp3_sl3_conservative"] = (
+                        label_frame["path_return_tp3_sl3_conservative"]
+                        - label_frame["baseline_forward_return"]
+                    )
+                    label_frame["path_excess_return_tp5_sl3_conservative"] = (
+                        label_frame["path_return_tp5_sl3_conservative"]
+                        - label_frame["baseline_forward_return"]
                     )
 
                 if force:

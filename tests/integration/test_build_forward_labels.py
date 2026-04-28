@@ -39,7 +39,7 @@ def test_build_forward_labels_uses_same_market_baseline_beyond_selected_subset(t
             """,
             [date(2026, 3, 3), date(2026, 3, 3)],
         ).fetchone()[0]
-        label_row = connection.execute(
+        h1_label_row = connection.execute(
             """
             SELECT baseline_forward_return, gross_forward_return, label_available_flag
             FROM fact_forward_return_label
@@ -49,7 +49,37 @@ def test_build_forward_labels_uses_same_market_baseline_beyond_selected_subset(t
             """,
             [date(2026, 3, 2)],
         ).fetchone()
+        label_row = connection.execute(
+            """
+            SELECT
+                baseline_forward_return,
+                gross_forward_return,
+                label_available_flag,
+                max_forward_return,
+                min_forward_return,
+                take_profit_3_hit,
+                take_profit_5_hit,
+                stop_loss_3_hit,
+                path_return_tp5_sl3_conservative,
+                path_excess_return_tp5_sl3_conservative
+            FROM fact_forward_return_label
+            WHERE as_of_date = ?
+              AND symbol = '005930'
+              AND horizon = 5
+            """,
+            [date(2026, 3, 2)],
+        ).fetchone()
 
+        assert h1_label_row[2] is True
+        assert h1_label_row[0] == pytest.approx(baseline_expected)
+        assert h1_label_row[1] != pytest.approx(h1_label_row[0])
         assert label_row[2] is True
-        assert label_row[0] == pytest.approx(baseline_expected)
+        assert label_row[0] is not None
         assert label_row[1] != pytest.approx(label_row[0])
+        assert label_row[3] >= 0.05
+        assert label_row[4] > -0.03
+        assert label_row[5] is True
+        assert label_row[6] is True
+        assert label_row[7] is False
+        assert label_row[8] == pytest.approx(0.05)
+        assert label_row[9] == pytest.approx(0.05 - label_row[0])

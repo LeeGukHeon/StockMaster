@@ -199,9 +199,23 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         entry_price DOUBLE,
         exit_price DOUBLE,
         gross_forward_return DOUBLE,
+        max_forward_return DOUBLE,
+        min_forward_return DOUBLE,
+        take_profit_3_hit BOOLEAN,
+        take_profit_3_date DATE,
+        take_profit_5_hit BOOLEAN,
+        take_profit_5_date DATE,
+        stop_loss_3_hit BOOLEAN,
+        stop_loss_3_date DATE,
+        stop_loss_5_hit BOOLEAN,
+        stop_loss_5_date DATE,
+        path_return_tp3_sl3_conservative DOUBLE,
+        path_return_tp5_sl3_conservative DOUBLE,
         baseline_type VARCHAR,
         baseline_forward_return DOUBLE,
         excess_forward_return DOUBLE,
+        path_excess_return_tp3_sl3_conservative DOUBLE,
+        path_excess_return_tp5_sl3_conservative DOUBLE,
         label_available_flag BOOLEAN NOT NULL,
         exclusion_reason VARCHAR,
         notes_json VARCHAR,
@@ -590,6 +604,20 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         exit_trade_date DATE,
         realized_return DOUBLE,
         realized_excess_return DOUBLE,
+        max_forward_return DOUBLE,
+        min_forward_return DOUBLE,
+        take_profit_3_hit BOOLEAN,
+        take_profit_3_date DATE,
+        take_profit_5_hit BOOLEAN,
+        take_profit_5_date DATE,
+        stop_loss_3_hit BOOLEAN,
+        stop_loss_3_date DATE,
+        stop_loss_5_hit BOOLEAN,
+        stop_loss_5_date DATE,
+        path_return_tp3_sl3_conservative DOUBLE,
+        path_return_tp5_sl3_conservative DOUBLE,
+        path_excess_return_tp3_sl3_conservative DOUBLE,
+        path_excess_return_tp5_sl3_conservative DOUBLE,
         prediction_error DOUBLE,
         direction_hit_flag BOOLEAN,
         raw_positive_flag BOOLEAN,
@@ -2024,6 +2052,35 @@ CALENDAR_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
 )
 
+FORWARD_LABEL_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE fact_forward_return_label ADD COLUMN IF NOT EXISTS max_forward_return DOUBLE",
+    "ALTER TABLE fact_forward_return_label ADD COLUMN IF NOT EXISTS min_forward_return DOUBLE",
+    "ALTER TABLE fact_forward_return_label ADD COLUMN IF NOT EXISTS take_profit_3_hit BOOLEAN",
+    "ALTER TABLE fact_forward_return_label ADD COLUMN IF NOT EXISTS take_profit_3_date DATE",
+    "ALTER TABLE fact_forward_return_label ADD COLUMN IF NOT EXISTS take_profit_5_hit BOOLEAN",
+    "ALTER TABLE fact_forward_return_label ADD COLUMN IF NOT EXISTS take_profit_5_date DATE",
+    "ALTER TABLE fact_forward_return_label ADD COLUMN IF NOT EXISTS stop_loss_3_hit BOOLEAN",
+    "ALTER TABLE fact_forward_return_label ADD COLUMN IF NOT EXISTS stop_loss_3_date DATE",
+    "ALTER TABLE fact_forward_return_label ADD COLUMN IF NOT EXISTS stop_loss_5_hit BOOLEAN",
+    "ALTER TABLE fact_forward_return_label ADD COLUMN IF NOT EXISTS stop_loss_5_date DATE",
+    (
+        "ALTER TABLE fact_forward_return_label "
+        "ADD COLUMN IF NOT EXISTS path_return_tp3_sl3_conservative DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_forward_return_label "
+        "ADD COLUMN IF NOT EXISTS path_return_tp5_sl3_conservative DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_forward_return_label "
+        "ADD COLUMN IF NOT EXISTS path_excess_return_tp3_sl3_conservative DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_forward_return_label "
+        "ADD COLUMN IF NOT EXISTS path_excess_return_tp5_sl3_conservative DOUBLE"
+    ),
+)
+
 MANIFEST_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE ops_run_manifest ADD COLUMN IF NOT EXISTS ranking_version VARCHAR",
 )
@@ -2097,6 +2154,32 @@ SELECTION_OUTCOME_COLUMN_MIGRATIONS: tuple[str, ...] = (
     (
         "ALTER TABLE fact_selection_outcome "
         "ADD COLUMN IF NOT EXISTS active_alpha_model_id_at_selection VARCHAR"
+    ),
+    "ALTER TABLE fact_selection_outcome ADD COLUMN IF NOT EXISTS max_forward_return DOUBLE",
+    "ALTER TABLE fact_selection_outcome ADD COLUMN IF NOT EXISTS min_forward_return DOUBLE",
+    "ALTER TABLE fact_selection_outcome ADD COLUMN IF NOT EXISTS take_profit_3_hit BOOLEAN",
+    "ALTER TABLE fact_selection_outcome ADD COLUMN IF NOT EXISTS take_profit_3_date DATE",
+    "ALTER TABLE fact_selection_outcome ADD COLUMN IF NOT EXISTS take_profit_5_hit BOOLEAN",
+    "ALTER TABLE fact_selection_outcome ADD COLUMN IF NOT EXISTS take_profit_5_date DATE",
+    "ALTER TABLE fact_selection_outcome ADD COLUMN IF NOT EXISTS stop_loss_3_hit BOOLEAN",
+    "ALTER TABLE fact_selection_outcome ADD COLUMN IF NOT EXISTS stop_loss_3_date DATE",
+    "ALTER TABLE fact_selection_outcome ADD COLUMN IF NOT EXISTS stop_loss_5_hit BOOLEAN",
+    "ALTER TABLE fact_selection_outcome ADD COLUMN IF NOT EXISTS stop_loss_5_date DATE",
+    (
+        "ALTER TABLE fact_selection_outcome "
+        "ADD COLUMN IF NOT EXISTS path_return_tp3_sl3_conservative DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_selection_outcome "
+        "ADD COLUMN IF NOT EXISTS path_return_tp5_sl3_conservative DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_selection_outcome "
+        "ADD COLUMN IF NOT EXISTS path_excess_return_tp3_sl3_conservative DOUBLE"
+    ),
+    (
+        "ALTER TABLE fact_selection_outcome "
+        "ADD COLUMN IF NOT EXISTS path_excess_return_tp5_sl3_conservative DOUBLE"
     ),
 )
 
@@ -3344,6 +3427,9 @@ def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
             connection.execute(ddl)
 
         for ddl in CALENDAR_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in FORWARD_LABEL_COLUMN_MIGRATIONS:
             connection.execute(ddl)
 
         for ddl in MANIFEST_COLUMN_MIGRATIONS:
