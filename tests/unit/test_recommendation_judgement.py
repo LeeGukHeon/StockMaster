@@ -159,6 +159,20 @@ def test_classify_recommendation_buys_selected_candidate_with_strong_priority() 
     assert "추천권" in judgement.summary
 
 
+def test_classify_recommendation_marks_marginal_priority_as_review() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=48,
+        expected_excess_return=0.007,
+        evidence_by_band={"<55": ScoreBandEvidence("<55", 5, 0.01, 0.6)},
+        candidate_selected=True,
+        candidate_rank=3,
+        buyability_priority_score=-0.4,
+    )
+
+    assert judgement.label == "매수검토"
+    assert "분할 접근" in judgement.summary
+
+
 def test_classify_recommendation_does_not_buy_selected_candidate_on_bad_band_evidence() -> None:
     judgement = classify_recommendation(
         final_selection_value=58,

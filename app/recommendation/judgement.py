@@ -12,6 +12,8 @@ from app.recommendation.buyability import (
     BUYABILITY_MIN_EXPECTED_EXCESS_RETURN,
 )
 
+D5_SELECTED_STRONG_PRIORITY_SCORE = 0.0
+
 
 @dataclass(frozen=True, slots=True)
 class ScoreBandEvidence:
@@ -133,6 +135,62 @@ def _evidence_summary(evidence: ScoreBandEvidence | None) -> str:
     return f"{evidence.score_band}점대 과거 평균 {evidence.avg_excess_return:+.1%}"
 
 
+def _selected_d5_judgement(
+    *,
+    score: float,
+    expected: float | None,
+    rank: int | None,
+    buyability_priority: float | None,
+    evidence: ScoreBandEvidence | None,
+    evidence_text: str,
+) -> RecommendationJudgement | None:
+    if expected is None or expected <= 0:
+        return None
+    if expected < BUYABILITY_MIN_EXPECTED_EXCESS_RETURN:
+        return RecommendationJudgement(
+            label="관찰 우선",
+            summary=f"D5 기대값 약함 · {evidence_text}",
+            score_band=score_band_for_value(score),
+            evidence=evidence,
+        )
+    if _evidence_blocks_selected_candidate(evidence):
+        return RecommendationJudgement(
+            label="관찰 우선",
+            summary=f"후보권이나 성과 확인 필요 · {evidence_text}",
+            score_band=score_band_for_value(score),
+            evidence=evidence,
+        )
+    if buyability_priority is None:
+        if score >= 55 or (rank is not None and rank <= 5):
+            return RecommendationJudgement(
+                label="매수해볼 가치 있음",
+                summary=f"추천권·분할 접근 · {evidence_text}",
+                score_band=score_band_for_value(score),
+                evidence=evidence,
+            )
+        return None
+    if buyability_priority >= D5_SELECTED_STRONG_PRIORITY_SCORE:
+        return RecommendationJudgement(
+            label="매수해볼 가치 있음",
+            summary=f"추천권·우선순위 양호 · {evidence_text}",
+            score_band=score_band_for_value(score),
+            evidence=evidence,
+        )
+    if buyability_priority >= BUYABILITY_MIN_DISPLAY_PRIORITY_SCORE:
+        return RecommendationJudgement(
+            label="매수검토",
+            summary=f"추천권·분할 접근 · {evidence_text}",
+            score_band=score_band_for_value(score),
+            evidence=evidence,
+        )
+    return RecommendationJudgement(
+        label="관찰 우선",
+        summary=f"모델위험 대비 보상 부족 · {evidence_text}",
+        score_band=score_band_for_value(score),
+        evidence=evidence,
+    )
+
+
 def classify_recommendation(
     *,
     final_selection_value: object,
@@ -186,49 +244,17 @@ def classify_recommendation(
             evidence=evidence,
         )
 
-    if (
-        candidate_selected
-        and expected is not None
-        and _selected_candidate_has_buyable_edge(
+    if candidate_selected:
+        d5_selected_judgement = _selected_d5_judgement(
+            score=score,
             expected=expected,
+            rank=rank,
             buyability_priority=buyability_priority,
-        )
-        and not _evidence_blocks_selected_candidate(evidence)
-        and (score >= 55 or (rank is not None and rank <= 5))
-    ):
-        return RecommendationJudgement(
-            label="매수해볼 가치 있음",
-            summary=f"추천권·분할 접근 · {evidence_text}",
-            score_band=band,
             evidence=evidence,
+            evidence_text=evidence_text,
         )
-
-    if candidate_selected and expected is not None and expected > 0:
-        if expected < BUYABILITY_MIN_EXPECTED_EXCESS_RETURN:
-            return RecommendationJudgement(
-                label="관찰 우선",
-                summary=f"D5 기대값 약함 · {evidence_text}",
-                score_band=band,
-                evidence=evidence,
-            )
-        if (
-            buyability_priority is not None
-            and buyability_priority < BUYABILITY_MIN_DISPLAY_PRIORITY_SCORE
-        ):
-            return RecommendationJudgement(
-                label="관찰 우선",
-                summary=f"모델위험 대비 보상 부족 · {evidence_text}",
-                score_band=band,
-                evidence=evidence,
-            )
-
-    if candidate_selected and expected is not None and expected > 0 and not evidence_ok:
-        return RecommendationJudgement(
-            label="관찰 우선",
-            summary=f"후보권이나 성과 확인 필요 · {evidence_text}",
-            score_band=band,
-            evidence=evidence,
-        )
+        if d5_selected_judgement is not None:
+            return d5_selected_judgement
 
     if (
         score >= 75

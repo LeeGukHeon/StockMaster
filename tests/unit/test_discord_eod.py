@@ -195,4 +195,4 @@ def test_format_pick_block_labels_d5_buyability_candidate_without_score_band_con
     assert "매수해볼 가치 있음" in rendered
     assert "매수 보류" not in rendered
     assert "특이 리스크 없음" in rendered
-    assert "추천권·분할 접근" in rendered
+    assert "추천권·우선순위 양호" in rendered

@@ -35,6 +35,7 @@ from app.ml.inference import (
     build_prediction_frame_from_training_run,
 )
 from app.ml.shadow import _load_regime_map
+from app.recommendation.buyability import buyability_priority_score
 from app.recommendation.judgement import classify_recommendation, load_score_band_evidence
 from app.selection.engine_v2 import build_selection_engine_v2_rankings
 from app.settings import Settings
@@ -193,6 +194,10 @@ def build_live_analysis_payload(
             None if live_row is None else live_row.get("live_d5_selection_v2_value")
         )
         or snapshot_payload.get("d5_final_selection_value"),
+        "d5_buyability_priority_score": (
+            None if live_row is None else live_row.get("live_d5_buyability_priority_score")
+        )
+        or snapshot_payload.get("buyability_priority_score"),
         "d5_judgement_label": (
             None if live_row is None else live_row.get("live_d5_judgement_label")
         )
@@ -573,6 +578,16 @@ def compute_live_stock_recommendation(
 
             ranking_by_horizon: dict[int, pd.Series] = {}
             for frame in ranking_frames:
+                if int(frame["horizon"].iloc[0]) == 5:
+                    frame = frame.copy()
+                    frame["d5_selection_rank"] = (
+                        pd.to_numeric(
+                            frame["final_selection_value"],
+                            errors="coerce",
+                        )
+                        .rank(ascending=False, method="first")
+                        .astype("Int64")
+                    )
                 symbol_row = frame.loc[frame["symbol"].astype(str) == normalized_symbol]
                 if symbol_row.empty:
                     continue
@@ -599,6 +614,15 @@ def compute_live_stock_recommendation(
                 horizon=5,
                 ranking_version=SELECTION_ENGINE_V2_VERSION,
             )
+            d5_buyability_priority_score = (
+                None
+                if d5_prediction_row is None
+                else buyability_priority_score(
+                    expected_excess_return=d5_prediction_row.get("expected_excess_return"),
+                    uncertainty_score=ranking_by_horizon.get(5, {}).get("uncertainty_score"),
+                    disagreement_score=ranking_by_horizon.get(5, {}).get("disagreement_score"),
+                )
+            )
             d5_judgement = classify_recommendation(
                 final_selection_value=ranking_by_horizon.get(5, {}).get("final_selection_value"),
                 expected_excess_return=None
@@ -609,6 +633,8 @@ def compute_live_stock_recommendation(
                 candidate_selected=bool(
                     ranking_by_horizon.get(5, {}).get("report_candidate_flag", False)
                 ),
+                candidate_rank=ranking_by_horizon.get(5, {}).get("d5_selection_rank"),
+                buyability_priority_score=d5_buyability_priority_score,
             )
             expected = (
                 None
@@ -682,6 +708,7 @@ def compute_live_stock_recommendation(
                             "explanatory_score_json"
                         ),
                         "live_d5_expected_excess_return": expected,
+                        "live_d5_buyability_priority_score": d5_buyability_priority_score,
                         "live_d5_judgement_label": d5_judgement.label,
                         "live_d5_judgement_summary": d5_judgement.summary,
                         "live_d5_target_price": None
