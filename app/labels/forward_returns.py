@@ -538,7 +538,6 @@ def build_forward_labels(
                       ON price.symbol = symbol.symbol
                     WHERE price.trading_date BETWEEN ? AND ?
                       AND symbol.market IN ('KOSPI', 'KOSDAQ')
-                    ORDER BY price.trading_date, price.symbol
                     """,
                     [start_date, relevant_end],
                 ).fetchdf()
