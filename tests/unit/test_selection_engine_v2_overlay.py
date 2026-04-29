@@ -592,7 +592,7 @@ def test_d5_buyability_risk_gate_penalizes_thin_liquidity_for_buyability():
     assert gated["final_selection_value"].item() == 63.0
 
 
-def test_d5_practical_v3_risk_gate_demotes_weak_path_profit_profile():
+def test_d5_practical_v3_risk_gate_does_not_override_learned_path_rank():
     scored = pd.DataFrame(
         {
             "symbol": ["A", "B"],
@@ -613,8 +613,26 @@ def test_d5_practical_v3_risk_gate_demotes_weak_path_profit_profile():
         horizon=5,
     )
 
-    assert gated["d5_buyability_risk_gate_penalty_score"].tolist() == [23.0, 0.0]
-    assert gated["final_selection_value"].tolist() == [47.0, 70.0]
+    assert gated["d5_buyability_risk_gate_penalty_score"].tolist() == [0.0, 0.0]
+    assert gated["final_selection_value"].tolist() == [70.0, 70.0]
+
+
+def test_d5_practical_v3_weights_preserve_cash_path_model_rank():
+    practical_v3_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id=D5_PRACTICAL_V3_MODEL_SPEC_ID,
+        target_variant="practical_path_return_v3",
+    )
+    buyable_weights = _resolve_selection_weights(
+        horizon=5,
+        model_spec_id="alpha_buyable_d5_v1",
+        target_variant="buyable_top5",
+    )
+
+    assert practical_v3_weights["alpha_core_score"] == 100
+    assert practical_v3_weights["quality_score"] == 0
+    assert practical_v3_weights["value_safety_score"] == 0
+    assert practical_v3_weights != buyable_weights
 
 
 def test_d5_buyability_risk_gate_applies_to_active_d5_and_skips_other_specs():

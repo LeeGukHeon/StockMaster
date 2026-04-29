@@ -156,6 +156,26 @@ SELECTION_V2_D5_BUYABLE_WEIGHTS = {
     },
 }
 
+SELECTION_V2_D5_CASH_PATH_WEIGHTS = {
+    5: {
+        "alpha_core_score": 100,
+        "relative_alpha_score": 0,
+        "flow_persistence_score": 0,
+        "flow_score": 0,
+        "trend_momentum_score": 0,
+        "quality_score": 0,
+        "value_safety_score": 0,
+        "regime_fit_score": 0,
+        "risk_penalty_score": 0,
+        "uncertainty_score": 0,
+        "disagreement_score": 0,
+        "implementation_penalty_score": 0,
+        "crowding_penalty_score": 0,
+        "late_entry_penalty_score": 0,
+        "fallback_penalty": -5,
+    },
+}
+
 SELECTION_V2_D5_STABLE_BUYABLE_WEIGHTS = {
     5: {
         "alpha_core_score": 24,
@@ -242,9 +262,6 @@ D5_THIN_LIQUIDITY_GATE_PENALTY = 7.0
 D5_PREDICTION_FALLBACK_GATE_PENALTY = 8.0
 D5_IMPLEMENTATION_FRICTION_GATE_PENALTY = 8.0
 D5_INELIGIBLE_GATE_PENALTY = 18.0
-D5_PRACTICAL_V3_WEAK_CONTINUATION_PENALTY = 9.0
-D5_PRACTICAL_V3_SOFT_DRAWDOWN_PENALTY = 8.0
-D5_PRACTICAL_V3_SOFT_LIQUIDITY_PENALTY = 6.0
 D5_PRACTICAL_V2_MODEL_DISAGREEMENT_GATE_PENALTY = 45.0
 D5_STABLE_MODEL_DISAGREEMENT_GATE_PENALTY = 25.0
 D5_ROBUST_MODEL_DISAGREEMENT_GATE_PENALTY = 25.0
@@ -284,12 +301,16 @@ def _resolve_selection_weights(
     ):
         return dict(SELECTION_V2_D5_STABLE_BUYABLE_WEIGHTS[int(horizon)])
     if (
+        model_spec_id == D5_PRACTICAL_V3_MODEL_SPEC_ID
+        and int(horizon) in SELECTION_V2_D5_CASH_PATH_WEIGHTS
+    ):
+        return dict(SELECTION_V2_D5_CASH_PATH_WEIGHTS[int(horizon)])
+    if (
         model_spec_id
         in {
             D5_BUYABLE_MODEL_SPEC_ID,
             D5_PRACTICAL_MODEL_SPEC_ID,
             D5_PRACTICAL_V2_MODEL_SPEC_ID,
-            D5_PRACTICAL_V3_MODEL_SPEC_ID,
         }
         and int(horizon) in SELECTION_V2_D5_BUYABLE_WEIGHTS
     ):
@@ -561,21 +582,6 @@ def _apply_d5_buyability_risk_gate(
     if model_spec_id in {D5_PRACTICAL_V2_MODEL_SPEC_ID, D5_PRACTICAL_V3_MODEL_SPEC_ID}:
         penalty = penalty + high_model_disagreement.astype(float).mul(
             D5_PRACTICAL_V2_MODEL_DISAGREEMENT_GATE_PENALTY
-        )
-    if model_spec_id == D5_PRACTICAL_V3_MODEL_SPEC_ID:
-        up_day_count = pd.to_numeric(gated.get("up_day_count_20d"), errors="coerce")
-        max_loss = pd.to_numeric(gated.get("max_loss_20d"), errors="coerce")
-        drawdown = pd.to_numeric(gated.get("drawdown_20d"), errors="coerce")
-        adv_rank = pd.to_numeric(gated.get("adv_20_rank_pct"), errors="coerce")
-        liquidity_rank = pd.to_numeric(gated.get("liquidity_rank_pct"), errors="coerce")
-        weak_continuation = up_day_count.le(9.0).fillna(False)
-        soft_drawdown = max_loss.le(-0.04).fillna(False) | drawdown.le(-0.04).fillna(False)
-        soft_liquidity = adv_rank.le(0.35).fillna(False) | liquidity_rank.le(0.35).fillna(False)
-        penalty = (
-            penalty
-            + weak_continuation.astype(float).mul(D5_PRACTICAL_V3_WEAK_CONTINUATION_PENALTY)
-            + soft_drawdown.astype(float).mul(D5_PRACTICAL_V3_SOFT_DRAWDOWN_PENALTY)
-            + soft_liquidity.astype(float).mul(D5_PRACTICAL_V3_SOFT_LIQUIDITY_PENALTY)
         )
     if model_spec_id == D5_STABLE_BUYABLE_MODEL_SPEC_ID:
         penalty = penalty + high_model_disagreement.astype(float).mul(
