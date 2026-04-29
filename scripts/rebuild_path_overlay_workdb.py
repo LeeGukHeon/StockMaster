@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import os
 import shutil
 import sys
 from datetime import date
@@ -66,6 +67,25 @@ def _sql_string(value: Path) -> str:
     return str(value).replace("'", "''")
 
 
+def _set_default_work_temp_directory(work_root: Path) -> Path:
+    """Keep rebuild spill files out of the production mart directory.
+
+    DuckDB's default temporary directory is derived from the database being
+    opened.  This script opens the production mart only as a source/merge
+    endpoint, so leaving the default in place can create a huge
+    ``main.duckdb.tmp`` beside the live DB.  Use a dedicated work temp
+    directory unless the operator intentionally supplied one.
+    """
+
+    temp_directory = Path(
+        os.environ.get("STOCKMASTER_DUCKDB_TEMP_DIRECTORY")
+        or (work_root / "duckdb_tmp").as_posix()
+    )
+    temp_directory.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("STOCKMASTER_DUCKDB_TEMP_DIRECTORY", temp_directory.as_posix())
+    return temp_directory
+
+
 def _resolve_relevant_end(
     source_connection,
     *,
@@ -78,7 +98,7 @@ def _resolve_relevant_end(
         for row in source_connection.execute(
             """
             SELECT trading_date
-            FROM source_db.dim_trading_calendar
+            FROM dim_trading_calendar
             WHERE is_trading_day
             ORDER BY trading_date
             """
@@ -118,37 +138,39 @@ def _prepare_work_db(
         shutil.rmtree(tmp_dir)
     work_db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    with duckdb_connection(source_db_path, read_only=True) as source_connection:
+        as_of_dates, relevant_end = _resolve_relevant_end(
+            source_connection,
+            start_date=start_date,
+            end_date=end_date,
+            horizons=horizons,
+        )
+        calendar_frame = source_connection.execute("SELECT * FROM dim_trading_calendar").fetchdf()
+        symbol_frame = source_connection.execute("SELECT * FROM dim_symbol").fetchdf()
+        ohlcv_frame = source_connection.execute(
+            """
+            SELECT *
+            FROM fact_daily_ohlcv
+            WHERE trading_date BETWEEN ? AND ?
+            """,
+            [start_date, relevant_end],
+        ).fetchdf()
+
     with duckdb_connection(work_db_path) as connection:
         bootstrap_core_tables(connection)
-        connection.execute(f"ATTACH '{_sql_string(source_db_path)}' AS source_db (READ_ONLY)")
-        try:
-            as_of_dates, relevant_end = _resolve_relevant_end(
-                connection,
-                start_date=start_date,
-                end_date=end_date,
-                horizons=horizons,
-            )
-            connection.execute(
-                "CREATE OR REPLACE TABLE dim_trading_calendar AS "
-                "SELECT * FROM source_db.dim_trading_calendar"
-            )
-            connection.execute(
-                "CREATE OR REPLACE TABLE dim_symbol AS SELECT * FROM source_db.dim_symbol"
-            )
-            connection.execute(
-                """
-                CREATE OR REPLACE TABLE fact_daily_ohlcv AS
-                SELECT *
-                FROM source_db.fact_daily_ohlcv
-                WHERE trading_date BETWEEN ? AND ?
-                """,
-                [start_date, relevant_end],
-            )
-            ohlcv_count = int(
-                connection.execute("SELECT COUNT(*) FROM fact_daily_ohlcv").fetchone()[0] or 0
-            )
-        finally:
-            connection.execute("DETACH source_db")
+        for table_name, frame in (
+            ("dim_trading_calendar", calendar_frame),
+            ("dim_symbol", symbol_frame),
+            ("fact_daily_ohlcv", ohlcv_frame),
+        ):
+            connection.register("source_frame", frame)
+            try:
+                connection.execute(
+                    f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM source_frame"
+                )
+            finally:
+                connection.unregister("source_frame")
+        ohlcv_count = len(ohlcv_frame)
     return len(as_of_dates), ohlcv_count, relevant_end
 
 
@@ -243,6 +265,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Drop and recreate the production path-overlay table before merging.",
     )
     parser.add_argument("--keep-workdb", action="store_true")
+    parser.add_argument(
+        "--skip-merge",
+        action="store_true",
+        help="Build and export the work overlay without writing to the production mart.",
+    )
     return parser
 
 
@@ -255,6 +282,8 @@ def main() -> int:
         work_root / f"path_overlay_{args.start.isoformat()}_{args.end.isoformat()}.duckdb"
     )
     overlay_path = args.overlay_parquet or work_db_path.with_suffix(".parquet")
+    temp_directory = _set_default_work_temp_directory(work_root)
+    print(f"Using DuckDB temp directory: {temp_directory}", flush=True)
 
     as_of_count, ohlcv_count, relevant_end = _prepare_work_db(
         source_db_path=settings.paths.duckdb_path,
@@ -267,7 +296,8 @@ def main() -> int:
     print(
         "Prepared work DB. "
         f"work_db={work_db_path} as_of_dates={as_of_count} "
-        f"ohlcv_rows={ohlcv_count} relevant_end={relevant_end.isoformat()}"
+        f"ohlcv_rows={ohlcv_count} relevant_end={relevant_end.isoformat()}",
+        flush=True,
     )
 
     work_settings = copy.deepcopy(settings)
@@ -287,21 +317,29 @@ def main() -> int:
         recreate_path_overlay_table=True,
     )
     overlay_count = _export_overlay(work_db_path, overlay_path)
-    merged_count = _merge_overlay(
-        source_db_path=settings.paths.duckdb_path,
-        overlay_path=overlay_path,
-        start_date=args.start,
-        end_date=args.end,
-        horizons=args.horizons,
-        recreate_target_table=args.recreate_target_table,
+    print(
+        f"Exported work overlay. rows={overlay_count} overlay={overlay_path}",
+        flush=True,
     )
+    if args.skip_merge:
+        merged_count = 0
+    else:
+        merged_count = _merge_overlay(
+            source_db_path=settings.paths.duckdb_path,
+            overlay_path=overlay_path,
+            start_date=args.start,
+            end_date=args.end,
+            horizons=args.horizons,
+            recreate_target_table=args.recreate_target_table,
+        )
     if not args.keep_workdb:
         work_db_path.unlink(missing_ok=True)
         shutil.rmtree(work_db_path.with_suffix(work_db_path.suffix + ".tmp"), ignore_errors=True)
     print(
         "Path overlay rebuild completed. "
         f"run_id={result.run_id} rows={result.row_count} available={result.available_row_count} "
-        f"overlay_rows={overlay_count} merged_range_rows={merged_count} overlay={overlay_path}"
+        f"overlay_rows={overlay_count} merged_range_rows={merged_count} overlay={overlay_path}",
+        flush=True,
     )
     return 0
 
