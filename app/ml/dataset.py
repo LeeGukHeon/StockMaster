@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import date
 
@@ -25,6 +26,7 @@ MARKET_FEATURE_COLUMNS: tuple[str, ...] = ("market_is_kospi", "market_is_kosdaq"
 TRAINING_FEATURE_COLUMNS: tuple[str, ...] = (
     FEATURE_NAMES + MARKET_FEATURE_COLUMNS + MARKET_REGIME_FEATURE_COLUMNS
 )
+DEFAULT_TRAINING_LABEL_MAX_REBUILD_DAYS = 10
 REGIME_STATE_FEATURE_MAP: dict[str, str] = {
     "panic": "market_regime_panic_flag",
     "risk_off": "market_regime_risk_off_flag",
@@ -107,6 +109,80 @@ def _resolve_candidate_dates(
     finally:
         connection.unregister("model_training_symbol_stage")
     return [pd.Timestamp(row[0]).date() for row in rows]
+
+
+def _training_label_max_rebuild_days() -> int:
+    raw_value = os.environ.get("STOCKMASTER_TRAINING_LABEL_MAX_REBUILD_DAYS")
+    if raw_value is None or raw_value.strip() == "":
+        return DEFAULT_TRAINING_LABEL_MAX_REBUILD_DAYS
+    return max(0, int(raw_value))
+
+
+def _resolve_missing_label_dates(
+    connection,
+    *,
+    train_end_date: date,
+    horizons: list[int],
+    symbols: list[str] | None,
+    limit_symbols: int | None,
+    market: str,
+) -> list[date]:
+    symbol_frame = load_symbol_frame(
+        connection,
+        symbols=symbols,
+        market=market,
+        limit_symbols=limit_symbols,
+        as_of_date=train_end_date,
+    )
+    if symbol_frame.empty:
+        return []
+
+    trading_days = [
+        pd.Timestamp(row[0]).date()
+        for row in connection.execute(
+            """
+            SELECT trading_date
+            FROM dim_trading_calendar
+            WHERE is_trading_day
+              AND trading_date <= ?
+            ORDER BY trading_date
+            """,
+            [train_end_date],
+        ).fetchall()
+    ]
+    if not trading_days:
+        return []
+    trading_day_index = {value: index for index, value in enumerate(trading_days)}
+    candidate_dates: set[date] = set()
+    for trading_date in trading_days:
+        date_index = trading_day_index[trading_date]
+        if all(date_index + int(horizon) < len(trading_days) for horizon in horizons):
+            candidate_dates.add(trading_date)
+    if not candidate_dates:
+        return []
+
+    connection.register("model_training_label_symbol_stage", symbol_frame[["symbol"]])
+    try:
+        horizon_placeholders = ",".join("?" for _ in horizons)
+        existing_rows = connection.execute(
+            f"""
+            SELECT as_of_date, COUNT(DISTINCT horizon) AS horizon_count
+            FROM fact_forward_return_label
+            WHERE as_of_date <= ?
+              AND horizon IN ({horizon_placeholders})
+              AND label_available_flag
+              AND exit_date <= ?
+              AND symbol IN (SELECT symbol FROM model_training_label_symbol_stage)
+            GROUP BY as_of_date
+            """,
+            [train_end_date, *horizons, train_end_date],
+        ).fetchall()
+    finally:
+        connection.unregister("model_training_label_symbol_stage")
+    complete_dates = {
+        pd.Timestamp(row[0]).date() for row in existing_rows if int(row[1] or 0) >= len(horizons)
+    }
+    return sorted(candidate_dates.difference(complete_dates))
 
 
 def _ensure_feature_snapshots(
@@ -925,8 +1001,13 @@ def build_model_training_dataset(
                 git_commit=None,
             )
             try:
-                label_start_date = _resolve_label_start_date(
-                    connection, train_end_date=train_end_date
+                missing_label_dates = _resolve_missing_label_dates(
+                    connection,
+                    train_end_date=train_end_date,
+                    horizons=horizons,
+                    symbols=symbols,
+                    limit_symbols=limit_symbols,
+                    market=market,
                 )
             except Exception as exc:
                 record_run_finish(
@@ -941,15 +1022,27 @@ def build_model_training_dataset(
                 )
                 raise
 
-        build_forward_labels(
-            settings,
-            start_date=label_start_date,
-            end_date=train_end_date,
-            horizons=horizons,
-            symbols=symbols,
-            limit_symbols=limit_symbols,
-            market=market,
-        )
+        max_rebuild_days = _training_label_max_rebuild_days()
+        if len(missing_label_dates) > max_rebuild_days:
+            raise RuntimeError(
+                "Training label rebuild blocked because too many missing label dates would "
+                "force a large online DuckDB rebuild. "
+                f"missing_dates={len(missing_label_dates)} "
+                f"max_rebuild_days={max_rebuild_days}. "
+                "Run the offline path/base label maintenance rebuild first, or increase "
+                "STOCKMASTER_TRAINING_LABEL_MAX_REBUILD_DAYS explicitly for a controlled run."
+            )
+        if missing_label_dates:
+            build_forward_labels(
+                settings,
+                start_date=min(missing_label_dates),
+                end_date=max(missing_label_dates),
+                horizons=horizons,
+                symbols=symbols,
+                limit_symbols=limit_symbols,
+                market=market,
+                chunk_trading_days=1,
+            )
 
         with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
             bootstrap_core_tables(connection)
