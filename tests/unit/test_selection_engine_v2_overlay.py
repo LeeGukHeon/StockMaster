@@ -565,6 +565,31 @@ def test_d5_buyability_risk_gate_penalizes_thin_liquidity_for_buyability():
     assert gated["final_selection_value"].item() == 63.0
 
 
+def test_d5_practical_v3_risk_gate_demotes_weak_path_profit_profile():
+    scored = pd.DataFrame(
+        {
+            "symbol": ["A", "B"],
+            "final_selection_value": [70.0, 70.0],
+            "up_day_count_20d": [8.0, 12.0],
+            "max_loss_20d": [-0.05, -0.02],
+            "drawdown_20d": [-0.045, -0.01],
+            "adv_20_rank_pct": [0.30, 0.80],
+            "liquidity_rank_pct": [0.30, 0.80],
+        }
+    )
+    risk_flags = pd.Series([[], []])
+
+    gated = _apply_d5_buyability_risk_gate(
+        scored,
+        risk_flags,
+        model_spec_id=D5_PRACTICAL_V3_MODEL_SPEC_ID,
+        horizon=5,
+    )
+
+    assert gated["d5_buyability_risk_gate_penalty_score"].tolist() == [23.0, 0.0]
+    assert gated["final_selection_value"].tolist() == [47.0, 70.0]
+
+
 def test_d5_buyability_risk_gate_applies_to_active_d5_and_skips_other_specs():
     scored = pd.DataFrame({"symbol": ["A"], "final_selection_value": [70.0]})
     risk_flags = pd.Series([["data_missingness_high"]])
