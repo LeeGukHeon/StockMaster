@@ -248,3 +248,130 @@ def test_training_dataset_prefers_path_overlay_targets(tmp_path):
 
     assert dataset["target_h5"].iloc[0] == pytest.approx(-0.10)
     assert dataset["target_practical_excess_v2_h5"].iloc[0] > 0.0
+
+
+def test_training_dataset_prefers_external_path_overlay_parquet(tmp_path, monkeypatch):
+    settings = build_test_settings(tmp_path)
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO dim_symbol (
+                symbol,
+                company_name,
+                market,
+                is_common_stock,
+                source,
+                updated_at
+            )
+            VALUES ('005930', 'SamsungElec', 'KOSPI', TRUE, 'test', now())
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_forward_return_label (
+                run_id,
+                as_of_date,
+                symbol,
+                horizon,
+                market,
+                entry_date,
+                exit_date,
+                excess_forward_return,
+                path_excess_return_tp5_sl3_conservative,
+                label_available_flag,
+                created_at
+            )
+            VALUES (
+                'base-run',
+                DATE '2026-03-02',
+                '005930',
+                5,
+                'KOSPI',
+                DATE '2026-03-03',
+                DATE '2026-03-09',
+                -0.10,
+                -0.10,
+                TRUE,
+                now()
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO fact_forward_return_path_label (
+                run_id,
+                as_of_date,
+                symbol,
+                horizon,
+                path_excess_return_tp5_sl3_conservative,
+                label_available_flag,
+                created_at
+            )
+            VALUES (
+                'table-overlay-run',
+                DATE '2026-03-02',
+                '005930',
+                5,
+                -0.08,
+                TRUE,
+                now()
+            )
+            """
+        )
+        connection.executemany(
+            """
+            INSERT INTO fact_feature_snapshot (
+                run_id,
+                as_of_date,
+                symbol,
+                feature_name,
+                feature_value,
+                feature_group,
+                source_version,
+                is_imputed,
+                created_at
+            )
+            VALUES ('feature-run', DATE '2026-03-02', '005930', ?, ?, 'test', 'test', FALSE, now())
+            """,
+            [
+                ("liquidity_rank_pct", 0.50),
+                ("adv_20", 100.0),
+                ("realized_vol_20d", 0.10),
+                ("drawdown_20d", 0.0),
+                ("max_loss_20d", 0.0),
+                ("missing_key_feature_count", 0.0),
+                ("data_confidence_score", 100.0),
+                ("stale_price_flag", 0.0),
+            ],
+        )
+        overlay_path = tmp_path / "external_path_overlay.parquet"
+        connection.execute(
+            """
+            COPY (
+                SELECT
+                    'external-overlay-run' AS run_id,
+                    DATE '2026-03-02' AS as_of_date,
+                    '005930' AS symbol,
+                    5 AS horizon,
+                    CAST(NULL AS DOUBLE) AS path_excess_return_tp3_sl3_conservative,
+                    0.04 AS path_excess_return_tp5_sl3_conservative,
+                    now() AS created_at
+            )
+            TO ? (FORMAT PARQUET)
+            """,
+            [str(overlay_path)],
+        )
+        monkeypatch.setenv("STOCKMASTER_PATH_LABEL_OVERLAY_PARQUET", str(overlay_path))
+
+        dataset = _load_dataset_frame(
+            connection,
+            train_end_date=date(2026, 3, 9),
+            horizons=[5],
+            symbols=["005930"],
+            limit_symbols=None,
+            market="ALL",
+        )
+
+    assert dataset["target_h5"].iloc[0] == pytest.approx(-0.10)
+    assert dataset["target_practical_excess_v2_h5"].iloc[0] > 0.0

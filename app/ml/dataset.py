@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import date
+from glob import glob
 
 import pandas as pd
 
@@ -27,6 +28,7 @@ TRAINING_FEATURE_COLUMNS: tuple[str, ...] = (
     FEATURE_NAMES + MARKET_FEATURE_COLUMNS + MARKET_REGIME_FEATURE_COLUMNS
 )
 DEFAULT_TRAINING_LABEL_MAX_REBUILD_DAYS = 10
+PATH_LABEL_OVERLAY_PARQUET_ENV = "STOCKMASTER_PATH_LABEL_OVERLAY_PARQUET"
 REGIME_STATE_FEATURE_MAP: dict[str, str] = {
     "panic": "market_regime_panic_flag",
     "risk_off": "market_regime_risk_off_flag",
@@ -671,6 +673,80 @@ def _robust_buyable_excess_return_targets(
     return positive_adjusted.where(adjusted > 0.0, adjusted.mul(negative_multiplier))
 
 
+def _register_external_path_overlay_view(connection) -> bool:
+    overlay_path = os.environ.get(PATH_LABEL_OVERLAY_PARQUET_ENV)
+    if not overlay_path:
+        return False
+    matched_paths = glob(overlay_path)
+    if not matched_paths:
+        raise RuntimeError(
+            f"{PATH_LABEL_OVERLAY_PARQUET_ENV} did not match any parquet files: {overlay_path}"
+        )
+    overlay_frame = connection.execute(
+        """
+        SELECT
+            run_id,
+            as_of_date,
+            symbol,
+            horizon,
+            path_excess_return_tp3_sl3_conservative,
+            path_excess_return_tp5_sl3_conservative,
+            created_at
+        FROM read_parquet(?)
+        """,
+        [matched_paths],
+    ).fetchdf()
+    connection.register("external_forward_path_label_frame", overlay_frame)
+    connection.execute(
+        """
+        CREATE OR REPLACE TEMP VIEW external_forward_path_label AS
+        SELECT
+            run_id,
+            as_of_date,
+            symbol,
+            horizon,
+            path_excess_return_tp3_sl3_conservative,
+            path_excess_return_tp5_sl3_conservative,
+            created_at
+        FROM external_forward_path_label_frame
+        """
+    )
+    return True
+
+
+def _path_overlay_source_sql(include_external: bool) -> str:
+    base_source = """
+        SELECT
+            run_id,
+            as_of_date,
+            symbol,
+            horizon,
+            path_excess_return_tp3_sl3_conservative,
+            path_excess_return_tp5_sl3_conservative,
+            created_at,
+            0 AS source_priority
+        FROM fact_forward_return_path_label
+    """
+    if not include_external:
+        return base_source
+    return (
+        """
+        SELECT
+            run_id,
+            as_of_date,
+            symbol,
+            horizon,
+            path_excess_return_tp3_sl3_conservative,
+            path_excess_return_tp5_sl3_conservative,
+            created_at,
+            1 AS source_priority
+        FROM external_forward_path_label
+        UNION ALL
+        """
+        + base_source
+    )
+
+
 def _load_dataset_frame(
     connection,
     *,
@@ -689,6 +765,9 @@ def _load_dataset_frame(
     )
     if symbol_frame.empty:
         return pd.DataFrame()
+
+    external_overlay_source = _register_external_path_overlay_view(connection)
+    path_overlay_source_sql = _path_overlay_source_sql(external_overlay_source)
 
     connection.register("model_training_symbol_stage", symbol_frame[["symbol"]])
     try:
@@ -716,11 +795,16 @@ def _load_dataset_frame(
                     symbol,
                     horizon,
                     path_excess_return_tp3_sl3_conservative,
-                    path_excess_return_tp5_sl3_conservative
-                FROM fact_forward_return_path_label
+                    path_excess_return_tp5_sl3_conservative,
+                    created_at,
+                    run_id,
+                    source_priority
+                FROM (
+                    {path_overlay_source_sql}
+                )
                 QUALIFY ROW_NUMBER() OVER (
                     PARTITION BY as_of_date, symbol, horizon
-                    ORDER BY created_at DESC, run_id DESC
+                    ORDER BY source_priority DESC, created_at DESC, run_id DESC
                 ) = 1
             ) AS path
               ON label.as_of_date = path.as_of_date
