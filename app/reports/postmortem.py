@@ -21,19 +21,6 @@ from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from app.storage.manifests import record_run_finish, record_run_start
 
-BAND_LABELS = {
-    "in_band": "예상 범위 안",
-    "above_upper": "예상보다 강함",
-    "below_lower": "예상보다 약함",
-    "band_missing": "예상 범위 없음",
-    "label_pending": "아직 결과 대기",
-}
-
-REASON_LABELS = {
-    "ml_alpha_supportive": "최근 흐름과 모델 판단이 함께 받쳐줌",
-    "prediction_fallback_used": "예측 보조값을 함께 참고함",
-}
-
 
 @dataclass(slots=True)
 class PostmortemRenderResult:
@@ -52,10 +39,6 @@ class PostmortemPublishResult:
     published: bool
     artifact_paths: list[str]
     notes: str
-
-
-def _horizon_label(horizon: int) -> str:
-    return f"{int(horizon)}거래일"
 
 
 def _build_postmortem_payload_messages(
@@ -78,14 +61,6 @@ def _window_label(window_type: str) -> str:
         "rolling_60d": "최근 60거래일",
     }
     return mapping.get(str(window_type), str(window_type))
-
-
-def _ranking_label(ranking_version: str) -> str:
-    if str(ranking_version) == SELECTION_ENGINE_VERSION:
-        return "현재 추천 모델"
-    if str(ranking_version) == EXPLANATORY_RANKING_VERSION:
-        return "비교 기준 모델"
-    return str(ranking_version)
 
 
 def _format_percent_text(
@@ -198,12 +173,8 @@ def _load_top_outcomes(
         SELECT
             outcome.symbol,
             meta.company_name,
-            meta.market,
-            outcome.selection_date,
             outcome.realized_excess_return,
-            outcome.expected_excess_return_at_selection,
-            outcome.band_status,
-            outcome.top_reason_tags_json
+            outcome.expected_excess_return_at_selection
         FROM fact_selection_outcome AS outcome
         JOIN dim_symbol AS meta
           ON outcome.symbol = meta.symbol
@@ -275,47 +246,87 @@ def _load_calibration_summary(connection, *, horizons: list[int]) -> pd.DataFram
     ).fetchdf()
 
 
-def _format_summary_line(row: pd.Series) -> str:
-    band_text = ""
-    if pd.notna(row.get("band_coverage_rate")):
-        band_text = (
-            " | 범위 적중률="
-            f"{_format_percent_text(row['band_coverage_rate'], decimals=1)}"
-        )
-    expected_text = ""
-    if pd.notna(row.get("avg_expected_excess_return")):
-        expected_text = (
-            " | 평균 참고 기대수익="
-            f"{_format_percent_text(row['avg_expected_excess_return'], decimals=2, signed=True)}"
-        )
+def _result_label(avg_excess: object, hit_rate: object) -> str:
+    avg = 0.0 if avg_excess is None or pd.isna(avg_excess) else float(avg_excess)
+    hit = 0.0 if hit_rate is None or pd.isna(hit_rate) else float(hit_rate)
+    if avg >= 0.01 and hit >= 0.55:
+        return "양호"
+    if avg > 0 and hit >= 0.5:
+        return "보통+"
+    if avg < -0.01 or hit < 0.45:
+        return "부진"
+    return "혼조"
+
+
+def _format_current_result_line(row: pd.Series) -> str:
+    label = _result_label(row.get("avg_realized_excess_return"), row.get("hit_rate"))
     return (
-        f"- {_horizon_label(int(row['horizon']))} | {_ranking_label(str(row['ranking_version']))} "
-        f"| 평가 수 {int(row['row_count'])} "
-        f"| 평균 초과수익률 "
-        f"{_format_percent_text(row['avg_realized_excess_return'], decimals=2, signed=True)} "
-        f"| 수익 플러스 비율 "
-        f"{_format_percent_text(row['hit_rate'], decimals=1)}{expected_text}{band_text}"
+        f"- H{int(row['horizon'])} 현재모델: {label} · "
+        "평균초과 "
+        f"{_format_percent_text(row['avg_realized_excess_return'], decimals=2, signed=True)} · "
+        f"적중률 {_format_percent_text(row['hit_rate'], decimals=0)} · "
+        f"표본 {int(row['row_count'])}개"
+    )
+
+
+def _format_comparison_line(row: pd.Series) -> str:
+    return (
+        f"- H{int(row['horizon'])} 비교기준 대비: "
+        f"평균 {_format_percent_text(row['avg_excess_gap'], decimals=2, signed=True)} · "
+        f"적중률 {_format_percent_text(row['hit_rate_gap'], decimals=0, signed=True)}"
+    )
+
+
+def _format_rolling_line(row: pd.Series) -> str:
+    return (
+        f"- {_window_label(str(row['window_type']))} H{int(row['horizon'])}: "
+        "평균초과 "
+        f"{_format_percent_text(row['mean_realized_excess_return'], decimals=2, signed=True)} · "
+        f"적중률 {_format_percent_text(row['hit_rate'], decimals=0)} · "
+        f"표본 {int(row['count_evaluated'])}개"
+    )
+
+
+def _format_calibration_line(row: pd.Series) -> str:
+    return (
+        f"- H{int(row['horizon'])}: 예상범위 적중 "
+        f"{_format_percent_text(row['coverage_rate'], decimals=0)} · "
+        f"치우침 {_format_percent_text(row['median_bias'], decimals=2, signed=True)}"
     )
 
 
 def _format_top_line(row: pd.Series) -> str:
-    try:
-        raw_reasons = json.loads(row["top_reason_tags_json"] or "[]")
-    except (TypeError, ValueError, json.JSONDecodeError):
-        raw_reasons = []
-    reasons = ", ".join(REASON_LABELS.get(str(item), str(item)) for item in raw_reasons[:2])
-    proxy = ""
-    if pd.notna(row.get("expected_excess_return_at_selection")):
-        proxy = (
-            " | 당시 참고 기대수익="
-            f"{_format_percent_text(row['expected_excess_return_at_selection'], decimals=2, signed=True)}"
-        )
-    return (
-        f"- `{row['symbol']}` {row['company_name']} ({row['market']}) "
-        f"| 선정일 {row['selection_date']} | 실제 초과수익률 "
-        f"{_format_percent_text(row['realized_excess_return'], decimals=2, signed=True)}"
-        f"{proxy} | 예상 범위 판정 {BAND_LABELS.get(str(row['band_status']), str(row['band_status']))} | 주요 근거 {reasons or '-'}"
+    realized = _format_percent_text(row["realized_excess_return"], decimals=2, signed=True)
+    expected = _format_percent_text(
+        row["expected_excess_return_at_selection"],
+        decimals=2,
+        signed=True,
+        na_text="n/a",
     )
+    return (
+        f"- `{row['symbol']}` {row['company_name']}: "
+        f"실제초과 {realized} / 당시기대 {expected}"
+    )
+
+
+def _current_model_rows(summary: pd.DataFrame) -> pd.DataFrame:
+    if summary.empty:
+        return summary
+    current = summary.loc[
+        summary["ranking_version"].astype(str).eq(SELECTION_ENGINE_VERSION)
+    ].copy()
+    return current.sort_values(["horizon", "row_count"], ascending=[False, False])
+
+
+def _current_rolling_rows(rolling_summary: pd.DataFrame) -> pd.DataFrame:
+    if rolling_summary.empty:
+        return rolling_summary
+    frame = rolling_summary.loc[
+        rolling_summary["ranking_version"].astype(str).eq(SELECTION_ENGINE_VERSION)
+        & rolling_summary["window_type"].astype(str).eq("rolling_20d")
+        & pd.to_numeric(rolling_summary["count_evaluated"], errors="coerce").fillna(0).gt(0)
+    ].copy()
+    return frame.sort_values(["horizon", "count_evaluated"], ascending=[False, False])
 
 
 def _build_report_content(
@@ -327,76 +338,57 @@ def _build_report_content(
     calibration_summary: pd.DataFrame,
     top_by_horizon: dict[int, pd.DataFrame],
 ) -> str:
+    current_summary = _current_model_rows(summary)
+    current_rolling = _current_rolling_rows(rolling_summary)
     lines = [
-        f"**StockMaster 사후 점검 | {evaluation_date.isoformat()}**",
+        f"**StockMaster 사후평가 | {evaluation_date.isoformat()}**",
         "",
-        "- 이 보고서는 실제 자동매매 손익장이 아니라, 당시 추천과 이후 흐름을 비교한 사후 점검입니다.",
-        "- 수수료·세금 시뮬레이션은 포함하지 않았고, 당시 저장된 추천과 예상 범위를 다시 계산하지 않고 그대로 사용합니다.",
+        "오늘 메시지는 ‘며칠 전 추천이 실제로 어땠는지’만 짧게 봅니다.",
+        "- 평균초과: 같은 기간 비교기준보다 더 벌었는지",
+        "- 적중률: 초과수익이 +였던 비율",
         "",
-        "**한눈에 요약**",
+        "**결론**",
     ]
-    if summary.empty:
-        lines.append("- 요청한 평가일에 결과가 확정된 추천이 없습니다.")
+
+    if current_summary.empty:
+        lines.append("- 아직 확정된 추천 결과가 없습니다.")
     else:
-        lines.extend(_format_summary_line(row) for _, row in summary.iterrows())
+        for _, row in current_summary.iterrows():
+            lines.append(_format_current_result_line(row))
+
+    if not comparison.empty:
+        lines.append("")
+        lines.append("**비교기준 대비**")
+        for _, row in comparison.sort_values("horizon", ascending=False).iterrows():
+            lines.append(_format_comparison_line(row))
 
     lines.append("")
-    lines.append("**추천 모델과 비교 기준의 차이**")
-    if comparison.empty:
-        lines.append("- 같은 날짜 기준 비교 결과가 없습니다.")
-    else:
-        for _, row in comparison.iterrows():
-            lines.append(
-                f"- {_horizon_label(int(row['horizon']))} 평균 초과수익률 차이="
-                f"{_format_percent_text(row['avg_excess_gap'], decimals=2, signed=True)} "
-                f"| 수익 플러스 비율 차이="
-                f"{_format_percent_text(row['hit_rate_gap'], decimals=1, signed=True)}"
-            )
-
-    lines.append("")
-    lines.append("**최근 구간 흐름**")
-    valid_rolling_summary = rolling_summary.loc[
-        pd.to_numeric(rolling_summary["count_evaluated"], errors="coerce").fillna(0).gt(0)
-    ].copy()
-    if valid_rolling_summary.empty:
+    lines.append("**최근 20거래일 흐름**")
+    if current_rolling.empty:
         lines.append("- 최근 구간 요약이 아직 없습니다.")
     else:
-        for _, row in valid_rolling_summary.iterrows():
-            lines.append(
-                f"- {_window_label(str(row['window_type']))} | {_horizon_label(int(row['horizon']))} | {_ranking_label(str(row['ranking_version']))} "
-                f"| 평가 수 {int(row['count_evaluated'])} "
-                f"| 평균 초과수익률 "
-                f"{_format_percent_text(row['mean_realized_excess_return'], decimals=2, signed=True)} "
-                f"| 수익 플러스 비율 "
-                f"{_format_percent_text(row['hit_rate'], decimals=1)}"
-            )
+        for _, row in current_rolling.iterrows():
+            lines.append(_format_rolling_line(row))
 
-    lines.append("")
-    lines.append("**예상 범위 점검**")
-    if calibration_summary.empty:
-        lines.append("- 예상 범위 점검 결과가 아직 없습니다.")
-    else:
-        for _, row in calibration_summary.iterrows():
-            lines.append(
-                f"- {_horizon_label(int(row['horizon']))} | 예상 범위 적중률 "
-                f"{_format_percent_text(row['coverage_rate'], decimals=1)} "
-                f"| 치우침 "
-                f"{_format_percent_text(row['median_bias'], decimals=2, signed=True)} "
-                f"| 품질 {row['quality_flag']}"
-            )
-
-    for horizon, top_frame in sorted(top_by_horizon.items()):
+    useful_calibration = calibration_summary.copy()
+    if not useful_calibration.empty:
+        useful_calibration = useful_calibration.sort_values("horizon", ascending=False).head(2)
         lines.append("")
-        lines.append(f"**대표 사례 | {_horizon_label(int(horizon))}**")
-        if top_frame.empty:
-            lines.append("- 결과가 확정된 종목이 없습니다.")
-        else:
-            lines.extend(_format_top_line(row) for _, row in top_frame.iterrows())
+        lines.append("**예상범위 참고**")
+        for _, row in useful_calibration.iterrows():
+            lines.append(_format_calibration_line(row))
+
+    d5_cases = top_by_horizon.get(5)
+    if d5_cases is not None and not d5_cases.empty:
+        lines.append("")
+        lines.append("**잘 맞은 H5 사례**")
+        for _, row in d5_cases.head(2).iterrows():
+            lines.append(_format_top_line(row))
 
     lines.append("")
     lines.append(
-        "여기서 말하는 예상 범위는 과거 통계 기반 참고 구간이며 미래를 보장하는 값은 아닙니다. "
-        "비교는 같은 날짜에 기록된 추천 묶음끼리만 수행했습니다."
+        "※ 이 평가는 과거 추천과 이후 가격 흐름의 사후 점검이며, "
+        "수수료·세금은 제외됩니다."
     )
     return "\n".join(lines)
 
