@@ -62,6 +62,10 @@ def _sql_date(value: date) -> str:
     return value.isoformat()
 
 
+def _sql_string(value: Path) -> str:
+    return str(value).replace("'", "''")
+
+
 def _resolve_relevant_end(
     source_connection,
     *,
@@ -115,7 +119,7 @@ def _prepare_work_db(
     work_db_path.parent.mkdir(parents=True, exist_ok=True)
 
     with duckdb_connection(work_db_path) as connection:
-        connection.execute("ATTACH ? AS source_db (READ_ONLY)", [str(source_db_path)])
+        connection.execute(f"ATTACH '{_sql_string(source_db_path)}' AS source_db (READ_ONLY)")
         try:
             as_of_dates, relevant_end = _resolve_relevant_end(
                 connection,
