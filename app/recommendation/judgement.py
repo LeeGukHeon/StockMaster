@@ -146,29 +146,15 @@ def _selected_d5_judgement(
     evidence_text: str,
     path_rank_candidate: bool = False,
 ) -> RecommendationJudgement | None:
-    if expected is None or expected <= 0:
-        if not path_rank_candidate:
-            return None
-        if _evidence_blocks_selected_candidate(evidence):
-            return RecommendationJudgement(
-                label="관찰 우선",
-                summary=f"경로모델 후보권이나 성과 확인 필요 · {evidence_text}",
-                score_band=score_band_for_value(score),
-                evidence=evidence,
-            )
-        if rank is not None and rank > D5_SELECTED_ACTIONABLE_RANK_END:
-            return RecommendationJudgement(
-                label="관찰 우선",
-                summary=f"경로모델 후순위 후보 · {evidence_text}",
-                score_band=score_band_for_value(score),
-                evidence=evidence,
-            )
+    if path_rank_candidate:
         return RecommendationJudgement(
             label="매수해볼 가치 있음",
-            summary=f"경로모델 추천권·분할 접근 · {evidence_text}",
+            summary=f"경로모델 추천권·2~5일 분할 접근 · {evidence_text}",
             score_band=score_band_for_value(score),
             evidence=evidence,
         )
+    if expected is None or expected <= 0:
+        return None
     if expected < BUYABILITY_MIN_EXPECTED_EXCESS_RETURN:
         return RecommendationJudgement(
             label="관찰 우선",
@@ -267,7 +253,9 @@ def classify_recommendation(
             evidence=evidence,
         )
 
-    if _evidence_warns_overconfidence(evidence):
+    if _evidence_warns_overconfidence(evidence) and not (
+        candidate_selected and path_rank_candidate
+    ):
         return RecommendationJudgement(
             label="관찰 우선",
             summary=f"고점수 과확신 경고 · {evidence_text}",

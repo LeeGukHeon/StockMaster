@@ -335,13 +335,14 @@ def _build_pick_rows(
             f"진입 {_safe_text(getattr(row, 'next_entry_trade_date', None))}",
         ]
         if is_d5_candidate_surface:
-            priority_text = _format_number(
-                getattr(row, "buyability_priority_score", None),
-                decimals=2,
-            )
-            summary_parts.append(
-                f"우선순위 {priority_text}"
-            )
+            if path_rank_candidate:
+                summary_parts.append("경로모델")
+            else:
+                priority_text = _format_number(
+                    getattr(row, "buyability_priority_score", None),
+                    decimals=2,
+                )
+                summary_parts.append(f"우선순위 {priority_text}")
         if reasons:
             summary_parts.append(f"핵심 근거 {', '.join(reasons)}")
         if risks:
