@@ -3417,12 +3417,11 @@ def _apply_duckdb_runtime_pragmas(connection: duckdb.DuckDBPyConnection) -> None
     memory_limit = os.environ.get("STOCKMASTER_DUCKDB_MEMORY_LIMIT")
     if memory_limit:
         connection.execute("SET memory_limit = ?", [memory_limit])
-    temp_directory = os.environ.get("STOCKMASTER_DUCKDB_TEMP_DIRECTORY")
-    if temp_directory:
-        connection.execute("SET temp_directory = ?", [temp_directory])
-    max_temp_directory_size = os.environ.get("STOCKMASTER_DUCKDB_MAX_TEMP_DIRECTORY_SIZE")
-    if max_temp_directory_size:
-        connection.execute("SET max_temp_directory_size = ?", [max_temp_directory_size])
+    # temp_directory and max_temp_directory_size are startup-only enough for
+    # DuckDB files that spill while opening/replaying WAL.  They are passed via
+    # the connection config above; setting them again after the database has
+    # started using temp storage can fail with "Cannot switch temporary
+    # directory after the current one has been used".
     threads = os.environ.get("STOCKMASTER_DUCKDB_THREADS")
     if threads:
         connection.execute(f"SET threads = {max(1, int(threads))}")
