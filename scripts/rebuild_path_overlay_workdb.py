@@ -119,6 +119,7 @@ def _prepare_work_db(
     work_db_path.parent.mkdir(parents=True, exist_ok=True)
 
     with duckdb_connection(work_db_path) as connection:
+        bootstrap_core_tables(connection)
         connection.execute(f"ATTACH '{_sql_string(source_db_path)}' AS source_db (READ_ONLY)")
         try:
             as_of_dates, relevant_end = _resolve_relevant_end(
@@ -143,7 +144,6 @@ def _prepare_work_db(
             ohlcv_count = int(
                 connection.execute("SELECT COUNT(*) FROM fact_daily_ohlcv").fetchone()[0] or 0
             )
-            bootstrap_core_tables(connection)
         finally:
             connection.execute("DETACH source_db")
     return len(as_of_dates), ohlcv_count, relevant_end
