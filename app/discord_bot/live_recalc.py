@@ -461,7 +461,82 @@ def _load_live_prediction_row(
         ),
         persist_member_predictions=False,
     )
+    if not result_frame.empty and "training_run_id" in result_frame.columns:
+        training_run_ids = result_frame["training_run_id"].dropna().astype(str).unique().tolist()
+        if training_run_ids:
+            metric_row = _load_validation_metric_row(
+                connection,
+                training_run_id=training_run_ids[0],
+                horizon=int(horizon),
+            )
+            for column, value in metric_row.items():
+                result_frame[column] = value
     return result_frame
+
+
+def _load_validation_metric_row(
+    connection,
+    *,
+    training_run_id: str,
+    horizon: int,
+) -> dict[str, object]:
+    row = connection.execute(
+        """
+        SELECT
+            MAX(
+                CASE
+                    WHEN metric_name = 'top5_mean_excess_return'
+                    THEN metric_value
+                END
+            ) AS validation_top5_mean_excess_return,
+            MAX(
+                CASE
+                    WHEN metric_name = 'top10_mean_excess_return'
+                    THEN metric_value
+                END
+            ) AS validation_top10_mean_excess_return,
+            MAX(
+                CASE
+                    WHEN metric_name = 'top20_mean_excess_return'
+                    THEN metric_value
+                END
+            ) AS validation_top20_mean_excess_return,
+            MAX(
+                CASE
+                    WHEN metric_name = 'rank_ic'
+                    THEN metric_value
+                END
+            ) AS validation_rank_ic,
+            MAX(
+                CASE
+                    WHEN metric_name = 'top5_mean_excess_return'
+                    THEN sample_count
+                END
+            ) AS validation_sample_count
+        FROM fact_model_metric_summary
+        WHERE training_run_id = ?
+          AND horizon = ?
+          AND member_name = 'ensemble'
+          AND split_name = 'validation'
+          AND metric_name IN (
+              'top5_mean_excess_return',
+              'top10_mean_excess_return',
+              'top20_mean_excess_return',
+              'rank_ic'
+          )
+        """,
+        [str(training_run_id), int(horizon)],
+    ).fetchone()
+    if row is None:
+        return {}
+    columns = [
+        "validation_top5_mean_excess_return",
+        "validation_top10_mean_excess_return",
+        "validation_top20_mean_excess_return",
+        "validation_rank_ic",
+        "validation_sample_count",
+    ]
+    return dict(zip(columns, row, strict=False))
 
 
 def compute_live_stock_recommendation(
@@ -512,25 +587,81 @@ def compute_live_stock_recommendation(
             for horizon in (1, 5):
                 stored_prediction_frame = connection.execute(
                     """
+                    WITH validation_metrics AS (
+                        SELECT
+                            training_run_id,
+                            horizon,
+                            MAX(
+                                CASE
+                                    WHEN metric_name = 'top5_mean_excess_return'
+                                    THEN metric_value
+                                END
+                            ) AS validation_top5_mean_excess_return,
+                            MAX(
+                                CASE
+                                    WHEN metric_name = 'top10_mean_excess_return'
+                                    THEN metric_value
+                                END
+                            ) AS validation_top10_mean_excess_return,
+                            MAX(
+                                CASE
+                                    WHEN metric_name = 'top20_mean_excess_return'
+                                    THEN metric_value
+                                END
+                            ) AS validation_top20_mean_excess_return,
+                            MAX(
+                                CASE
+                                    WHEN metric_name = 'rank_ic'
+                                    THEN metric_value
+                                END
+                            ) AS validation_rank_ic,
+                            MAX(
+                                CASE
+                                    WHEN metric_name = 'top5_mean_excess_return'
+                                    THEN sample_count
+                                END
+                            ) AS validation_sample_count
+                        FROM fact_model_metric_summary
+                        WHERE member_name = 'ensemble'
+                          AND split_name = 'validation'
+                          AND metric_name IN (
+                              'top5_mean_excess_return',
+                              'top10_mean_excess_return',
+                              'top20_mean_excess_return',
+                              'rank_ic'
+                          )
+                        GROUP BY training_run_id, horizon
+                    )
                     SELECT
-                        symbol,
-                        expected_excess_return,
-                        lower_band,
-                        median_band,
-                        upper_band,
-                        uncertainty_score,
-                        disagreement_score,
-                        fallback_flag,
-                        fallback_reason,
-                        prediction_version,
-                        member_count,
-                        ensemble_weight_json,
-                        source_notes_json
-                    FROM fact_prediction
-                    WHERE as_of_date = ?
-                      AND horizon = ?
-                      AND prediction_version = ?
-                      AND ranking_version = ?
+                        prediction.symbol,
+                        prediction.expected_excess_return,
+                        prediction.lower_band,
+                        prediction.median_band,
+                        prediction.upper_band,
+                        prediction.uncertainty_score,
+                        prediction.disagreement_score,
+                        prediction.fallback_flag,
+                        prediction.fallback_reason,
+                        prediction.prediction_version,
+                        prediction.model_spec_id,
+                        prediction.active_alpha_model_id,
+                        prediction.training_run_id,
+                        prediction.member_count,
+                        prediction.ensemble_weight_json,
+                        prediction.source_notes_json,
+                        validation_metrics.validation_top5_mean_excess_return,
+                        validation_metrics.validation_top10_mean_excess_return,
+                        validation_metrics.validation_top20_mean_excess_return,
+                        validation_metrics.validation_rank_ic,
+                        validation_metrics.validation_sample_count
+                    FROM fact_prediction AS prediction
+                    LEFT JOIN validation_metrics
+                      ON prediction.training_run_id = validation_metrics.training_run_id
+                     AND prediction.horizon = validation_metrics.horizon
+                    WHERE prediction.as_of_date = ?
+                      AND prediction.horizon = ?
+                      AND prediction.prediction_version = ?
+                      AND prediction.ranking_version = ?
                     """,
                     [as_of_date, horizon, ALPHA_PREDICTION_VERSION, SELECTION_ENGINE_V2_VERSION],
                 ).fetchdf()
@@ -561,9 +692,17 @@ def compute_live_stock_recommendation(
                                     "fallback_flag",
                                     "fallback_reason",
                                     "prediction_version",
+                                    "model_spec_id",
+                                    "active_alpha_model_id",
+                                    "training_run_id",
                                     "member_count",
                                     "ensemble_weight_json",
                                     "source_notes_json",
+                                    "validation_top5_mean_excess_return",
+                                    "validation_top10_mean_excess_return",
+                                    "validation_top20_mean_excess_return",
+                                    "validation_rank_ic",
+                                    "validation_sample_count",
                                 ]
                             ],
                         ],
