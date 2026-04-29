@@ -28,6 +28,7 @@ TRAINING_FEATURE_COLUMNS: tuple[str, ...] = (
     FEATURE_NAMES + MARKET_FEATURE_COLUMNS + MARKET_REGIME_FEATURE_COLUMNS
 )
 DEFAULT_TRAINING_LABEL_MAX_REBUILD_DAYS = 10
+FORWARD_LABEL_PARQUET_ENV = "STOCKMASTER_FORWARD_LABEL_PARQUET"
 PATH_LABEL_OVERLAY_PARQUET_ENV = "STOCKMASTER_PATH_LABEL_OVERLAY_PARQUET"
 REGIME_STATE_FEATURE_MAP: dict[str, str] = {
     "panic": "market_regime_panic_flag",
@@ -92,13 +93,17 @@ def _resolve_candidate_dates(
     )
     if symbol_frame.empty:
         return []
+    external_label_source = _register_external_forward_label_view(connection)
+    label_source_sql = _forward_label_source_sql(external_label_source)
     connection.register("model_training_symbol_stage", symbol_frame[["symbol"]])
     try:
         placeholders = ",".join("?" for _ in horizons)
         rows = connection.execute(
             f"""
             SELECT DISTINCT as_of_date
-            FROM fact_forward_return_label
+            FROM (
+                {label_source_sql}
+            )
             WHERE as_of_date <= ?
               AND horizon IN ({placeholders})
               AND label_available_flag
@@ -163,13 +168,17 @@ def _resolve_missing_label_dates(
     if not candidate_dates:
         return []
 
+    external_label_source = _register_external_forward_label_view(connection)
+    label_source_sql = _forward_label_source_sql(external_label_source)
     connection.register("model_training_label_symbol_stage", symbol_frame[["symbol"]])
     try:
         horizon_placeholders = ",".join("?" for _ in horizons)
         existing_rows = connection.execute(
             f"""
             SELECT as_of_date, COUNT(DISTINCT horizon) AS horizon_count
-            FROM fact_forward_return_label
+            FROM (
+                {label_source_sql}
+            )
             WHERE as_of_date <= ?
               AND horizon IN ({horizon_placeholders})
               AND label_available_flag
@@ -673,6 +682,100 @@ def _robust_buyable_excess_return_targets(
     return positive_adjusted.where(adjusted > 0.0, adjusted.mul(negative_multiplier))
 
 
+def _register_external_forward_label_view(connection) -> bool:
+    label_path = os.environ.get(FORWARD_LABEL_PARQUET_ENV)
+    if not label_path:
+        return False
+    matched_paths = glob(label_path)
+    if not matched_paths:
+        raise RuntimeError(
+            f"{FORWARD_LABEL_PARQUET_ENV} did not match any parquet files: {label_path}"
+        )
+    label_frame = connection.execute(
+        """
+        SELECT
+            run_id,
+            as_of_date,
+            symbol,
+            horizon,
+            market,
+            entry_date,
+            exit_date,
+            excess_forward_return,
+            path_excess_return_tp3_sl3_conservative,
+            path_excess_return_tp5_sl3_conservative,
+            label_available_flag,
+            created_at
+        FROM read_parquet(?)
+        """,
+        [matched_paths],
+    ).fetchdf()
+    connection.register("external_forward_label_frame", label_frame)
+    connection.execute(
+        """
+        CREATE OR REPLACE TEMP VIEW external_forward_label AS
+        SELECT
+            run_id,
+            as_of_date,
+            symbol,
+            horizon,
+            market,
+            entry_date,
+            exit_date,
+            excess_forward_return,
+            path_excess_return_tp3_sl3_conservative,
+            path_excess_return_tp5_sl3_conservative,
+            label_available_flag,
+            created_at
+        FROM external_forward_label_frame
+        """
+    )
+    return True
+
+
+def _forward_label_source_sql(include_external: bool) -> str:
+    base_source = """
+        SELECT
+            run_id,
+            as_of_date,
+            symbol,
+            horizon,
+            market,
+            entry_date,
+            exit_date,
+            excess_forward_return,
+            path_excess_return_tp3_sl3_conservative,
+            path_excess_return_tp5_sl3_conservative,
+            label_available_flag,
+            created_at,
+            0 AS source_priority
+        FROM fact_forward_return_label
+    """
+    if not include_external:
+        return base_source
+    return (
+        """
+        SELECT
+            run_id,
+            as_of_date,
+            symbol,
+            horizon,
+            market,
+            entry_date,
+            exit_date,
+            excess_forward_return,
+            path_excess_return_tp3_sl3_conservative,
+            path_excess_return_tp5_sl3_conservative,
+            label_available_flag,
+            created_at,
+            1 AS source_priority
+        FROM external_forward_label
+        UNION ALL
+        """
+        + base_source
+    )
+
+
 def _register_external_path_overlay_view(connection) -> bool:
     overlay_path = os.environ.get(PATH_LABEL_OVERLAY_PARQUET_ENV)
     if not overlay_path:
@@ -766,6 +869,8 @@ def _load_dataset_frame(
     if symbol_frame.empty:
         return pd.DataFrame()
 
+    external_label_source = _register_external_forward_label_view(connection)
+    label_source_sql = _forward_label_source_sql(external_label_source)
     external_overlay_source = _register_external_path_overlay_view(connection)
     path_overlay_source_sql = _path_overlay_source_sql(external_overlay_source)
 
@@ -788,7 +893,16 @@ def _load_dataset_frame(
                     path.path_excess_return_tp5_sl3_conservative,
                     label.path_excess_return_tp5_sl3_conservative
                 ) AS path_excess_return_tp5_sl3_conservative
-            FROM fact_forward_return_label AS label
+            FROM (
+                SELECT *
+                FROM (
+                    {label_source_sql}
+                )
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY as_of_date, symbol, horizon
+                    ORDER BY source_priority DESC, created_at DESC, run_id DESC
+                ) = 1
+            ) AS label
             LEFT JOIN (
                 SELECT
                     as_of_date,
@@ -867,7 +981,9 @@ def _load_dataset_frame(
             FROM fact_feature_snapshot AS snapshot
             WHERE snapshot.as_of_date IN (
                 SELECT DISTINCT as_of_date
-                FROM fact_forward_return_label
+                FROM (
+                    {label_source_sql}
+                )
                 WHERE as_of_date <= ?
                   AND horizon IN ({horizon_placeholders})
                   AND label_available_flag

@@ -49,6 +49,43 @@ PATH_OVERLAY_COLUMNS = [
 ]
 
 
+FORWARD_LABEL_COLUMNS = [
+    "run_id",
+    "as_of_date",
+    "symbol",
+    "horizon",
+    "market",
+    "entry_date",
+    "exit_date",
+    "entry_basis",
+    "exit_basis",
+    "entry_price",
+    "exit_price",
+    "gross_forward_return",
+    "max_forward_return",
+    "min_forward_return",
+    "take_profit_3_hit",
+    "take_profit_3_date",
+    "take_profit_5_hit",
+    "take_profit_5_date",
+    "stop_loss_3_hit",
+    "stop_loss_3_date",
+    "stop_loss_5_hit",
+    "stop_loss_5_date",
+    "path_return_tp3_sl3_conservative",
+    "path_return_tp5_sl3_conservative",
+    "baseline_type",
+    "baseline_forward_return",
+    "excess_forward_return",
+    "path_excess_return_tp3_sl3_conservative",
+    "path_excess_return_tp5_sl3_conservative",
+    "label_available_flag",
+    "exclusion_reason",
+    "notes_json",
+    "created_at",
+]
+
+
 def _parse_date(value: str) -> date:
     return date.fromisoformat(value)
 
@@ -196,6 +233,28 @@ def _export_overlay(work_db_path: Path, overlay_path: Path) -> int:
     return row_count
 
 
+def _export_forward_labels(work_db_path: Path, label_path: Path) -> int:
+    label_path.parent.mkdir(parents=True, exist_ok=True)
+    label_path.unlink(missing_ok=True)
+    column_list = ", ".join(FORWARD_LABEL_COLUMNS)
+    with duckdb_connection(work_db_path, read_only=True) as connection:
+        row_count = int(
+            connection.execute("SELECT COUNT(*) FROM fact_forward_return_label").fetchone()[0]
+            or 0
+        )
+        connection.execute(
+            f"""
+            COPY (
+                SELECT {column_list}
+                FROM fact_forward_return_label
+            )
+            TO ? (FORMAT PARQUET)
+            """,
+            [str(label_path)],
+        )
+    return row_count
+
+
 def _merge_overlay(
     *,
     source_db_path: Path,
@@ -252,6 +311,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start", required=True, type=_parse_date)
     parser.add_argument("--end", required=True, type=_parse_date)
     parser.add_argument("--horizons", nargs="+", type=int, required=True)
+    parser.add_argument(
+        "--mode",
+        choices=["path-overlay", "base-labels"],
+        default="path-overlay",
+        help="Build path overlay parquet or full forward-label parquet in the work DB.",
+    )
     parser.add_argument("--symbols")
     parser.add_argument("--limit-symbols", type=int)
     parser.add_argument("--market", default="ALL", choices=["ALL", "KOSPI", "KOSDAQ"])
@@ -281,7 +346,14 @@ def main() -> int:
     work_db_path = args.work_db or (
         work_root / f"path_overlay_{args.start.isoformat()}_{args.end.isoformat()}.duckdb"
     )
-    overlay_path = args.overlay_parquet or work_db_path.with_suffix(".parquet")
+    if args.overlay_parquet:
+        overlay_path = args.overlay_parquet
+    elif args.mode == "base-labels":
+        overlay_path = (
+            work_root / f"forward_labels_{args.start.isoformat()}_{args.end.isoformat()}.parquet"
+        )
+    else:
+        overlay_path = work_db_path.with_suffix(".parquet")
     temp_directory = _set_default_work_temp_directory(work_root)
     print(f"Using DuckDB temp directory: {temp_directory}", flush=True)
 
@@ -302,6 +374,7 @@ def main() -> int:
 
     work_settings = copy.deepcopy(settings)
     work_settings.paths.duckdb_path = work_db_path
+    work_settings.paths.curated_dir = work_root / "curated"
     result = build_forward_labels(
         work_settings,
         start_date=args.start,
@@ -312,16 +385,20 @@ def main() -> int:
         market=args.market,
         force=True,
         bootstrap=True,
-        path_overlay_only=True,
+        path_overlay_only=args.mode == "path-overlay",
         chunk_trading_days=args.chunk_trading_days,
-        recreate_path_overlay_table=True,
+        recreate_path_overlay_table=args.mode == "path-overlay",
     )
-    overlay_count = _export_overlay(work_db_path, overlay_path)
+    overlay_count = (
+        _export_overlay(work_db_path, overlay_path)
+        if args.mode == "path-overlay"
+        else _export_forward_labels(work_db_path, overlay_path)
+    )
     print(
-        f"Exported work overlay. rows={overlay_count} overlay={overlay_path}",
+        f"Exported work {args.mode}. rows={overlay_count} overlay={overlay_path}",
         flush=True,
     )
-    if args.skip_merge:
+    if args.mode == "base-labels" or args.skip_merge:
         merged_count = 0
     else:
         merged_count = _merge_overlay(

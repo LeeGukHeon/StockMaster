@@ -375,3 +375,83 @@ def test_training_dataset_prefers_external_path_overlay_parquet(tmp_path, monkey
 
     assert dataset["target_h5"].iloc[0] == pytest.approx(-0.10)
     assert dataset["target_practical_excess_v2_h5"].iloc[0] > 0.0
+
+
+def test_training_dataset_can_read_external_forward_label_parquet(tmp_path, monkeypatch):
+    settings = build_test_settings(tmp_path)
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO dim_symbol (
+                symbol,
+                company_name,
+                market,
+                is_common_stock,
+                source,
+                updated_at
+            )
+            VALUES ('005930', 'SamsungElec', 'KOSPI', TRUE, 'test', now())
+            """
+        )
+        connection.executemany(
+            """
+            INSERT INTO fact_feature_snapshot (
+                run_id,
+                as_of_date,
+                symbol,
+                feature_name,
+                feature_value,
+                feature_group,
+                source_version,
+                is_imputed,
+                created_at
+            )
+            VALUES ('feature-run', DATE '2026-03-02', '005930', ?, ?, 'test', 'test', FALSE, now())
+            """,
+            [
+                ("liquidity_rank_pct", 0.50),
+                ("adv_20", 100.0),
+                ("realized_vol_20d", 0.10),
+                ("drawdown_20d", 0.0),
+                ("max_loss_20d", 0.0),
+                ("missing_key_feature_count", 0.0),
+                ("data_confidence_score", 100.0),
+                ("stale_price_flag", 0.0),
+            ],
+        )
+        label_path = tmp_path / "external_forward_labels.parquet"
+        connection.execute(
+            """
+            COPY (
+                SELECT
+                    'external-label-run' AS run_id,
+                    DATE '2026-03-02' AS as_of_date,
+                    '005930' AS symbol,
+                    5 AS horizon,
+                    'KOSPI' AS market,
+                    DATE '2026-03-03' AS entry_date,
+                    DATE '2026-03-09' AS exit_date,
+                    0.01 AS excess_forward_return,
+                    CAST(NULL AS DOUBLE) AS path_excess_return_tp3_sl3_conservative,
+                    0.04 AS path_excess_return_tp5_sl3_conservative,
+                    TRUE AS label_available_flag,
+                    now() AS created_at
+            )
+            TO ? (FORMAT PARQUET)
+            """,
+            [str(label_path)],
+        )
+        monkeypatch.setenv("STOCKMASTER_FORWARD_LABEL_PARQUET", str(label_path))
+
+        dataset = _load_dataset_frame(
+            connection,
+            train_end_date=date(2026, 3, 9),
+            horizons=[5],
+            symbols=["005930"],
+            limit_symbols=None,
+            market="ALL",
+        )
+
+    assert dataset["target_h5"].iloc[0] == pytest.approx(0.01)
+    assert dataset["target_practical_excess_v2_h5"].iloc[0] > 0.0
