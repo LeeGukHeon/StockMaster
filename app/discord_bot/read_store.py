@@ -16,6 +16,7 @@ from app.discord_bot.data_views import (
     stock_workbench_live_snapshot_frame,
     stock_workbench_summary_frame,
 )
+from app.ml.constants import D5_PRACTICAL_V3_MODEL_SPEC_ID
 from app.ml.promotion import load_alpha_promotion_summary
 from app.ops.common import JobStatus, OpsJobResult
 from app.recommendation.buyability import (
@@ -51,6 +52,10 @@ BOT_D5_CORE_PICK_LIMIT = 5
 BOT_D5_MAX_PICKS_PER_SECTOR = 2
 BOT_WEEKLY_LIMIT = 4
 BOT_SNAPSHOT_TYPES = ("status", "next_picks", "weekly_report", "stock_summary")
+
+
+def _is_d5_cash_path_model(value: object) -> bool:
+    return _safe_text(value, fallback="") == D5_PRACTICAL_V3_MODEL_SPEC_ID
 
 
 def _safe_text(value: object, fallback: str = "-") -> str:
@@ -235,38 +240,62 @@ def _build_pick_rows(
             ascending=False,
             method="first",
         )
-        working = working.loc[
-            eligible
-            & (expected > 0.0)
-            & (final_score >= BUYABILITY_MIN_FINAL_SELECTION_VALUE)
-            & ~working["raw_risks_list"].apply(has_buyability_blocker)
-        ].copy()
+        cash_path_surface = (
+            "model_spec_id" in working.columns
+            and working["model_spec_id"].dropna().astype(str).nunique() == 1
+            and _is_d5_cash_path_model(working["model_spec_id"].dropna().astype(str).iloc[0])
+        )
+        if cash_path_surface:
+            report_candidate = (
+                working["report_candidate_flag"].fillna(False).astype(bool)
+                if "report_candidate_flag" in working.columns
+                else pd.Series(True, index=working.index)
+            )
+            working = working.loc[
+                eligible
+                & report_candidate
+                & ~working["raw_risks_list"].apply(has_buyability_blocker)
+            ].copy()
+        else:
+            working = working.loc[
+                eligible
+                & (expected > 0.0)
+                & (final_score >= BUYABILITY_MIN_FINAL_SELECTION_VALUE)
+                & ~working["raw_risks_list"].apply(has_buyability_blocker)
+            ].copy()
         if working.empty:
             return []
-        working["buyability_priority_score"] = working.apply(
-            lambda row: buyability_priority_score(
-                expected_excess_return=row.get("expected_excess_return"),
-                uncertainty_score=row.get("uncertainty_score"),
-                disagreement_score=row.get("disagreement_score"),
-            ),
-            axis=1,
-        )
-        working["d5_policy_bucket"] = working.apply(
-            lambda row: d5_buyability_policy_bucket(
-                selection_rank=row.get("d5_selection_rank"),
-                expected_excess_return=row.get("expected_excess_return"),
-                final_selection_value=row.get("final_selection_value"),
-                risk_flags=row.get("raw_risks_list"),
-                fallback_flag=row.get("fallback_flag"),
-                uncertainty_score=row.get("uncertainty_score"),
-                disagreement_score=row.get("disagreement_score"),
-            ),
-            axis=1,
-        )
-        working = working.loc[working["d5_policy_bucket"].notna()].sort_values(
-            ["d5_policy_bucket", "buyability_priority_score", "d5_selection_rank", "symbol"],
-            ascending=[True, False, True, True],
-        )
+        if cash_path_surface:
+            working["buyability_priority_score"] = 0.0
+            working = working.sort_values(
+                ["d5_selection_rank", "symbol"],
+                ascending=[True, True],
+            )
+        else:
+            working["buyability_priority_score"] = working.apply(
+                lambda row: buyability_priority_score(
+                    expected_excess_return=row.get("expected_excess_return"),
+                    uncertainty_score=row.get("uncertainty_score"),
+                    disagreement_score=row.get("disagreement_score"),
+                ),
+                axis=1,
+            )
+            working["d5_policy_bucket"] = working.apply(
+                lambda row: d5_buyability_policy_bucket(
+                    selection_rank=row.get("d5_selection_rank"),
+                    expected_excess_return=row.get("expected_excess_return"),
+                    final_selection_value=row.get("final_selection_value"),
+                    risk_flags=row.get("raw_risks_list"),
+                    fallback_flag=row.get("fallback_flag"),
+                    uncertainty_score=row.get("uncertainty_score"),
+                    disagreement_score=row.get("disagreement_score"),
+                ),
+                axis=1,
+            )
+            working = working.loc[working["d5_policy_bucket"].notna()].sort_values(
+                ["d5_policy_bucket", "buyability_priority_score", "d5_selection_rank", "symbol"],
+                ascending=[True, False, True, True],
+            )
         working = _limit_d5_sector_concentration(working, limit=BOT_D5_CORE_PICK_LIMIT)
     else:
         working = working.head(BOT_PICK_LIMIT)
@@ -277,6 +306,10 @@ def _build_pick_rows(
             raw_risks = _parse_raw_json_list(getattr(row, "risks", "[]"))
         reasons = _parse_json_list(getattr(row, "reasons", "[]"), REASON_LABELS)[:2]
         risks = _parse_json_list(getattr(row, "risks", "[]"), RISK_LABELS)[:2]
+        path_rank_candidate = (
+            is_d5_candidate_surface
+            and _is_d5_cash_path_model(getattr(row, "model_spec_id", None))
+        )
         judgement = classify_recommendation(
             final_selection_value=getattr(row, "final_selection_value", None),
             expected_excess_return=getattr(row, "expected_excess_return", None),
@@ -285,6 +318,7 @@ def _build_pick_rows(
             candidate_selected=is_d5_candidate_surface,
             candidate_rank=rank if is_d5_candidate_surface else None,
             buyability_priority_score=getattr(row, "buyability_priority_score", None),
+            path_rank_candidate=path_rank_candidate,
         )
         display_label = judgement.label
         display_summary = judgement.summary
@@ -292,7 +326,12 @@ def _build_pick_rows(
             display_label,
             f"점수 {_format_number(getattr(row, 'final_selection_value', None))}",
             f"등급 {_safe_text(getattr(row, 'grade', None))}",
-            f"기대 {_format_percent(getattr(row, 'expected_excess_return', None), signed=True)}",
+            f"경로순위 {rank}"
+            if path_rank_candidate
+            else (
+                "기대 "
+                f"{_format_percent(getattr(row, 'expected_excess_return', None), signed=True)}"
+            ),
             f"진입 {_safe_text(getattr(row, 'next_entry_trade_date', None))}",
         ]
         if is_d5_candidate_surface:
@@ -545,6 +584,9 @@ def _build_stock_summary_rows(
             uncertainty_score=d5_uncertainty,
             disagreement_score=d5_disagreement,
         )
+        d5_model_spec_id = _safe_text(
+            getattr(live, "live_d5_model_spec_id", None) if live else None
+        )
         try:
             d5_candidate_rank = (
                 None if raw_d5_candidate_rank is None else int(float(raw_d5_candidate_rank))
@@ -561,13 +603,16 @@ def _build_stock_summary_rows(
             candidate_selected=is_d5_candidate,
             candidate_rank=d5_display_rank,
             buyability_priority_score=d5_buyability_priority,
+            path_rank_candidate=is_d5_candidate and _is_d5_cash_path_model(d5_model_spec_id),
         )
         summary = " · ".join(
             [
                 judgement.label,
                 f"D5 점수 {_format_number(d5_score)}",
                 f"D5 {d5_grade}",
-                f"기대 {_format_percent(d5_expected, signed=True)}",
+                f"D5 경로순위 {d5_display_rank}"
+                if is_d5_candidate and _is_d5_cash_path_model(d5_model_spec_id)
+                else f"기대 {_format_percent(d5_expected, signed=True)}",
                 f"5일수익 {_format_percent(getattr(item, 'ret_5d', None), signed=True)}",
             ]
         )
@@ -580,9 +625,7 @@ def _build_stock_summary_rows(
             "d1_active_alpha_model_id": _safe_text(
                 getattr(live, "live_d1_active_alpha_model_id", None) if live else None
             ),
-            "d5_model_spec_id": _safe_text(
-                getattr(live, "live_d5_model_spec_id", None) if live else None
-            ),
+            "d5_model_spec_id": d5_model_spec_id,
             "d5_active_alpha_model_id": _safe_text(
                 getattr(live, "live_d5_active_alpha_model_id", None) if live else None
             ),
@@ -663,6 +706,13 @@ def _d5_display_rank_by_symbol(
         ),
         axis=1,
     )
+    cash_path_surface = (
+        "live_d5_model_spec_id" in working.columns
+        and working["live_d5_model_spec_id"].dropna().astype(str).nunique() == 1
+        and _is_d5_cash_path_model(
+            working["live_d5_model_spec_id"].dropna().astype(str).iloc[0]
+        )
+    )
     if "live_d5_explanatory_score_json" in working.columns:
         validation_guard_applied = working["live_d5_explanatory_score_json"].apply(
             _validation_edge_guard_applied
@@ -674,21 +724,40 @@ def _d5_display_rank_by_symbol(
         if "live_d5_eligible_flag" in working.columns
         else pd.Series(True, index=working.index)
     )
-    working = working.loc[
-        eligible
-        & ~validation_guard_applied
-        & working["expected_excess_return"].gt(0.0)
-        & working["final_selection_value"].ge(BUYABILITY_MIN_FINAL_SELECTION_VALUE)
-        & working["d5_policy_bucket"].notna()
-        & ~working["raw_risks_list"].apply(has_buyability_blocker)
-    ].copy()
+    if cash_path_surface:
+        report_candidate = (
+            working["live_d5_report_candidate_flag"].fillna(False).astype(bool)
+            if "live_d5_report_candidate_flag" in working.columns
+            else pd.Series(True, index=working.index)
+        )
+        working = working.loc[
+            eligible
+            & report_candidate
+            & ~validation_guard_applied
+            & ~working["raw_risks_list"].apply(has_buyability_blocker)
+        ].copy()
+    else:
+        working = working.loc[
+            eligible
+            & ~validation_guard_applied
+            & working["expected_excess_return"].gt(0.0)
+            & working["final_selection_value"].ge(BUYABILITY_MIN_FINAL_SELECTION_VALUE)
+            & working["d5_policy_bucket"].notna()
+            & ~working["raw_risks_list"].apply(has_buyability_blocker)
+        ].copy()
     if working.empty:
         return {}
-    working["d5_policy_bucket"] = working["d5_policy_bucket"].astype(int)
-    working = working.sort_values(
-        ["d5_policy_bucket", "buyability_priority_score", "d5_selection_rank", "symbol"],
-        ascending=[True, False, True, True],
-    )
+    if cash_path_surface:
+        working = working.sort_values(
+            ["d5_selection_rank", "symbol"],
+            ascending=[True, True],
+        )
+    else:
+        working["d5_policy_bucket"] = working["d5_policy_bucket"].astype(int)
+        working = working.sort_values(
+            ["d5_policy_bucket", "buyability_priority_score", "d5_selection_rank", "symbol"],
+            ascending=[True, False, True, True],
+        )
     selected = _limit_d5_sector_concentration(working, limit=BOT_D5_CORE_PICK_LIMIT)
     return {
         str(row.symbol): int(rank)

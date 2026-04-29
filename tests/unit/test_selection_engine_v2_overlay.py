@@ -14,6 +14,7 @@ from app.selection.engine_v2 import (
     _compute_d5_raw_preservation_blocker_mask,
     _compute_late_entry_penalty_score,
     _d5_cash_path_basket_gate_payload,
+    _d5_cash_path_replacement_candidate_mask,
     _resolve_selection_weights,
     _select_report_candidate_mask,
 )
@@ -686,6 +687,39 @@ def test_d5_practical_v3_basket_gate_flags_late_extension_and_volume_drought():
 
     assert payload["applied"] is True
     assert payload["reasons"] == ["late_extension", "volume_drought"]
+
+
+def test_d5_practical_v3_basket_gate_uses_rank_6_to_10_replacements():
+    scored = pd.DataFrame(
+        {
+            "symbol": list("ABCDEFGHIJK"),
+            "final_selection_value": [100.0 - index for index in range(11)],
+            "eligible_flag": [True] * 11,
+            "fallback_flag": [False] * 11,
+            "up_day_count_20d": [8.0] * 5 + [12.0] * 6,
+            "drawdown_20d": [-0.05] * 5 + [-0.01] * 6,
+            "dist_from_20d_high": [-0.10] * 5 + [-0.02] * 6,
+            "volume_ratio_1d_vs_20d": [0.7] * 11,
+        }
+    )
+    risk_flags = pd.Series([[], [], [], [], [], [], [], [], [], [], []], index=scored.index)
+
+    payload = _d5_cash_path_basket_gate_payload(
+        scored,
+        risk_flags,
+        model_spec_id=D5_PRACTICAL_V3_MODEL_SPEC_ID,
+        horizon=5,
+    )
+    mask = _d5_cash_path_replacement_candidate_mask(
+        scored,
+        risk_flags,
+        model_spec_id=D5_PRACTICAL_V3_MODEL_SPEC_ID,
+        horizon=5,
+    )
+
+    assert payload["applied"] is True
+    assert payload["replacement_window"] == "6-10"
+    assert scored.loc[mask, "symbol"].tolist() == ["F", "G", "H", "I", "J"]
 
 
 def test_d5_buyability_risk_gate_applies_to_active_d5_and_skips_other_specs():

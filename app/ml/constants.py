@@ -37,7 +37,9 @@ D5_PRACTICAL_V2_MODEL_SPEC_ID = "alpha_practical_d5_v2"
 D5_PRACTICAL_V3_MODEL_SPEC_ID = "alpha_practical_d5_v3"
 D5_STABLE_BUYABLE_MODEL_SPEC_ID = "alpha_stable_buyable_d5_v1"
 D5_ROBUST_BUYABLE_MODEL_SPEC_ID = "alpha_robust_buyable_d5_v1"
-D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID = D5_PRACTICAL_V2_MODEL_SPEC_ID
+# Daily close trains/evaluates the cash-path D5 candidate when active_d5_swing is enabled.
+# Keep the spec itself experimental so ad-hoc/default training does not expand unexpectedly.
+D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID = D5_PRACTICAL_V3_MODEL_SPEC_ID
 D5_PRIMARY_BUCKET_SEGMENTS: tuple[str, ...] = (
     "bucket_continuation",
     "bucket_reversal_recovery",

@@ -616,6 +616,8 @@ def _d5_cash_path_basket_gate_payload(
         "applied": bool(reasons),
         "reasons": reasons,
         "basket_size": int(len(basket)),
+        "replacement_window": "6-10" if reasons and len(ranked) >= 10 else None,
+        "replacement_candidate_count": int(min(max(len(ranked) - 5, 0), 5)),
         "avg_up_day_count_20d": None if pd.isna(avg_up_days) else float(avg_up_days),
         "avg_drawdown_20d": None if pd.isna(avg_drawdown) else float(avg_drawdown),
         "avg_dist_from_20d_high": None
@@ -625,6 +627,38 @@ def _d5_cash_path_basket_gate_payload(
         if pd.isna(avg_volume_ratio)
         else float(avg_volume_ratio),
     }
+
+
+def _d5_cash_path_replacement_candidate_mask(
+    scored: pd.DataFrame,
+    risk_flags: pd.Series,
+    *,
+    model_spec_id: str | None,
+    horizon: int,
+    candidate_limit: int = 5,
+) -> pd.Series:
+    candidate_mask = pd.Series(False, index=scored.index, dtype=bool)
+    if model_spec_id != D5_PRACTICAL_V3_MODEL_SPEC_ID or int(horizon) != 5:
+        return candidate_mask
+    ranked = scored.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
+    eligible = ranked.get("eligible_flag")
+    if eligible is not None:
+        ranked = ranked.loc[eligible.fillna(False).astype(bool)].copy()
+    fallback = ranked.get("fallback_flag")
+    if fallback is not None:
+        ranked = ranked.loc[~fallback.fillna(False).astype(bool)].copy()
+    if not ranked.empty:
+        blocker_by_index = pd.Series(
+            [has_buyability_blocker(risk_flags.get(index, [])) for index in ranked.index],
+            index=ranked.index,
+            dtype=bool,
+        )
+        ranked = ranked.loc[~blocker_by_index].copy()
+    replacement_indices = ranked.iloc[candidate_limit : candidate_limit * 2].index[
+        :candidate_limit
+    ]
+    candidate_mask.loc[replacement_indices] = True
+    return candidate_mask
 
 
 def _apply_d5_buyability_risk_gate(
@@ -1089,7 +1123,13 @@ def _score_selection_engine_v2_frame(
         risk_flags=risk_flags,
     )
     if bool(cash_path_basket_gate.get("applied", False)):
-        scored["report_candidate_flag"] = False
+        replacement_mask = _d5_cash_path_replacement_candidate_mask(
+            scored,
+            risk_flags,
+            model_spec_id=model_spec_id,
+            horizon=int(horizon),
+        )
+        scored["report_candidate_flag"] = replacement_mask
     scored["risk_flags_json"] = risk_flags.map(
         lambda values: json.dumps(values, ensure_ascii=False)
     )

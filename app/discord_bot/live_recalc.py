@@ -28,6 +28,7 @@ from app.features.feature_store import (
     load_feature_matrix,
 )
 from app.features.normalization import compute_group_rank_pct
+from app.ml.constants import D5_PRACTICAL_V3_MODEL_SPEC_ID
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ml.inference import (
@@ -45,6 +46,13 @@ from app.recommendation.judgement import classify_recommendation, load_score_ban
 from app.selection.engine_v2 import build_selection_engine_v2_rankings
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables
+
+
+def _is_d5_cash_path_frame(frame: pd.DataFrame) -> bool:
+    if "model_spec_id" not in frame.columns:
+        return False
+    model_specs = frame["model_spec_id"].dropna().astype(str).unique().tolist()
+    return len(model_specs) == 1 and model_specs[0] == D5_PRACTICAL_V3_MODEL_SPEC_ID
 
 
 @dataclass(frozen=True, slots=True)
@@ -772,6 +780,10 @@ def compute_live_stock_recommendation(
                         .astype("Int64")
                     )
                     frame["risk_flag_list"] = frame["risk_flags_json"].map(_json_list)
+                    if "expected_excess_return" not in frame.columns:
+                        frame["expected_excess_return"] = pd.NA
+                    if "model_spec_id" not in frame.columns:
+                        frame["model_spec_id"] = pd.NA
                     frame["expected_excess_return"] = pd.to_numeric(
                         frame["expected_excess_return"], errors="coerce"
                     )
@@ -798,27 +810,42 @@ def compute_live_stock_recommendation(
                         ),
                         axis=1,
                     )
-                    display_candidates = frame.loc[
-                        frame["eligible_flag"].fillna(False).astype(bool)
-                        & frame["report_candidate_flag"].fillna(False).astype(bool)
-                        & frame["expected_excess_return"].gt(0.0)
-                        & frame["final_selection_value"].ge(BUYABILITY_MIN_FINAL_SELECTION_VALUE)
-                        & frame["d5_policy_bucket"].notna()
-                        & ~frame["risk_flag_list"].apply(has_buyability_blocker)
-                    ].copy()
+                    if _is_d5_cash_path_frame(frame):
+                        display_candidates = frame.loc[
+                            frame["eligible_flag"].fillna(False).astype(bool)
+                            & frame["report_candidate_flag"].fillna(False).astype(bool)
+                            & ~frame["risk_flag_list"].apply(has_buyability_blocker)
+                        ].copy()
+                    else:
+                        display_candidates = frame.loc[
+                            frame["eligible_flag"].fillna(False).astype(bool)
+                            & frame["report_candidate_flag"].fillna(False).astype(bool)
+                            & frame["expected_excess_return"].gt(0.0)
+                            & frame["final_selection_value"].ge(
+                                BUYABILITY_MIN_FINAL_SELECTION_VALUE
+                            )
+                            & frame["d5_policy_bucket"].notna()
+                            & ~frame["risk_flag_list"].apply(has_buyability_blocker)
+                        ].copy()
                     if not display_candidates.empty:
-                        display_candidates["d5_policy_bucket"] = display_candidates[
-                            "d5_policy_bucket"
-                        ].astype(int)
-                        display_candidates = display_candidates.sort_values(
-                            [
-                                "d5_policy_bucket",
-                                "buyability_priority_score",
-                                "d5_selection_rank",
-                                "symbol",
-                            ],
-                            ascending=[True, False, True, True],
-                        ).head(5)
+                        if _is_d5_cash_path_frame(frame):
+                            display_candidates = display_candidates.sort_values(
+                                ["d5_selection_rank", "symbol"],
+                                ascending=[True, True],
+                            ).head(5)
+                        else:
+                            display_candidates["d5_policy_bucket"] = display_candidates[
+                                "d5_policy_bucket"
+                            ].astype(int)
+                            display_candidates = display_candidates.sort_values(
+                                [
+                                    "d5_policy_bucket",
+                                    "buyability_priority_score",
+                                    "d5_selection_rank",
+                                    "symbol",
+                                ],
+                                ascending=[True, False, True, True],
+                            ).head(5)
                         d5_display_rank_by_symbol = {
                             str(row.symbol): int(rank)
                             for rank, row in enumerate(
@@ -872,6 +899,12 @@ def compute_live_stock_recommendation(
                 candidate_selected=d5_display_rank is not None,
                 candidate_rank=d5_display_rank,
                 buyability_priority_score=d5_buyability_priority_score,
+                path_rank_candidate=(
+                    d5_display_rank is not None
+                    and d5_prediction_row is not None
+                    and str(d5_prediction_row.get("model_spec_id"))
+                    == D5_PRACTICAL_V3_MODEL_SPEC_ID
+                ),
             )
             expected = (
                 None

@@ -203,6 +203,49 @@ def test_build_pick_rows_labels_weak_d5_candidate_as_observation() -> None:
     assert "D5 기대값 약함" in weak_row["payload_json"]
 
 
+def test_build_pick_rows_keeps_cash_path_v3_report_candidates_by_rank() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "horizon": 5,
+                "eligible_flag": True,
+                "report_candidate_flag": True,
+                "symbol": symbol,
+                "company_name": symbol,
+                "market": "KOSDAQ",
+                "industry": "-",
+                "sector": "-",
+                "final_selection_value": score,
+                "grade": "A",
+                "selection_date": "2026-04-28",
+                "next_entry_trade_date": "2026-04-29",
+                "expected_excess_return": expected,
+                "uncertainty_score": 20.0,
+                "disagreement_score": 20.0,
+                "model_spec_id": "alpha_practical_d5_v3",
+                "reasons": '["ml_alpha_supportive"]',
+                "risks": "[]",
+            }
+            for symbol, score, expected in [
+                ("111111", 99.0, -0.001),
+                ("222222", 98.0, -0.002),
+            ]
+        ]
+    )
+
+    rows = read_store._build_pick_rows(
+        frame,
+        horizon=5,
+        built_at="2026-04-29T00:00:00+09:00",
+        as_of_date="2026-04-28",
+        source_run_id="test",
+    )
+
+    assert [row["symbol"] for row in rows] == ["111111", "222222"]
+    assert "매수 보류" not in rows[0]["summary"]
+    assert "경로모델 추천권" in rows[0]["payload_json"]
+
+
 def test_build_stock_summary_rows_omits_news_noise() -> None:
     frame = pd.DataFrame(
         [
@@ -407,3 +450,58 @@ def test_build_stock_summary_rows_blocks_validation_edge_guarded_d5_candidate() 
     payload = json.loads(rows[0]["payload_json"])
     assert payload["d5_report_candidate_flag"] is False
     assert payload["d5_display_rank"] is None
+
+
+def test_build_stock_summary_rows_keeps_cash_path_v3_display_candidate() -> None:
+    summary_frame = pd.DataFrame(
+        [
+            {
+                "symbol": "111111",
+                "company_name": "경로후보",
+                "market": "KOSDAQ",
+                "sector": "기타",
+                "industry": "기타",
+                "d1_selection_v2_grade": "B",
+                "d5_selection_v2_grade": "A",
+                "d5_alpha_expected_excess_return": -0.001,
+                "d5_selection_v2_value": 80.0,
+                "ret_5d": 0.0,
+                "ret_20d": 0.0,
+                "news_count_3d": 0,
+                "d5_alpha_uncertainty_score": 20.0,
+                "d5_alpha_disagreement_score": 20.0,
+            }
+        ]
+    )
+    live_frame = pd.DataFrame(
+        [
+            {
+                "symbol": "111111",
+                "live_d5_selection_v2_grade": "A",
+                "live_d5_expected_excess_return": -0.001,
+                "live_d5_selection_v2_value": 80.0,
+                "live_d5_selection_rank": 1,
+                "live_d5_uncertainty_score": 20.0,
+                "live_d5_disagreement_score": 20.0,
+                "live_d5_risk_flags_json": "[]",
+                "live_d5_top_reason_tags_json": '["ml_alpha_supportive"]',
+                "live_d5_eligible_flag": True,
+                "live_d5_report_candidate_flag": True,
+                "live_d5_model_spec_id": "alpha_practical_d5_v3",
+            }
+        ]
+    )
+
+    rows = read_store._build_stock_summary_rows(
+        summary_frame=summary_frame,
+        live_frame=live_frame,
+        built_at="2026-04-29T00:00:00+09:00",
+        as_of_date="2026-04-28",
+        source_run_id="test",
+    )
+
+    payload = json.loads(rows[0]["payload_json"])
+    assert "매수 보류" not in rows[0]["summary"]
+    assert payload["d5_report_candidate_flag"] is True
+    assert payload["d5_display_rank"] == 1
+    assert "경로모델 추천권" in payload["d5_judgement_summary"]

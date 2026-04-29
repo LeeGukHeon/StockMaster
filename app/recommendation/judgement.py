@@ -144,9 +144,31 @@ def _selected_d5_judgement(
     buyability_priority: float | None,
     evidence: ScoreBandEvidence | None,
     evidence_text: str,
+    path_rank_candidate: bool = False,
 ) -> RecommendationJudgement | None:
     if expected is None or expected <= 0:
-        return None
+        if not path_rank_candidate:
+            return None
+        if _evidence_blocks_selected_candidate(evidence):
+            return RecommendationJudgement(
+                label="관찰 우선",
+                summary=f"경로모델 후보권이나 성과 확인 필요 · {evidence_text}",
+                score_band=score_band_for_value(score),
+                evidence=evidence,
+            )
+        if rank is not None and rank > D5_SELECTED_ACTIONABLE_RANK_END:
+            return RecommendationJudgement(
+                label="관찰 우선",
+                summary=f"경로모델 후순위 후보 · {evidence_text}",
+                score_band=score_band_for_value(score),
+                evidence=evidence,
+            )
+        return RecommendationJudgement(
+            label="매수해볼 가치 있음",
+            summary=f"경로모델 추천권·분할 접근 · {evidence_text}",
+            score_band=score_band_for_value(score),
+            evidence=evidence,
+        )
     if expected < BUYABILITY_MIN_EXPECTED_EXCESS_RETURN:
         return RecommendationJudgement(
             label="관찰 우선",
@@ -208,6 +230,7 @@ def classify_recommendation(
     candidate_selected: bool = False,
     candidate_rank: object = None,
     buyability_priority_score: object = None,
+    path_rank_candidate: bool = False,
 ) -> RecommendationJudgement:
     score = _float_or_none(final_selection_value)
     expected = _float_or_none(expected_excess_return)
@@ -228,7 +251,7 @@ def classify_recommendation(
             evidence=evidence,
         )
 
-    if expected is not None and expected <= 0:
+    if expected is not None and expected <= 0 and not (candidate_selected and path_rank_candidate):
         return RecommendationJudgement(
             label="매수 보류",
             summary=f"기대수익률이 낮음 · {evidence_text}",
@@ -260,6 +283,7 @@ def classify_recommendation(
             buyability_priority=buyability_priority,
             evidence=evidence,
             evidence_text=evidence_text,
+            path_rank_candidate=path_rank_candidate,
         )
         if d5_selected_judgement is not None:
             return d5_selected_judgement
