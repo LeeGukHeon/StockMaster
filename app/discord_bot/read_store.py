@@ -102,6 +102,20 @@ def _parse_raw_json_list(value: object) -> list[str]:
     return [str(item) for item in parsed if str(item).strip()]
 
 
+def _parse_raw_json_dict(value: object) -> dict[str, object]:
+    if value in (None, "", "{}"):
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _validation_edge_guard_applied(value: object) -> bool:
+    return bool(_parse_raw_json_dict(value).get("validation_top5_edge_guard_applied"))
+
+
 def _model_label(value: object) -> str:
     text = _safe_text(value)
     return MODEL_SPEC_LABELS.get(text, text)
@@ -649,6 +663,12 @@ def _d5_display_rank_by_symbol(
         ),
         axis=1,
     )
+    if "live_d5_explanatory_score_json" in working.columns:
+        validation_guard_applied = working["live_d5_explanatory_score_json"].apply(
+            _validation_edge_guard_applied
+        )
+    else:
+        validation_guard_applied = pd.Series(False, index=working.index)
     eligible = (
         working["live_d5_eligible_flag"].fillna(False).astype(bool)
         if "live_d5_eligible_flag" in working.columns
@@ -656,6 +676,7 @@ def _d5_display_rank_by_symbol(
     )
     working = working.loc[
         eligible
+        & ~validation_guard_applied
         & working["expected_excess_return"].gt(0.0)
         & working["final_selection_value"].ge(BUYABILITY_MIN_FINAL_SELECTION_VALUE)
         & working["d5_policy_bucket"].notna()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 
 from app.discord_bot import read_store
@@ -347,3 +349,61 @@ def test_build_stock_summary_rows_uses_d5_display_rank_not_raw_score_rank() -> N
     assert "매수검토" in target["summary"]
     assert "후순위 후보" not in target["payload_json"]
     assert '"d5_display_rank": 1' in target["payload_json"]
+
+
+def test_build_stock_summary_rows_blocks_validation_edge_guarded_d5_candidate() -> None:
+    summary_frame = pd.DataFrame(
+        [
+            {
+                "symbol": "394420",
+                "company_name": "리센스메디컬",
+                "market": "KOSDAQ",
+                "sector": "헬스케어",
+                "industry": "바이오",
+                "d1_selection_v2_grade": "B",
+                "d5_selection_v2_grade": "A",
+                "d5_alpha_expected_excess_return": 0.02,
+                "d5_selection_v2_value": 80.0,
+                "ret_5d": 0.0,
+                "ret_20d": 0.0,
+                "news_count_3d": 0,
+                "d5_alpha_uncertainty_score": 10.0,
+                "d5_alpha_disagreement_score": 10.0,
+            }
+        ]
+    )
+    live_frame = pd.DataFrame(
+        [
+            {
+                "symbol": "394420",
+                "live_d5_selection_v2_grade": "A",
+                "live_d5_expected_excess_return": 0.02,
+                "live_d5_selection_v2_value": 80.0,
+                "live_d5_selection_rank": 2,
+                "live_d5_uncertainty_score": 10.0,
+                "live_d5_disagreement_score": 10.0,
+                "live_d5_risk_flags_json": "[]",
+                "live_d5_top_reason_tags_json": '["residual_strength_improving"]',
+                "live_d5_eligible_flag": True,
+                "live_d5_explanatory_score_json": json.dumps(
+                    {
+                        "validation_top5_mean_excess_return": -0.018,
+                        "validation_top5_edge_guard_applied": True,
+                    }
+                ),
+            }
+        ]
+    )
+
+    rows = read_store._build_stock_summary_rows(
+        summary_frame=summary_frame,
+        live_frame=live_frame,
+        built_at="2026-04-29T00:00:00+09:00",
+        as_of_date="2026-04-28",
+        source_run_id="test",
+    )
+
+    assert len(rows) == 1
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["d5_report_candidate_flag"] is False
+    assert payload["d5_display_rank"] is None

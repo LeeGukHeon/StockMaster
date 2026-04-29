@@ -762,6 +762,7 @@ def compute_live_stock_recommendation(
                     )
                     display_candidates = frame.loc[
                         frame["eligible_flag"].fillna(False).astype(bool)
+                        & frame["report_candidate_flag"].fillna(False).astype(bool)
                         & frame["expected_excess_return"].gt(0.0)
                         & frame["final_selection_value"].ge(BUYABILITY_MIN_FINAL_SELECTION_VALUE)
                         & frame["d5_policy_bucket"].notna()

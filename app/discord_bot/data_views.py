@@ -316,7 +316,24 @@ def stock_workbench_live_snapshot_frame(
                 ROW_NUMBER() OVER (
                     ORDER BY final_selection_value DESC, symbol
                 ) AS live_d5_selection_rank,
-                (COALESCE(eligible_flag, FALSE) AND COALESCE(final_selection_rank_pct, 0.0) >= 0.85)
+                (
+                    COALESCE(eligible_flag, FALSE)
+                    AND COALESCE(final_selection_rank_pct, 0.0) >= 0.85
+                    AND NOT (
+                        LOWER(
+                            COALESCE(
+                                CAST(
+                                    json_extract(
+                                        explanatory_score_json,
+                                        '$.validation_top5_edge_guard_applied'
+                                    )
+                                    AS VARCHAR
+                                ),
+                                'false'
+                            )
+                        ) = 'true'
+                    )
+                )
                     AS live_d5_report_candidate_flag
             FROM fact_ranking
             WHERE as_of_date = ?
