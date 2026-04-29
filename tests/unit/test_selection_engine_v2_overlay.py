@@ -13,6 +13,7 @@ from app.selection.engine_v2 import (
     _compute_crowding_penalty_score,
     _compute_d5_raw_preservation_blocker_mask,
     _compute_late_entry_penalty_score,
+    _d5_cash_path_basket_gate_payload,
     _resolve_selection_weights,
     _select_report_candidate_mask,
 )
@@ -633,6 +634,58 @@ def test_d5_practical_v3_weights_preserve_cash_path_model_rank():
     assert practical_v3_weights["quality_score"] == 0
     assert practical_v3_weights["value_safety_score"] == 0
     assert practical_v3_weights != buyable_weights
+
+
+def test_d5_practical_v3_basket_gate_flags_fragile_rebound():
+    scored = pd.DataFrame(
+        {
+            "symbol": list("ABCDE"),
+            "final_selection_value": [99.0, 98.0, 97.0, 96.0, 95.0],
+            "eligible_flag": [True, True, True, True, True],
+            "fallback_flag": [False, False, False, False, False],
+            "up_day_count_20d": [8.0, 8.5, 9.0, 8.0, 9.0],
+            "drawdown_20d": [-0.05, -0.04, -0.045, -0.05, -0.04],
+            "dist_from_20d_high": [-0.10, -0.09, -0.08, -0.09, -0.10],
+            "volume_ratio_1d_vs_20d": [0.7, 0.8, 0.9, 0.7, 0.8],
+        }
+    )
+    risk_flags = pd.Series([[], [], [], [], []], index=scored.index)
+
+    payload = _d5_cash_path_basket_gate_payload(
+        scored,
+        risk_flags,
+        model_spec_id=D5_PRACTICAL_V3_MODEL_SPEC_ID,
+        horizon=5,
+    )
+
+    assert payload["applied"] is True
+    assert payload["reasons"] == ["fragile_rebound"]
+
+
+def test_d5_practical_v3_basket_gate_flags_late_extension_and_volume_drought():
+    scored = pd.DataFrame(
+        {
+            "symbol": list("ABCDE"),
+            "final_selection_value": [99.0, 98.0, 97.0, 96.0, 95.0],
+            "eligible_flag": [True, True, True, True, True],
+            "fallback_flag": [False, False, False, False, False],
+            "up_day_count_20d": [9.0, 9.5, 9.0, 9.0, 9.0],
+            "drawdown_20d": [-0.01, -0.01, -0.01, -0.01, -0.01],
+            "dist_from_20d_high": [-0.01, -0.02, -0.01, -0.02, -0.01],
+            "volume_ratio_1d_vs_20d": [0.2, 0.25, 0.3, 0.2, 0.25],
+        }
+    )
+    risk_flags = pd.Series([[], [], [], [], []], index=scored.index)
+
+    payload = _d5_cash_path_basket_gate_payload(
+        scored,
+        risk_flags,
+        model_spec_id=D5_PRACTICAL_V3_MODEL_SPEC_ID,
+        horizon=5,
+    )
+
+    assert payload["applied"] is True
+    assert payload["reasons"] == ["late_extension", "volume_drought"]
 
 
 def test_d5_buyability_risk_gate_applies_to_active_d5_and_skips_other_specs():

@@ -266,6 +266,11 @@ D5_PRACTICAL_V2_MODEL_DISAGREEMENT_GATE_PENALTY = 45.0
 D5_STABLE_MODEL_DISAGREEMENT_GATE_PENALTY = 25.0
 D5_ROBUST_MODEL_DISAGREEMENT_GATE_PENALTY = 25.0
 D5_VALIDATION_EDGE_MIN_TOP5_MEAN_EXCESS_RETURN = 0.0
+D5_CASH_PATH_FRAGILE_REBOUND_MIN_DIST_FROM_HIGH = -0.08
+D5_CASH_PATH_FRAGILE_REBOUND_MAX_DRAWDOWN = -0.035
+D5_CASH_PATH_LATE_EXTENSION_MIN_DIST_FROM_HIGH = -0.02
+D5_CASH_PATH_LATE_EXTENSION_MAX_UP_DAYS = 10.0
+D5_CASH_PATH_VOLUME_DROUGHT_MAX_RATIO = 0.30
 D5_VALIDATION_EDGE_GUARDED_MODEL_SPEC_IDS = {
     D5_PRACTICAL_V2_MODEL_SPEC_ID,
     D5_PRACTICAL_V3_MODEL_SPEC_ID,
@@ -542,6 +547,84 @@ def _risk_flag_mask(risk_flags: pd.Series, flag: str) -> pd.Series:
         index=risk_flags.index,
         dtype="bool",
     )
+
+
+def _d5_cash_path_basket_gate_payload(
+    scored: pd.DataFrame,
+    risk_flags: pd.Series,
+    *,
+    model_spec_id: str | None,
+    horizon: int,
+) -> dict[str, object]:
+    if model_spec_id != D5_PRACTICAL_V3_MODEL_SPEC_ID or int(horizon) != 5:
+        return {"applied": False, "reasons": []}
+    ranked = scored.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
+    eligible = ranked.get("eligible_flag")
+    if eligible is not None:
+        ranked = ranked.loc[eligible.fillna(False).astype(bool)].copy()
+    fallback = ranked.get("fallback_flag")
+    if fallback is not None:
+        ranked = ranked.loc[~fallback.fillna(False).astype(bool)].copy()
+    if not ranked.empty:
+        blocker_by_index = pd.Series(
+            [
+                has_buyability_blocker(risk_flags.get(index, []))
+                for index in ranked.index
+            ],
+            index=ranked.index,
+            dtype=bool,
+        )
+        ranked = ranked.loc[~blocker_by_index].copy()
+    basket = ranked.head(5)
+    if len(basket) < 5:
+        return {"applied": False, "reasons": [], "basket_size": int(len(basket))}
+
+    avg_up_days = pd.to_numeric(basket.get("up_day_count_20d"), errors="coerce").mean()
+    avg_drawdown = pd.to_numeric(basket.get("drawdown_20d"), errors="coerce").mean()
+    avg_dist_from_high = pd.to_numeric(
+        basket.get("dist_from_20d_high"),
+        errors="coerce",
+    ).mean()
+    avg_volume_ratio = pd.to_numeric(
+        basket.get("volume_ratio_1d_vs_20d"),
+        errors="coerce",
+    ).mean()
+    fragile_rebound = (
+        pd.notna(avg_dist_from_high)
+        and pd.notna(avg_drawdown)
+        and float(avg_dist_from_high) <= D5_CASH_PATH_FRAGILE_REBOUND_MIN_DIST_FROM_HIGH
+        and float(avg_drawdown) <= D5_CASH_PATH_FRAGILE_REBOUND_MAX_DRAWDOWN
+    )
+    late_extension = (
+        pd.notna(avg_dist_from_high)
+        and pd.notna(avg_up_days)
+        and float(avg_dist_from_high) >= D5_CASH_PATH_LATE_EXTENSION_MIN_DIST_FROM_HIGH
+        and float(avg_up_days) < D5_CASH_PATH_LATE_EXTENSION_MAX_UP_DAYS
+    )
+    volume_drought = (
+        pd.notna(avg_volume_ratio)
+        and float(avg_volume_ratio) < D5_CASH_PATH_VOLUME_DROUGHT_MAX_RATIO
+    )
+    reasons: list[str] = []
+    if fragile_rebound:
+        reasons.append("fragile_rebound")
+    if late_extension:
+        reasons.append("late_extension")
+    if volume_drought:
+        reasons.append("volume_drought")
+    return {
+        "applied": bool(reasons),
+        "reasons": reasons,
+        "basket_size": int(len(basket)),
+        "avg_up_day_count_20d": None if pd.isna(avg_up_days) else float(avg_up_days),
+        "avg_drawdown_20d": None if pd.isna(avg_drawdown) else float(avg_drawdown),
+        "avg_dist_from_20d_high": None
+        if pd.isna(avg_dist_from_high)
+        else float(avg_dist_from_high),
+        "avg_volume_ratio_1d_vs_20d": None
+        if pd.isna(avg_volume_ratio)
+        else float(avg_volume_ratio),
+    }
 
 
 def _apply_d5_buyability_risk_gate(
@@ -984,6 +1067,20 @@ def _score_selection_engine_v2_frame(
         model_spec_id=model_spec_id,
         horizon=int(horizon),
     )
+    cash_path_basket_gate = _d5_cash_path_basket_gate_payload(
+        scored,
+        risk_flags,
+        model_spec_id=model_spec_id,
+        horizon=int(horizon),
+    )
+    scored["d5_cash_path_basket_gate_applied"] = bool(
+        cash_path_basket_gate.get("applied", False)
+    )
+    scored["d5_cash_path_basket_gate_json"] = json.dumps(
+        cash_path_basket_gate,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
     scored["report_candidate_flag"] = _select_report_candidate_mask(
         scored,
         model_spec_id=model_spec_id,
@@ -991,6 +1088,8 @@ def _score_selection_engine_v2_frame(
         horizon=int(horizon),
         risk_flags=risk_flags,
     )
+    if bool(cash_path_basket_gate.get("applied", False)):
+        scored["report_candidate_flag"] = False
     scored["risk_flags_json"] = risk_flags.map(
         lambda values: json.dumps(values, ensure_ascii=False)
     )
@@ -1080,6 +1179,12 @@ def _score_selection_engine_v2_frame(
                 else int(row.get("validation_sample_count")),
                 "validation_top5_edge_guard_applied": bool(
                     row["validation_top5_edge_guard_applied"]
+                ),
+                "d5_cash_path_basket_gate_applied": bool(
+                    row["d5_cash_path_basket_gate_applied"]
+                ),
+                "d5_cash_path_basket_gate": json.loads(
+                    str(row["d5_cash_path_basket_gate_json"])
                 ),
                 "prediction_version": row.get("prediction_version"),
                 "score_version": SELECTION_ENGINE_VERSION,
