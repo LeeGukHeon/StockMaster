@@ -390,6 +390,7 @@ def _normalise_weights(
     elif training_target_variant in {
         "practical_excess_return",
         "practical_excess_return_v2",
+        "practical_path_return_v3",
         "stable_practical_excess_return",
         "robust_buyable_excess_return",
     }:

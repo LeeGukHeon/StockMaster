@@ -34,6 +34,7 @@ D5_PRIMARY_FOCUS_MODEL_SPEC_ID = "alpha_swing_d5_v2"
 D5_BUYABLE_MODEL_SPEC_ID = "alpha_buyable_d5_v1"
 D5_PRACTICAL_MODEL_SPEC_ID = "alpha_practical_d5_v1"
 D5_PRACTICAL_V2_MODEL_SPEC_ID = "alpha_practical_d5_v2"
+D5_PRACTICAL_V3_MODEL_SPEC_ID = "alpha_practical_d5_v3"
 D5_STABLE_BUYABLE_MODEL_SPEC_ID = "alpha_stable_buyable_d5_v1"
 D5_ROBUST_BUYABLE_MODEL_SPEC_ID = "alpha_robust_buyable_d5_v1"
 D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID = D5_PRACTICAL_V2_MODEL_SPEC_ID
@@ -265,6 +266,29 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         allowed_horizons=(5,),
     ),
     AlphaModelSpec(
+        model_spec_id=D5_PRACTICAL_V3_MODEL_SPEC_ID,
+        estimation_scheme="rolling",
+        rolling_window_days=250,
+        active_candidate_flag=False,
+        lifecycle_role="experimental_candidate",
+        feature_groups=(
+            "price_trend",
+            "volatility_risk",
+            "liquidity_turnover",
+            "investor_flow",
+            "fundamentals_quality",
+            "value_safety",
+            "market_regime",
+            "data_quality",
+        ),
+        member_names=("hist_gbm", "extra_trees"),
+        target_variant="practical_path_return_v3",
+        training_target_variant="practical_path_return_v3",
+        validation_primary_metric_name="top5_mean_excess_return",
+        promotion_primary_loss_name="loss_top5",
+        allowed_horizons=(5,),
+    ),
+    AlphaModelSpec(
         model_spec_id=D5_STABLE_BUYABLE_MODEL_SPEC_ID,
         estimation_scheme="rolling",
         rolling_window_days=250,
@@ -407,6 +431,8 @@ def resolve_target_column_for_spec(model_spec: AlphaModelSpec, *, horizon: int) 
         return f"target_practical_excess_h{int(horizon)}"
     if target_variant == "practical_excess_return_v2":
         return f"target_practical_excess_v2_h{int(horizon)}"
+    if target_variant == "practical_path_return_v3":
+        return f"target_practical_path_return_v3_h{int(horizon)}"
     if target_variant == "stable_practical_excess_return":
         return f"target_stable_practical_excess_h{int(horizon)}"
     if target_variant == "robust_buyable_excess_return":
@@ -426,6 +452,7 @@ def resolve_validation_primary_metric_for_spec(
         "top5_binary",
         "practical_excess_return",
         "practical_excess_return_v2",
+        "practical_path_return_v3",
         "stable_practical_excess_return",
         "robust_buyable_excess_return",
     }:

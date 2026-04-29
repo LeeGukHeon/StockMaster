@@ -520,6 +520,135 @@ def _practical_excess_return_v2_targets(
     return _practical_excess_return_targets(working, horizon=int(horizon))
 
 
+def _practical_path_return_v3_targets(
+    feature_label_frame: pd.DataFrame,
+    *,
+    horizon: int,
+) -> pd.Series:
+    """Return a cash-first, path-aware D5 utility target for buyable recommendations.
+
+    V2 used the +5%/-3% path *excess* label. That matched relative alpha, but it was too
+    harsh for the user-facing product: a human can often take +3% before D+5, and a
+    cash-positive trade can look negative after subtracting a strong market baseline. V3
+    therefore starts from the conservative +3% take-profit / -3% stop-loss path gross
+    outcome, blends in the excess outcome as a market-opportunity cost, and then removes
+    reward from ex-ante fragile names using only point-in-time features.
+    """
+
+    path_gross_column = f"path_return_tp3_sl3_h{int(horizon)}"
+    path_excess_column = f"path_excess_tp3_sl3_h{int(horizon)}"
+    endpoint_column = f"target_h{int(horizon)}"
+    if feature_label_frame.empty:
+        return pd.Series(dtype="float64")
+    if path_gross_column not in feature_label_frame.columns:
+        return _practical_excess_return_v2_targets(feature_label_frame, horizon=int(horizon))
+
+    working = feature_label_frame.copy()
+    path_gross = pd.to_numeric(working[path_gross_column], errors="coerce")
+    if path_gross.notna().sum() == 0:
+        return _practical_excess_return_v2_targets(feature_label_frame, horizon=int(horizon))
+
+    path_excess = (
+        pd.to_numeric(working[path_excess_column], errors="coerce")
+        if path_excess_column in working.columns
+        else path_gross
+    )
+    endpoint = (
+        pd.to_numeric(working[endpoint_column], errors="coerce")
+        if endpoint_column in working.columns
+        else pd.Series(pd.NA, index=working.index, dtype="Float64")
+    )
+    raw_target = (
+        path_gross.mul(0.70)
+        .add(path_excess.fillna(path_gross).mul(0.30))
+        .combine_first(path_gross)
+        .combine_first(endpoint)
+    )
+
+    adjusted = pd.Series(0.0, index=working.index, dtype="float64")
+    for _, group in working.assign(_raw_target=raw_target).groupby(
+        ["as_of_date", "market"],
+        sort=False,
+    ):
+        group_returns = pd.to_numeric(group["_raw_target"], errors="coerce")
+        valid = group_returns.dropna()
+        if valid.empty:
+            continue
+        lower = max(float(valid.quantile(0.08)), -0.055)
+        upper = min(float(valid.quantile(0.92)), 0.045)
+        if upper <= lower:
+            lower = float(valid.min())
+            upper = float(valid.max())
+        adjusted.loc[group.index] = group_returns.clip(lower=lower, upper=upper).fillna(0.0)
+
+    liquidity_rank = _numeric_feature_series(working, "liquidity_rank_pct")
+    adv_rank = _date_market_rank(working, "adv_20", ascending=True)
+    vol_rank = _date_market_rank(working, "realized_vol_20d", ascending=True)
+    day_range_rank = _date_market_rank(working, "hl_range_1d", ascending=True)
+    drawdown_rank = _date_market_rank(working, "drawdown_20d", ascending=True)
+    max_loss_rank = _date_market_rank(working, "max_loss_20d", ascending=True)
+    crowding_rank = _date_market_rank(working, "dist_from_20d_high", ascending=True)
+    turnover_burst_rank = _date_market_rank(working, "volume_ratio_1d_vs_20d", ascending=True)
+    up_day_count_rank = _date_market_rank(working, "up_day_count_20d", ascending=True)
+    missing_count = _numeric_feature_series(working, "missing_key_feature_count").fillna(99.0)
+    data_confidence = _numeric_feature_series(working, "data_confidence_score").fillna(0.0)
+    stale_price = _numeric_feature_series(working, "stale_price_flag").fillna(1.0)
+    regime_coverage = _numeric_feature_series(working, "market_regime_coverage_flag").fillna(0.0)
+    panic_regime = _numeric_feature_series(working, "market_regime_panic_flag").fillna(0.0)
+    risk_off_regime = _numeric_feature_series(working, "market_regime_risk_off_flag").fillna(0.0)
+    breadth_up = _numeric_feature_series(working, "market_breadth_up_ratio")
+    breadth_down = _numeric_feature_series(working, "market_breadth_down_ratio")
+
+    thin_liquidity = liquidity_rank.le(0.18).fillna(False) | adv_rank.le(0.18).fillna(False)
+    high_volatility = vol_rank.ge(0.84).fillna(False) | day_range_rank.ge(0.88).fillna(False)
+    large_drawdown = drawdown_rank.le(0.16).fillna(False) | max_loss_rank.le(0.16).fillna(False)
+    weak_continuation = up_day_count_rank.le(0.20).fillna(False)
+    late_crowding = crowding_rank.ge(0.90).fillna(False) & turnover_burst_rank.ge(
+        0.82
+    ).fillna(False)
+    data_missing = missing_count.ge(2.0) | data_confidence.lt(70.0) | stale_price.gt(0.0)
+    weak_regime = regime_coverage.gt(0.5) & (
+        panic_regime.gt(0.5)
+        | risk_off_regime.gt(0.5)
+        | breadth_up.lt(0.35).fillna(False)
+        | breadth_down.gt(0.55).fillna(False)
+    )
+
+    positive_multiplier = pd.Series(1.0, index=working.index, dtype="float64")
+    positive_multiplier = positive_multiplier.where(~high_volatility, positive_multiplier.mul(0.45))
+    positive_multiplier = positive_multiplier.where(~late_crowding, positive_multiplier.mul(0.55))
+    positive_multiplier = positive_multiplier.where(
+        ~weak_continuation,
+        positive_multiplier.mul(0.65),
+    )
+    positive_multiplier = positive_multiplier.where(~weak_regime, positive_multiplier.mul(0.65))
+
+    hard_blocker = thin_liquidity | large_drawdown | data_missing
+    positive_adjusted = adjusted.mul(positive_multiplier)
+    positive_adjusted = positive_adjusted.where(
+        ~(positive_adjusted.gt(0.0) & hard_blocker),
+        positive_adjusted.clip(upper=0.001),
+    )
+
+    risk_count = (
+        thin_liquidity.astype(float)
+        + high_volatility.astype(float)
+        + large_drawdown.astype(float)
+        + late_crowding.astype(float)
+        + weak_continuation.astype(float)
+        + data_missing.astype(float)
+        + weak_regime.astype(float)
+    )
+    realized_stop_like = path_gross.le(-0.03).fillna(False)
+    negative_multiplier = (
+        1.0
+        + risk_count.mul(0.25)
+        + realized_stop_like.astype(float).mul(0.40)
+        + weak_regime.astype(float).mul(0.15)
+    )
+    return positive_adjusted.where(adjusted > 0.0, adjusted.mul(negative_multiplier))
+
+
 def _stable_practical_excess_return_targets(
     feature_label_frame: pd.DataFrame,
     *,
@@ -711,6 +840,8 @@ def _register_external_forward_label_view(connection) -> bool:
             entry_date,
             exit_date,
             excess_forward_return,
+            path_return_tp3_sl3_conservative,
+            path_return_tp5_sl3_conservative,
             path_excess_return_tp3_sl3_conservative,
             path_excess_return_tp5_sl3_conservative,
             label_available_flag,
@@ -732,6 +863,8 @@ def _register_external_forward_label_view(connection) -> bool:
             entry_date,
             exit_date,
             excess_forward_return,
+            path_return_tp3_sl3_conservative,
+            path_return_tp5_sl3_conservative,
             path_excess_return_tp3_sl3_conservative,
             path_excess_return_tp5_sl3_conservative,
             label_available_flag,
@@ -753,6 +886,8 @@ def _forward_label_source_sql(include_external: bool) -> str:
             entry_date,
             exit_date,
             excess_forward_return,
+            path_return_tp3_sl3_conservative,
+            path_return_tp5_sl3_conservative,
             path_excess_return_tp3_sl3_conservative,
             path_excess_return_tp5_sl3_conservative,
             label_available_flag,
@@ -773,6 +908,8 @@ def _forward_label_source_sql(include_external: bool) -> str:
             entry_date,
             exit_date,
             excess_forward_return,
+            path_return_tp3_sl3_conservative,
+            path_return_tp5_sl3_conservative,
             path_excess_return_tp3_sl3_conservative,
             path_excess_return_tp5_sl3_conservative,
             label_available_flag,
@@ -894,6 +1031,8 @@ def _load_dataset_frame(
                 label.market,
                 label.horizon,
                 label.excess_forward_return,
+                label.path_return_tp3_sl3_conservative,
+                label.path_return_tp5_sl3_conservative,
                 COALESCE(
                     path.path_excess_return_tp3_sl3_conservative,
                     label.path_excess_return_tp3_sl3_conservative
@@ -1070,6 +1209,32 @@ def _load_dataset_frame(
         )
         .reset_index()
     )
+    path_tp3_sl3_label_matrix = (
+        label_rows.assign(
+            target_name=label_rows["horizon"].map(
+                lambda value: f"path_excess_tp3_sl3_h{int(value)}"
+            )
+        )
+        .pivot(
+            index=["as_of_date", "symbol"],
+            columns="target_name",
+            values="path_excess_return_tp3_sl3_conservative",
+        )
+        .reset_index()
+    )
+    path_return_tp3_sl3_label_matrix = (
+        label_rows.assign(
+            target_name=label_rows["horizon"].map(
+                lambda value: f"path_return_tp3_sl3_h{int(value)}"
+            )
+        )
+        .pivot(
+            index=["as_of_date", "symbol"],
+            columns="target_name",
+            values="path_return_tp3_sl3_conservative",
+        )
+        .reset_index()
+    )
     path_tp5_sl3_label_matrix = (
         label_rows.assign(
             target_name=label_rows["horizon"].map(
@@ -1083,12 +1248,36 @@ def _load_dataset_frame(
         )
         .reset_index()
     )
+    path_return_tp5_sl3_label_matrix = (
+        label_rows.assign(
+            target_name=label_rows["horizon"].map(
+                lambda value: f"path_return_tp5_sl3_h{int(value)}"
+            )
+        )
+        .pivot(
+            index=["as_of_date", "symbol"],
+            columns="target_name",
+            values="path_return_tp5_sl3_conservative",
+        )
+        .reset_index()
+    )
     dataset = feature_matrix.merge(label_matrix, on=["as_of_date", "symbol"], how="inner")
     dataset = dataset.merge(rank_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(top5_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(topbucket_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(buyable_label_matrix, on=["as_of_date", "symbol"], how="left")
+    dataset = dataset.merge(path_tp3_sl3_label_matrix, on=["as_of_date", "symbol"], how="left")
+    dataset = dataset.merge(
+        path_return_tp3_sl3_label_matrix,
+        on=["as_of_date", "symbol"],
+        how="left",
+    )
     dataset = dataset.merge(path_tp5_sl3_label_matrix, on=["as_of_date", "symbol"], how="left")
+    dataset = dataset.merge(
+        path_return_tp5_sl3_label_matrix,
+        on=["as_of_date", "symbol"],
+        how="left",
+    )
     dataset = dataset.merge(
         symbol_frame[["symbol", "company_name", "market"]],
         on="symbol",
@@ -1104,6 +1293,12 @@ def _load_dataset_frame(
         )
         dataset[f"target_practical_excess_v2_h{int(horizon)}"] = (
             _practical_excess_return_v2_targets(
+                dataset,
+                horizon=int(horizon),
+            )
+        )
+        dataset[f"target_practical_path_return_v3_h{int(horizon)}"] = (
+            _practical_path_return_v3_targets(
                 dataset,
                 horizon=int(horizon),
             )
@@ -1146,6 +1341,11 @@ def _load_dataset_frame(
         if target_name not in dataset.columns:
             dataset[target_name] = pd.NA
     for target_name in [
+        f"target_practical_path_return_v3_h{int(horizon)}" for horizon in horizons
+    ]:
+        if target_name not in dataset.columns:
+            dataset[target_name] = pd.NA
+    for target_name in [
         f"target_stable_practical_excess_h{int(horizon)}" for horizon in horizons
     ]:
         if target_name not in dataset.columns:
@@ -1166,6 +1366,7 @@ def _load_dataset_frame(
         *[f"target_buyable_h{int(horizon)}" for horizon in horizons],
         *[f"target_practical_excess_h{int(horizon)}" for horizon in horizons],
         *[f"target_practical_excess_v2_h{int(horizon)}" for horizon in horizons],
+        *[f"target_practical_path_return_v3_h{int(horizon)}" for horizon in horizons],
         *[f"target_stable_practical_excess_h{int(horizon)}" for horizon in horizons],
         *[f"target_robust_buyable_excess_h{int(horizon)}" for horizon in horizons],
     ]

@@ -12,6 +12,7 @@ from app.ml.constants import (
     D5_BUYABLE_MODEL_SPEC_ID,
     D5_PRACTICAL_MODEL_SPEC_ID,
     D5_PRACTICAL_V2_MODEL_SPEC_ID,
+    D5_PRACTICAL_V3_MODEL_SPEC_ID,
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
     D5_PRIMARY_OUTPUT_CONTRACT_ROLES,
     D5_ROBUST_BUYABLE_MODEL_SPEC_ID,
@@ -245,6 +246,10 @@ D5_PRACTICAL_V2_MODEL_DISAGREEMENT_GATE_PENALTY = 45.0
 D5_STABLE_MODEL_DISAGREEMENT_GATE_PENALTY = 25.0
 D5_ROBUST_MODEL_DISAGREEMENT_GATE_PENALTY = 25.0
 D5_VALIDATION_EDGE_MIN_TOP5_MEAN_EXCESS_RETURN = 0.0
+D5_VALIDATION_EDGE_GUARDED_MODEL_SPEC_IDS = {
+    D5_PRACTICAL_V2_MODEL_SPEC_ID,
+    D5_PRACTICAL_V3_MODEL_SPEC_ID,
+}
 
 
 def _is_d5_focus_model_spec(model_spec_id: str | None) -> bool:
@@ -253,6 +258,7 @@ def _is_d5_focus_model_spec(model_spec_id: str | None) -> bool:
         D5_BUYABLE_MODEL_SPEC_ID,
         D5_PRACTICAL_MODEL_SPEC_ID,
         D5_PRACTICAL_V2_MODEL_SPEC_ID,
+        D5_PRACTICAL_V3_MODEL_SPEC_ID,
         D5_STABLE_BUYABLE_MODEL_SPEC_ID,
         D5_ROBUST_BUYABLE_MODEL_SPEC_ID,
     }
@@ -280,6 +286,7 @@ def _resolve_selection_weights(
             D5_BUYABLE_MODEL_SPEC_ID,
             D5_PRACTICAL_MODEL_SPEC_ID,
             D5_PRACTICAL_V2_MODEL_SPEC_ID,
+            D5_PRACTICAL_V3_MODEL_SPEC_ID,
         }
         and int(horizon) in SELECTION_V2_D5_BUYABLE_WEIGHTS
     ):
@@ -352,6 +359,7 @@ def _resolve_report_candidate_limit(
         "buyable_top5",
         "practical_excess_return",
         "practical_excess_return_v2",
+        "practical_path_return_v3",
         "stable_practical_excess_return",
         "robust_buyable_excess_return",
     }:
@@ -381,7 +389,7 @@ def _select_report_candidate_mask(
         return eligible_mask & scored["final_selection_rank_pct"].fillna(0.0).ge(0.85)
     candidate_mask = pd.Series(False, index=scored.index)
     if (
-        model_spec_id == D5_PRACTICAL_V2_MODEL_SPEC_ID
+        model_spec_id in D5_VALIDATION_EDGE_GUARDED_MODEL_SPEC_IDS
         and int(horizon) == 5
         and _d5_validation_top5_edge_guard_applies(
             scored,
@@ -391,7 +399,12 @@ def _select_report_candidate_mask(
     ):
         return candidate_mask
     if (
-        model_spec_id in {D5_PRIMARY_FOCUS_MODEL_SPEC_ID, D5_PRACTICAL_V2_MODEL_SPEC_ID}
+        model_spec_id
+        in {
+            D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+            D5_PRACTICAL_V2_MODEL_SPEC_ID,
+            D5_PRACTICAL_V3_MODEL_SPEC_ID,
+        }
         and int(horizon) == 5
     ):
         ordered = scored.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
@@ -433,7 +446,7 @@ def _d5_validation_top5_edge_guard_applies(
     model_spec_id: str | None,
     horizon: int,
 ) -> bool:
-    if model_spec_id != D5_PRACTICAL_V2_MODEL_SPEC_ID or int(horizon) != 5:
+    if model_spec_id not in D5_VALIDATION_EDGE_GUARDED_MODEL_SPEC_IDS or int(horizon) != 5:
         return False
     if "validation_top5_mean_excess_return" not in scored.columns:
         return False
@@ -526,7 +539,7 @@ def _apply_d5_buyability_risk_gate(
         + implementation_friction.astype(float).mul(D5_IMPLEMENTATION_FRICTION_GATE_PENALTY)
         + ineligible.astype(float).mul(D5_INELIGIBLE_GATE_PENALTY)
     )
-    if model_spec_id == D5_PRACTICAL_V2_MODEL_SPEC_ID:
+    if model_spec_id in {D5_PRACTICAL_V2_MODEL_SPEC_ID, D5_PRACTICAL_V3_MODEL_SPEC_ID}:
         penalty = penalty + high_model_disagreement.astype(float).mul(
             D5_PRACTICAL_V2_MODEL_DISAGREEMENT_GATE_PENALTY
         )
