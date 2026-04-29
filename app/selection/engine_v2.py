@@ -36,7 +36,7 @@ from app.ranking.risk_taxonomy import (
     has_grade_capping_risk,
     model_risk_flags,
 )
-from app.recommendation.buyability import d5_buyability_policy_bucket
+from app.recommendation.buyability import d5_buyability_policy_bucket, has_buyability_blocker
 from app.selection.engine_v1 import _apply_selection_engine_v1
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
@@ -406,7 +406,6 @@ def _select_report_candidate_mask(
         in {
             D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
             D5_PRACTICAL_V2_MODEL_SPEC_ID,
-            D5_PRACTICAL_V3_MODEL_SPEC_ID,
         }
         and int(horizon) == 5
     ):
@@ -432,6 +431,22 @@ def _select_report_candidate_mask(
                 :candidate_limit
             ]
         ]
+        candidate_mask.loc[selected_indices] = True
+        return candidate_mask
+    if model_spec_id == D5_PRACTICAL_V3_MODEL_SPEC_ID and int(horizon) == 5:
+        ordered = scored.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
+        selected_indices: list[object] = []
+        for index, row in ordered.iterrows():
+            row_risk_flags = [] if risk_flags is None else risk_flags.get(index, [])
+            if has_buyability_blocker(row_risk_flags):
+                continue
+            if bool(row.get("fallback_flag")):
+                continue
+            if not bool(row.get("eligible_flag", False)):
+                continue
+            selected_indices.append(index)
+            if len(selected_indices) >= candidate_limit:
+                break
         candidate_mask.loc[selected_indices] = True
         return candidate_mask
     top_candidate_indices = (

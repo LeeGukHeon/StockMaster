@@ -464,6 +464,33 @@ def test_d5_practical_v3_report_candidate_mask_allows_top_five_on_positive_path_
     assert scored.loc[mask, "symbol"].tolist() == ["A", "B", "C", "D", "E"]
 
 
+def test_d5_practical_v3_report_candidate_mask_uses_path_rank_not_positive_excess():
+    scored = pd.DataFrame(
+        {
+            "symbol": list("ABCDEF"),
+            "eligible_flag": [True, True, True, True, True, True],
+            "final_selection_value": [99.0, 98.0, 97.0, 96.0, 95.0, 94.0],
+            "final_selection_rank_pct": [1.0, 5 / 6, 4 / 6, 3 / 6, 2 / 6, 1 / 6],
+            "expected_excess_return": [-0.001, -0.002, -0.003, -0.004, -0.005, -0.006],
+            "fallback_flag": [False, False, False, False, False, False],
+            "uncertainty_score": [20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
+            "disagreement_score": [20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
+            "validation_top5_mean_excess_return": [0.004, 0.004, 0.004, 0.004, 0.004, 0.004],
+        }
+    )
+    risk_flags = pd.Series([[], [], [], [], [], []], index=scored.index)
+
+    mask = _select_report_candidate_mask(
+        scored,
+        model_spec_id=D5_PRACTICAL_V3_MODEL_SPEC_ID,
+        target_variant="practical_path_return_v3",
+        horizon=5,
+        risk_flags=risk_flags,
+    )
+
+    assert scored.loc[mask, "symbol"].tolist() == ["A", "B", "C", "D", "E"]
+
+
 def test_d5_practical_v2_report_candidate_mask_allows_zero_to_n_with_positive_edge():
     scored = pd.DataFrame(
         {
