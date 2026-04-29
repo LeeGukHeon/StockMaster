@@ -421,7 +421,7 @@ def test_d5_practical_v3_report_candidate_mask_blocks_negative_validation_edge()
             "fallback_flag": [False, False, False, False, False, False],
             "uncertainty_score": [20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
             "disagreement_score": [20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
-            "validation_top1_mean_excess_return": [-0.001, -0.001, -0.001, -0.001, -0.001, -0.001],
+            "validation_top5_mean_excess_return": [-0.001, -0.001, -0.001, -0.001, -0.001, -0.001],
         }
     )
     risk_flags = pd.Series([[], [], [], [], [], []], index=scored.index)
@@ -437,7 +437,7 @@ def test_d5_practical_v3_report_candidate_mask_blocks_negative_validation_edge()
     assert scored.loc[mask, "symbol"].tolist() == []
 
 
-def test_d5_practical_v3_report_candidate_mask_allows_only_top_one_on_positive_top1_edge():
+def test_d5_practical_v3_report_candidate_mask_allows_top_five_on_positive_path_edge():
     scored = pd.DataFrame(
         {
             "symbol": list("ABCDEF"),
@@ -448,7 +448,7 @@ def test_d5_practical_v3_report_candidate_mask_allows_only_top_one_on_positive_t
             "fallback_flag": [False, False, False, False, False, False],
             "uncertainty_score": [20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
             "disagreement_score": [20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
-            "validation_top1_mean_excess_return": [0.004, 0.004, 0.004, 0.004, 0.004, 0.004],
+            "validation_top5_mean_excess_return": [0.004, 0.004, 0.004, 0.004, 0.004, 0.004],
         }
     )
     risk_flags = pd.Series([[], [], [], [], [], []], index=scored.index)
@@ -461,7 +461,7 @@ def test_d5_practical_v3_report_candidate_mask_allows_only_top_one_on_positive_t
         risk_flags=risk_flags,
     )
 
-    assert scored.loc[mask, "symbol"].tolist() == ["A"]
+    assert scored.loc[mask, "symbol"].tolist() == ["A", "B", "C", "D", "E"]
 
 
 def test_d5_practical_v2_report_candidate_mask_allows_zero_to_n_with_positive_edge():

@@ -525,18 +525,20 @@ def _practical_path_return_v3_targets(
     *,
     horizon: int,
 ) -> pd.Series:
-    """Return a cash-first, path-aware D5 utility target for buyable recommendations.
+    """Return a cash-first, path-aware D5 Top5 utility target.
 
-    V2 used the +5%/-3% path *excess* label. That matched relative alpha, but it was too
-    harsh for the user-facing product: a human can often take +3% before D+5, and a
-    cash-positive trade can look negative after subtracting a strong market baseline. V3
-    therefore starts from the conservative +3% take-profit / -3% stop-loss path gross
-    outcome, blends in the excess outcome as a market-opportunity cost, and then removes
-    reward from ex-ante fragile names using only point-in-time features.
+    The user-facing D5 recommendation is not "hold exactly five days and beat the
+    equal-weight market"; it is "surface five stocks that can plausibly be sold for a
+    profit within roughly two to five trading days."  The target therefore prioritizes
+    conservative +3% take-profit / -3% stop-loss path *gross* return, includes a small
+    +5% path and endpoint gross component, and uses only point-in-time fragility features
+    to haircut rewards that would be hard to trade safely.  Relative/excess return stays
+    available for diagnostics, but it is not the main reward for this target.
     """
 
     path_gross_column = f"path_return_tp3_sl3_h{int(horizon)}"
-    path_excess_column = f"path_excess_tp3_sl3_h{int(horizon)}"
+    path_gross_tp5_column = f"path_return_tp5_sl3_h{int(horizon)}"
+    endpoint_gross_column = f"gross_return_h{int(horizon)}"
     endpoint_column = f"target_h{int(horizon)}"
     if feature_label_frame.empty:
         return pd.Series(dtype="float64")
@@ -548,10 +550,15 @@ def _practical_path_return_v3_targets(
     if path_gross.notna().sum() == 0:
         return _practical_excess_return_v2_targets(feature_label_frame, horizon=int(horizon))
 
-    path_excess = (
-        pd.to_numeric(working[path_excess_column], errors="coerce")
-        if path_excess_column in working.columns
+    path_gross_tp5 = (
+        pd.to_numeric(working[path_gross_tp5_column], errors="coerce")
+        if path_gross_tp5_column in working.columns
         else path_gross
+    )
+    endpoint_gross = (
+        pd.to_numeric(working[endpoint_gross_column], errors="coerce")
+        if endpoint_gross_column in working.columns
+        else pd.Series(pd.NA, index=working.index, dtype="Float64")
     )
     endpoint = (
         pd.to_numeric(working[endpoint_column], errors="coerce")
@@ -559,9 +566,11 @@ def _practical_path_return_v3_targets(
         else pd.Series(pd.NA, index=working.index, dtype="Float64")
     )
     raw_target = (
-        path_gross.mul(0.70)
-        .add(path_excess.fillna(path_gross).mul(0.30))
+        path_gross.mul(0.75)
+        .add(path_gross_tp5.fillna(path_gross).mul(0.15))
+        .add(endpoint_gross.fillna(path_gross).mul(0.10))
         .combine_first(path_gross)
+        .combine_first(endpoint_gross)
         .combine_first(endpoint)
     )
 
@@ -615,13 +624,13 @@ def _practical_path_return_v3_targets(
     )
 
     positive_multiplier = pd.Series(1.0, index=working.index, dtype="float64")
-    positive_multiplier = positive_multiplier.where(~high_volatility, positive_multiplier.mul(0.45))
-    positive_multiplier = positive_multiplier.where(~late_crowding, positive_multiplier.mul(0.55))
+    positive_multiplier = positive_multiplier.where(~high_volatility, positive_multiplier.mul(0.75))
+    positive_multiplier = positive_multiplier.where(~late_crowding, positive_multiplier.mul(0.70))
     positive_multiplier = positive_multiplier.where(
         ~weak_continuation,
-        positive_multiplier.mul(0.65),
+        positive_multiplier.mul(0.75),
     )
-    positive_multiplier = positive_multiplier.where(~weak_regime, positive_multiplier.mul(0.65))
+    positive_multiplier = positive_multiplier.where(~weak_regime, positive_multiplier.mul(0.75))
 
     hard_blocker = thin_liquidity | large_drawdown | data_missing
     positive_adjusted = adjusted.mul(positive_multiplier)
@@ -1165,6 +1174,17 @@ def _load_dataset_frame(
         )
         .reset_index()
     )
+    gross_label_matrix = (
+        label_rows.assign(
+            target_name=label_rows["horizon"].map(lambda value: f"gross_return_h{int(value)}")
+        )
+        .pivot(
+            index=["as_of_date", "symbol"],
+            columns="target_name",
+            values="gross_forward_return",
+        )
+        .reset_index()
+    )
     rank_label_matrix = (
         label_rows.assign(
             target_name=label_rows["horizon"].map(lambda value: f"target_rank_h{int(value)}")
@@ -1262,6 +1282,7 @@ def _load_dataset_frame(
         .reset_index()
     )
     dataset = feature_matrix.merge(label_matrix, on=["as_of_date", "symbol"], how="inner")
+    dataset = dataset.merge(gross_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(rank_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(top5_label_matrix, on=["as_of_date", "symbol"], how="left")
     dataset = dataset.merge(topbucket_label_matrix, on=["as_of_date", "symbol"], how="left")

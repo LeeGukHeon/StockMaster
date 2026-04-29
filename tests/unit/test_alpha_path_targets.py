@@ -14,7 +14,9 @@ def _base_frame() -> pd.DataFrame:
             "as_of_date": ["2026-03-02", "2026-03-02", "2026-03-03"],
             "market": ["KOSPI", "KOSPI", "KOSPI"],
             "target_h5": [-0.10, 0.01, -0.02],
+            "gross_return_h5": [0.04, -0.02, -0.01],
             "path_return_tp3_sl3_h5": [0.03, -0.03, pd.NA],
+            "path_return_tp5_sl3_h5": [0.05, -0.03, pd.NA],
             "path_excess_tp5_sl3_h5": [0.05, -0.03, pd.NA],
             "path_excess_tp3_sl3_h5": [0.02, -0.04, pd.NA],
             "liquidity_rank_pct": [0.5, 0.5, 0.5],
@@ -37,7 +39,7 @@ def test_practical_v2_target_uses_path_label_before_endpoint_return() -> None:
     assert targets.iloc[2] < 0.0
 
 
-def test_practical_v3_target_prioritizes_tp3_cash_path_with_excess_cost() -> None:
+def test_practical_v3_target_prioritizes_top5_cash_path_profit() -> None:
     targets = _practical_path_return_v3_targets(_base_frame(), horizon=5)
 
     assert targets.iloc[0] > 0.0

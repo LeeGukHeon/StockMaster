@@ -423,9 +423,9 @@ def _normalise_weights(
         }
     elif training_target_variant == "practical_path_return_v3":
         metric_weights = {
-            "top1_mean_excess_return": 7.0,
-            "top3_mean_excess_return": 4.0,
-            "top5_mean_excess_return": 2.0,
+            "top5_mean_excess_return": 7.0,
+            "top10_mean_excess_return": 3.0,
+            "top3_mean_excess_return": 2.0,
             "rank_ic": 2.0,
             "corr": 1.0,
             "mae": 1.0,

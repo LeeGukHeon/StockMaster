@@ -359,12 +359,11 @@ def _resolve_report_candidate_limit(
         "buyable_top5",
         "practical_excess_return",
         "practical_excess_return_v2",
+        "practical_path_return_v3",
         "stable_practical_excess_return",
         "robust_buyable_excess_return",
     }:
         return 5
-    if target_variant == "practical_path_return_v3":
-        return 1
     if model_spec_id == "alpha_topbucket_h1_rolling_120_v1" and int(horizon) == 1:
         return 5
     if target_variant == "top20_weighted":
@@ -449,11 +448,7 @@ def _d5_validation_top5_edge_guard_applies(
 ) -> bool:
     if model_spec_id not in D5_VALIDATION_EDGE_GUARDED_MODEL_SPEC_IDS or int(horizon) != 5:
         return False
-    metric_column = (
-        "validation_top1_mean_excess_return"
-        if model_spec_id == D5_PRACTICAL_V3_MODEL_SPEC_ID
-        else "validation_top5_mean_excess_return"
-    )
+    metric_column = "validation_top5_mean_excess_return"
     if metric_column not in scored.columns:
         return False
     validation_edge = pd.to_numeric(

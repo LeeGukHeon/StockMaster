@@ -284,7 +284,7 @@ CHALLENGER_ALPHA_MODEL_SPECS: tuple[AlphaModelSpec, ...] = (
         member_names=("hist_gbm", "extra_trees"),
         target_variant="practical_path_return_v3",
         training_target_variant="practical_path_return_v3",
-        validation_primary_metric_name="top1_mean_excess_return",
+        validation_primary_metric_name="top5_mean_excess_return",
         promotion_primary_loss_name="loss_top5",
         allowed_horizons=(5,),
     ),

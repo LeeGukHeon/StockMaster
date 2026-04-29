@@ -345,7 +345,7 @@ def test_alpha_practical_d5_v3_is_experimental_news_free_and_cash_path_unit() ->
     assert spec.member_names == ("hist_gbm", "extra_trees")
     assert spec.target_variant == "practical_path_return_v3"
     assert spec.training_target_variant == "practical_path_return_v3"
-    assert spec.validation_primary_metric_name == "top1_mean_excess_return"
+    assert spec.validation_primary_metric_name == "top5_mean_excess_return"
     assert resolve_target_column_for_spec(spec, horizon=5) == "target_practical_path_return_v3_h5"
     assert supports_horizon_for_spec(spec, horizon=5) is True
     assert supports_horizon_for_spec(spec, horizon=1) is False
