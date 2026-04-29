@@ -27,6 +27,9 @@ from app.ml.constants import (
 from app.ml.constants import (
     MODEL_VERSION as ALPHA_MODEL_VERSION,
 )
+from app.ml.constants import (
+    SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION,
+)
 from app.ml.inference import materialize_alpha_predictions_v1
 from app.ml.promotion import run_alpha_auto_promotion
 from app.ml.registry import load_active_alpha_model
@@ -715,7 +718,7 @@ def run_evaluation_job(
                     output_artifacts=artifact_paths,
                     notes=notes,
                     model_version=PREDICTION_VERSION,
-                    ranking_version="selection_engine_v1,explanatory_ranking_v0",
+                    ranking_version=f"{SELECTION_ENGINE_V2_VERSION},explanatory_ranking_v0",
                 )
             return JobExecutionResult(
                 run_id=run_context.run_id,

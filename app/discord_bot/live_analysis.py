@@ -10,6 +10,7 @@ from app.discord_bot.live_recalc import (
     compute_live_stock_recommendation,
 )
 from app.discord_bot.read_store import fetch_discord_bot_snapshot_rows
+from app.ml.constants import D5_PRACTICAL_V3_MODEL_SPEC_ID
 from app.providers.kis.client import KISProvider
 from app.reports.discord_eod import REASON_LABELS, RISK_LABELS
 from app.settings import Settings
@@ -284,13 +285,30 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
         show_suffix=False,
     )
 
-    lines = [
-        f"**{symbol} {company_name} · {stable_judgement_label}**",
-        (
+    stable_d5_model = _safe_text(
+        payload.get("d5_model_spec_id") or analysis_payload.get("d5_model_spec_id")
+    )
+    stable_d5_rank = payload.get("d5_display_rank") or analysis_payload.get(
+        "live_d5_display_rank"
+    )
+    if (
+        stable_d5_model == D5_PRACTICAL_V3_MODEL_SPEC_ID
+        and stable_d5_rank not in (None, "", "-")
+    ):
+        d5_line = (
+            f"장마감 D5 경로순위 {int(float(stable_d5_rank))} "
+            f"· 상대점수 {stable_d5_score} · 기대 {_pct_text(stable_d5_expected)} "
+            f"· 현재 {current_price}원 ({change_rate})"
+        )
+    else:
+        d5_line = (
             f"장마감 D5 {stable_d5_grade}/{stable_d5_score}점 "
             f"· 기대 {_pct_text(stable_d5_expected)} "
             f"· 현재 {current_price}원 ({change_rate})"
-        ),
+        )
+    lines = [
+        f"**{symbol} {company_name} · {stable_judgement_label}**",
+        d5_line,
         f"판단: {_compact_judgement_text(stable_judgement_summary)}",
     ]
     if live_row is not None and live_d5_score != stable_d5_score:

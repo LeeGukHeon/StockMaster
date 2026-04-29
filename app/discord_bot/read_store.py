@@ -322,18 +322,25 @@ def _build_pick_rows(
         )
         display_label = judgement.label
         display_summary = judgement.summary
-        summary_parts = [
-            display_label,
-            f"점수 {_format_number(getattr(row, 'final_selection_value', None))}",
-            f"등급 {_safe_text(getattr(row, 'grade', None))}",
-            f"경로순위 {rank}"
-            if path_rank_candidate
-            else (
-                "기대 "
-                f"{_format_percent(getattr(row, 'expected_excess_return', None), signed=True)}"
-            ),
-            f"진입 {_safe_text(getattr(row, 'next_entry_trade_date', None))}",
-        ]
+        summary_parts = [display_label]
+        if path_rank_candidate:
+            summary_parts.extend(
+                [
+                    f"경로순위 {rank}",
+                    f"상대점수 {_format_number(getattr(row, 'final_selection_value', None))}",
+                    f"등급 {_safe_text(getattr(row, 'grade', None))}",
+                ]
+            )
+        else:
+            summary_parts.extend(
+                [
+                    f"점수 {_format_number(getattr(row, 'final_selection_value', None))}",
+                    f"등급 {_safe_text(getattr(row, 'grade', None))}",
+                    "기대 "
+                    f"{_format_percent(getattr(row, 'expected_excess_return', None), signed=True)}",
+                ]
+            )
+        summary_parts.append(f"진입 {_safe_text(getattr(row, 'next_entry_trade_date', None))}")
         if is_d5_candidate_surface:
             if path_rank_candidate:
                 summary_parts.append("경로모델")
@@ -606,14 +613,23 @@ def _build_stock_summary_rows(
             buyability_priority_score=d5_buyability_priority,
             path_rank_candidate=is_d5_candidate and _is_d5_cash_path_model(d5_model_spec_id),
         )
+        d5_cash_path_candidate = is_d5_candidate and _is_d5_cash_path_model(d5_model_spec_id)
+        if d5_cash_path_candidate:
+            d5_metric_parts = [
+                f"D5 경로순위 {d5_display_rank}",
+                f"상대점수 {_format_number(d5_score)}",
+                f"D5 {d5_grade}",
+            ]
+        else:
+            d5_metric_parts = [
+                f"D5 점수 {_format_number(d5_score)}",
+                f"D5 {d5_grade}",
+                f"기대 {_format_percent(d5_expected, signed=True)}",
+            ]
         summary = " · ".join(
             [
                 judgement.label,
-                f"D5 점수 {_format_number(d5_score)}",
-                f"D5 {d5_grade}",
-                f"D5 경로순위 {d5_display_rank}"
-                if is_d5_candidate and _is_d5_cash_path_model(d5_model_spec_id)
-                else f"기대 {_format_percent(d5_expected, signed=True)}",
+                *d5_metric_parts,
                 f"5일수익 {_format_percent(getattr(item, 'ret_5d', None), signed=True)}",
             ]
         )

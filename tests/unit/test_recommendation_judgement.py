@@ -62,6 +62,21 @@ def test_classify_recommendation_allows_selected_cash_path_rank_with_negative_ex
     assert "경로모델 추천권" in judgement.summary
 
 
+def test_classify_recommendation_ignores_sparse_bad_band_for_cash_path_rank() -> None:
+    judgement = classify_recommendation(
+        final_selection_value=100,
+        expected_excess_return=0.009,
+        evidence_by_band={"75+": ScoreBandEvidence("75+", 3, -0.046, 0.0)},
+        candidate_selected=True,
+        candidate_rank=1,
+        path_rank_candidate=True,
+    )
+
+    assert judgement.label == "매수해볼 가치 있음"
+    assert judgement.summary == "경로모델 추천권·2~5일 분할 접근"
+    assert "과확신" not in judgement.summary
+
+
 def test_classify_recommendation_distinguishes_missing_evidence_from_small_sample() -> None:
     judgement = classify_recommendation(
         final_selection_value=60,

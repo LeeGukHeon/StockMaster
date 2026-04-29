@@ -243,6 +243,8 @@ def test_build_pick_rows_keeps_cash_path_v3_report_candidates_by_rank() -> None:
 
     assert [row["symbol"] for row in rows] == ["111111", "222222"]
     assert "매수 보류" not in rows[0]["summary"]
+    assert "경로순위 1" in rows[0]["summary"]
+    assert "상대점수 99.0" in rows[0]["summary"]
     assert "경로모델 추천권" in rows[0]["payload_json"]
 
 
@@ -502,6 +504,8 @@ def test_build_stock_summary_rows_keeps_cash_path_v3_display_candidate() -> None
 
     payload = json.loads(rows[0]["payload_json"])
     assert "매수 보류" not in rows[0]["summary"]
+    assert "D5 경로순위 1" in rows[0]["summary"]
+    assert "상대점수 80.0" in rows[0]["summary"]
     assert payload["d5_report_candidate_flag"] is True
     assert payload["d5_display_rank"] == 1
     assert "경로모델 추천권" in payload["d5_judgement_summary"]

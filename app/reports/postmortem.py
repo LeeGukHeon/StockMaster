@@ -13,9 +13,9 @@ from app.common.discord import (
 )
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
+from app.ml.constants import SELECTION_ENGINE_VERSION
 from app.ranking.explanatory_score import RANKING_VERSION as EXPLANATORY_RANKING_VERSION
 from app.reports.discord_eod import _build_payload_messages
-from app.selection.engine_v1 import SELECTION_ENGINE_VERSION
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -261,7 +261,7 @@ def _result_label(avg_excess: object, hit_rate: object) -> str:
 def _format_current_result_line(row: pd.Series) -> str:
     label = _result_label(row.get("avg_realized_excess_return"), row.get("hit_rate"))
     return (
-        f"- H{int(row['horizon'])} 현재모델: {label} · "
+        f"- H{int(row['horizon'])} 현재 추천로직: {label} · "
         "평균초과 "
         f"{_format_percent_text(row['avg_realized_excess_return'], decimals=2, signed=True)} · "
         f"적중률 {_format_percent_text(row['hit_rate'], decimals=0)} · "
@@ -343,7 +343,10 @@ def _build_report_content(
     lines = [
         f"**StockMaster 사후평가 | {evaluation_date.isoformat()}**",
         "",
-        "오늘 메시지는 ‘며칠 전 추천이 실제로 어땠는지’만 짧게 봅니다.",
+        (
+            "오늘 메시지는 현재 추천로직(selection_engine_v2/v3 D5 경로모델 포함)의 "
+            "사후 성과만 짧게 봅니다."
+        ),
         "- 평균초과: 같은 기간 비교기준보다 더 벌었는지",
         "- 적중률: 초과수익이 +였던 비율",
         "",

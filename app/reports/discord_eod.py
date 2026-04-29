@@ -13,7 +13,7 @@ from app.common.discord import (
 )
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
-from app.ml.constants import MODEL_SPEC_ID
+from app.ml.constants import D5_PRACTICAL_V3_MODEL_SPEC_ID, MODEL_SPEC_ID
 from app.ml.constants import PREDICTION_VERSION as ALPHA_PREDICTION_VERSION
 from app.ml.constants import SELECTION_ENGINE_VERSION as SELECTION_ENGINE_V2_VERSION
 from app.ml.promotion import load_alpha_promotion_summary
@@ -44,6 +44,12 @@ DISCORD_EOD_D5_CORE_CANDIDATE_LIMIT = 5
 DISCORD_EOD_D5_MAX_CANDIDATES_PER_SECTOR = 2
 DISCORD_EOD_MIN_REFERENCE_SCORE = 55.0
 D5_ACTIONABLE_JUDGEMENT_LABELS = {"매수검토", "매수해볼 가치 있음"}
+
+
+def _is_d5_cash_path_model(value: object) -> bool:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return False
+    return str(value).strip() == D5_PRACTICAL_V3_MODEL_SPEC_ID
 
 REASON_LABELS = {
     "ml_alpha_supportive": "최근 흐름과 모델 판단이 함께 받쳐줌",
@@ -702,6 +708,9 @@ def _pick_judgement(
         horizon == DISCORD_EOD_CANDIDATE_HORIZON
         and pd.notna(row.get("buyability_priority_score"))
     )
+    path_rank_candidate = is_d5_buyability_pick and _is_d5_cash_path_model(
+        row.get("model_spec_id")
+    )
     return classify_recommendation(
         final_selection_value=row.get("final_selection_value"),
         expected_excess_return=row.get("expected_excess_return"),
@@ -710,6 +719,7 @@ def _pick_judgement(
         candidate_selected=is_d5_buyability_pick,
         candidate_rank=rank if is_d5_buyability_pick else None,
         buyability_priority_score=row.get("buyability_priority_score"),
+        path_rank_candidate=path_rank_candidate,
     )
 
 
@@ -756,6 +766,11 @@ def _format_pick_block(
     reason_text = _compact_pick_text(reasons, fallback="근거 제한")
     score = float(row["final_selection_value"])
     expected_text = _pct_text(row.get("expected_excess_return"))
+    is_cash_path_pick = (
+        horizon == DISCORD_EOD_CANDIDATE_HORIZON
+        and _is_d5_cash_path_model(row.get("model_spec_id"))
+        and pd.notna(row.get("d5_selection_rank"))
+    )
     detail = (
         f"   - 판단 {_compact_judgement_summary(display_summary)}"
         f" | 근거 {reason_text} | 주의 {risk_text}"
@@ -766,10 +781,17 @@ def _format_pick_block(
         base_price = float(row["selection_close_price"])
         target_price = base_price * (1.0 + float(row["expected_excess_return"]))
         detail += f" | 목표 {target_price:,.0f}원"
+    if is_cash_path_pick:
+        headline_metric = (
+            f"D{horizon} 경로순위 {int(row['d5_selection_rank'])} "
+            f"· 상대점수 {score:.1f}/{row['grade']}"
+        )
+    else:
+        headline_metric = f"D{horizon} {score:.1f}/{row['grade']}"
     return [
         (
             f"{rank}. `{row['symbol']}` {row['company_name']} · {display_label}"
-            f" | D{horizon} {score:.1f}/{row['grade']} | 기대 {expected_text}"
+            f" | {headline_metric} | 기대 {expected_text}"
         ),
         detail,
     ]
@@ -952,6 +974,17 @@ def _build_payload_content(
         primary_candidate_title = (
             f"**다음 거래일 후보 | {candidate_basis} (D+{int(candidate_horizon)})**"
         )
+    uses_cash_path_d5 = (
+        int(candidate_horizon) == 5
+        and not single_buy_candidates.empty
+        and single_buy_candidates.get("model_spec_id") is not None
+        and single_buy_candidates["model_spec_id"].dropna().map(_is_d5_cash_path_model).any()
+    )
+    judgement_basis_line = (
+        "v3 D5는 2~5거래일 경로순위 후보를 우선 보고, raw 점수대 성과는 보조 참고로만 봅니다."
+        if uses_cash_path_d5
+        else _score_band_evidence_line(primary_score_evidence)
+    )
     lines = [
         f"**StockMaster 장마감 추천 요약 | {as_of_date.isoformat()}**",
         (
@@ -960,7 +993,7 @@ def _build_payload_content(
             f" · 기관+ {_pct_text(market_pulse.get('institution_positive_ratio'))}"
         ),
         f"- 기준: 메인 후보는 {candidate_basis}(D+{int(candidate_horizon)}) 중심입니다.",
-        f"- 판단: {_score_band_evidence_line(primary_score_evidence)}",
+        f"- 판단: {judgement_basis_line}",
         "- 기대수익은 보장값이 아니라 과거 성숙 성과와 현재 신호를 함께 본 참고값입니다.",
     ]
 

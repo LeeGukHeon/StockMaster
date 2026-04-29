@@ -128,6 +128,53 @@ def test_build_payload_content_marks_d5_section_as_observation_when_no_actionabl
     assert "관찰 우선" in content
 
 
+def test_build_payload_content_treats_v3_cash_path_rank_as_actionable() -> None:
+    content = _build_payload_content(
+        as_of_date=date(2026, 4, 29),
+        sector_horizon=5,
+        candidate_horizon=5,
+        market_pulse={},
+        alpha_promotion=pd.DataFrame(),
+        selection_gap=pd.DataFrame(),
+        sector_outlook=pd.DataFrame(),
+        single_buy_candidates=pd.DataFrame(
+            [
+                {
+                    "horizon": 5,
+                    "symbol": "136480",
+                    "company_name": "하림",
+                    "market": "KOSDAQ",
+                    "industry": "식품",
+                    "sector": "소비재",
+                    "final_selection_value": 100.0,
+                    "d5_selection_rank": 1,
+                    "grade": "A",
+                    "selection_date": "2026-04-29 00:00:00",
+                    "next_entry_trade_date": "2026-04-30 00:00:00",
+                    "selection_close_price": 3000,
+                    "expected_excess_return": 0.009,
+                    "buyability_priority_score": -1.9,
+                    "model_spec_id": "alpha_practical_d5_v3",
+                    "top_reason_tags_json": '["ml_alpha_supportive"]',
+                    "risk_flags_json": "[]",
+                }
+            ]
+        ),
+        market_news=pd.DataFrame(),
+        score_evidence_by_horizon={
+            5: {"75+": ScoreBandEvidence("75+", 3, -0.046, 0.0)}
+        },
+    )
+
+    assert "**2~5거래일 스윙 후보" in content
+    assert "매수검토 이상 기준을 통과한 D5 후보가 없어" not in content
+    assert "136480" in content
+    assert "매수해볼 가치 있음" in content
+    assert "D5 경로순위 1 · 상대점수 100.0/A" in content
+    assert "고점수 과확신" not in content
+    assert "raw 점수대 성과는 보조 참고" in content
+
+
 def test_format_pick_block_omits_active_model_id() -> None:
     row = pd.Series(
         {

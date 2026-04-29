@@ -149,7 +149,7 @@ def _selected_d5_judgement(
     if path_rank_candidate:
         return RecommendationJudgement(
             label="매수해볼 가치 있음",
-            summary=f"경로모델 추천권·2~5일 분할 접근 · {evidence_text}",
+            summary="경로모델 추천권·2~5일 분할 접근",
             score_band=score_band_for_value(score),
             evidence=evidence,
         )

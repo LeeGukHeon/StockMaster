@@ -7,6 +7,7 @@ import pandas as pd
 
 from app.evaluation.calibration_diagnostics import materialize_calibration_diagnostics
 from app.evaluation.summary import materialize_prediction_evaluation
+from app.ml.constants import SELECTION_ENGINE_VERSION
 from app.reports.postmortem import (
     _build_postmortem_payload_messages,
     _build_report_content,
@@ -167,19 +168,57 @@ def test_load_top_outcomes_excludes_zero_volume_entry_or_exit_rows():
             ('222222', '정상종목', 'KOSDAQ')
         """
     )
-    con.execute(
-        """
-        INSERT INTO fact_selection_outcome VALUES
-            (DATE '2026-03-17', DATE '2026-03-24', '111111', 5, 'selection_engine_v1', 'matured', 9.0, 0.01, 'above_upper', '[]', 'forward_label_v1'),
-            (DATE '2026-03-17', DATE '2026-03-24', '222222', 5, 'selection_engine_v1', 'matured', 0.20, 0.01, 'above_upper', '[]', 'forward_label_v1')
-        """
+    con.executemany(
+        "INSERT INTO fact_selection_outcome VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                date(2026, 3, 17),
+                date(2026, 3, 24),
+                "111111",
+                5,
+                SELECTION_ENGINE_VERSION,
+                "matured",
+                9.0,
+                0.01,
+                "above_upper",
+                "[]",
+                "forward_label_v1",
+            ),
+            (
+                date(2026, 3, 17),
+                date(2026, 3, 24),
+                "222222",
+                5,
+                SELECTION_ENGINE_VERSION,
+                "matured",
+                0.20,
+                0.01,
+                "above_upper",
+                "[]",
+                "forward_label_v1",
+            ),
+        ],
     )
-    con.execute(
-        """
-        INSERT INTO fact_forward_return_label VALUES
-            (DATE '2026-03-17', '111111', 5, 'forward_label_v1', DATE '2026-03-18', DATE '2026-03-24'),
-            (DATE '2026-03-17', '222222', 5, 'forward_label_v1', DATE '2026-03-18', DATE '2026-03-24')
-        """
+    con.executemany(
+        "INSERT INTO fact_forward_return_label VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            (
+                date(2026, 3, 17),
+                "111111",
+                5,
+                "forward_label_v1",
+                date(2026, 3, 18),
+                date(2026, 3, 24),
+            ),
+            (
+                date(2026, 3, 17),
+                "222222",
+                5,
+                "forward_label_v1",
+                date(2026, 3, 18),
+                date(2026, 3, 24),
+            ),
+        ],
     )
     con.execute(
         """
