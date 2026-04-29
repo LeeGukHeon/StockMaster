@@ -973,6 +973,7 @@ def _train_alpha_specs(
         train_end_date=train_end_date,
         horizons=horizons,
         min_train_days=min_train_days,
+        validation_days=validation_days,
         symbols=symbols,
         limit_symbols=limit_symbols,
         market=market,

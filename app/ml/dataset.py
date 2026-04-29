@@ -145,6 +145,7 @@ def _resolve_missing_label_dates(
     symbols: list[str] | None,
     limit_symbols: int | None,
     market: str,
+    required_recent_complete_days: int | None = None,
 ) -> list[date]:
     symbol_frame = load_symbol_frame(
         connection,
@@ -207,7 +208,11 @@ def _resolve_missing_label_dates(
     complete_dates = {
         pd.Timestamp(row[0]).date() for row in existing_rows if int(row[1] or 0) >= len(horizons)
     }
-    return sorted(candidate_dates.difference(complete_dates))
+    scoped_candidate_dates = sorted(candidate_dates)
+    if required_recent_complete_days is not None:
+        recent_window_days = max(1, int(required_recent_complete_days))
+        scoped_candidate_dates = scoped_candidate_dates[-recent_window_days:]
+    return sorted(set(scoped_candidate_dates).difference(complete_dates))
 
 
 def _ensure_feature_snapshots(
@@ -838,28 +843,28 @@ def _register_external_forward_label_view(connection) -> bool:
     matched_paths = _external_forward_label_paths()
     if not matched_paths:
         return False
-    label_frame = connection.execute(
-        """
-        SELECT
-            run_id,
-            as_of_date,
-            symbol,
-            horizon,
-            market,
-            entry_date,
-            exit_date,
-            gross_forward_return,
-            excess_forward_return,
-            path_return_tp3_sl3_conservative,
-            path_return_tp5_sl3_conservative,
-            path_excess_return_tp3_sl3_conservative,
-            path_excess_return_tp5_sl3_conservative,
-            label_available_flag,
-            created_at
-        FROM read_parquet(?)
-        """,
-        [matched_paths],
-    ).fetchdf()
+    columns = [
+        "run_id",
+        "as_of_date",
+        "symbol",
+        "horizon",
+        "market",
+        "entry_date",
+        "exit_date",
+        "gross_forward_return",
+        "excess_forward_return",
+        "path_return_tp3_sl3_conservative",
+        "path_return_tp5_sl3_conservative",
+        "path_excess_return_tp3_sl3_conservative",
+        "path_excess_return_tp5_sl3_conservative",
+        "label_available_flag",
+        "created_at",
+    ]
+    label_frame = connection.execute("SELECT * FROM read_parquet(?)", [matched_paths]).fetchdf()
+    for column in columns:
+        if column not in label_frame.columns:
+            label_frame[column] = pd.NA
+    label_frame = label_frame[columns]
     connection.register("external_forward_label_frame", label_frame)
     connection.execute(
         """
@@ -1409,6 +1414,7 @@ def build_model_training_dataset(
     limit_symbols: int | None = None,
     market: str = "ALL",
     force: bool = False,
+    validation_days: int = 0,
 ) -> ModelTrainingDatasetResult:
     ensure_storage_layout(settings)
     with activate_run_context(
@@ -1444,6 +1450,9 @@ def build_model_training_dataset(
                     symbols=symbols,
                     limit_symbols=limit_symbols,
                     market=market,
+                    required_recent_complete_days=(
+                        int(min_train_days) + max(0, int(validation_days))
+                    ),
                 )
             except Exception as exc:
                 record_run_finish(

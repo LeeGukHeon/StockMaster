@@ -498,3 +498,34 @@ def test_external_forward_label_parquet_disables_online_missing_label_rebuild(
             )
             == []
         )
+
+
+def test_missing_label_guard_ignores_old_gaps_when_recent_window_is_complete(tmp_path):
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    build_forward_labels(
+        settings,
+        start_date=date(2026, 3, 10),
+        end_date=date(2026, 3, 12),
+        horizons=[1],
+        symbols=["005930"],
+    )
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        assert _resolve_missing_label_dates(
+            connection,
+            train_end_date=date(2026, 3, 13),
+            horizons=[1],
+            symbols=["005930"],
+            limit_symbols=None,
+            market="ALL",
+            required_recent_complete_days=3,
+        ) == []
+        assert _resolve_missing_label_dates(
+            connection,
+            train_end_date=date(2026, 3, 13),
+            horizons=[1],
+            symbols=["005930"],
+            limit_symbols=None,
+            market="ALL",
+        )
