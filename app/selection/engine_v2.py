@@ -244,6 +244,7 @@ D5_INELIGIBLE_GATE_PENALTY = 18.0
 D5_PRACTICAL_V2_MODEL_DISAGREEMENT_GATE_PENALTY = 45.0
 D5_STABLE_MODEL_DISAGREEMENT_GATE_PENALTY = 25.0
 D5_ROBUST_MODEL_DISAGREEMENT_GATE_PENALTY = 25.0
+D5_VALIDATION_EDGE_MIN_TOP5_MEAN_EXCESS_RETURN = 0.0
 
 
 def _is_d5_focus_model_spec(model_spec_id: str | None) -> bool:
@@ -379,7 +380,20 @@ def _select_report_candidate_mask(
         eligible_mask = scored["eligible_flag"].fillna(False).astype(bool)
         return eligible_mask & scored["final_selection_rank_pct"].fillna(0.0).ge(0.85)
     candidate_mask = pd.Series(False, index=scored.index)
-    if model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID and int(horizon) == 5:
+    if (
+        model_spec_id == D5_PRACTICAL_V2_MODEL_SPEC_ID
+        and int(horizon) == 5
+        and _d5_validation_top5_edge_guard_applies(
+            scored,
+            model_spec_id=model_spec_id,
+            horizon=int(horizon),
+        )
+    ):
+        return candidate_mask
+    if (
+        model_spec_id in {D5_PRIMARY_FOCUS_MODEL_SPEC_ID, D5_PRACTICAL_V2_MODEL_SPEC_ID}
+        and int(horizon) == 5
+    ):
         ordered = scored.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
         selected: list[tuple[int, int, object]] = []
         for selection_rank, (index, row) in enumerate(ordered.iterrows(), start=1):
@@ -411,6 +425,27 @@ def _select_report_candidate_mask(
     )
     candidate_mask.loc[top_candidate_indices] = True
     return candidate_mask
+
+
+def _d5_validation_top5_edge_guard_applies(
+    scored: pd.DataFrame,
+    *,
+    model_spec_id: str | None,
+    horizon: int,
+) -> bool:
+    if model_spec_id != D5_PRACTICAL_V2_MODEL_SPEC_ID or int(horizon) != 5:
+        return False
+    if "validation_top5_mean_excess_return" not in scored.columns:
+        return False
+    top5_edge = pd.to_numeric(
+        scored["validation_top5_mean_excess_return"],
+        errors="coerce",
+    ).dropna()
+    if top5_edge.empty:
+        return False
+    return bool(
+        float(top5_edge.iloc[0]) <= D5_VALIDATION_EDGE_MIN_TOP5_MEAN_EXCESS_RETURN
+    )
 
 
 def _augment_reason_tags(row: pd.Series, tags: list[str]) -> list[str]:
@@ -891,6 +926,11 @@ def _score_selection_engine_v2_frame(
         scored["raw_preservation_bonus"] = 0.0
         scored["raw_preservation_guardrail_applied"] = False
         scored["raw_preservation_blocker_flag"] = False
+    scored["validation_top5_edge_guard_applied"] = _d5_validation_top5_edge_guard_applies(
+        scored,
+        model_spec_id=model_spec_id,
+        horizon=int(horizon),
+    )
     scored["report_candidate_flag"] = _select_report_candidate_mask(
         scored,
         model_spec_id=model_spec_id,
@@ -963,6 +1003,25 @@ def _score_selection_engine_v2_frame(
                     row["raw_preservation_guardrail_applied"]
                 ),
                 "raw_preservation_blocker_flag": bool(row["raw_preservation_blocker_flag"]),
+                "training_run_id": row.get("training_run_id"),
+                "validation_top5_mean_excess_return": None
+                if pd.isna(row.get("validation_top5_mean_excess_return"))
+                else float(row.get("validation_top5_mean_excess_return")),
+                "validation_top10_mean_excess_return": None
+                if pd.isna(row.get("validation_top10_mean_excess_return"))
+                else float(row.get("validation_top10_mean_excess_return")),
+                "validation_top20_mean_excess_return": None
+                if pd.isna(row.get("validation_top20_mean_excess_return"))
+                else float(row.get("validation_top20_mean_excess_return")),
+                "validation_rank_ic": None
+                if pd.isna(row.get("validation_rank_ic"))
+                else float(row.get("validation_rank_ic")),
+                "validation_sample_count": None
+                if pd.isna(row.get("validation_sample_count"))
+                else int(row.get("validation_sample_count")),
+                "validation_top5_edge_guard_applied": bool(
+                    row["validation_top5_edge_guard_applied"]
+                ),
                 "prediction_version": row.get("prediction_version"),
                 "score_version": SELECTION_ENGINE_VERSION,
                 "score_type": "selection_engine_v2",
@@ -1051,31 +1110,85 @@ def _load_predictions(connection, *, as_of_date: date, horizon: int) -> pd.DataF
     ]
     active_filter = ""
     if active_model is not None and active_model.get("active_alpha_model_id") not in (None, ""):
-        active_filter = "AND active_alpha_model_id = ?"
+        active_filter = "AND prediction.active_alpha_model_id = ?"
         parameters.append(str(active_model["active_alpha_model_id"]))
     return connection.execute(
         f"""
+        WITH validation_metrics AS (
+            SELECT
+                training_run_id,
+                horizon,
+                MAX(
+                    CASE
+                        WHEN metric_name = 'top5_mean_excess_return'
+                        THEN metric_value
+                    END
+                ) AS validation_top5_mean_excess_return,
+                MAX(
+                    CASE
+                        WHEN metric_name = 'top10_mean_excess_return'
+                        THEN metric_value
+                    END
+                ) AS validation_top10_mean_excess_return,
+                MAX(
+                    CASE
+                        WHEN metric_name = 'top20_mean_excess_return'
+                        THEN metric_value
+                    END
+                ) AS validation_top20_mean_excess_return,
+                MAX(
+                    CASE
+                        WHEN metric_name = 'rank_ic'
+                        THEN metric_value
+                    END
+                ) AS validation_rank_ic,
+                MAX(
+                    CASE
+                        WHEN metric_name = 'top5_mean_excess_return'
+                        THEN sample_count
+                    END
+                ) AS validation_sample_count
+            FROM fact_model_metric_summary
+            WHERE member_name = 'ensemble'
+              AND split_name = 'validation'
+              AND metric_name IN (
+                  'top5_mean_excess_return',
+                  'top10_mean_excess_return',
+                  'top20_mean_excess_return',
+                  'rank_ic'
+              )
+            GROUP BY training_run_id, horizon
+        )
         SELECT
-            symbol,
-            expected_excess_return,
-            lower_band,
-            median_band,
-            upper_band,
-            uncertainty_score,
-            disagreement_score,
-            fallback_flag,
-            fallback_reason,
-            prediction_version,
-            model_spec_id,
-            active_alpha_model_id,
-            member_count,
-            ensemble_weight_json,
-            source_notes_json
-        FROM fact_prediction
-        WHERE as_of_date = ?
-          AND horizon = ?
-          AND prediction_version = ?
-          AND ranking_version = ?
+            prediction.symbol,
+            prediction.expected_excess_return,
+            prediction.lower_band,
+            prediction.median_band,
+            prediction.upper_band,
+            prediction.uncertainty_score,
+            prediction.disagreement_score,
+            prediction.fallback_flag,
+            prediction.fallback_reason,
+            prediction.prediction_version,
+            prediction.model_spec_id,
+            prediction.active_alpha_model_id,
+            prediction.training_run_id,
+            prediction.member_count,
+            prediction.ensemble_weight_json,
+            prediction.source_notes_json,
+            validation_metrics.validation_top5_mean_excess_return,
+            validation_metrics.validation_top10_mean_excess_return,
+            validation_metrics.validation_top20_mean_excess_return,
+            validation_metrics.validation_rank_ic,
+            validation_metrics.validation_sample_count
+        FROM fact_prediction AS prediction
+        LEFT JOIN validation_metrics
+          ON prediction.training_run_id = validation_metrics.training_run_id
+         AND prediction.horizon = validation_metrics.horizon
+        WHERE prediction.as_of_date = ?
+          AND prediction.horizon = ?
+          AND prediction.prediction_version = ?
+          AND prediction.ranking_version = ?
           {active_filter}
         """,
         parameters,

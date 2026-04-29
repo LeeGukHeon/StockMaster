@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from app.ml.constants import D5_PRACTICAL_V2_MODEL_SPEC_ID
 from app.selection.engine_v2 import (
     D5_RAW_PRESERVATION_PRIORITY_COUNT,
     _alpha_core_score,
@@ -380,6 +381,63 @@ def test_active_d5_report_candidate_mask_prefers_rank_two_to_six_when_rank_one_r
     )
 
     assert scored.loc[mask, "symbol"].tolist() == ["B", "C", "D", "E", "F"]
+
+
+def test_d5_practical_v2_report_candidate_mask_blocks_negative_validation_edge():
+    scored = pd.DataFrame(
+        {
+            "symbol": list("ABCDEF"),
+            "eligible_flag": [True, True, True, True, True, True],
+            "final_selection_value": [99.0, 98.0, 97.0, 96.0, 95.0, 94.0],
+            "final_selection_rank_pct": [1.0, 5 / 6, 4 / 6, 3 / 6, 2 / 6, 1 / 6],
+            "expected_excess_return": [0.02, 0.018, 0.016, 0.014, 0.012, 0.010],
+            "fallback_flag": [False, False, False, False, False, False],
+            "uncertainty_score": [20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
+            "disagreement_score": [20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
+            "validation_top5_mean_excess_return": [-0.018, -0.018, -0.018, -0.018, -0.018, -0.018],
+        }
+    )
+    risk_flags = pd.Series([[], [], [], [], [], []], index=scored.index)
+
+    mask = _select_report_candidate_mask(
+        scored,
+        model_spec_id=D5_PRACTICAL_V2_MODEL_SPEC_ID,
+        target_variant="practical_excess_return_v2",
+        horizon=5,
+        risk_flags=risk_flags,
+    )
+
+    assert scored.loc[mask, "symbol"].tolist() == []
+
+
+def test_d5_practical_v2_report_candidate_mask_allows_zero_to_n_with_positive_edge():
+    scored = pd.DataFrame(
+        {
+            "symbol": list("ABCDEF"),
+            "eligible_flag": [True, True, True, True, True, True],
+            "final_selection_value": [99.0, 98.0, 97.0, 96.0, 95.0, 94.0],
+            "final_selection_rank_pct": [1.0, 5 / 6, 4 / 6, 3 / 6, 2 / 6, 1 / 6],
+            "expected_excess_return": [0.02, 0.009, 0.0, 0.006, 0.007, -0.001],
+            "fallback_flag": [False, False, False, False, False, False],
+            "uncertainty_score": [20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
+            "disagreement_score": [20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
+            "validation_top5_mean_excess_return": [0.012, 0.012, 0.012, 0.012, 0.012, 0.012],
+        }
+    )
+    risk_flags = pd.Series(
+        [[], ["thin_liquidity"], [], [], [], []],
+        index=scored.index,
+    )
+
+    mask = _select_report_candidate_mask(
+        scored,
+        model_spec_id=D5_PRACTICAL_V2_MODEL_SPEC_ID,
+        target_variant="practical_excess_return_v2",
+        horizon=5,
+        risk_flags=risk_flags,
+    )
+
+    assert scored.loc[mask, "symbol"].tolist() == ["A", "D", "E"]
 
 
 def test_non_topk_report_candidate_mask_requires_eligibility_and_rank_threshold():
