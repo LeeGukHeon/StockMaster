@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 
 from app.labels.forward_returns import LABEL_VERSION, build_forward_labels
-from app.ml.dataset import _load_dataset_frame
+from app.ml.dataset import _load_dataset_frame, _resolve_missing_label_dates
 from app.storage.duckdb import duckdb_connection
 from tests._ticket003_support import build_test_settings, seed_ticket003_data
 
@@ -455,3 +455,46 @@ def test_training_dataset_can_read_external_forward_label_parquet(tmp_path, monk
 
     assert dataset["target_h5"].iloc[0] == pytest.approx(0.01)
     assert dataset["target_practical_excess_v2_h5"].iloc[0] > 0.0
+
+
+def test_external_forward_label_parquet_disables_online_missing_label_rebuild(
+    tmp_path, monkeypatch
+):
+    settings = build_test_settings(tmp_path)
+    seed_ticket003_data(settings)
+    label_path = tmp_path / "external_forward_labels.parquet"
+
+    with duckdb_connection(settings.paths.duckdb_path) as connection:
+        connection.execute(
+            """
+            COPY (
+                SELECT
+                    'external-label-run' AS run_id,
+                    DATE '2026-03-02' AS as_of_date,
+                    '005930' AS symbol,
+                    5 AS horizon,
+                    'KOSPI' AS market,
+                    DATE '2026-03-03' AS entry_date,
+                    DATE '2026-03-09' AS exit_date,
+                    0.01 AS excess_forward_return,
+                    CAST(NULL AS DOUBLE) AS path_excess_return_tp3_sl3_conservative,
+                    0.04 AS path_excess_return_tp5_sl3_conservative,
+                    TRUE AS label_available_flag,
+                    now() AS created_at
+            )
+            TO ? (FORMAT PARQUET)
+            """,
+            [str(label_path)],
+        )
+        monkeypatch.setenv("STOCKMASTER_FORWARD_LABEL_PARQUET", str(label_path))
+        assert (
+            _resolve_missing_label_dates(
+                connection,
+                train_end_date=date(2026, 3, 9),
+                horizons=[1, 5],
+                symbols=None,
+                limit_symbols=None,
+                market="ALL",
+            )
+            == []
+        )

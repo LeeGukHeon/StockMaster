@@ -125,6 +125,18 @@ def _training_label_max_rebuild_days() -> int:
     return max(0, int(raw_value))
 
 
+def _external_forward_label_paths() -> list[str]:
+    label_path = os.environ.get(FORWARD_LABEL_PARQUET_ENV)
+    if not label_path:
+        return []
+    matched_paths = glob(label_path)
+    if not matched_paths:
+        raise RuntimeError(
+            f"{FORWARD_LABEL_PARQUET_ENV} did not match any parquet files: {label_path}"
+        )
+    return matched_paths
+
+
 def _resolve_missing_label_dates(
     connection,
     *,
@@ -142,6 +154,8 @@ def _resolve_missing_label_dates(
         as_of_date=train_end_date,
     )
     if symbol_frame.empty:
+        return []
+    if _external_forward_label_paths():
         return []
 
     trading_days = [
@@ -683,14 +697,9 @@ def _robust_buyable_excess_return_targets(
 
 
 def _register_external_forward_label_view(connection) -> bool:
-    label_path = os.environ.get(FORWARD_LABEL_PARQUET_ENV)
-    if not label_path:
-        return False
-    matched_paths = glob(label_path)
+    matched_paths = _external_forward_label_paths()
     if not matched_paths:
-        raise RuntimeError(
-            f"{FORWARD_LABEL_PARQUET_ENV} did not match any parquet files: {label_path}"
-        )
+        return False
     label_frame = connection.execute(
         """
         SELECT
