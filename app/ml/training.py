@@ -166,6 +166,8 @@ def _metric_rows(
             "corr": None,
             "rank_ic": None,
             "directional_hit_rate": None,
+            "top1_mean_excess_return": None,
+            "top3_mean_excess_return": None,
             "top5_mean_excess_return": None,
             "top10_mean_excess_return": None,
             "top20_mean_excess_return": None,
@@ -182,14 +184,20 @@ def _metric_rows(
         cohort_rank_ics: list[float] = []
 
         if "as_of_date" in pair.columns and pair["as_of_date"].notna().any():
+            cohort_top1_returns: list[float] = []
+            cohort_top3_returns: list[float] = []
             cohort_top5_returns: list[float] = []
             cohort_top10_returns: list[float] = []
             cohort_top20_returns: list[float] = []
             for _, group in pair.dropna(subset=["as_of_date"]).groupby("as_of_date", sort=True):
                 ordered = group.sort_values("predicted", ascending=False)
+                top1 = ordered.head(min(1, len(ordered)))
+                top3 = ordered.head(min(3, len(ordered)))
                 top5 = ordered.head(min(5, len(ordered)))
                 top10 = ordered.head(min(10, len(ordered)))
                 top20 = ordered.head(min(20, len(ordered)))
+                cohort_top1_returns.append(float(top1["actual"].mean()))
+                cohort_top3_returns.append(float(top3["actual"].mean()))
                 cohort_top5_returns.append(float(top5["actual"].mean()))
                 cohort_top10_returns.append(float(top10["actual"].mean()))
                 cohort_top20_returns.append(float(top20["actual"].mean()))
@@ -199,6 +207,12 @@ def _metric_rows(
                     group_rank_ic = group_actual_rank.corr(group_predicted_rank)
                     if not pd.isna(group_rank_ic):
                         cohort_rank_ics.append(float(group_rank_ic))
+            top1_mean_excess_return = (
+                float(np.mean(cohort_top1_returns)) if cohort_top1_returns else None
+            )
+            top3_mean_excess_return = (
+                float(np.mean(cohort_top3_returns)) if cohort_top3_returns else None
+            )
             top5_mean_excess_return = (
                 float(np.mean(cohort_top5_returns)) if cohort_top5_returns else None
             )
@@ -211,9 +225,13 @@ def _metric_rows(
             rank_ic = float(np.mean(cohort_rank_ics)) if cohort_rank_ics else None
         else:
             ordered = pair.sort_values("predicted", ascending=False)
+            top1 = ordered.head(min(1, len(ordered)))
+            top3 = ordered.head(min(3, len(ordered)))
             top5 = ordered.head(min(5, len(ordered)))
             top10 = ordered.head(min(10, len(ordered)))
             top20 = ordered.head(min(20, len(ordered)))
+            top1_mean_excess_return = float(top1["actual"].mean())
+            top3_mean_excess_return = float(top3["actual"].mean())
             top5_mean_excess_return = float(top5["actual"].mean())
             top10_mean_excess_return = float(top10["actual"].mean())
             top20_mean_excess_return = float(top20["actual"].mean())
@@ -228,6 +246,8 @@ def _metric_rows(
             "directional_hit_rate": float(
                 (np.sign(pair["actual"]) == np.sign(pair["predicted"])).mean()
             ),
+            "top1_mean_excess_return": top1_mean_excess_return,
+            "top3_mean_excess_return": top3_mean_excess_return,
             "top5_mean_excess_return": top5_mean_excess_return,
             "top10_mean_excess_return": top10_mean_excess_return,
             "top20_mean_excess_return": top20_mean_excess_return,
@@ -390,7 +410,6 @@ def _normalise_weights(
     elif training_target_variant in {
         "practical_excess_return",
         "practical_excess_return_v2",
-        "practical_path_return_v3",
         "stable_practical_excess_return",
         "robust_buyable_excess_return",
     }:
@@ -398,6 +417,15 @@ def _normalise_weights(
             "top5_mean_excess_return": 6.0,
             "top10_mean_excess_return": 4.0,
             "top20_mean_excess_return": 2.0,
+            "rank_ic": 2.0,
+            "corr": 1.0,
+            "mae": 1.0,
+        }
+    elif training_target_variant == "practical_path_return_v3":
+        metric_weights = {
+            "top1_mean_excess_return": 7.0,
+            "top3_mean_excess_return": 4.0,
+            "top5_mean_excess_return": 2.0,
             "rank_ic": 2.0,
             "corr": 1.0,
             "mae": 1.0,

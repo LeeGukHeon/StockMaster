@@ -118,10 +118,14 @@ def build_live_analysis_payload(
     news_basis: str,
 ) -> dict[str, object]:
     live_row = live_result.frame.iloc[0] if not live_result.frame.empty else None
-    source_precedence = ["live_recalc", "snapshot", "quote"] if live_row is not None else [
-        "snapshot",
-        "quote",
-    ]
+    source_precedence = (
+        ["live_recalc", "snapshot", "quote"]
+        if live_row is not None
+        else [
+            "snapshot",
+            "quote",
+        ]
+    )
     degradation_mode = (
         "none" if live_result.mode == "live" and live_row is not None else str(live_result.mode)
     )
@@ -485,6 +489,18 @@ def _load_validation_metric_row(
         SELECT
             MAX(
                 CASE
+                    WHEN metric_name = 'top1_mean_excess_return'
+                    THEN metric_value
+                END
+            ) AS validation_top1_mean_excess_return,
+            MAX(
+                CASE
+                    WHEN metric_name = 'top3_mean_excess_return'
+                    THEN metric_value
+                END
+            ) AS validation_top3_mean_excess_return,
+            MAX(
+                CASE
                     WHEN metric_name = 'top5_mean_excess_return'
                     THEN metric_value
                 END
@@ -519,6 +535,8 @@ def _load_validation_metric_row(
           AND member_name = 'ensemble'
           AND split_name = 'validation'
           AND metric_name IN (
+              'top1_mean_excess_return',
+              'top3_mean_excess_return',
               'top5_mean_excess_return',
               'top10_mean_excess_return',
               'top20_mean_excess_return',
@@ -530,6 +548,8 @@ def _load_validation_metric_row(
     if row is None:
         return {}
     columns = [
+        "validation_top1_mean_excess_return",
+        "validation_top3_mean_excess_return",
         "validation_top5_mean_excess_return",
         "validation_top10_mean_excess_return",
         "validation_top20_mean_excess_return",
@@ -593,6 +613,18 @@ def compute_live_stock_recommendation(
                             horizon,
                             MAX(
                                 CASE
+                                    WHEN metric_name = 'top1_mean_excess_return'
+                                    THEN metric_value
+                                END
+                            ) AS validation_top1_mean_excess_return,
+                            MAX(
+                                CASE
+                                    WHEN metric_name = 'top3_mean_excess_return'
+                                    THEN metric_value
+                                END
+                            ) AS validation_top3_mean_excess_return,
+                            MAX(
+                                CASE
                                     WHEN metric_name = 'top5_mean_excess_return'
                                     THEN metric_value
                                 END
@@ -625,6 +657,8 @@ def compute_live_stock_recommendation(
                         WHERE member_name = 'ensemble'
                           AND split_name = 'validation'
                           AND metric_name IN (
+                              'top1_mean_excess_return',
+                              'top3_mean_excess_return',
                               'top5_mean_excess_return',
                               'top10_mean_excess_return',
                               'top20_mean_excess_return',
@@ -649,6 +683,8 @@ def compute_live_stock_recommendation(
                         prediction.member_count,
                         prediction.ensemble_weight_json,
                         prediction.source_notes_json,
+                        validation_metrics.validation_top1_mean_excess_return,
+                        validation_metrics.validation_top3_mean_excess_return,
                         validation_metrics.validation_top5_mean_excess_return,
                         validation_metrics.validation_top10_mean_excess_return,
                         validation_metrics.validation_top20_mean_excess_return,
@@ -698,6 +734,8 @@ def compute_live_stock_recommendation(
                                     "member_count",
                                     "ensemble_weight_json",
                                     "source_notes_json",
+                                    "validation_top1_mean_excess_return",
+                                    "validation_top3_mean_excess_return",
                                     "validation_top5_mean_excess_return",
                                     "validation_top10_mean_excess_return",
                                     "validation_top20_mean_excess_return",

@@ -359,11 +359,12 @@ def _resolve_report_candidate_limit(
         "buyable_top5",
         "practical_excess_return",
         "practical_excess_return_v2",
-        "practical_path_return_v3",
         "stable_practical_excess_return",
         "robust_buyable_excess_return",
     }:
         return 5
+    if target_variant == "practical_path_return_v3":
+        return 1
     if model_spec_id == "alpha_topbucket_h1_rolling_120_v1" and int(horizon) == 1:
         return 5
     if target_variant == "top20_weighted":
@@ -448,16 +449,21 @@ def _d5_validation_top5_edge_guard_applies(
 ) -> bool:
     if model_spec_id not in D5_VALIDATION_EDGE_GUARDED_MODEL_SPEC_IDS or int(horizon) != 5:
         return False
-    if "validation_top5_mean_excess_return" not in scored.columns:
+    metric_column = (
+        "validation_top1_mean_excess_return"
+        if model_spec_id == D5_PRACTICAL_V3_MODEL_SPEC_ID
+        else "validation_top5_mean_excess_return"
+    )
+    if metric_column not in scored.columns:
         return False
-    top5_edge = pd.to_numeric(
-        scored["validation_top5_mean_excess_return"],
+    validation_edge = pd.to_numeric(
+        scored[metric_column],
         errors="coerce",
     ).dropna()
-    if top5_edge.empty:
+    if validation_edge.empty:
         return False
     return bool(
-        float(top5_edge.iloc[0]) <= D5_VALIDATION_EDGE_MIN_TOP5_MEAN_EXCESS_RETURN
+        float(validation_edge.iloc[0]) <= D5_VALIDATION_EDGE_MIN_TOP5_MEAN_EXCESS_RETURN
     )
 
 
@@ -1017,6 +1023,12 @@ def _score_selection_engine_v2_frame(
                 ),
                 "raw_preservation_blocker_flag": bool(row["raw_preservation_blocker_flag"]),
                 "training_run_id": row.get("training_run_id"),
+                "validation_top1_mean_excess_return": None
+                if pd.isna(row.get("validation_top1_mean_excess_return"))
+                else float(row.get("validation_top1_mean_excess_return")),
+                "validation_top3_mean_excess_return": None
+                if pd.isna(row.get("validation_top3_mean_excess_return"))
+                else float(row.get("validation_top3_mean_excess_return")),
                 "validation_top5_mean_excess_return": None
                 if pd.isna(row.get("validation_top5_mean_excess_return"))
                 else float(row.get("validation_top5_mean_excess_return")),
@@ -1133,6 +1145,18 @@ def _load_predictions(connection, *, as_of_date: date, horizon: int) -> pd.DataF
                 horizon,
                 MAX(
                     CASE
+                        WHEN metric_name = 'top1_mean_excess_return'
+                        THEN metric_value
+                    END
+                ) AS validation_top1_mean_excess_return,
+                MAX(
+                    CASE
+                        WHEN metric_name = 'top3_mean_excess_return'
+                        THEN metric_value
+                    END
+                ) AS validation_top3_mean_excess_return,
+                MAX(
+                    CASE
                         WHEN metric_name = 'top5_mean_excess_return'
                         THEN metric_value
                     END
@@ -1166,6 +1190,8 @@ def _load_predictions(connection, *, as_of_date: date, horizon: int) -> pd.DataF
               AND split_name = 'validation'
               AND metric_name IN (
                   'top5_mean_excess_return',
+                  'top1_mean_excess_return',
+                  'top3_mean_excess_return',
                   'top10_mean_excess_return',
                   'top20_mean_excess_return',
                   'rank_ic'
@@ -1189,6 +1215,8 @@ def _load_predictions(connection, *, as_of_date: date, horizon: int) -> pd.DataF
             prediction.member_count,
             prediction.ensemble_weight_json,
             prediction.source_notes_json,
+            validation_metrics.validation_top1_mean_excess_return,
+            validation_metrics.validation_top3_mean_excess_return,
             validation_metrics.validation_top5_mean_excess_return,
             validation_metrics.validation_top10_mean_excess_return,
             validation_metrics.validation_top20_mean_excess_return,
