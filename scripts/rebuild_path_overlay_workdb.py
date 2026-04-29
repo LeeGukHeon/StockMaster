@@ -129,12 +129,15 @@ def _prepare_work_db(
                 horizons=horizons,
             )
             connection.execute(
-                "CREATE TABLE dim_trading_calendar AS SELECT * FROM source_db.dim_trading_calendar"
+                "CREATE OR REPLACE TABLE dim_trading_calendar AS "
+                "SELECT * FROM source_db.dim_trading_calendar"
             )
-            connection.execute("CREATE TABLE dim_symbol AS SELECT * FROM source_db.dim_symbol")
+            connection.execute(
+                "CREATE OR REPLACE TABLE dim_symbol AS SELECT * FROM source_db.dim_symbol"
+            )
             connection.execute(
                 """
-                CREATE TABLE fact_daily_ohlcv AS
+                CREATE OR REPLACE TABLE fact_daily_ohlcv AS
                 SELECT *
                 FROM source_db.fact_daily_ohlcv
                 WHERE trading_date BETWEEN ? AND ?
