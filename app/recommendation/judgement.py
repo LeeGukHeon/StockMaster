@@ -147,6 +147,13 @@ def _selected_d5_judgement(
     path_rank_candidate: bool = False,
 ) -> RecommendationJudgement | None:
     if path_rank_candidate:
+        if expected is not None and expected <= 0:
+            return RecommendationJudgement(
+                label="관찰 우선",
+                summary="경로순위 후보이나 기대수익률 낮음·매수 보류",
+                score_band=score_band_for_value(score),
+                evidence=evidence,
+            )
         return RecommendationJudgement(
             label="매수해볼 가치 있음",
             summary="경로모델 추천권·2~5일 분할 접근",

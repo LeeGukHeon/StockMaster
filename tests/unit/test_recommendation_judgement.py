@@ -48,7 +48,7 @@ def test_classify_recommendation_rejects_negative_expected_return() -> None:
     assert judgement.label == "매수 보류"
 
 
-def test_classify_recommendation_allows_selected_cash_path_rank_with_negative_expected() -> None:
+def test_classify_recommendation_downgrades_cash_path_rank_with_negative_expected() -> None:
     judgement = classify_recommendation(
         final_selection_value=80,
         expected_excess_return=-0.001,
@@ -58,8 +58,9 @@ def test_classify_recommendation_allows_selected_cash_path_rank_with_negative_ex
         path_rank_candidate=True,
     )
 
-    assert judgement.label == "매수해볼 가치 있음"
-    assert "경로모델 추천권" in judgement.summary
+    assert judgement.label == "관찰 우선"
+    assert "기대수익률 낮음" in judgement.summary
+    assert "매수 보류" in judgement.summary
 
 
 def test_classify_recommendation_ignores_sparse_bad_band_for_cash_path_rank() -> None:
