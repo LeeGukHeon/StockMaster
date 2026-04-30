@@ -292,14 +292,10 @@ def _load_top_selection_rows(
         for flag in sorted(BUYABILITY_BLOCKING_RISK_FLAGS)
     )
     score_floor_filter = "          AND ranking.final_selection_value >= ?\n"
-    expected_floor = (
-        0.0
-        if is_d5_candidate_surface
-        else 0.0
-    )
+    expected_floor = -1.0 if is_d5_candidate_surface else 0.0
     priority_floor_filter = ""
     order_expression = (
-        """
+        f"""
             CASE
                 WHEN ranking.d5_selection_rank = 1
                  AND NOT COALESCE(prediction.fallback_flag, FALSE)
@@ -317,7 +313,11 @@ def _load_top_selection_rows(
                  )
                  AND COALESCE(prediction.uncertainty_score, 100.0) < 75.0
                  AND COALESCE(prediction.disagreement_score, 100.0) < 75.0
-                 AND COALESCE(prediction.expected_excess_return, 0.0) > 0.005
+                 AND (
+                    COALESCE(prediction.expected_excess_return, 0.0) > 0.005
+                    OR COALESCE(active_models.model_spec_id, prediction.model_spec_id)
+                        = '{D5_PRACTICAL_V3_MODEL_SPEC_ID}'
+                 )
                     THEN 0
                 WHEN ranking.d5_selection_rank BETWEEN 2 AND 6
                  AND COALESCE(prediction.expected_excess_return, 0.0) > 0.005
@@ -338,7 +338,7 @@ def _load_top_selection_rows(
         else "ranking.final_selection_value DESC, ranking.symbol"
     )
     d5_rank_window_filter = (
-        """
+        f"""
           AND ranking.d5_selection_rank BETWEEN 1 AND 10
           AND (
                 ranking.d5_selection_rank <> 1
@@ -358,7 +358,11 @@ def _load_top_selection_rows(
                     )
                     AND COALESCE(prediction.uncertainty_score, 100.0) < 75.0
                     AND COALESCE(prediction.disagreement_score, 100.0) < 75.0
-                    AND COALESCE(prediction.expected_excess_return, 0.0) > 0.005
+                    AND (
+                        COALESCE(prediction.expected_excess_return, 0.0) > 0.005
+                        OR COALESCE(active_models.model_spec_id, prediction.model_spec_id)
+                            = '{D5_PRACTICAL_V3_MODEL_SPEC_ID}'
+                    )
                 )
           )
         """
