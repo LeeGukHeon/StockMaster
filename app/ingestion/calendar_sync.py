@@ -14,6 +14,13 @@ from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from app.storage.manifests import record_run_finish, record_run_start
 
+KOREA_EXCHANGE_FIXED_HOLIDAYS: dict[tuple[int, int], str] = {
+    # 근로자의 날은 법정 공휴일 목록에는 없지만 KRX 정규시장은 휴장한다.
+    # Public-holiday libraries therefore mark it as open unless we layer the
+    # exchange calendar on top of the national holiday calendar.
+    (5, 1): "Labor Day",
+}
+
 
 @dataclass(slots=True)
 class TradingCalendarSyncResult:
@@ -39,6 +46,10 @@ def load_trading_calendar_overrides(path: Path | None) -> pd.DataFrame:
     return frame
 
 
+def _exchange_holiday_name(current_date: date) -> str | None:
+    return KOREA_EXCHANGE_FIXED_HOLIDAYS.get((current_date.month, current_date.day))
+
+
 def build_trading_calendar_frame(
     *,
     start_date: date,
@@ -54,10 +65,14 @@ def build_trading_calendar_frame(
     rows: list[dict[str, object]] = []
     for day in days:
         current_date = day.date()
-        holiday_name = holiday_map.get(current_date)
+        public_holiday_name = holiday_map.get(current_date)
+        exchange_holiday_name = _exchange_holiday_name(current_date)
         is_weekend = day.weekday() >= 5
-        is_public_holiday = holiday_name is not None
-        is_trading_day = not is_weekend and not is_public_holiday
+        is_public_holiday = public_holiday_name is not None
+        is_exchange_holiday = exchange_holiday_name is not None
+        is_trading_day = not is_weekend and not is_public_holiday and not is_exchange_holiday
+        holiday_name = public_holiday_name or exchange_holiday_name
+        source = "krx_holiday" if is_exchange_holiday else "weekend+kr_holidays"
         rows.append(
             {
                 "trading_date": current_date,
@@ -67,7 +82,7 @@ def build_trading_calendar_frame(
                 "is_weekend": is_weekend,
                 "is_public_holiday": is_public_holiday,
                 "holiday_name": holiday_name,
-                "source": "weekend+kr_holidays",
+                "source": source,
                 "source_confidence": "high",
                 "is_override": False,
             }
