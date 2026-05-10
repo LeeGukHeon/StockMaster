@@ -111,9 +111,19 @@ def calculate_valuation_metrics(inputs: ValuationMetricInput) -> dict[str, Metri
         shares = float(inputs.shares_outstanding or 0.0)
         eps = None if inputs.net_income is None else float(inputs.net_income) / shares
         bps = None if inputs.equity is None else float(inputs.equity) / shares
-        metrics["eps"] = _metric("eps", eps, "KRW/share", base_inputs)
-        metrics["bps"] = _metric("bps", bps, "KRW/share", base_inputs)
-        if not _positive(eps):
+        metrics["eps"] = (
+            _unavailable("eps", "KRW/share", "missing_net_income", base_inputs)
+            if inputs.net_income is None
+            else _metric("eps", eps, "KRW/share", base_inputs)
+        )
+        metrics["bps"] = (
+            _unavailable("bps", "KRW/share", "missing_equity", base_inputs)
+            if inputs.equity is None
+            else _metric("bps", bps, "KRW/share", base_inputs)
+        )
+        if inputs.net_income is None:
+            metrics["per"] = _unavailable("per", "multiple", "missing_eps", base_inputs)
+        elif not _positive(eps):
             metrics["per"] = _unavailable("per", "multiple", "negative_or_zero_eps", base_inputs)
         elif not _positive(inputs.basis_close):
             metrics["per"] = _unavailable("per", "multiple", "missing_basis_close", base_inputs)
@@ -121,7 +131,9 @@ def calculate_valuation_metrics(inputs: ValuationMetricInput) -> dict[str, Metri
             metrics["per"] = _metric(
                 "per", float(inputs.basis_close or 0.0) / float(eps), "multiple", base_inputs
             )
-        if not _positive(bps):
+        if inputs.equity is None:
+            metrics["pbr"] = _unavailable("pbr", "multiple", "missing_bps", base_inputs)
+        elif not _positive(bps):
             metrics["pbr"] = _unavailable("pbr", "multiple", "negative_or_zero_bps", base_inputs)
         elif not _positive(inputs.basis_close):
             metrics["pbr"] = _unavailable("pbr", "multiple", "missing_basis_close", base_inputs)
@@ -157,41 +169,58 @@ def calculate_valuation_metrics(inputs: ValuationMetricInput) -> dict[str, Metri
             base_inputs,
         )
     else:
-        net_margin = (
-            None
+        metrics["net_margin"] = (
+            _unavailable("net_margin", "percent", "missing_net_income", base_inputs)
             if inputs.net_income is None
-            else float(inputs.net_income) / float(inputs.revenue) * 100.0
+            else _metric(
+                "net_margin",
+                float(inputs.net_income) / float(inputs.revenue) * 100.0,
+                "percent",
+                base_inputs,
+            )
         )
-        metrics["net_margin"] = _metric("net_margin", net_margin, "percent", base_inputs)
 
-    metrics["roe"] = (
-        _metric(
+    if not _positive(inputs.equity):
+        metrics["roe"] = _unavailable("roe", "percent", "missing_or_zero_equity", base_inputs)
+    elif inputs.net_income is None:
+        metrics["roe"] = _unavailable("roe", "percent", "missing_net_income", base_inputs)
+    else:
+        metrics["roe"] = _metric(
             "roe",
-            float(inputs.net_income or 0.0) / float(inputs.equity or 0.0) * 100.0,
+            float(inputs.net_income) / float(inputs.equity or 0.0) * 100.0,
             "percent",
             base_inputs,
         )
-        if _positive(inputs.equity) and inputs.net_income is not None
-        else _unavailable("roe", "percent", "missing_or_zero_equity", base_inputs)
-    )
-    metrics["operating_margin"] = (
-        _metric(
+
+    if not _positive(inputs.revenue):
+        metrics["operating_margin"] = _unavailable(
+            "operating_margin", "percent", "missing_or_zero_revenue", base_inputs
+        )
+    elif inputs.operating_income is None:
+        metrics["operating_margin"] = _unavailable(
+            "operating_margin", "percent", "missing_operating_income", base_inputs
+        )
+    else:
+        metrics["operating_margin"] = _metric(
             "operating_margin",
-            float(inputs.operating_income or 0.0) / float(inputs.revenue or 0.0) * 100.0,
+            float(inputs.operating_income) / float(inputs.revenue or 0.0) * 100.0,
             "percent",
             base_inputs,
         )
-        if _positive(inputs.revenue) and inputs.operating_income is not None
-        else _unavailable("operating_margin", "percent", "missing_or_zero_revenue", base_inputs)
-    )
-    metrics["debt_ratio"] = (
-        _metric(
+
+    if not _positive(inputs.equity):
+        metrics["debt_ratio"] = _unavailable(
+            "debt_ratio", "percent", "missing_or_zero_equity", base_inputs
+        )
+    elif inputs.liabilities is None:
+        metrics["debt_ratio"] = _unavailable(
+            "debt_ratio", "percent", "missing_liabilities", base_inputs
+        )
+    else:
+        metrics["debt_ratio"] = _metric(
             "debt_ratio",
-            float(inputs.liabilities or 0.0) / float(inputs.equity or 0.0) * 100.0,
+            float(inputs.liabilities) / float(inputs.equity or 0.0) * 100.0,
             "percent",
             base_inputs,
         )
-        if _positive(inputs.equity) and inputs.liabilities is not None
-        else _unavailable("debt_ratio", "percent", "missing_or_zero_equity", base_inputs)
-    )
     return metrics

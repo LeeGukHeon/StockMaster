@@ -61,6 +61,31 @@ def test_pbr_unavailable_when_bps_non_positive() -> None:
     assert metrics["pbr"].reason == "negative_or_zero_bps"
 
 
+def test_missing_disclosure_ingredients_are_not_marked_internal_calculations() -> None:
+    metrics = calculate_valuation_metrics(_inputs(net_income=None, equity=None))
+
+    assert not metrics["eps"].available
+    assert metrics["eps"].source_type == "unavailable"
+    assert metrics["eps"].reason == "missing_net_income"
+    assert not metrics["bps"].available
+    assert metrics["bps"].source_type == "unavailable"
+    assert metrics["bps"].reason == "missing_equity"
+    assert metrics["per"].reason == "missing_eps"
+    assert metrics["pbr"].reason == "missing_bps"
+
+
+def test_quality_metrics_explain_missing_component_not_internal_nulls() -> None:
+    metrics = calculate_valuation_metrics(
+        _inputs(net_income=None, operating_income=None, liabilities=None)
+    )
+
+    assert metrics["net_margin"].source_type == "unavailable"
+    assert metrics["net_margin"].reason == "missing_net_income"
+    assert metrics["roe"].reason == "missing_net_income"
+    assert metrics["operating_margin"].reason == "missing_operating_income"
+    assert metrics["debt_ratio"].reason == "missing_liabilities"
+
+
 def test_no_core_computation_when_shares_missing_or_currency_unknown() -> None:
     no_shares = calculate_valuation_metrics(_inputs(shares_outstanding=0.0))
     unknown_currency = calculate_valuation_metrics(_inputs(currency=None))
