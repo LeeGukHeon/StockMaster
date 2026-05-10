@@ -136,6 +136,8 @@ def materialize_fundamentals_row(
         "revenue": revenue,
         "operating_income": operating_income,
         "net_income": net_income,
+        "equity": equity,
+        "liabilities": liabilities,
         "roe": _safe_ratio(net_income, equity),
         "debt_ratio": _safe_ratio(liabilities, equity),
         "operating_margin": _safe_ratio(operating_income, revenue),

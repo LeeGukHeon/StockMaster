@@ -51,7 +51,13 @@ BOT_PICK_LIMIT = 20
 BOT_D5_CORE_PICK_LIMIT = 5
 BOT_D5_MAX_PICKS_PER_SECTOR = 2
 BOT_WEEKLY_LIMIT = 4
-BOT_SNAPSHOT_TYPES = ("status", "next_picks", "weekly_report", "stock_summary")
+BOT_SNAPSHOT_TYPES = (
+    "status",
+    "next_picks",
+    "weekly_report",
+    "stock_summary",
+    "stock_valuation",
+)
 
 
 def _is_d5_cash_path_model(value: object) -> bool:
@@ -81,6 +87,12 @@ def _format_number(value: object, *, decimals: int = 1) -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return "-"
     return f"{float(value):,.{decimals}f}"
+
+
+def _format_metric_value(value: object, *, decimals: int = 2, suffix: str = "") -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "-"
+    return f"{float(value):,.{decimals}f}{suffix}"
 
 
 def _parse_json_list(value: object, mapping: dict[str, str]) -> list[str]:
@@ -306,9 +318,8 @@ def _build_pick_rows(
             raw_risks = _parse_raw_json_list(getattr(row, "risks", "[]"))
         reasons = _parse_json_list(getattr(row, "reasons", "[]"), REASON_LABELS)[:2]
         risks = _parse_json_list(getattr(row, "risks", "[]"), RISK_LABELS)[:2]
-        path_rank_candidate = (
-            is_d5_candidate_surface
-            and _is_d5_cash_path_model(getattr(row, "model_spec_id", None))
+        path_rank_candidate = is_d5_candidate_surface and _is_d5_cash_path_model(
+            getattr(row, "model_spec_id", None)
         )
         judgement = classify_recommendation(
             final_selection_value=getattr(row, "final_selection_value", None),
@@ -537,9 +548,11 @@ def _build_stock_summary_rows(
 ) -> list[dict[str, object]]:
     if summary_frame.empty:
         return []
-    live_by_symbol = {
-        str(row.symbol): row for row in live_frame.itertuples(index=False)
-    } if not live_frame.empty else {}
+    live_by_symbol = (
+        {str(row.symbol): row for row in live_frame.itertuples(index=False)}
+        if not live_frame.empty
+        else {}
+    )
     d5_display_rank_by_symbol = _d5_display_rank_by_symbol(
         summary_frame=summary_frame,
         live_frame=live_frame,
@@ -681,6 +694,186 @@ def _build_stock_summary_rows(
     return rows
 
 
+def _valuation_snapshot_frame(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    as_of_date: date | None,
+) -> pd.DataFrame:
+    as_of_filter = "WHERE label.as_of_date <= ?" if as_of_date is not None else ""
+    params: list[object] = [as_of_date] if as_of_date is not None else []
+    label_frame = connection.execute(
+        f"""
+        SELECT
+            label.*,
+            symbol.company_name,
+            symbol.market,
+            symbol.sector,
+            symbol.industry,
+            ingredient.basis_date,
+            ingredient.basis_close,
+            ingredient.revenue,
+            ingredient.operating_income,
+            ingredient.net_income,
+            ingredient.equity,
+            ingredient.liabilities,
+            ingredient.shares_outstanding,
+            ingredient.denominator_basis,
+            ingredient.selected_share_class,
+            ingredient.source_lineage_json AS ingredient_source_lineage_json,
+            ingredient.reason_codes_json AS share_reason_codes_json,
+            baseline.group_type,
+            baseline.group_value,
+            baseline.peer_count,
+            baseline.valid_pbr_count,
+            baseline.valid_per_count,
+            baseline.pbr_coverage,
+            baseline.per_coverage,
+            baseline.median_pbr,
+            baseline.median_per,
+            baseline.pbr_percentile,
+            baseline.per_percentile,
+            baseline.filter_note,
+            baseline.reason_codes_json AS baseline_reason_codes_json
+        FROM fact_valuation_label_snapshot AS label
+        LEFT JOIN dim_symbol AS symbol
+          ON symbol.symbol = label.symbol
+        LEFT JOIN fact_valuation_source_ingredient AS ingredient
+          ON ingredient.as_of_date = label.as_of_date
+         AND ingredient.symbol = label.symbol
+        LEFT JOIN fact_sector_valuation_baseline AS baseline
+          ON baseline.as_of_date = label.as_of_date
+         AND baseline.symbol = label.symbol
+        {as_of_filter}
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY label.symbol
+            ORDER BY label.as_of_date DESC, label.created_at DESC
+        ) = 1
+        """,
+        params,
+    ).fetchdf()
+    if label_frame.empty:
+        return label_frame
+
+    metric_filter = "WHERE as_of_date <= ?" if as_of_date is not None else ""
+    metric_frame = connection.execute(
+        f"""
+        SELECT *
+        FROM fact_valuation_metric_snapshot
+        {metric_filter}
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY symbol, metric_name
+            ORDER BY as_of_date DESC, created_at DESC
+        ) = 1
+        """,
+        params,
+    ).fetchdf()
+    metrics_by_symbol: dict[str, dict[str, object]] = {}
+    if not metric_frame.empty:
+        for metric in metric_frame.itertuples(index=False):
+            symbol = str(metric.symbol).zfill(6)
+            metrics_by_symbol.setdefault(symbol, {})[str(metric.metric_name)] = {
+                "value": metric.metric_value,
+                "unit": metric.metric_unit,
+                "source_type": metric.source_type,
+                "reason": metric.reason,
+                "formula_version": metric.formula_version,
+            }
+    label_frame["metrics_payload"] = (
+        label_frame["symbol"]
+        .astype(str)
+        .str.zfill(6)
+        .map(lambda symbol: metrics_by_symbol.get(symbol, {}))
+    )
+    return label_frame
+
+
+def _build_stock_valuation_rows(
+    frame: pd.DataFrame,
+    *,
+    built_at: str,
+    as_of_date: str | None,
+    source_run_id: str,
+) -> list[dict[str, object]]:
+    if frame.empty:
+        return []
+    rows: list[dict[str, object]] = []
+    for item in frame.itertuples(index=False):
+        symbol = _safe_text(getattr(item, "symbol", None))
+        metrics = getattr(item, "metrics_payload", {}) or {}
+        per = metrics.get("per", {}).get("value") if isinstance(metrics, dict) else None
+        pbr = metrics.get("pbr", {}).get("value") if isinstance(metrics, dict) else None
+        label = _safe_text(getattr(item, "valuation_label", None), fallback="판단 보류")
+        confidence_pass = bool(getattr(item, "confidence_pass", False))
+        hard_gate_reasons = _parse_raw_json_list(getattr(item, "hard_gate_reasons_json", "[]"))
+        summary_parts = [
+            label,
+            f"PER {_format_metric_value(per, suffix='배')}",
+            f"PBR {_format_metric_value(pbr, suffix='배')}",
+            f"Peer {int(getattr(item, 'peer_count', 0) or 0)}개",
+            "신뢰 통과" if confidence_pass else "판단 보류",
+        ]
+        if hard_gate_reasons:
+            summary_parts.append(f"보류사유 {', '.join(hard_gate_reasons[:3])}")
+        payload = {
+            "valuation_label": label,
+            "confidence_pass": confidence_pass,
+            "hard_gate_reasons": hard_gate_reasons,
+            "annotations": _parse_raw_json_list(getattr(item, "annotations_json", "[]")),
+            "metrics": metrics,
+            "sector": _safe_text(getattr(item, "sector", None)),
+            "industry": _safe_text(getattr(item, "industry", None)),
+            "basis_date": _safe_text(getattr(item, "basis_date", None)),
+            "basis_close": getattr(item, "basis_close", None),
+            "peer": {
+                "group_type": _safe_text(getattr(item, "group_type", None)),
+                "group_value": _safe_text(getattr(item, "group_value", None)),
+                "peer_count": getattr(item, "peer_count", None),
+                "valid_pbr_count": getattr(item, "valid_pbr_count", None),
+                "valid_per_count": getattr(item, "valid_per_count", None),
+                "pbr_coverage": getattr(item, "pbr_coverage", None),
+                "per_coverage": getattr(item, "per_coverage", None),
+                "median_pbr": getattr(item, "median_pbr", None),
+                "median_per": getattr(item, "median_per", None),
+                "pbr_percentile": getattr(item, "pbr_percentile", None),
+                "per_percentile": getattr(item, "per_percentile", None),
+                "filter_note": _safe_text(getattr(item, "filter_note", None)),
+                "reason_codes": _parse_raw_json_list(
+                    getattr(item, "baseline_reason_codes_json", "[]")
+                ),
+            },
+            "financial_quality": {
+                "revenue": getattr(item, "revenue", None),
+                "operating_income": getattr(item, "operating_income", None),
+                "net_income": getattr(item, "net_income", None),
+                "equity": getattr(item, "equity", None),
+                "liabilities": getattr(item, "liabilities", None),
+            },
+            "source_lineage": _parse_raw_json_dict(
+                getattr(item, "ingredient_source_lineage_json", "{}")
+            ),
+            "share_reason_codes": _parse_raw_json_list(
+                getattr(item, "share_reason_codes_json", "[]")
+            ),
+        }
+        rows.append(
+            _snapshot_row(
+                snapshot_type="stock_valuation",
+                snapshot_key=symbol,
+                built_at=built_at,
+                as_of_date=as_of_date or _safe_text(getattr(item, "as_of_date", None)),
+                symbol=symbol,
+                company_name=_safe_text(getattr(item, "company_name", None)),
+                market=_safe_text(getattr(item, "market", None)),
+                title=f"{symbol} {_safe_text(getattr(item, 'company_name', None))}",
+                subtitle="가치평가",
+                summary=" · ".join(summary_parts),
+                payload=payload,
+                source_run_id=source_run_id,
+            )
+        )
+    return rows
+
+
 def _d5_display_rank_by_symbol(
     *,
     summary_frame: pd.DataFrame,
@@ -701,9 +894,7 @@ def _d5_display_rank_by_symbol(
     working["final_selection_value"] = pd.to_numeric(
         working["live_d5_selection_v2_value"], errors="coerce"
     )
-    working["d5_selection_rank"] = pd.to_numeric(
-        working["live_d5_selection_rank"], errors="coerce"
-    )
+    working["d5_selection_rank"] = pd.to_numeric(working["live_d5_selection_rank"], errors="coerce")
     working["buyability_priority_score"] = working.apply(
         lambda row: buyability_priority_score(
             expected_excess_return=row.get("live_d5_expected_excess_return"),
@@ -726,9 +917,7 @@ def _d5_display_rank_by_symbol(
     cash_path_surface = (
         "live_d5_model_spec_id" in working.columns
         and working["live_d5_model_spec_id"].dropna().astype(str).nunique() == 1
-        and _is_d5_cash_path_model(
-            working["live_d5_model_spec_id"].dropna().astype(str).iloc[0]
-        )
+        and _is_d5_cash_path_model(working["live_d5_model_spec_id"].dropna().astype(str).iloc[0])
     )
     if "live_d5_explanatory_score_json" in working.columns:
         validation_guard_applied = working["live_d5_explanatory_score_json"].apply(
@@ -840,6 +1029,7 @@ def materialize_discord_bot_read_store(
         connection,
         ranking_as_of_date=ranking_as_of_date,
     )
+    valuation_frame = _valuation_snapshot_frame(connection, as_of_date=target_as_of_date)
     alpha_promotion = load_alpha_promotion_summary(connection, as_of_date=target_as_of_date)
     evaluation_summary = latest_evaluation_summary_frame(connection)
     policy_eval = latest_intraday_policy_evaluation_frame(connection)
@@ -883,6 +1073,14 @@ def materialize_discord_bot_read_store(
             as_of_date=target_as_of_date_text,
             source_run_id=job_run_id,
             score_evidence=score_evidence_by_horizon.get(5),
+        )
+    )
+    rows.extend(
+        _build_stock_valuation_rows(
+            valuation_frame,
+            built_at=built_at_text,
+            as_of_date=target_as_of_date_text,
+            source_run_id=job_run_id,
         )
     )
 

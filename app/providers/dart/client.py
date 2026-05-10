@@ -9,7 +9,9 @@ from .corp_codes import CorpCodesSnapshot, DartCorpCodeClient
 from .financials import (
     DartDisclosureSnapshot,
     DartFinancialClient,
+    DartFinancialIndicatorSnapshot,
     DartFinancialStatementSnapshot,
+    DartStockTotalStatusSnapshot,
 )
 
 
@@ -88,4 +90,32 @@ class DartProvider(BaseProvider):
             bsns_year=bsns_year,
             reprt_code=reprt_code,
             fs_div=fs_div,
+        )
+
+    def fetch_financial_indicator(
+        self,
+        *,
+        corp_code: str,
+        bsns_year: int,
+        reprt_code: str,
+        idx_cl_code: str,
+    ) -> DartFinancialIndicatorSnapshot:
+        return self.financials.fetch_financial_indicator(
+            corp_code=corp_code,
+            bsns_year=bsns_year,
+            reprt_code=reprt_code,
+            idx_cl_code=idx_cl_code,
+        )
+
+    def fetch_stock_total_status(
+        self,
+        *,
+        corp_code: str,
+        bsns_year: int,
+        reprt_code: str,
+    ) -> DartStockTotalStatusSnapshot:
+        return self.financials.fetch_stock_total_status(
+            corp_code=corp_code,
+            bsns_year=bsns_year,
+            reprt_code=reprt_code,
         )

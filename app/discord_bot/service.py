@@ -8,6 +8,7 @@ from app.discord_bot.read_store import (
     fetch_active_job_runs,
     fetch_discord_bot_snapshot_rows,
 )
+from app.discord_bot.valuation_analysis import render_stock_valuation
 from app.logging import get_logger
 from app.settings import Settings
 
@@ -211,7 +212,9 @@ def build_discord_bot(settings: Settings):
         active_jobs = fetch_active_job_runs(settings, limit=5)
         await interaction.followup.send(_render_status(rows, active_jobs=active_jobs))
 
-    @client.tree.command(name="내일종목추천", description="다음 거래일 기준 상위 후보를 보여줍니다.")
+    @client.tree.command(
+        name="내일종목추천", description="다음 거래일 기준 상위 후보를 보여줍니다."
+    )
     @app_commands.rename(basis="보유기준", count="개수")
     @app_commands.describe(
         basis="1은 하루 보유 기준, 5는 5거래일 보유 기준입니다.",
@@ -257,7 +260,9 @@ def build_discord_bot(settings: Settings):
         )
         await interaction.followup.send(message)
 
-    @client.tree.command(name="종목요약", description="종목명 또는 6자리 코드로 최신 요약을 보여줍니다.")
+    @client.tree.command(
+        name="종목요약", description="종목명 또는 6자리 코드로 최신 요약을 보여줍니다."
+    )
     @app_commands.rename(query="종목")
     @app_commands.describe(query="종목명 또는 6자리 종목코드를 입력하세요.")
     async def stock_summary(interaction: discord.Interaction, query: str) -> None:
@@ -279,6 +284,17 @@ def build_discord_bot(settings: Settings):
     async def live_stock_summary(interaction: discord.Interaction, query: str) -> None:
         await interaction.response.defer(thinking=True)
         message = render_live_stock_analysis(settings, query=query)
+        await interaction.followup.send(message)
+
+    @client.tree.command(
+        name="가치평가",
+        description="공시 기반 PER/PBR과 동종 섹터 비교 가치평가를 보여줍니다.",
+    )
+    @app_commands.rename(query="종목")
+    @app_commands.describe(query="종목명 또는 6자리 종목코드를 입력하세요.")
+    async def stock_valuation(interaction: discord.Interaction, query: str) -> None:
+        await interaction.response.defer(thinking=True)
+        message = render_stock_valuation(settings, query=query)
         await interaction.followup.send(message)
 
     return client

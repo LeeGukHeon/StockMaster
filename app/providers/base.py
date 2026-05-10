@@ -98,6 +98,18 @@ _PROVIDER_REQUEST_POLICIES: dict[str, dict[str, ProviderRequestPolicy]] = {
             retry_delay_seconds=1.5,
             transport_retry_delay_seconds=2.0,
         ),
+        "/api/fnlttSinglIndx.json": ProviderRequestPolicy(
+            min_interval_seconds=0.9,
+            retries=5,
+            retry_delay_seconds=1.5,
+            transport_retry_delay_seconds=2.0,
+        ),
+        "/api/stockTotqySttus.json": ProviderRequestPolicy(
+            min_interval_seconds=0.9,
+            retries=5,
+            retry_delay_seconds=1.5,
+            transport_retry_delay_seconds=2.0,
+        ),
     },
     "naver_news": {
         "__default__": ProviderRequestPolicy(

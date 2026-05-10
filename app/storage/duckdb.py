@@ -112,6 +112,8 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         revenue DOUBLE,
         operating_income DOUBLE,
         net_income DOUBLE,
+        equity DOUBLE,
+        liabilities DOUBLE,
         roe DOUBLE,
         debt_ratio DOUBLE,
         operating_margin DOUBLE,
@@ -124,6 +126,84 @@ CORE_TABLE_DDL: tuple[str, ...] = (
         accounting_standard VARCHAR,
         source_notes_json VARCHAR,
         ingested_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, symbol)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_valuation_source_ingredient (
+        as_of_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        fiscal_year INTEGER,
+        report_code VARCHAR,
+        statement_basis VARCHAR,
+        source_doc_id VARCHAR,
+        disclosed_at TIMESTAMPTZ,
+        basis_date DATE,
+        basis_close DOUBLE,
+        revenue DOUBLE,
+        operating_income DOUBLE,
+        net_income DOUBLE,
+        equity DOUBLE,
+        liabilities DOUBLE,
+        shares_outstanding DOUBLE,
+        denominator_basis VARCHAR,
+        selected_share_class VARCHAR,
+        istc_totqy DOUBLE,
+        tesstk_co DOUBLE,
+        distb_stock_co DOUBLE,
+        share_stlm_dt VARCHAR,
+        source_lineage_json VARCHAR,
+        reason_codes_json VARCHAR,
+        ingested_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, symbol)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_valuation_metric_snapshot (
+        as_of_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        metric_name VARCHAR NOT NULL,
+        metric_value DOUBLE,
+        metric_unit VARCHAR,
+        source_type VARCHAR,
+        formula_version VARCHAR,
+        reason VARCHAR,
+        formula_inputs_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, symbol, metric_name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_sector_valuation_baseline (
+        as_of_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        group_type VARCHAR,
+        group_value VARCHAR,
+        peer_count INTEGER,
+        valid_pbr_count INTEGER,
+        valid_per_count INTEGER,
+        pbr_coverage DOUBLE,
+        per_coverage DOUBLE,
+        median_pbr DOUBLE,
+        median_per DOUBLE,
+        pbr_percentile DOUBLE,
+        per_percentile DOUBLE,
+        filter_note VARCHAR,
+        reason_codes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (as_of_date, symbol)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fact_valuation_label_snapshot (
+        as_of_date DATE NOT NULL,
+        symbol VARCHAR NOT NULL,
+        valuation_label VARCHAR NOT NULL,
+        confidence_pass BOOLEAN NOT NULL,
+        hard_gate_reasons_json VARCHAR,
+        annotations_json VARCHAR,
+        source_notes_json VARCHAR,
+        created_at TIMESTAMPTZ NOT NULL,
         PRIMARY KEY (as_of_date, symbol)
     )
     """,
@@ -2066,6 +2146,11 @@ SYMBOL_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE dim_symbol ADD COLUMN IF NOT EXISTS as_of_date DATE",
 )
 
+FUNDAMENTALS_COLUMN_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE fact_fundamentals_snapshot ADD COLUMN IF NOT EXISTS equity DOUBLE",
+    "ALTER TABLE fact_fundamentals_snapshot ADD COLUMN IF NOT EXISTS liabilities DOUBLE",
+)
+
 CALENDAR_COLUMN_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS weekday INTEGER",
     "ALTER TABLE dim_trading_calendar ADD COLUMN IF NOT EXISTS is_weekend BOOLEAN",
@@ -2331,6 +2416,33 @@ CORE_VIEW_DDL: tuple[str, ...] = (
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY symbol
         ORDER BY as_of_date DESC, disclosed_at DESC NULLS LAST, ingested_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_valuation_metric_snapshot AS
+    SELECT *
+    FROM fact_valuation_metric_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol, metric_name
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_valuation_label_snapshot AS
+    SELECT *
+    FROM fact_valuation_label_snapshot
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol
+        ORDER BY as_of_date DESC, created_at DESC
+    ) = 1
+    """,
+    """
+    CREATE OR REPLACE VIEW vw_latest_sector_valuation_baseline AS
+    SELECT *
+    FROM fact_sector_valuation_baseline
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY symbol
+        ORDER BY as_of_date DESC, created_at DESC
     ) = 1
     """,
     """
@@ -3492,6 +3604,9 @@ def bootstrap_core_tables(connection: duckdb.DuckDBPyConnection) -> None:
             connection.execute(ddl)
 
         for ddl in SYMBOL_COLUMN_MIGRATIONS:
+            connection.execute(ddl)
+
+        for ddl in FUNDAMENTALS_COLUMN_MIGRATIONS:
             connection.execute(ddl)
 
         for ddl in CALENDAR_COLUMN_MIGRATIONS:

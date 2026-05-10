@@ -34,6 +34,18 @@ class DartFinancialStatementSnapshot:
     payload: dict[str, Any]
 
 
+@dataclass(slots=True)
+class DartFinancialIndicatorSnapshot:
+    frame: pd.DataFrame
+    payload: dict[str, Any]
+
+
+@dataclass(slots=True)
+class DartStockTotalStatusSnapshot:
+    frame: pd.DataFrame
+    payload: dict[str, Any]
+
+
 def parse_regular_report_metadata(report_name: str) -> dict[str, object] | None:
     normalized = _PREFIX_RE.sub("", report_name or "").strip()
     base_name = normalized.split("(")[0].strip()
@@ -161,3 +173,71 @@ class DartFinancialClient:
 
         frame = pd.DataFrame(payload.get("list", []))
         return DartFinancialStatementSnapshot(frame=frame, payload=payload)
+
+    def fetch_financial_indicator(
+        self,
+        *,
+        corp_code: str,
+        bsns_year: int,
+        reprt_code: str,
+        idx_cl_code: str,
+    ) -> DartFinancialIndicatorSnapshot:
+        endpoint = "/api/fnlttSinglIndx.json"
+        response = request_with_retries(
+            client=self.client,
+            provider_name="dart",
+            logger=self.logger,
+            method="GET",
+            url=f"{self.base_url}{endpoint}",
+            endpoint_label=endpoint,
+            params={
+                "crtfc_key": self._api_key(),
+                "corp_code": corp_code,
+                "bsns_year": str(bsns_year),
+                "reprt_code": reprt_code,
+                "idx_cl_code": idx_cl_code,
+            },
+        )
+        payload = response.json()
+        status = payload.get("status")
+        if status == "013":
+            return DartFinancialIndicatorSnapshot(frame=pd.DataFrame(), payload=payload)
+        if status != "000":
+            detail = payload.get("message") or payload.get("status") or "Unknown DART API error."
+            raise ProviderRequestError("dart", endpoint, str(detail))
+
+        frame = pd.DataFrame(payload.get("list", []))
+        return DartFinancialIndicatorSnapshot(frame=frame, payload=payload)
+
+    def fetch_stock_total_status(
+        self,
+        *,
+        corp_code: str,
+        bsns_year: int,
+        reprt_code: str,
+    ) -> DartStockTotalStatusSnapshot:
+        endpoint = "/api/stockTotqySttus.json"
+        response = request_with_retries(
+            client=self.client,
+            provider_name="dart",
+            logger=self.logger,
+            method="GET",
+            url=f"{self.base_url}{endpoint}",
+            endpoint_label=endpoint,
+            params={
+                "crtfc_key": self._api_key(),
+                "corp_code": corp_code,
+                "bsns_year": str(bsns_year),
+                "reprt_code": reprt_code,
+            },
+        )
+        payload = response.json()
+        status = payload.get("status")
+        if status == "013":
+            return DartStockTotalStatusSnapshot(frame=pd.DataFrame(), payload=payload)
+        if status != "000":
+            detail = payload.get("message") or payload.get("status") or "Unknown DART API error."
+            raise ProviderRequestError("dart", endpoint, str(detail))
+
+        frame = pd.DataFrame(payload.get("list", []))
+        return DartStockTotalStatusSnapshot(frame=frame, payload=payload)
