@@ -311,7 +311,11 @@ def _load_ranking_prediction_frame(
     ).fetchdf()
     symbols_dim = connection.execute(
         """
-        SELECT symbol, company_name, market, COALESCE(sector, '미분류') AS sector
+        SELECT
+            symbol,
+            company_name,
+            market,
+            COALESCE(industry_code, industry, sector_code, sector, '미분류') AS sector
         FROM dim_symbol
         """
     ).fetchdf()

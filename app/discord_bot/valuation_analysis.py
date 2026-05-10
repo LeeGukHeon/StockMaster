@@ -101,17 +101,21 @@ def render_stock_valuation(settings: Settings, *, query: str) -> str:
     if not isinstance(reasons, list):
         reasons = []
     peer = payload.get("peer") if isinstance(payload.get("peer"), dict) else {}
+    industry_group = (
+        payload.get("industry_group") if isinstance(payload.get("industry_group"), dict) else {}
+    )
     quality = (
         payload.get("financial_quality")
         if isinstance(payload.get("financial_quality"), dict)
         else {}
     )
+    display_industry = industry_group.get("label") or payload.get("industry") or "-"
     lines = [
         f"**{row['title']} 가치평가**",
         f"최종 판단: {label}",
         (
             f"기준: {row.get('as_of_date') or '-'} · "
-            f"섹터 {payload.get('sector') or '-'} / 산업 {payload.get('industry') or '-'}"
+            f"업종 {display_industry} / 상위분류 {payload.get('sector') or '-'}"
         ),
         (
             "핵심지표: "

@@ -5,6 +5,7 @@ from datetime import date
 import duckdb
 import pandas as pd
 
+from app.reference.industry_grouping import add_industry_group_columns
 
 GENERIC_OUTLOOK_LABELS = {"미분류", "기술성장기업", "지주/스팩"}
 
@@ -27,6 +28,8 @@ def sector_outlook_frame(
             symbol.company_name,
             symbol.sector,
             symbol.industry,
+            symbol.sector_code,
+            symbol.industry_code,
             ranking.final_selection_value,
             prediction.expected_excess_return
         FROM fact_ranking AS ranking
@@ -54,7 +57,12 @@ def sector_outlook_frame(
     ranked["rank_weight"] = 1.0 / ranked["overall_rank"].astype(float)
     ranked["sector"] = ranked["sector"].replace("", pd.NA)
     ranked["industry"] = ranked["industry"].replace("", pd.NA)
-    ranked["outlook_label"] = ranked["industry"].combine_first(ranked["sector"])
+    ranked = add_industry_group_columns(
+        ranked,
+        key_column="outlook_group_key",
+        label_column="outlook_label",
+        type_column="outlook_group_type",
+    )
     ranked["broad_sector"] = ranked["sector"].combine_first(ranked["industry"])
     ranked = ranked.loc[ranked["outlook_label"].notna()].copy()
     ranked = ranked.loc[~ranked["outlook_label"].isin(GENERIC_OUTLOOK_LABELS)].copy()
@@ -62,7 +70,10 @@ def sector_outlook_frame(
         return pd.DataFrame()
 
     grouped = (
-        ranked.groupby(["selection_date", "outlook_label", "broad_sector"], dropna=False)
+        ranked.groupby(
+            ["selection_date", "outlook_group_key", "outlook_label", "broad_sector"],
+            dropna=False,
+        )
         .agg(
             symbol_count=("symbol", "count"),
             top10_count=("overall_rank", lambda series: int((series <= 10).sum())),

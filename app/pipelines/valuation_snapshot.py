@@ -405,6 +405,8 @@ def materialize_valuation_snapshot(
                         target_symbol=symbol,
                         sector=str(getattr(row, "sector", "") or ""),
                         industry=str(getattr(row, "industry", "") or ""),
+                        sector_code=str(getattr(row, "sector_code", "") or ""),
+                        industry_code=str(getattr(row, "industry_code", "") or ""),
                     )
                     confidence = evaluate_confidence(
                         ConfidenceInput(

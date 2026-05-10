@@ -11,6 +11,7 @@ import pandas as pd
 from app.common.run_context import activate_run_context
 from app.common.time import now_local
 from app.ml.constants import SELECTION_ENGINE_VERSION
+from app.reference.industry_grouping import industry_group_key
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -331,7 +332,7 @@ def _allocate_weights(
         next_remaining: list[dict[str, object]] = []
         for row in remaining_symbols:
             symbol = str(row["symbol"])
-            sector = str(row.get("sector") or "미분류")
+            sector = industry_group_key(row)
             market = str(row.get("market") or "")
             adv20 = float(pd.to_numeric(row.get("adv20_krw"), errors="coerce") or 0.0)
             if adv20 < liquidity_min_adv20_krw:

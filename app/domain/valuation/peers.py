@@ -5,6 +5,8 @@ from typing import Any
 
 import pandas as pd
 
+from app.reference.industry_grouping import add_industry_group_columns, industry_group
+
 UNSUPPORTED_FLAG_COLUMNS = (
     "is_preferred_stock",
     "is_etf",
@@ -96,6 +98,8 @@ def build_sector_valuation_baseline(
     target_symbol: str,
     sector: str | None,
     industry: str | None = None,
+    sector_code: str | None = None,
+    industry_code: str | None = None,
 ) -> PeerBaseline:
     if frame.empty:
         return PeerBaseline(
@@ -119,26 +123,40 @@ def build_sector_valuation_baseline(
     target_rows = working.loc[working["symbol"].astype(str) == str(target_symbol)]
     target_row = target_rows.iloc[0] if not target_rows.empty else None
 
-    group_type = None
-    group_value = None
-    if sector and "sector" in working.columns:
-        peers = working.loc[working["sector"].astype(str) == str(sector)].copy()
-        group_type = "sector"
-        group_value = str(sector)
-    else:
-        peers = pd.DataFrame()
-    peers = (
-        peers.loc[peers["symbol"].astype(str) != str(target_symbol)] if not peers.empty else peers
+    target_group = industry_group(
+        {
+            "industry_code": industry_code
+            if industry_code is not None
+            else target_row.get("industry_code")
+            if target_row is not None
+            else None,
+            "industry": industry
+            if industry is not None
+            else target_row.get("industry")
+            if target_row is not None
+            else None,
+            "sector_code": sector_code
+            if sector_code is not None
+            else target_row.get("sector_code")
+            if target_row is not None
+            else None,
+            "sector": sector
+            if sector is not None
+            else target_row.get("sector")
+            if target_row is not None
+            else None,
+        }
     )
-    if len(peers) < 8 and industry and "industry" in working.columns:
-        industry_peers = working.loc[working["industry"].astype(str) == str(industry)].copy()
-        industry_peers = industry_peers.loc[
-            industry_peers["symbol"].astype(str) != str(target_symbol)
-        ]
-        if len(industry_peers) >= len(peers):
-            peers = industry_peers
-            group_type = "industry"
-            group_value = str(industry)
+    grouped = add_industry_group_columns(
+        working,
+        key_column="_valuation_group_key",
+        label_column="_valuation_group_label",
+        type_column="_valuation_group_type",
+    )
+    peers = grouped.loc[grouped["_valuation_group_key"].astype(str) == target_group.key].copy()
+    peers = peers.loc[peers["symbol"].astype(str) != str(target_symbol)]
+    group_type = target_group.group_type
+    group_value = target_group.label
 
     peer_count = len(peers)
     pbr_values = (

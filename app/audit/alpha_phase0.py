@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, time
 from pathlib import Path
 
 import pandas as pd
@@ -402,7 +402,12 @@ def compute_decomposition_metrics(
             ranking.final_selection_rank_pct,
             prediction.expected_excess_return,
             outcome.realized_excess_return,
-            symbol_meta.sector,
+            COALESCE(
+                symbol_meta.industry_code,
+                symbol_meta.industry,
+                symbol_meta.sector_code,
+                symbol_meta.sector
+            ) AS sector,
             symbol_meta.market,
             feature_pivot.recent_1d_return,
             feature_pivot.recent_3d_return,

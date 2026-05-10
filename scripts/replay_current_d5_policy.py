@@ -29,6 +29,7 @@ from app.recommendation.judgement import (
     classify_recommendation,
     score_band_for_value,
 )
+from app.reference.industry_grouping import industry_group_key
 from app.settings import load_settings
 
 ACTIONABLE_LABELS = {"매수검토", "매수해볼 가치 있음", "적극매수 후보"}
@@ -117,6 +118,8 @@ def _load_matured_rows(
             COALESCE(symbol.market, outcome.market) AS market,
             symbol.sector,
             symbol.industry,
+            symbol.sector_code,
+            symbol.industry_code,
             outcome.horizon,
             outcome.ranking_version,
             outcome.grade,
@@ -328,13 +331,13 @@ def _limit_sector_concentration(
     if frame.empty:
         return frame.copy()
     selected_indices: list[object] = []
-    sector_counts: dict[str, int] = {}
+    group_counts: dict[str, int] = {}
     for index, row in frame.iterrows():
-        sector = str(row.get("sector") or row.get("industry") or "-")
-        if sector_counts.get(sector, 0) >= int(max_per_sector):
+        group = industry_group_key(row)
+        if group_counts.get(group, 0) >= int(max_per_sector):
             continue
         selected_indices.append(index)
-        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        group_counts[group] = group_counts.get(group, 0) + 1
         if len(selected_indices) >= int(limit):
             break
     if len(selected_indices) < int(limit):

@@ -30,6 +30,7 @@ from app.recommendation.judgement import (
     classify_recommendation,
     load_score_band_evidence,
 )
+from app.reference.industry_grouping import industry_group_key
 from app.selection.sector_outlook import sector_outlook_frame
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
@@ -433,6 +434,8 @@ def _load_top_selection_rows(
             symbol.market,
             symbol.sector,
             symbol.industry,
+            symbol.sector_code,
+            symbol.industry_code,
             ranking.final_selection_value,
             ranking.d5_selection_rank,
             ranking.grade,
@@ -489,13 +492,13 @@ def _limit_d5_sector_concentration(frame: pd.DataFrame, *, limit: int) -> pd.Dat
     if frame.empty:
         return frame
     selected_indices: list[object] = []
-    sector_counts: dict[str, int] = {}
+    group_counts: dict[str, int] = {}
     for index, row in frame.iterrows():
-        sector = str(row.get("sector") or row.get("industry") or "-")
-        if sector_counts.get(sector, 0) >= DISCORD_EOD_D5_MAX_CANDIDATES_PER_SECTOR:
+        group = industry_group_key(row)
+        if group_counts.get(group, 0) >= DISCORD_EOD_D5_MAX_CANDIDATES_PER_SECTOR:
             continue
         selected_indices.append(index)
-        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        group_counts[group] = group_counts.get(group, 0) + 1
         if len(selected_indices) >= int(limit):
             break
     if len(selected_indices) < int(limit):
@@ -524,6 +527,8 @@ def _load_official_target_rows(
             target.market,
             symbol_meta.sector,
             symbol_meta.industry,
+            symbol_meta.sector_code,
+            symbol_meta.industry_code,
             target.target_rank,
             target.target_weight,
             target.target_price,

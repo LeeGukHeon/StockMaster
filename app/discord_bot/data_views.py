@@ -108,6 +108,8 @@ def leaderboard_frame(
             symbol.market,
             symbol.sector,
             symbol.industry,
+            symbol.sector_code,
+            symbol.industry_code,
             ranking.horizon,
             ranking.eligible_flag,
             ranking.final_selection_value,

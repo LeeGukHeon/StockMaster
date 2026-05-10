@@ -10,7 +10,9 @@ def _peer_frame(peer_count: int = 8) -> pd.DataFrame:
         {
             "symbol": "000000",
             "sector": "Tech",
+            "sector_code": "S1",
             "industry": "Semi",
+            "industry_code": "I1",
             "per": 9.0,
             "pbr": 0.9,
             "is_common_stock": True,
@@ -21,7 +23,9 @@ def _peer_frame(peer_count: int = 8) -> pd.DataFrame:
             {
                 "symbol": f"000{idx + 1:03d}",
                 "sector": "Tech",
+                "sector_code": "S1",
                 "industry": "Semi",
+                "industry_code": "I1",
                 "per": float(idx + 10),
                 "pbr": float(idx + 1),
                 "is_common_stock": True,
@@ -37,15 +41,18 @@ def _peer_frame(peer_count: int = 8) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_uses_sector_peer_group_and_excludes_target() -> None:
+def test_uses_industry_peer_group_and_excludes_target() -> None:
     baseline = build_sector_valuation_baseline(
         _peer_frame(8),
         target_symbol="000000",
         sector="Tech",
         industry="Semi",
+        sector_code="S1",
+        industry_code="I1",
     )
 
-    assert baseline.group_type == "sector"
+    assert baseline.group_type == "industry"
+    assert baseline.group_value == "Semi"
     assert baseline.peer_count == 8
     assert baseline.valid_pbr_count == 8
     assert baseline.median_pbr == 4.5
@@ -65,6 +72,7 @@ def test_excludes_unsupported_security_rows() -> None:
 def test_falls_back_to_industry_when_sector_is_too_thin() -> None:
     frame = _peer_frame(8)
     frame.loc[5:, "sector"] = "Other"
+    frame.loc[5:, "sector_code"] = "S2"
 
     baseline = build_sector_valuation_baseline(
         frame,
@@ -74,6 +82,21 @@ def test_falls_back_to_industry_when_sector_is_too_thin() -> None:
     )
 
     assert baseline.group_type == "industry"
+    assert baseline.peer_count == 8
+
+
+def test_falls_back_to_sector_when_industry_metadata_is_missing() -> None:
+    frame = _peer_frame(8).drop(columns=["industry", "industry_code"])
+
+    baseline = build_sector_valuation_baseline(
+        frame,
+        target_symbol="000000",
+        sector="Tech",
+        sector_code="S1",
+    )
+
+    assert baseline.group_type == "sector"
+    assert baseline.group_value == "Tech"
     assert baseline.peer_count == 8
 
 

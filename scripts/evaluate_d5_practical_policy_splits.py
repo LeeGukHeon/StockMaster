@@ -27,6 +27,7 @@ from app.recommendation.buyability import (
     BUYABILITY_MIN_PRIORITY_SCORE,
     BUYABILITY_UNCERTAINTY_PENALTY,
 )
+from app.reference.industry_grouping import industry_group_key
 
 HIGH_DISAGREEMENT_FLAG = "model_disagreement_high"
 DEFAULT_TRANSACTION_COST_BPS = 15.0
@@ -297,6 +298,15 @@ def _max_group_concentration(frame: pd.DataFrame, column: str) -> float | None:
     if column not in frame.columns or frame.empty:
         return None
     values = frame[column].fillna("UNKNOWN").astype(str)
+    if values.empty:
+        return None
+    return float(values.value_counts(normalize=True).max())
+
+
+def _max_industry_group_concentration(frame: pd.DataFrame) -> float | None:
+    if frame.empty:
+        return None
+    values = frame.apply(industry_group_key, axis=1)
     if values.empty:
         return None
     return float(values.value_counts(normalize=True).max())
@@ -630,7 +640,7 @@ def _portfolio_by_date(
                     "portfolio_net_excess_return": float(net.mean()),
                     "portfolio_hit_rate": float(net.gt(0.0).mean()),
                     "market_concentration": _max_group_concentration(top, "market"),
-                    "sector_concentration": _max_group_concentration(top, "sector"),
+                    "sector_concentration": _max_industry_group_concentration(top),
                 }
             )
     return pd.DataFrame(rows)

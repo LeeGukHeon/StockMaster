@@ -30,6 +30,7 @@ from app.recommendation.judgement import (
     classify_recommendation,
     load_score_band_evidence,
 )
+from app.reference.industry_grouping import industry_group, industry_group_key
 from app.reports.discord_eod import (
     ALPHA_DECISION_LABELS,
     ALPHA_DECISION_REASON_LABELS,
@@ -376,6 +377,9 @@ def _build_pick_rows(
             "buyability_priority_score": getattr(row, "buyability_priority_score", None),
             "industry": _safe_text(getattr(row, "industry", None)),
             "sector": _safe_text(getattr(row, "sector", None)),
+            "industry_code": _safe_text(getattr(row, "industry_code", None)),
+            "sector_code": _safe_text(getattr(row, "sector_code", None)),
+            "industry_group": industry_group_key(row),
             "model_spec_id": _model_label(getattr(row, "model_spec_id", None)),
             "judgement_label": display_label,
             "judgement_summary": display_summary,
@@ -411,13 +415,13 @@ def _limit_d5_sector_concentration(frame: pd.DataFrame, *, limit: int) -> pd.Dat
     if frame.empty:
         return frame
     selected_indices: list[object] = []
-    sector_counts: dict[str, int] = {}
+    group_counts: dict[str, int] = {}
     for index, row in frame.iterrows():
-        sector = str(row.get("sector") or row.get("industry") or "-")
-        if sector_counts.get(sector, 0) >= BOT_D5_MAX_PICKS_PER_SECTOR:
+        group = industry_group_key(row)
+        if group_counts.get(group, 0) >= BOT_D5_MAX_PICKS_PER_SECTOR:
             continue
         selected_indices.append(index)
-        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        group_counts[group] = group_counts.get(group, 0) + 1
         if len(selected_indices) >= int(limit):
             break
     if len(selected_indices) < int(limit):
@@ -709,6 +713,8 @@ def _valuation_snapshot_frame(
             symbol.market,
             symbol.sector,
             symbol.industry,
+            symbol.sector_code,
+            symbol.industry_code,
             ingredient.basis_date,
             ingredient.basis_close,
             ingredient.revenue,
@@ -814,7 +820,14 @@ def _build_stock_valuation_rows(
         ]
         if hard_gate_reasons:
             summary_parts.append(f"보류사유 {', '.join(hard_gate_reasons[:3])}")
+        group = industry_group(item)
         payload = {
+            "industry_group": {
+                "group_type": group.group_type,
+                "key": group.key,
+                "label": group.label,
+                "source_column": group.source_column,
+            },
             "valuation_label": label,
             "confidence_pass": confidence_pass,
             "hard_gate_reasons": hard_gate_reasons,
@@ -822,6 +835,8 @@ def _build_stock_valuation_rows(
             "metrics": metrics,
             "sector": _safe_text(getattr(item, "sector", None)),
             "industry": _safe_text(getattr(item, "industry", None)),
+            "sector_code": _safe_text(getattr(item, "sector_code", None)),
+            "industry_code": _safe_text(getattr(item, "industry_code", None)),
             "basis_date": _safe_text(getattr(item, "basis_date", None)),
             "basis_close": getattr(item, "basis_close", None),
             "peer": {
@@ -883,7 +898,9 @@ def _d5_display_rank_by_symbol(
         return {}
     working = live_frame.copy()
     sector_columns = [
-        column for column in ("symbol", "sector", "industry") if column in summary_frame.columns
+        column
+        for column in ("symbol", "sector", "industry", "sector_code", "industry_code")
+        if column in summary_frame.columns
     ]
     sectors = summary_frame[sector_columns].copy()
     working = working.merge(sectors, on="symbol", how="left")
