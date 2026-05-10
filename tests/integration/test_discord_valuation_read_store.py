@@ -105,3 +105,4 @@ def test_discord_valuation_read_store_builds_stock_valuation_rows(tmp_path) -> N
     payload = json.loads(rows[0]["payload_json"])
     assert payload["metrics"]["per"]["value"] == 10.0
     assert payload["peer"]["peer_count"] == 8
+    assert payload["evaluation_basis"] == "PER/PBR 동종업계 percentile 비교"

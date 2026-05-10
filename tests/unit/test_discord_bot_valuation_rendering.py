@@ -55,11 +55,50 @@ def test_render_stock_valuation_displays_core_table_and_internal_disclosure(monk
 
     assert "005930 삼성전자 가치평가" in rendered
     assert "최종 판단: 판단 보류" in rendered
+    assert "평가기반: 공시 주식수 기준 불확실" in rendered
     assert "PER 10.00배" in rendered
     assert "PBR 1.20배" in rendered
     assert "주식수 기준" in rendered
     assert "공시 원자료에는 해당 지표가 비어 있어 StockMaster" in rendered
     assert "매수" not in rendered
+
+
+def test_render_stock_valuation_displays_loss_company_basis(monkeypatch) -> None:
+    payload = {
+        "valuation_label": "판단 보류",
+        "confidence_pass": False,
+        "hard_gate_reasons": ["missing_core_metric", "non_positive_net_income"],
+        "metrics": {
+            "per": {
+                "value": None,
+                "source_type": "unavailable",
+                "reason": "negative_or_zero_eps",
+            },
+            "pbr": {"value": 1.2, "source_type": "internal_calculated_from_disclosure"},
+        },
+        "peer": {"group_type": "industry", "group_value": "Bio", "peer_count": 20},
+        "financial_quality": {"net_income": -100.0, "equity": 500.0},
+    }
+    rows = pd.DataFrame(
+        [
+            {
+                "title": "000250 삼천당제약",
+                "summary": "판단 보류",
+                "as_of_date": "2026-05-08",
+                "payload_json": json.dumps(payload, ensure_ascii=False),
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "app.discord_bot.valuation_analysis.fetch_discord_bot_snapshot_rows",
+        lambda *args, **kwargs: rows,
+    )
+
+    rendered = render_stock_valuation(object(), query="000250")
+
+    assert "최종 판단: 판단 보류" in rendered
+    assert "평가기반: 적자/비양수 순이익: PER 제외, PBR·재무품질 참고" in rendered
+    assert "주의: 순이익이 비양수라 최종 가치 라벨은 보류됩니다." in rendered
 
 
 def test_render_stock_valuation_returns_candidates_for_ambiguous_query(monkeypatch) -> None:

@@ -16,6 +16,7 @@ from app.discord_bot.data_views import (
     stock_workbench_live_snapshot_frame,
     stock_workbench_summary_frame,
 )
+from app.domain.valuation.basis import describe_evaluation_basis
 from app.ml.constants import D5_PRACTICAL_V3_MODEL_SPEC_ID
 from app.ml.promotion import load_alpha_promotion_summary
 from app.ops.common import JobStatus, OpsJobResult
@@ -811,6 +812,36 @@ def _build_stock_valuation_rows(
         label = _safe_text(getattr(item, "valuation_label", None), fallback="판단 보류")
         confidence_pass = bool(getattr(item, "confidence_pass", False))
         hard_gate_reasons = _parse_raw_json_list(getattr(item, "hard_gate_reasons_json", "[]"))
+        peer_payload = {
+            "group_type": _safe_text(getattr(item, "group_type", None)),
+            "group_value": _safe_text(getattr(item, "group_value", None)),
+            "peer_count": getattr(item, "peer_count", None),
+            "valid_pbr_count": getattr(item, "valid_pbr_count", None),
+            "valid_per_count": getattr(item, "valid_per_count", None),
+            "pbr_coverage": getattr(item, "pbr_coverage", None),
+            "per_coverage": getattr(item, "per_coverage", None),
+            "median_pbr": getattr(item, "median_pbr", None),
+            "median_per": getattr(item, "median_per", None),
+            "pbr_percentile": getattr(item, "pbr_percentile", None),
+            "per_percentile": getattr(item, "per_percentile", None),
+            "filter_note": _safe_text(getattr(item, "filter_note", None)),
+            "reason_codes": _parse_raw_json_list(
+                getattr(item, "baseline_reason_codes_json", "[]")
+            ),
+        }
+        financial_quality_payload = {
+            "revenue": getattr(item, "revenue", None),
+            "operating_income": getattr(item, "operating_income", None),
+            "net_income": getattr(item, "net_income", None),
+            "equity": getattr(item, "equity", None),
+            "liabilities": getattr(item, "liabilities", None),
+        }
+        evaluation_basis = describe_evaluation_basis(
+            metrics=metrics if isinstance(metrics, dict) else {},
+            peer=peer_payload,
+            hard_gate_reasons=hard_gate_reasons,
+            financial_quality=financial_quality_payload,
+        )
         summary_parts = [
             label,
             f"PER {_format_metric_value(per, suffix='배')}",
@@ -829,6 +860,7 @@ def _build_stock_valuation_rows(
                 "source_column": group.source_column,
             },
             "valuation_label": label,
+            "evaluation_basis": evaluation_basis,
             "confidence_pass": confidence_pass,
             "hard_gate_reasons": hard_gate_reasons,
             "annotations": _parse_raw_json_list(getattr(item, "annotations_json", "[]")),
@@ -839,30 +871,8 @@ def _build_stock_valuation_rows(
             "industry_code": _safe_text(getattr(item, "industry_code", None)),
             "basis_date": _safe_text(getattr(item, "basis_date", None)),
             "basis_close": getattr(item, "basis_close", None),
-            "peer": {
-                "group_type": _safe_text(getattr(item, "group_type", None)),
-                "group_value": _safe_text(getattr(item, "group_value", None)),
-                "peer_count": getattr(item, "peer_count", None),
-                "valid_pbr_count": getattr(item, "valid_pbr_count", None),
-                "valid_per_count": getattr(item, "valid_per_count", None),
-                "pbr_coverage": getattr(item, "pbr_coverage", None),
-                "per_coverage": getattr(item, "per_coverage", None),
-                "median_pbr": getattr(item, "median_pbr", None),
-                "median_per": getattr(item, "median_per", None),
-                "pbr_percentile": getattr(item, "pbr_percentile", None),
-                "per_percentile": getattr(item, "per_percentile", None),
-                "filter_note": _safe_text(getattr(item, "filter_note", None)),
-                "reason_codes": _parse_raw_json_list(
-                    getattr(item, "baseline_reason_codes_json", "[]")
-                ),
-            },
-            "financial_quality": {
-                "revenue": getattr(item, "revenue", None),
-                "operating_income": getattr(item, "operating_income", None),
-                "net_income": getattr(item, "net_income", None),
-                "equity": getattr(item, "equity", None),
-                "liabilities": getattr(item, "liabilities", None),
-            },
+            "peer": peer_payload,
+            "financial_quality": financial_quality_payload,
             "source_lineage": _parse_raw_json_dict(
                 getattr(item, "ingredient_source_lineage_json", "{}")
             ),

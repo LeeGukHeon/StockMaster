@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 
 from app.discord_bot.read_store import fetch_discord_bot_snapshot_rows
+from app.domain.valuation.basis import describe_evaluation_basis
 from app.settings import Settings
 
 INTERNAL_CALCULATION_DISCLOSURE = (
@@ -109,10 +110,21 @@ def render_stock_valuation(settings: Settings, *, query: str) -> str:
         if isinstance(payload.get("financial_quality"), dict)
         else {}
     )
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    evaluation_basis = str(
+        payload.get("evaluation_basis")
+        or describe_evaluation_basis(
+            metrics=metrics,
+            peer=peer,
+            hard_gate_reasons=reasons,
+            financial_quality=quality,
+        )
+    )
     display_industry = industry_group.get("label") or payload.get("industry") or "-"
     lines = [
         f"**{row['title']} 가치평가**",
         f"최종 판단: {label}",
+        f"평가기반: {evaluation_basis}",
         (
             f"기준: {row.get('as_of_date') or '-'} · "
             f"업종 {display_industry} / 상위분류 {payload.get('sector') or '-'}"
@@ -144,4 +156,4 @@ def render_stock_valuation(settings: Settings, *, query: str) -> str:
         lines.append(INTERNAL_CALCULATION_DISCLOSURE)
     if quality.get("net_income") is not None and float(quality.get("net_income") or 0.0) <= 0:
         lines.append("주의: 순이익이 비양수라 최종 가치 라벨은 보류됩니다.")
-    return "\n".join(lines[:9])
+    return "\n".join(lines[:10])
