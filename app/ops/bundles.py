@@ -43,11 +43,11 @@ from app.intraday.postmortem import (
     publish_discord_intraday_postmortem,
     render_intraday_postmortem_report,
 )
+from app.intraday.promotion_common import resolve_alpha_lineage_status
 from app.intraday.research_mode import (
     intraday_research_feature_flags,
     materialize_intraday_research_capability,
 )
-from app.intraday.promotion_common import resolve_alpha_lineage_status
 from app.intraday.session import materialize_intraday_candidate_session
 from app.intraday.signals import materialize_intraday_signal_snapshots
 from app.intraday.strategy import materialize_intraday_decision_outcomes
@@ -78,6 +78,7 @@ from app.ops.scheduler import (
     resolve_reference_trading_date,
 )
 from app.pipelines.news_metadata import sync_news_metadata
+from app.pipelines.valuation_snapshot import materialize_valuation_snapshot
 from app.portfolio.allocation import (
     evaluate_portfolio_policies,
     materialize_portfolio_nav,
@@ -1239,6 +1240,18 @@ def run_daily_close_bundle(
                     run_training=True,
                     publish_discord=False,
                     active_d5_swing=active_d5_swing,
+                )
+                job.run_step(
+                    "materialize_valuation_snapshot",
+                    materialize_valuation_snapshot,
+                    settings,
+                    as_of_date=target_date,
+                    force=force,
+                    critical=False,
+                    notes=(
+                        "Refresh disclosure-grounded valuation snapshots before Discord "
+                        "read-store materialization."
+                    ),
                 )
                 job.run_step(
                     "build_portfolio_candidate_book",

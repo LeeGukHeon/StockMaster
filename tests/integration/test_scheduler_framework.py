@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from app.ops.bundles import (
     _resolve_intraday_session_start_date,
     run_daily_close_bundle,
-    run_daily_overlay_refresh_bundle,
     run_daily_evaluation_bundle,
+    run_daily_overlay_refresh_bundle,
     run_docker_build_cache_cleanup_bundle,
     run_evaluation_bundle,
     run_news_sync_bundle,
@@ -372,7 +372,16 @@ def test_daily_close_bundle_passes_requested_date_to_daily_pipeline(tmp_path, mo
         captured["active_d5_swing"] = active_d5_swing
         return noop_result
 
+    def fake_valuation_snapshot(_settings, *, as_of_date=None, force=None, **_kwargs):
+        captured["valuation_as_of_date"] = as_of_date
+        captured["valuation_force"] = force
+        return noop_result
+
     monkeypatch.setattr("app.ops.bundles.run_daily_pipeline_job", fake_daily_pipeline_job)
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_valuation_snapshot",
+        fake_valuation_snapshot,
+    )
     monkeypatch.setattr("app.ops.bundles.build_portfolio_candidate_book", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.validate_portfolio_candidate_book", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.materialize_portfolio_target_book", lambda *a, **k: noop_result)
@@ -393,6 +402,8 @@ def test_daily_close_bundle_passes_requested_date_to_daily_pipeline(tmp_path, mo
     assert result.status == JobStatus.SUCCESS
     assert captured["pipeline_date"] == date(2026, 3, 9)
     assert captured["active_d5_swing"] is True
+    assert captured["valuation_as_of_date"] == date(2026, 3, 9)
+    assert captured["valuation_force"] is True
 
 
 def test_daily_close_recovery_disables_discord_publish(tmp_path, monkeypatch) -> None:
@@ -412,6 +423,10 @@ def test_daily_close_recovery_disables_discord_publish(tmp_path, monkeypatch) ->
         return noop_result
 
     monkeypatch.setattr("app.ops.bundles.run_daily_pipeline_job", fake_daily_pipeline_job)
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_valuation_snapshot",
+        lambda *a, **k: noop_result,
+    )
     monkeypatch.setattr("app.ops.bundles.build_portfolio_candidate_book", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.validate_portfolio_candidate_book", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.materialize_portfolio_target_book", lambda *a, **k: noop_result)
@@ -454,6 +469,10 @@ def test_daily_close_bundle_publishes_eod_after_post_close_steps(tmp_path, monke
         return noop_result
 
     monkeypatch.setattr("app.ops.bundles.run_daily_pipeline_job", fake_daily_pipeline_job)
+    monkeypatch.setattr(
+        "app.ops.bundles.materialize_valuation_snapshot",
+        lambda *a, **k: noop_result,
+    )
     monkeypatch.setattr("app.ops.bundles.build_portfolio_candidate_book", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.validate_portfolio_candidate_book", lambda *a, **k: noop_result)
     monkeypatch.setattr("app.ops.bundles.materialize_portfolio_target_book", lambda *a, **k: noop_result)
