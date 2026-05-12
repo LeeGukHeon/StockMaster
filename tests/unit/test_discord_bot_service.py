@@ -76,6 +76,6 @@ def test_render_status_mentions_no_active_jobs() -> None:
 
 def test_next_picks_empty_message_distinguishes_v3_no_candidate() -> None:
     assert _next_picks_empty_message(5) == (
-        "오늘은 v3 하드필터를 통과한 5거래일 스윙 후보가 없습니다."
+        "오늘은 v4 종가RR 실행필터를 통과한 5거래일 스윙 후보가 없습니다."
     )
     assert _next_picks_empty_message(1) == "참고용 H1 단기 후보가 아직 없습니다."

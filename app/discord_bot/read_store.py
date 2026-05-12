@@ -397,15 +397,26 @@ def _build_pick_rows(
             summary_parts.extend(
                 [
                     f"3~5D 스윙순위 {rank}",
-                    f"v3최종점수 {_format_number(getattr(row, 'final_selection_value', None))}",
+                    f"v4최종점수 {_format_number(getattr(row, 'final_selection_value', None))}",
                     f"등급 {_safe_text(getattr(row, 'grade', None))}",
                     "ML기대보조 "
                     f"{_format_percent(getattr(row, 'expected_excess_return', None), signed=True)}",
                 ]
             )
+            rr_at_reference = swing_payload.get(
+                "rr_at_reference",
+                swing_payload.get("reward_risk_ratio"),
+            )
+            eod_status = swing_payload.get("entry_status_eod") or swing_payload.get("entry_status")
+            summary_parts.append(
+                "종가진단 "
+                f"RR {_format_metric_value(rr_at_reference)} · "
+                f"상태 {_safe_text(eod_status)} · "
+                f"그룹 {_safe_text(swing_payload.get('recommendation_group'))}"
+            )
             summary_parts.append(
                 "가격조건 "
-                f"기준 {_format_krw(_swing_policy_value(swing_payload, 'signal_close'))} · "
+                f"신호종가 {_format_krw(_swing_policy_value(swing_payload, 'signal_close'))} · "
                 f"최대진입 {_format_krw(_swing_policy_value(swing_payload, 'max_buy_price'))} · "
                 f"무효 {_format_krw(_swing_policy_value(swing_payload, 'invalidation_price'))}"
             )
@@ -533,12 +544,12 @@ def _build_recommendation_diagnostic_rows(
     return [
         _snapshot_row(
             snapshot_type="recommendation_diagnostics",
-            snapshot_key="h5_v3_gate_summary",
+            snapshot_key="h5_v4_eod_rr_summary",
             built_at=built_at,
             as_of_date=as_of_date,
             horizon=int(horizon),
             sort_order=1,
-            title="H5 v3 미추천 사유",
+            title="H5 v3/v4 미추천 사유",
             subtitle="5거래일 보유 기준",
             summary=summary,
             payload=diagnostics,
@@ -758,11 +769,21 @@ def _build_stock_summary_rows(
             )
         d5_cash_path_candidate = is_d5_candidate and _is_d5_cash_path_model(d5_model_spec_id)
         if is_d5_candidate and isinstance(d5_swing_payload, dict):
+            d5_rr_at_reference = d5_swing_payload.get(
+                "rr_at_reference",
+                d5_swing_payload.get("reward_risk_ratio"),
+            )
+            d5_entry_status = d5_swing_payload.get("entry_status_eod") or d5_swing_payload.get(
+                "entry_status"
+            )
             d5_metric_parts = [
                 f"3~5D 스윙순위 {d5_display_rank}",
-                f"v3최종점수 {_format_number(d5_score)}",
+                f"v4최종점수 {_format_number(d5_score)}",
                 f"H5 {d5_grade}",
                 f"ML기대보조 {_format_percent(d5_expected, signed=True)}",
+                "종가진단 "
+                f"RR {_format_metric_value(d5_rr_at_reference)} · "
+                f"상태 {_safe_text(d5_entry_status)}",
                 "가격조건 "
                 f"최대진입 {_format_krw(_swing_policy_value(d5_swing_payload, 'max_buy_price'))}",
             ]

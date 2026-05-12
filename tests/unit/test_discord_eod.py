@@ -23,6 +23,7 @@ def _swing_row(
     recommendation_pass: bool = False,
     final_status: str = "WATCHLIST",
     entry_status: str = "BUYABLE",
+    recommendation_group: str | None = None,
     pattern: str | None = None,
     risk_distance: float = 0.03,
     reward_risk_ratio: float = 2.0,
@@ -41,12 +42,17 @@ def _swing_row(
                     "recommendation_pass": recommendation_pass,
                     "final_status": final_status,
                     "entry_status": entry_status,
+                    "entry_status_eod": entry_status,
+                    "recommendation_group": recommendation_group
+                    or ("EXECUTABLE_PICKS" if recommendation_pass else final_status),
                     "pattern": pattern,
                     "risk_distance": risk_distance,
                     "reward_risk_ratio": reward_risk_ratio,
+                    "rr_at_reference": reward_risk_ratio,
                     "rule_score": rule_score,
                     "ml_probability_target_first": ml_probability,
                     "hybrid_score": hybrid_score,
+                    "final_score": hybrid_score,
                 }
             },
             ensure_ascii=False,
@@ -63,20 +69,23 @@ def test_build_swing_gate_diagnostics_counts_and_translates_filters() -> None:
                     eligible=True,
                     recommendation_pass=True,
                     final_status="CANDIDATE",
+                    recommendation_group="EXECUTABLE_PICKS",
                     pattern="pullback",
                 ),
                 _swing_row(
                     symbol="000002",
                     risk_flags=["swing_common_filter_failed"],
                     final_status="REJECTED",
+                    recommendation_group="REJECTED",
                     pattern=None,
                     rule_score=65.0,
                     hybrid_score=66.0,
                 ),
                 _swing_row(
                     symbol="000003",
-                    final_status="WATCH_CAUTION",
-                    entry_status="WATCH_CAUTION",
+                    final_status="VALID_SIGNAL",
+                    entry_status="RR_COLLAPSED",
+                    recommendation_group="VALID_SIGNALS",
                     pattern="recovery_breakout",
                     risk_distance=0.07,
                     reward_risk_ratio=0.8,
@@ -89,6 +98,8 @@ def test_build_swing_gate_diagnostics_counts_and_translates_filters() -> None:
     counts = {item["key"]: item["pass_count"] for item in diagnostics["gates"]}
     assert diagnostics["total_rows"] == 3
     assert diagnostics["recommendation_pass_count"] == 1
+    assert diagnostics["valid_signal_count"] == 2
+    assert diagnostics["rr_collapsed_count"] == 1
     assert counts["common_not_rejected"] == 2
     assert counts["pattern_present"] == 2
     assert counts["risk_distance_le_5pct"] == 2
@@ -100,7 +111,9 @@ def test_build_swing_gate_diagnostics_counts_and_translates_filters() -> None:
     assert "공통 제외 필터: 2/3" in rendered
     assert "관리/거래정지/유동성/재무/과열" in rendered
     assert "유효 스윙 패턴: 2/3" in rendered
-    assert "누적 하드게이트" in rendered
+    assert "유효 신호 2개" in rendered
+    assert "손익비 붕괴 1개" in rendered
+    assert "누적 실행게이트" in rendered
 
 
 
@@ -198,11 +211,11 @@ def test_build_payload_content_includes_v3_no_recommendation_gate_diagnostics() 
         swing_gate_diagnostics=diagnostics,
     )
 
-    assert "H5 v3 2개 중 최종 추천 통과 0개" in content
+    assert "H5 v3/v4 2개 중 실행 가능 추천 0개" in content
     assert "공통 제외 필터: 1/2" in content
     assert "유효 스윙 패턴: 0/2" in content
-    assert "entry_policy 매수 가능" in content
-    assert "누적 하드게이트" in content
+    assert "종가 기준 실행 가능" in content
+    assert "누적 실행게이트" in content
 
 
 def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> None:
@@ -224,9 +237,9 @@ def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> Non
     assert "**3~5거래일 스윙 후보 | 5거래일 보유 기준 (H5/D+5)**" in content
     assert "**참고용 H1 단기 후보 | 하루 보유 기준 (D+1)**" in content
     assert "메인 후보는 5거래일 보유 기준(D+5) 중심" in content
-    assert "3~5D v3는 룰 하드필터 후 ML 목표확률로 재정렬" in content
+    assert "3~5D v4는 신호 점수와 종가RR 실행가능성을 분리" in content
     assert (
-        "v3 하드필터(룰·목표확률·entry_policy·손익비)를 통과한 "
+        "v4 실행필터(신호·목표확률·종가RR·entry_status_eod)를 통과한 "
         "H5 스윙 후보가 없습니다"
     ) in content
 
@@ -369,14 +382,14 @@ def test_build_payload_content_uses_swing_payload_despite_low_ml_expectation() -
     assert "매수검토 이상 기준을 통과한 H5 스윙 후보가 없어" not in content
     assert "136480" in content
     assert "매수검토" in content
-    assert "3~5D 스윙순위 1 · v3최종점수 73.1/A" in content
+    assert "3~5D 스윙순위 1 · v4최종점수 73.1/A" in content
     assert "ML기대보조 -0.3%" in content
-    assert "신호 84.0 · 손익비 1.65" in content
-    assert "가격조건 기준 3,000원" in content
+    assert "신호 84.0 · 종가RR 1.65" in content
+    assert "가격조건 신호종가 3,000원" in content
     assert "매수 2,950원~3,090원" in content
     assert "목표1/2 3,150원/3,240원" in content
     assert "고점수 과확신" not in content
-    assert "ML 목표확률" in content
+    assert "종가상태 BUYABLE" in content
     assert "raw 점수대 성과" not in content
 
 

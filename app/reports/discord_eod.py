@@ -66,8 +66,8 @@ SWING_GATE_LABELS = {
     "rr_ge_1_5": "손익비 1.5 이상",
     "rule_ge_70": "룰 점수 70 이상",
     "ml_ge_0_50": "ML 목표확률 50% 이상",
-    "entry_buyable": "entry_policy 매수 가능",
-    "hybrid_ge_70": "최종 v3 점수 70 이상",
+    "entry_buyable": "종가 기준 실행 가능",
+    "hybrid_ge_70": "최종 v4 점수 70 이상",
 }
 
 SWING_GATE_DESCRIPTIONS = {
@@ -75,14 +75,21 @@ SWING_GATE_DESCRIPTIONS = {
         "관리/거래정지/유동성/재무/과열/윗꼬리/급락 거래량 등 기본 제외 조건을 피했는지"
     ),
     "pattern_present": "20일선 눌림, 박스 돌파, 회복형 돌파, 역배열 개선 중 하나가 잡혔는지",
-    "risk_distance_le_5pct": "현재 기준가에서 신호 무효·손절선까지 하락 여지가 5% 이내인지",
-    "rr_ge_1_5": "1차 목표까지 기대보상이 손절위험의 1.5배 이상인지",
+    "risk_distance_le_5pct": "신호 종가에서 신호 무효·손절선까지 하락 여지가 5% 이내인지",
+    "rr_ge_1_5": "신호 종가 기준 1차 목표까지 기대보상이 손절위험의 1.5배 이상인지",
     "rule_ge_70": "차트·거래량·과열방지·상대강도·손익비·캔들·재무 룰 점수가 70점 이상인지",
     "ml_ge_0_50": "ML이 5거래일 안에 목표가가 손절보다 먼저 나올 확률을 50% 이상으로 봤는지",
     "entry_buyable": (
-        "종가 기준 현재 가격이 max_buy_price 이하라 다음 거래일 조건부 진입 가능권인지"
+        "신호 종가가 손익비 1.5를 보존하는 max_buy_price 이하인지"
     ),
-    "hybrid_ge_70": "룰 점수, ML 확률, 시장/섹터, 유동성을 합친 최종 v3 점수가 70점 이상인지",
+    "hybrid_ge_70": "신호 점수와 종가 기준 진입 점수를 합친 최종 v4 점수가 70점 이상인지",
+}
+
+SWING_RECOMMENDATION_GROUP_LABELS = {
+    "EXECUTABLE_PICKS": "실행 가능 추천",
+    "VALID_SIGNALS": "유효 신호",
+    "WATCHLIST": "관심 후보",
+    "REJECTED": "제외",
 }
 
 
@@ -139,6 +146,10 @@ RISK_LABELS = {
     "swing_stop_distance_wide": "손절 기준선까지 거리가 넓음",
     "swing_near_resistance": "가까운 저항까지 여유가 좁음",
     "swing_low_reward_risk": "손익비가 기준보다 낮음",
+    "swing_rr_collapsed": "신호 종가 기준 손익비가 1.5 미만",
+    "swing_target_already_reached": "신호 종가가 1차 목표 이상",
+    "swing_invalid_stop": "손절선이 신호 종가보다 높거나 같음",
+    "swing_rr_invalid": "손익비 계산 불가",
     "swing_chase_risk": "신호 이후 상승폭이 커 추격 부담",
     "swing_target_zone_reached": "3~5일 목표권 도달 가능성",
     "swing_extended": "신호 이후 과도하게 상승",
@@ -655,11 +666,15 @@ def _swing_gate_flags(row: pd.Series) -> dict[str, bool] | None:
     final_status = str(payload.get("final_status") or "")
     pattern = payload.get("pattern")
     risk_distance = _payload_float(payload, "risk_distance")
-    reward_risk = _payload_float(payload, "reward_risk_ratio")
+    reward_risk = _payload_float(payload, "rr_at_reference")
+    if reward_risk is None:
+        reward_risk = _payload_float(payload, "reward_risk_ratio")
     rule_score = _payload_float(payload, "rule_score")
     ml_probability = _payload_float(payload, "ml_probability_target_first")
-    hybrid_score = _payload_float(payload, "hybrid_score")
-    entry_status = str(payload.get("entry_status") or "")
+    hybrid_score = _payload_float(payload, "final_score")
+    if hybrid_score is None:
+        hybrid_score = _payload_float(payload, "hybrid_score")
+    entry_status = str(payload.get("entry_status_eod") or payload.get("entry_status") or "")
     return {
         "common_not_rejected": (
             "swing_common_filter_failed" not in risk_flags and final_status != "REJECTED"
@@ -675,7 +690,7 @@ def _swing_gate_flags(row: pd.Series) -> dict[str, bool] | None:
 
 
 def build_swing_gate_diagnostics(frame: pd.DataFrame) -> dict[str, object]:
-    """Summarize why the v3 H5 swing surface produced no final recommendation."""
+    """Summarize why the v4 EOD-reference H5 swing surface produced no final recommendation."""
 
     if frame.empty:
         return {
@@ -755,10 +770,36 @@ def build_swing_gate_diagnostics(frame: pd.DataFrame) -> dict[str, object]:
         .to_dict()
     )
     entry_status_counts = (
-        pd.Series([str(payload.get("entry_status") or "UNKNOWN") for payload in payloads])
+        pd.Series(
+            [
+                str(payload.get("entry_status_eod") or payload.get("entry_status") or "UNKNOWN")
+                for payload in payloads
+            ]
+        )
         .value_counts()
         .to_dict()
     )
+    group_counts = (
+        pd.Series(
+            [
+                str(payload.get("recommendation_group") or payload.get("final_status") or "UNKNOWN")
+                for payload in payloads
+            ]
+        )
+        .value_counts()
+        .to_dict()
+    )
+    rr_collapsed_count = int(entry_status_counts.get("RR_COLLAPSED", 0))
+    target_reached_count = int(
+        entry_status_counts.get("TARGET_ALREADY_REACHED", 0)
+        + entry_status_counts.get("TARGET_ZONE_REACHED", 0)
+    )
+    executable_count = int(group_counts.get("EXECUTABLE_PICKS", 0))
+    valid_signal_count = int(
+        group_counts.get("VALID_SIGNALS", 0) + group_counts.get("EXECUTABLE_PICKS", 0)
+    )
+    watchlist_count = int(group_counts.get("WATCHLIST", 0))
+    rejected_count = int(group_counts.get("REJECTED", 0))
     failed_gate_counts = {
         key: int(total - row["pass_count"])
         for key, row in zip(SWING_GATE_ORDER, gate_rows, strict=False)
@@ -787,6 +828,13 @@ def build_swing_gate_diagnostics(frame: pd.DataFrame) -> dict[str, object]:
         "top_failed_gates": top_failed,
         "final_status_counts": final_status_counts,
         "entry_status_counts": entry_status_counts,
+        "recommendation_group_counts": group_counts,
+        "valid_signal_count": valid_signal_count,
+        "executable_count": executable_count,
+        "rr_collapsed_count": rr_collapsed_count,
+        "target_reached_count": target_reached_count,
+        "watchlist_count": watchlist_count,
+        "rejected_count": rejected_count,
     }
 
 
@@ -803,6 +851,12 @@ def format_swing_gate_diagnostics_lines(
         return []
     total = int(diagnostics.get("total_rows") or 0)
     recommendation_pass = int(diagnostics.get("recommendation_pass_count") or 0)
+    valid_signal = int(diagnostics.get("valid_signal_count") or 0)
+    executable = int(diagnostics.get("executable_count") or recommendation_pass)
+    rr_collapsed = int(diagnostics.get("rr_collapsed_count") or 0)
+    target_reached = int(diagnostics.get("target_reached_count") or 0)
+    watchlist = int(diagnostics.get("watchlist_count") or 0)
+    rejected = int(diagnostics.get("rejected_count") or 0)
     top_failed = diagnostics.get("top_failed_gates") or []
     if isinstance(top_failed, list) and top_failed:
         bottleneck = str(top_failed[0].get("label", "하드게이트"))
@@ -810,10 +864,19 @@ def format_swing_gate_diagnostics_lines(
         bottleneck = "하드게이트"
     lines = [
         (
-            f"- 미추천 사유: H5 v3 {total:,}개 중 최종 추천 통과 "
-            f"{recommendation_pass:,}개입니다. 가장 큰 병목은 {bottleneck}입니다."
+            f"- 미추천 사유: H5 v3/v4 {total:,}개 중 실행 가능 추천 "
+            f"{executable:,}개입니다. 유효 신호 {valid_signal:,}개, 손익비 붕괴 "
+            f"{rr_collapsed:,}개, 목표권/상방 부족 {target_reached:,}개, 관심 후보 "
+            f"{watchlist:,}개, 제외 {rejected:,}개입니다. 가장 큰 병목은 {bottleneck}입니다."
         )
     ]
+    group_counts = diagnostics.get("recommendation_group_counts") or {}
+    if isinstance(group_counts, dict) and group_counts:
+        group_parts = [
+            f"{SWING_RECOMMENDATION_GROUP_LABELS.get(str(key), str(key))} {int(value):,}"
+            for key, value in sorted(group_counts.items(), key=lambda item: str(item[0]))
+        ]
+        lines.append("- v4 추천 그룹: " + " · ".join(group_parts))
     gates = [item for item in diagnostics.get("gates", []) if isinstance(item, dict)]
     if gates:
         lines.append("- 필터별 개별 통과 수:")
@@ -833,7 +896,7 @@ def format_swing_gate_diagnostics_lines(
             )
             for item in cumulative
         ]
-        lines.append("- 누적 하드게이트: " + " → ".join(parts))
+        lines.append("- 누적 실행게이트: " + " → ".join(parts))
     return lines
 
 
@@ -1064,7 +1127,11 @@ def _format_pick_block(
         rule_score = _float_or_none(swing_payload.get("rule_score"))
         entry_score = _float_or_none(swing_payload.get("entry_score"))
         ml_probability = _float_or_none(swing_payload.get("ml_probability_target_first"))
-        reward_risk = _float_or_none(swing_payload.get("reward_risk_ratio"))
+        reward_risk = _float_or_none(
+            swing_payload.get("rr_at_reference", swing_payload.get("reward_risk_ratio"))
+        )
+        recommendation_group = swing_payload.get("recommendation_group")
+        entry_status = swing_payload.get("entry_status_eod") or swing_payload.get("entry_status")
         swing_parts = []
         if rule_score is not None:
             swing_parts.append(f"신호 {rule_score:.1f}")
@@ -1073,7 +1140,9 @@ def _format_pick_block(
         if ml_probability is not None:
             swing_parts.append(f"목표확률 {ml_probability:.0%}")
         if reward_risk is not None:
-            swing_parts.append(f"손익비 {reward_risk:.2f}")
+            swing_parts.append(f"종가RR {reward_risk:.2f}")
+        if recommendation_group:
+            swing_parts.append(f"그룹 {recommendation_group}")
         if swing_parts:
             detail += f" | {' · '.join(swing_parts)}"
         signal_close = _swing_policy_value(swing_payload, "signal_close")
@@ -1085,16 +1154,15 @@ def _format_pick_block(
         target_1 = _swing_policy_value(swing_payload, "target_1")
         target_2 = _swing_policy_value(swing_payload, "target_2")
         detail += (
-            f" | 가격조건 기준 {_krw_text(signal_close)}"
+            f" | 가격조건 신호종가 {_krw_text(signal_close)}"
             f" · 매수 {_krw_text(entry_lower)}~{_krw_text(max_buy)}"
             f" · 추격주의 {_krw_text(chase_warning)}↑"
             f" · 목표권 {_krw_text(target_zone)}↑"
             f" · 무효 {_krw_text(invalidation)}↓"
             f" · 목표1/2 {_krw_text(target_1)}/{_krw_text(target_2)}"
         )
-        entry_status = swing_payload.get("entry_status")
         if entry_status:
-            detail += f" | 상태 {entry_status}"
+            detail += f" | 종가상태 {entry_status}"
     elif pd.notna(row.get("selection_close_price")) and pd.notna(
         row.get("expected_excess_return")
     ):
@@ -1104,7 +1172,7 @@ def _format_pick_block(
     if is_swing_pick and pd.notna(row.get("d5_selection_rank")):
         headline_metric = (
             f"3~5D 스윙순위 {int(row['d5_selection_rank'])} "
-            f"· v3최종점수 {score:.1f}/{row['grade']}"
+            f"· v4최종점수 {score:.1f}/{row['grade']}"
         )
     elif is_cash_path_pick:
         headline_metric = (
@@ -1321,7 +1389,7 @@ def _build_payload_content(
         )
     )
     judgement_basis_line = (
-        "3~5D v3는 룰 하드필터 후 ML 목표확률로 재정렬하고, "
+        "3~5D v4는 신호 점수와 종가RR 실행가능성을 분리하고, "
         "entry_policy 가격 조건을 함께 고정합니다."
         if uses_swing_h5
         else _score_band_evidence_line(primary_score_evidence)
@@ -1342,7 +1410,7 @@ def _build_payload_content(
     if single_buy_candidates.empty:
         if int(candidate_horizon) == 5:
             lines.append(
-                "- 오늘은 v3 하드필터(룰·목표확률·entry_policy·손익비)를 "
+                "- 오늘은 v4 실행필터(신호·목표확률·종가RR·entry_status_eod)를 "
                 "통과한 H5 스윙 후보가 없습니다."
             )
             lines.extend(

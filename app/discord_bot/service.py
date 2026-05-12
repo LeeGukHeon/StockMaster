@@ -74,7 +74,7 @@ def _render_snapshot_list(
 
 def _next_picks_empty_message(horizon: int) -> str:
     if int(horizon) == 5:
-        return "오늘은 v3 하드필터를 통과한 5거래일 스윙 후보가 없습니다."
+        return "오늘은 v4 종가RR 실행필터를 통과한 5거래일 스윙 후보가 없습니다."
     if int(horizon) == 1:
         return "참고용 H1 단기 후보가 아직 없습니다."
     return "추천 후보 스냅샷이 아직 준비되지 않았습니다."

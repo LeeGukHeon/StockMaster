@@ -10,8 +10,12 @@ from app.selection.engine_v2 import (
 from app.selection.swing_3_5d import (
     Swing35DConfig,
     _entry_policy_status_series,
+    _entry_status_eod_series,
+    _entry_status_next_day_series,
     _score_rows,
     apply_swing_3_5d_overlay,
+    calculate_max_buy_price,
+    calculate_rr,
     swing_explanatory_payload,
 )
 
@@ -176,7 +180,7 @@ def test_pullback_pattern_does_not_require_prior_volume_dry_up() -> None:
     assert bool(row["swing_recommendation_pass"])
 
 
-def test_recovery_breakout_uses_v3_entry_policy_revalidation() -> None:
+def test_recovery_breakout_uses_v4_eod_entry_reference_not_intraday_current_price() -> None:
     features = pd.DataFrame(
         [
             {
@@ -252,10 +256,15 @@ def test_recovery_breakout_uses_v3_entry_policy_revalidation() -> None:
     row = scored.iloc[0]
 
     assert row["swing_pattern"] == "recovery_breakout"
-    assert row["entry_status"] == "TARGET_ZONE_REACHED"
-    assert row["swing_final_status"] == "TARGET_ZONE_REACHED"
+    assert row["entry_reference_price"] == 10_900.0
+    assert row["current_price"] == 10_900.0
+    assert row["observed_current_price"] == 11_460.0
+    assert row["entry_status_eod"] == "RR_COLLAPSED"
+    assert row["entry_status"] == "RR_COLLAPSED"
+    assert row["swing_final_status"] == "VALID_SIGNAL"
+    assert row["swing_recommendation_group"] == "VALID_SIGNALS"
     assert not bool(row["swing_recommendation_pass"])
-    assert "swing_target_zone_reached" in row["swing_risk_flags"]
+    assert "swing_rr_collapsed" in row["swing_risk_flags"]
 
 
 def test_v3_final_score_combines_rule_ml_market_sector_and_liquidity() -> None:
@@ -330,19 +339,21 @@ def test_v3_final_score_combines_rule_ml_market_sector_and_liquidity() -> None:
     )
 
     row = _score_rows(features, config=Swing35DConfig()).iloc[0]
-    expected = (
-        0.40 * row["swing_rule_score"]
-        + 0.35 * row["ml_probability_score"]
+    expected_signal = (
+        0.55 * row["swing_rule_score"]
+        + 0.30 * row["ml_probability_score"]
         + 0.10 * row["market_regime_score_scaled"]
-        + 0.10 * row["sector_strength_score_scaled"]
-        + 0.05 * row["liquidity_score_scaled"]
+        + 0.05 * row["sector_strength_score_scaled"]
     )
+    expected = 0.60 * expected_signal + 0.40 * row["entry_score"]
 
+    assert abs(row["swing_signal_score"] - expected_signal) < 1e-9
     assert abs(row["swing_hybrid_score"] - expected) < 1e-9
     assert row["swing_final_status"] in {"CANDIDATE", "HIGH_CONFIDENCE"}
-    assert row["entry_status"] == "BUYABLE"
+    assert row["entry_status_eod"] == "BUYABLE"
+    assert row["price_basis"] == "EOD_SIGNAL_CLOSE"
     assert row["max_buy_price"] <= row["target_1"]
-    assert row["reward_risk_ratio"] >= 1.5
+    assert row["rr_at_reference"] >= 1.5
 
 
 def test_v3_explanatory_payload_contains_entry_policy_contract() -> None:
@@ -361,12 +372,25 @@ def test_v3_explanatory_payload_contains_entry_policy_contract() -> None:
             {
                 "symbol": "000001",
                 "swing_hybrid_score": 88.0,
+                "swing_final_score": 88.0,
                 "swing_rule_score": 82.0,
+                "swing_entry_score": 90.0,
                 "swing_candidate_pass": True,
                 "swing_recommendation_pass": True,
+                "swing_executable_pick": True,
+                "swing_valid_signal": True,
+                "swing_signal_tier": "STRONG_SIGNAL",
+                "swing_recommendation_group": "EXECUTABLE_PICKS",
                 "swing_pattern": "pullback",
                 "entry_status": "BUYABLE",
+                "entry_status_eod": "BUYABLE",
+                "entry_status_next_day": "WAIT_FOR_NEXT_DAY_PRICE",
                 "signal_close": 10_000.0,
+                "entry_reference_price": 10_000.0,
+                "entry_reference_source": "signal_close",
+                "price_basis": "EOD_SIGNAL_CLOSE",
+                "rr_min": 1.5,
+                "rr_at_reference": 1.67,
                 "entry_lower_price": 9_900.0,
                 "max_buy_price": 10_250.0,
                 "chase_warning_price": 10_400.0,
@@ -385,9 +409,17 @@ def test_v3_explanatory_payload_contains_entry_policy_contract() -> None:
     overlaid = apply_swing_3_5d_overlay(base, swing, horizon=5)
     payload = swing_explanatory_payload(overlaid.iloc[0])
 
-    assert payload["methodology_version"] == "stockmaster_cycle_ml_hybrid_v3"
+    assert (
+        payload["methodology_version"]
+        == "stockmaster_cycle_ml_hybrid_v3_eod_rr_entry_reference_v4"
+    )
     assert payload["entry_policy"]["status"] == "WAIT_FOR_NEXT_DAY_PRICE"
+    assert payload["entry_policy"]["price_basis"] == "EOD_SIGNAL_CLOSE"
+    assert payload["entry_policy"]["entry_reference_price"] == 10_000.0
     assert payload["entry_policy"]["buyable_range"] == [9_900.0, 10_250.0]
+    assert payload["entry_status_eod"] == "BUYABLE"
+    assert payload["recommendation_group"] == "EXECUTABLE_PICKS"
+    assert payload["rr_at_reference"] == 1.67
     assert payload["max_buy_price"] == 10_250.0
     assert payload["target_1"] == 10_500.0
 
@@ -408,6 +440,51 @@ def test_v3_entry_status_marks_target_zone_at_threshold() -> None:
         "WATCH_CAUTION",
         "TARGET_ZONE_REACHED",
         "EXTENDED",
+    ]
+
+
+def test_v4_rr_reference_formula_matches_spec_example() -> None:
+    entry = pd.Series([91_200.0])
+    target = pd.Series([93_132.0])
+    stop = pd.Series([88_004.0])
+
+    rr = calculate_rr(entry_reference_price=entry, target_1=target, stop_price=stop)
+    max_buy = calculate_max_buy_price(target_1=target, stop_price=stop, rr_min=1.5)
+    next_day = _entry_status_next_day_series(
+        entry_check_price=pd.Series([90_000.0, 91_200.0, 93_132.0, 88_000.0]),
+        signal_close=pd.Series([91_200.0] * 4),
+        target_1=pd.Series([93_132.0] * 4),
+        stop_price=pd.Series([88_004.0] * 4),
+        max_buy_price=pd.Series([90_055.0] * 4),
+        rr_min=1.5,
+    )
+
+    assert abs(rr.iloc[0] - 0.6045056) < 1e-6
+    assert abs(max_buy.iloc[0] - 90_055.2) < 1e-6
+    assert next_day.tolist() == [
+        "BUYABLE",
+        "RR_COLLAPSED",
+        "TARGET_ZONE_REACHED",
+        "INVALIDATED",
+    ]
+
+
+def test_v4_eod_status_prioritizes_invalid_stop_and_rr_collapse() -> None:
+    status = _entry_status_eod_series(
+        entry_reference_price=pd.Series([10_000.0, 10_000.0, 10_000.0, 10_000.0]),
+        signal_close=pd.Series([10_000.0] * 4),
+        target_1=pd.Series([10_800.0, 9_900.0, 10_300.0, 10_800.0]),
+        stop_price=pd.Series([10_000.0, 9_500.0, 9_800.0, 9_400.0]),
+        max_buy_price=pd.Series([10_200.0, 9_900.0, 9_920.0, 10_100.0]),
+        rr_at_reference=pd.Series([None, 0.0, 1.0, 1.5]),
+        rr_min=1.5,
+    )
+
+    assert status.tolist() == [
+        "INVALID_STOP",
+        "TARGET_ALREADY_REACHED",
+        "RR_COLLAPSED",
+        "BUYABLE",
     ]
 
 

@@ -197,10 +197,10 @@ def test_render_live_stock_analysis_renders_v3_entry_policy(monkeypatch) -> None
 
     rendered = render_live_stock_analysis(object(), query="삼성전자")
 
-    assert "장마감 3~5D 스윙순위 1 · v3최종점수 73.1" in rendered
-    assert "가격조건: 기준 70,000원 · 매수 69,000~72,000원 · 최대진입 72,000원" in rendered
+    assert "장마감 3~5D 스윙순위 1 · v4최종점수 73.1" in rendered
+    assert "가격조건: 신호종가 70,000원 · 매수 69,000~72,000원 · 최대진입 72,000원" in rendered
     assert "추격주의 72,800원↑ · 목표권 73,500원↑ · 신호무효 68,000원↓" in rendered
-    assert "목표: 1차 73,500원 · 2차 75,600원 · 현재상태 BUYABLE" in rendered
+    assert "목표: 1차 73,500원 · 2차 75,600원 · 종가RR - · 현재상태 BUYABLE" in rendered
 
 
 def test_render_live_stock_analysis_marks_target_zone_at_threshold(monkeypatch) -> None:

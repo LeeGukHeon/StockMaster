@@ -304,7 +304,10 @@ def test_build_pick_rows_uses_swing_payload_not_negative_ml_expectation_for_h5()
     assert "매수검토" in rows[0]["summary"]
     assert "기대수익률 낮음" not in rows[0]["payload_json"]
     assert "3~5D 스윙순위 1" in rows[0]["summary"]
-    assert "가격조건 기준 30,000원 · 최대진입 30,900원 · 무효 28,900원" in rows[0]["summary"]
+    assert (
+        "가격조건 신호종가 30,000원 · 최대진입 30,900원 · 무효 28,900원"
+        in rows[0]["summary"]
+    )
     assert "ML기대보조 -0.3%" in rows[0]["summary"]
     assert payload["swing_3_5d"]["recommendation_pass"] is True
 

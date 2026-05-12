@@ -139,11 +139,16 @@ def classify_swing_3_5d_recommendation(
     if score is None:
         score = _float_or_none(final_selection_value)
     rule_score = _float_or_none(swing_payload.get("rule_score"))
-    reward_risk = _float_or_none(swing_payload.get("reward_risk_ratio"))
+    reward_risk = _float_or_none(
+        swing_payload.get("rr_at_reference", swing_payload.get("reward_risk_ratio"))
+    )
     recommendation_pass = bool(swing_payload.get("recommendation_pass", False))
     candidate_pass = bool(swing_payload.get("candidate_pass", False))
     final_status = str(swing_payload.get("final_status") or "").upper()
-    entry_status = str(swing_payload.get("entry_status") or "").upper()
+    entry_status = str(
+        swing_payload.get("entry_status_eod") or swing_payload.get("entry_status") or ""
+    ).upper()
+    recommendation_group = str(swing_payload.get("recommendation_group") or "").upper()
     risks = {str(flag) for flag in (risk_flags or [])}
     has_severe_risk = bool(risks & SEVERE_RISK_FLAGS)
     band = score_band_for_value(score)
@@ -176,6 +181,24 @@ def classify_swing_3_5d_recommendation(
             score_band=band,
             evidence=None,
         )
+    if (
+        final_status == "VALID_SIGNAL"
+        or recommendation_group == "VALID_SIGNALS"
+        or entry_status == "RR_COLLAPSED"
+    ):
+        return RecommendationJudgement(
+            label="관찰 우선",
+            summary="유효 신호이나 신호 종가 기준 손익비 1.5 미달·다음날 더 낮은 진입가 대기",
+            score_band=band,
+            evidence=None,
+        )
+    if recommendation_group == "WATCHLIST":
+        return RecommendationJudgement(
+            label="관찰 우선",
+            summary="경계권 신호라 다음날 가격·거래량 재확인 필요",
+            score_band=band,
+            evidence=None,
+        )
     if final_status == "CHASE_RISK" or entry_status == "CHASE_RISK":
         return RecommendationJudgement(
             label="관찰 우선",
@@ -194,7 +217,7 @@ def classify_swing_3_5d_recommendation(
         if final_status == "CANDIDATE":
             return RecommendationJudgement(
                 label="매수검토",
-                summary="3~5D v3 조건 통과·가격 조건 내 분할 접근 검토",
+                summary="3~5D v4 실행 조건 통과·가격 조건 내 분할 접근 검토",
                 score_band=band,
                 evidence=None,
             )
@@ -206,13 +229,13 @@ def classify_swing_3_5d_recommendation(
         if strong_score and strong_rule and strong_reward:
             return RecommendationJudgement(
                 label="매수해볼 가치 있음",
-                summary="3~5D v3 고신뢰 조건 통과·가격 조건 내 분할 접근",
+                summary="3~5D v4 고신뢰 조건 통과·가격 조건 내 분할 접근",
                 score_band=band,
                 evidence=None,
             )
         return RecommendationJudgement(
             label="매수검토",
-            summary="3~5D v3 조건 통과·가격 조건 내 분할 접근 검토",
+            summary="3~5D v4 실행 조건 통과·가격 조건 내 분할 접근 검토",
             score_band=band,
             evidence=None,
         )

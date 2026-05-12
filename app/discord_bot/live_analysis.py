@@ -132,23 +132,37 @@ def _swing_policy_value(swing_payload: dict[str, object], key: str) -> object:
 def _classify_entry_policy_status(price: object, swing_payload: dict[str, object]) -> str:
     current = _float_or_none(price)
     if current is None or current <= 0:
-        return _safe_text(swing_payload.get("entry_status"), "UNKNOWN")
+        return _safe_text(
+            swing_payload.get("entry_status_eod") or swing_payload.get("entry_status"),
+            "UNKNOWN",
+        )
     invalidation = _float_or_none(_swing_policy_value(swing_payload, "invalidation_price"))
+    stop_price = _float_or_none(_swing_policy_value(swing_payload, "stop_price"))
     max_buy = _float_or_none(_swing_policy_value(swing_payload, "max_buy_price"))
     chase_warning = _float_or_none(_swing_policy_value(swing_payload, "chase_warning_price"))
-    target_zone = _float_or_none(_swing_policy_value(swing_payload, "target_zone_price"))
-    extended = _float_or_none(_swing_policy_value(swing_payload, "extended_price"))
-    if invalidation is not None and current < invalidation:
+    signal_close = _float_or_none(_swing_policy_value(swing_payload, "signal_close"))
+    target_1 = _float_or_none(_swing_policy_value(swing_payload, "target_1"))
+    rr_min = _float_or_none(_swing_policy_value(swing_payload, "rr_min")) or 1.5
+    if invalidation is not None and current <= invalidation:
         return "INVALIDATED"
-    if max_buy is not None and current <= max_buy:
-        return "BUYABLE"
-    if chase_warning is not None and current <= chase_warning:
-        return "WATCH_CAUTION"
-    if target_zone is not None and current < target_zone:
-        return "CHASE_RISK"
-    if extended is not None and current <= extended:
+    if target_1 is not None and current >= target_1:
         return "TARGET_ZONE_REACHED"
-    return "EXTENDED"
+    if max_buy is not None and current > max_buy:
+        return "RR_COLLAPSED"
+    if stop_price is not None and target_1 is not None:
+        risk = current - stop_price
+        reward = target_1 - current
+        if risk <= 0:
+            return "INVALIDATED"
+        if reward <= 0:
+            return "TARGET_ZONE_REACHED"
+        if reward / risk < rr_min:
+            return "RR_COLLAPSED"
+    if signal_close is not None and signal_close > 0 and current / signal_close - 1.0 >= 0.05:
+        return "EXTENDED"
+    if chase_warning is not None and current > chase_warning:
+        return "WATCH_CAUTION"
+    return "BUYABLE"
 
 
 def _translate_tag(value: object, mapping: dict[str, str]) -> str:
@@ -353,7 +367,7 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     ):
         d5_line = (
             f"장마감 3~5D 스윙순위 {int(float(stable_d5_rank))} "
-            f"· v3최종점수 {stable_d5_score} · ML기대보조 {_pct_text(stable_d5_expected)} "
+            f"· v4최종점수 {stable_d5_score} · ML기대보조 {_pct_text(stable_d5_expected)} "
             f"· 현재 {current_price}원 ({change_rate})"
         )
     elif (
@@ -388,9 +402,13 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
         lines.append(f"주의: {risk_text}")
     if isinstance(swing_payload, dict):
         entry_status = _classify_entry_policy_status(quote.get("stck_prpr"), swing_payload)
+        rr_at_reference = swing_payload.get(
+            "rr_at_reference",
+            swing_payload.get("reward_risk_ratio"),
+        )
         lines.append(
             "가격조건: "
-            f"기준 {_int_text(_swing_policy_value(swing_payload, 'signal_close'))}원 · "
+            f"신호종가 {_int_text(_swing_policy_value(swing_payload, 'signal_close'))}원 · "
             f"매수 {_int_text(_swing_policy_value(swing_payload, 'entry_lower_price'))}"
             f"~{_int_text(_swing_policy_value(swing_payload, 'max_buy_price'))}원 · "
             f"최대진입 {_int_text(_swing_policy_value(swing_payload, 'max_buy_price'))}원"
@@ -405,6 +423,7 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
             "목표: "
             f"1차 {_int_text(_swing_policy_value(swing_payload, 'target_1'))}원 · "
             f"2차 {_int_text(_swing_policy_value(swing_payload, 'target_2'))}원 · "
+            f"종가RR {_safe_text(rr_at_reference)} · "
             f"현재상태 {entry_status}"
         )
     elif live_row is not None:
