@@ -128,7 +128,7 @@ ABC_POLICY_SPECS: tuple[PolicySpec, ...] = (
     PolicySpec(
         policy_id="active_current",
         model_key="active",
-        description="Current active alpha_swing_d5_v2 practical surface.",
+        description="Current active alpha_practical_d5_v3 v4 EOD RR practical surface.",
     ),
     PolicySpec(
         policy_id="A_hard_disagreement_quarantine",
@@ -163,7 +163,7 @@ CURRENT_POLICY_SPECS: tuple[PolicySpec, ...] = (
     PolicySpec(
         policy_id="active_current",
         model_key="active",
-        description="Current active alpha_swing_d5_v2 practical surface.",
+        description="Current active alpha_practical_d5_v3 v4 EOD RR practical surface.",
     ),
     PolicySpec(
         policy_id="practical_v1_current",
@@ -180,7 +180,7 @@ STABLE_POLICY_SPECS: tuple[PolicySpec, ...] = (
     PolicySpec(
         policy_id="active_current",
         model_key="active",
-        description="Current active alpha_swing_d5_v2 practical surface.",
+        description="Current active alpha_practical_d5_v3 v4 EOD RR practical surface.",
     ),
     PolicySpec(
         policy_id="stable_buyable_current",
@@ -195,7 +195,7 @@ ROBUST_POLICY_SPECS: tuple[PolicySpec, ...] = (
     PolicySpec(
         policy_id="active_current",
         model_key="active",
-        description="Current active alpha_swing_d5_v2 practical surface.",
+        description="Current active alpha_practical_d5_v3 v4 EOD RR practical surface.",
     ),
     PolicySpec(
         policy_id="practical_v2_current",

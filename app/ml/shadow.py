@@ -15,6 +15,7 @@ from app.features.feature_store import (
 )
 from app.ml.constants import (
     ALPHA_CANDIDATE_MODEL_SPECS,
+    D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID,
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
     DEFAULT_ALPHA_MODEL_SPEC,
     MODEL_DOMAIN,
@@ -126,6 +127,7 @@ def _load_candidate_specs(connection) -> list[dict[str, object]]:
         "alpha_topbucket_h1_rolling_120_v1",
         "alpha_lead_d1_v1",
         D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+        D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID,
     }
     specs = [
         {

@@ -22,7 +22,7 @@ def main() -> int:
     parser.add_argument(
         "--skip-active-d5-swing",
         action="store_true",
-        help="Do not force H5 active alpha to alpha_swing_d5_v2.",
+        help="Do not force H5 active alpha to the current daily H5 v4 candidate.",
     )
     args = parser.parse_args()
     settings = load_settings(project_root=PROJECT_ROOT)

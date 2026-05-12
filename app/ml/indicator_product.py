@@ -10,6 +10,7 @@ from app.evaluation.alpha_shadow import (
 from app.features.feature_store import _load_feature_symbol_frame
 from app.ml.active import freeze_alpha_active_model
 from app.ml.constants import (
+    D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID,
     D5_PRIMARY_COMPARATOR_PAIRS,
     D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
     MODEL_DOMAIN,
@@ -145,8 +146,18 @@ def _detect_missing_snapshot_dates(
         return missing_dates
 
 
+def _is_d5_indicator_focus_model(model_spec_id: str | None) -> bool:
+    return str(model_spec_id or "") in {
+        D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID,
+        D5_PRIMARY_FOCUS_MODEL_SPEC_ID,
+    }
+
+
 def _resolve_bundle_focus_model_spec_id(model_spec_ids: list[str]) -> str | None:
-    if D5_PRIMARY_FOCUS_MODEL_SPEC_ID in {str(value) for value in model_spec_ids}:
+    spec_ids = {str(value) for value in model_spec_ids}
+    if D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID in spec_ids:
+        return D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID
+    if D5_PRIMARY_FOCUS_MODEL_SPEC_ID in spec_ids:
         return D5_PRIMARY_FOCUS_MODEL_SPEC_ID
     return None
 
@@ -323,7 +334,7 @@ def _backfill_indicator_shadow_history(
             market=market,
             model_specs=model_specs,
         )
-        if focus_model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID:
+        if _is_d5_indicator_focus_model(focus_model_spec_id):
             training_run_count += _ensure_d5_primary_reference_training_runs(
                 settings,
                 train_end_date=selection_date,
@@ -370,7 +381,7 @@ def _analysis_model_spec_ids_for_bundle(
     focus_model_spec_id: str | None = None,
 ) -> list[str]:
     analysis_model_spec_ids = list(model_spec_ids)
-    if focus_model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID:
+    if _is_d5_indicator_focus_model(focus_model_spec_id):
         analysis_model_spec_ids.extend(
             model_spec_id for _, model_spec_id in D5_PRIMARY_COMPARATOR_PAIRS
         )
@@ -386,11 +397,11 @@ def _required_analysis_pairs_for_bundle(
     horizons: list[int],
     focus_model_spec_id: str | None = None,
 ) -> list[tuple[int, str]]:
-    if focus_model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID:
-        return [
-            (5, D5_PRIMARY_FOCUS_MODEL_SPEC_ID),
+    if _is_d5_indicator_focus_model(focus_model_spec_id):
+        return sorted(dict.fromkeys([
+            (5, str(focus_model_spec_id)),
             *D5_PRIMARY_COMPARATOR_PAIRS,
-        ]
+        ]))
     required_pairs: list[tuple[int, str]] = []
     for model_spec_id in model_spec_ids:
         try:
@@ -419,7 +430,10 @@ def _require_analysis_evidence_rows(
 ) -> None:
     if not required_pairs:
         return
-    required_pair_set = {(str(model_spec_id), int(horizon)) for horizon, model_spec_id in required_pairs}
+    required_pair_set = {
+        (str(model_spec_id), int(horizon))
+        for horizon, model_spec_id in required_pairs
+    }
     model_spec_values = sorted({model_spec_id for model_spec_id, _ in required_pair_set})
     model_spec_placeholders = ",".join("?" for _ in model_spec_values)
     horizon_values = sorted({horizon for _, horizon in required_pair_set})
@@ -438,7 +452,10 @@ def _require_analysis_evidence_rows(
     found_pairs = {(str(model_spec_id), int(horizon)) for model_spec_id, horizon in rows}
     missing_pairs = sorted(required_pair_set - found_pairs)
     if missing_pairs:
-        missing_text = ", ".join(f"{model_spec_id}:h{horizon}" for model_spec_id, horizon in missing_pairs)
+        missing_text = ", ".join(
+            f"{model_spec_id}:h{horizon}"
+            for model_spec_id, horizon in missing_pairs
+        )
         raise RuntimeError(
             "Missing same-window analysis evidence for required comparator set: "
             f"{missing_text}"
@@ -532,7 +549,8 @@ def inspect_alpha_indicator_product_readiness(
         "Alpha indicator readiness inspected. "
         f"train_end_date={train_end_date.isoformat()} "
         f"latest_market_date={latest_market_date.isoformat() if latest_market_date else '-'} "
-        f"missing_snapshot_dates={','.join(value.isoformat() for value in missing_snapshot_dates) or '-'}"
+        "missing_snapshot_dates="
+        f"{','.join(value.isoformat() for value in missing_snapshot_dates) or '-'}"
     )
     return AlphaIndicatorProductReadinessResult(
         train_end_date=train_end_date,
@@ -647,8 +665,14 @@ def _evaluate_d1_freeze_gate(
         reasons.append("missing_gap_scorecard")
         return False, reasons
     matured_count = int(gap_row.get("matured_selection_date_count") or 0)
-    if bool(gap_row.get("insufficient_history_flag")) or matured_count < D1_FREEZE_MIN_MATURED_SELECTION_DATES:
-        required_count = int(gap_row.get("required_selection_date_count") or D1_FREEZE_MIN_MATURED_SELECTION_DATES)
+    if (
+        bool(gap_row.get("insufficient_history_flag"))
+        or matured_count < D1_FREEZE_MIN_MATURED_SELECTION_DATES
+    ):
+        required_count = int(
+            gap_row.get("required_selection_date_count")
+            or D1_FREEZE_MIN_MATURED_SELECTION_DATES
+        )
         reasons.append(
             f"insufficient_matured_shadow_dates={matured_count}/{required_count}"
         )
@@ -699,7 +723,10 @@ def _evaluate_d1_freeze_gate(
     if (
         candidate_top5_return is not None
         and baseline_top5_return is not None
-        and float(candidate_top5_return) - float(baseline_top5_return) < D1_FREEZE_MIN_TOP5_BEAT_BASELINE
+        and (
+            float(candidate_top5_return) - float(baseline_top5_return)
+            < D1_FREEZE_MIN_TOP5_BEAT_BASELINE
+        )
     ):
         reasons.append("candidate_top5_does_not_beat_baseline")
 
@@ -787,12 +814,13 @@ def run_alpha_indicator_product_bundle(
             )
             missing_text = ", ".join(sorted(value.isoformat() for value in missing_dates))
             raise RuntimeError(
-                f"{message} Missing feature-snapshot source dates for bundle: {missing_text or 'unknown'}."
+                f"{message} Missing feature-snapshot source dates for bundle: "
+                f"{missing_text or 'unknown'}."
             ) from exc
         raise
 
     additional_reference_training_runs = 0
-    if focus_model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID:
+    if _is_d5_indicator_focus_model(focus_model_spec_id):
         additional_reference_training_runs += _ensure_d5_primary_reference_training_runs(
             settings,
             train_end_date=train_end_date,
@@ -834,7 +862,10 @@ def run_alpha_indicator_product_bundle(
             training_run_count=0,
             prediction_row_count=int(shadow_result.prediction_row_count),
             ranking_row_count=int(shadow_result.ranking_row_count),
-            notes="Alpha indicator shadow history backfill disabled; materialized only the current as_of_date shadow candidates.",
+            notes=(
+                "Alpha indicator shadow history backfill disabled; materialized only "
+                "the current as_of_date shadow candidates."
+            ),
         )
         shadow_prediction_row_count = int(shadow_result.prediction_row_count)
         shadow_ranking_row_count = int(shadow_result.ranking_row_count)
@@ -898,7 +929,7 @@ def run_alpha_indicator_product_bundle(
             allow_d5_active_freeze
             and 5 in target_freeze_horizons
             and any(
-                model_spec.model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+                _is_d5_indicator_focus_model(model_spec.model_spec_id)
                 for model_spec in model_specs
             )
         )
@@ -932,7 +963,7 @@ def run_alpha_indicator_product_bundle(
                 continue
 
             if (
-                model_spec.model_spec_id == D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+                _is_d5_indicator_focus_model(model_spec.model_spec_id)
                 and freezeable_horizons
                 and not allow_d5_active_freeze
             ):
@@ -944,7 +975,7 @@ def run_alpha_indicator_product_bundle(
 
             if (
                 prefer_d5_focus_active_freeze
-                and model_spec.model_spec_id != D5_PRIMARY_FOCUS_MODEL_SPEC_ID
+                and not _is_d5_indicator_focus_model(model_spec.model_spec_id)
                 and 5 in freezeable_horizons
             ):
                 blocked_freeze_model_spec_ids.append(model_spec.model_spec_id)
@@ -1062,7 +1093,8 @@ def run_alpha_indicator_product_bundle(
         f"blocked_freeze={','.join(blocked_freeze_model_spec_ids) or '-'} "
         f"train_end_date={train_end_date.isoformat()} "
         f"as_of_date={as_of_date.isoformat()} "
-        f"training_runs={int(training_result.training_run_count) + int(additional_reference_training_runs)} "
+        "training_runs="
+        f"{int(training_result.training_run_count) + int(additional_reference_training_runs)} "
         f"freeze_rows={freeze_row_count} "
         f"prediction_rows={prediction_result.row_count} "
         f"ranking_rows={ranking_result.row_count} "
@@ -1090,7 +1122,10 @@ def run_alpha_indicator_product_bundle(
         freeze_block_reasons=freeze_block_reasons,
         active_model_spec_ids_by_horizon=active_model_spec_ids_by_horizon,
         registry_row_count=len(registry_frame),
-        training_run_count=int(training_result.training_run_count) + int(additional_reference_training_runs),
+        training_run_count=(
+            int(training_result.training_run_count)
+            + int(additional_reference_training_runs)
+        ),
         freeze_row_count=freeze_row_count,
         prediction_row_count=int(prediction_result.row_count),
         ranking_row_count=int(ranking_result.row_count),

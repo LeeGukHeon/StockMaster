@@ -5,9 +5,10 @@ from datetime import date
 import pytest
 
 from app.labels.forward_returns import build_forward_labels
-from app.ml.constants import MODEL_SPEC_ID
+from app.ml.constants import D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID, MODEL_SPEC_ID
 from app.ml.indicator_product import (
     _analysis_model_spec_ids_for_bundle,
+    _required_analysis_pairs_for_bundle,
     inspect_alpha_indicator_product_readiness,
     run_alpha_indicator_product_bundle,
 )
@@ -36,7 +37,10 @@ def test_indicator_product_bundle_surfaces_missing_ohlcv_dates(tmp_path, monkeyp
         lambda *args, **kwargs: [date(2026, 2, 27)],
     )
 
-    with pytest.raises(RuntimeError, match="Missing feature-snapshot source dates for bundle: 2026-02-27"):
+    with pytest.raises(
+        RuntimeError,
+        match="Missing feature-snapshot source dates for bundle: 2026-02-27",
+    ):
         run_alpha_indicator_product_bundle(
             settings,
             train_end_date=date(2026, 3, 6),
@@ -93,4 +97,26 @@ def test_analysis_model_spec_ids_include_h5_comparator_for_d5_only_bundle() -> N
         MODEL_SPEC_ID,
         "alpha_swing_d5_v2",
         "alpha_topbucket_h1_rolling_120_v1",
+    ]
+
+
+def test_indicator_product_analysis_pairs_use_current_v4_h5_focus() -> None:
+    assert _analysis_model_spec_ids_for_bundle(
+        model_spec_ids=[D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID],
+        horizons=[1, 5],
+        focus_model_spec_id=D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID,
+    ) == [
+        D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID,
+        MODEL_SPEC_ID,
+        "alpha_topbucket_h1_rolling_120_v1",
+    ]
+    assert _required_analysis_pairs_for_bundle(
+        model_spec_ids=[D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID],
+        horizons=[1, 5],
+        focus_model_spec_id=D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID,
+    ) == [
+        (1, MODEL_SPEC_ID),
+        (1, "alpha_topbucket_h1_rolling_120_v1"),
+        (5, D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID),
+        (5, MODEL_SPEC_ID),
     ]

@@ -1222,7 +1222,7 @@ def run_daily_close_bundle(
             notes=f"Scheduler daily close bundle for {target_date.isoformat()}",
             details={
                 "bundle_phase": "daily_close",
-                "profile": "post_close_v3_entry_policy_report",
+                "profile": "post_close_v4_eod_rr_entry_policy_report",
                 "date_semantics": "trading_day",
             },
         ) as job:
@@ -1374,7 +1374,7 @@ def run_daily_close_bundle(
             return job_result_from_context(
                 job,
                 notes=(
-                    "Daily close bundle completed with v3 hybrid selection, entry_policy, "
+                    "Daily close bundle completed with v4 EOD RR selection, entry_policy, "
                     "portfolio snapshots, read-store refresh, and post-close reports."
                 ),
             )

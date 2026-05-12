@@ -298,6 +298,7 @@ MODEL_SPEC_LABELS = {
     "alpha_topbucket_h1_rolling_120_v1": "하루 선행 비교 기준",
     "alpha_lead_d1_v1": "하루 선행 포착 v1",
     "alpha_swing_d5_v2": "3~5일 스윙 ML 보조",
+    "alpha_practical_d5_v3": "3~5일 v4 종가RR ML 보조",
     "alpha_recursive_rolling_combo": "누적+최근 구간 혼합",
     "recursive": "확장형 누적 학습",
     "rolling 120d": "최근 120거래일 중심 학습",
@@ -1057,9 +1058,8 @@ def build_swing_gate_diagnostics(frame: pd.DataFrame) -> dict[str, object]:
         + entry_status_counts.get("TARGET_ZONE_REACHED", 0)
     )
     executable_count = int(group_counts.get("EXECUTABLE_PICKS", 0))
-    valid_signal_count = int(
-        group_counts.get("VALID_SIGNALS", 0) + group_counts.get("EXECUTABLE_PICKS", 0)
-    )
+    valid_signal_non_executable_count = int(group_counts.get("VALID_SIGNALS", 0))
+    signal_quality_count = int(executable_count + valid_signal_non_executable_count)
     watchlist_count = int(group_counts.get("WATCHLIST", 0))
     rejected_count = int(group_counts.get("REJECTED", 0))
     failed_gate_counts = {
@@ -1091,7 +1091,9 @@ def build_swing_gate_diagnostics(frame: pd.DataFrame) -> dict[str, object]:
         "final_status_counts": final_status_counts,
         "entry_status_counts": entry_status_counts,
         "recommendation_group_counts": group_counts,
-        "valid_signal_count": valid_signal_count,
+        "valid_signal_count": valid_signal_non_executable_count,
+        "valid_signal_non_executable_count": valid_signal_non_executable_count,
+        "signal_quality_count": signal_quality_count,
         "executable_count": executable_count,
         "rr_collapsed_count": rr_collapsed_count,
         "target_reached_count": target_reached_count,
@@ -1113,7 +1115,15 @@ def format_swing_gate_diagnostics_lines(
         return []
     total = int(diagnostics.get("total_rows") or 0)
     recommendation_pass = int(diagnostics.get("recommendation_pass_count") or 0)
-    valid_signal = int(diagnostics.get("valid_signal_count") or 0)
+    valid_signal = int(
+        diagnostics.get("valid_signal_non_executable_count")
+        if diagnostics.get("valid_signal_non_executable_count") is not None
+        else diagnostics.get("valid_signal_count")
+        or 0
+    )
+    signal_quality = int(
+        diagnostics.get("signal_quality_count") or (valid_signal + recommendation_pass)
+    )
     executable = int(diagnostics.get("executable_count") or recommendation_pass)
     rr_collapsed = int(diagnostics.get("rr_collapsed_count") or 0)
     target_reached = int(diagnostics.get("target_reached_count") or 0)
@@ -1122,8 +1132,9 @@ def format_swing_gate_diagnostics_lines(
     bottleneck = _swing_gate_bottleneck_label(diagnostics) or "하드게이트"
     lines = [
         (
-            f"- 미추천 사유: H5 v3/v4 {total:,}개 중 실행 가능 추천 "
-            f"{executable:,}개입니다. 유효 신호 {valid_signal:,}개, 손익비 붕괴 "
+            f"- 미추천 사유: H5 v4 종가RR {total:,}개 중 실제 매수 가능 "
+            f"{executable:,}개입니다. 비실행 유효 신호 {valid_signal:,}개"
+            f"(신호권 합계 {signal_quality:,}개), 손익비 붕괴 "
             f"{rr_collapsed:,}개, 목표권/상방 부족 {target_reached:,}개, 관심 후보 "
             f"{watchlist:,}개, 제외 {rejected:,}개입니다. 가장 큰 병목은 {bottleneck}입니다."
         )
@@ -1183,15 +1194,22 @@ def format_swing_gate_diagnostics_compact_lines(
     total = int(diagnostics.get("total_rows") or 0)
     recommendation_pass = int(diagnostics.get("recommendation_pass_count") or 0)
     executable = int(diagnostics.get("executable_count") or recommendation_pass)
-    valid_signal = int(diagnostics.get("valid_signal_count") or 0)
+    valid_signal = int(
+        diagnostics.get("valid_signal_non_executable_count")
+        if diagnostics.get("valid_signal_non_executable_count") is not None
+        else diagnostics.get("valid_signal_count")
+        or 0
+    )
+    signal_quality = int(diagnostics.get("signal_quality_count") or (valid_signal + executable))
     rr_collapsed = int(diagnostics.get("rr_collapsed_count") or 0)
     target_reached = int(diagnostics.get("target_reached_count") or 0)
     watchlist = int(diagnostics.get("watchlist_count") or 0)
     bottleneck = _swing_gate_bottleneck_label(diagnostics)
     lines = [
         (
-            f"- H5 실행 추천: {executable:,}/{total:,}개. "
-            f"유효 신호 {valid_signal:,}개, 손익비 미달 {rr_collapsed:,}개, "
+            f"- H5 실제 매수 가능: {executable:,}/{total:,}개. "
+            f"비실행 유효 신호 {valid_signal:,}개(신호권 {signal_quality:,}개), "
+            f"손익비 미달 {rr_collapsed:,}개, "
             f"목표권/상방 부족 {target_reached:,}개, 관심 {watchlist:,}개."
         )
     ]

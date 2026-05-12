@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.logging import configure_logging, get_logger
+from app.ml.constants import D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID
 from app.ml.indicator_product import inspect_alpha_indicator_product_readiness
 from app.settings import load_settings
 
@@ -28,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model-spec-ids",
         nargs="+",
-        default=["alpha_swing_d5_v2"],
+        default=[D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID],
     )
     parser.add_argument("--limit-symbols", type=int)
     parser.add_argument("--market", default="ALL", choices=["ALL", "KOSPI", "KOSDAQ"])

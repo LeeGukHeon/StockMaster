@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.logging import configure_logging, get_logger
+from app.ml.constants import D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID
 from app.ml.indicator_product import run_alpha_indicator_product_bundle
 from app.settings import load_settings
 
@@ -30,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model-spec-ids",
         nargs="+",
-        default=["alpha_swing_d5_v2"],
+        default=[D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID],
     )
     parser.add_argument("--min-train-days", type=int, default=120)
     parser.add_argument("--validation-days", type=int, default=20)
@@ -53,7 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-d5-active-freeze",
         action="store_true",
-        help="Allow alpha_swing_d5_v2 to become the active H5 model when horizon 5 is frozen.",
+        help=(
+            "Allow the current daily H5 candidate model to become active "
+            "when horizon 5 is frozen."
+        ),
     )
     return parser
 

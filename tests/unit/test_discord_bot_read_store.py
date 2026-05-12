@@ -312,6 +312,156 @@ def test_build_pick_rows_uses_swing_payload_not_negative_ml_expectation_for_h5()
     assert payload["swing_3_5d"]["recommendation_pass"] is True
 
 
+def test_build_pick_rows_keeps_h5_swing_three_message_groups() -> None:
+    def swing_payload(
+        *,
+        group: str,
+        status: str,
+        final_status: str,
+        score: float,
+        rr: float,
+        max_buy: float,
+        pattern: str = "pullback",
+    ) -> str:
+        return json.dumps(
+            {
+                "swing_3_5d": {
+                    "recommendation_pass": group == "EXECUTABLE_PICKS",
+                    "executable_pick": group == "EXECUTABLE_PICKS",
+                    "valid_signal": group == "VALID_SIGNALS",
+                    "watchlist": group == "WATCHLIST",
+                    "recommendation_group": group,
+                    "final_status": final_status,
+                    "entry_status": status,
+                    "entry_status_eod": status,
+                    "pattern": pattern,
+                    "signal_close": 10_000.0,
+                    "entry_reference_price": 10_000.0,
+                    "max_buy_price": max_buy,
+                    "target_1": 10_900.0,
+                    "stop_price": 9_400.0,
+                    "rr_at_reference": rr,
+                    "rr_min": 1.5,
+                    "signal_score": score - 5.0,
+                    "entry_score": score - 10.0,
+                    "final_score": score,
+                }
+            },
+            ensure_ascii=False,
+        )
+
+    frame = pd.DataFrame(
+        [
+            {
+                "horizon": 5,
+                "eligible_flag": True,
+                "symbol": "111111",
+                "company_name": "실행가능",
+                "market": "KOSDAQ",
+                "industry": "반도체",
+                "sector": "기술",
+                "final_selection_value": 80.0,
+                "grade": "A",
+                "selection_date": "2026-05-12",
+                "next_entry_trade_date": "2026-05-13",
+                "selection_close_price": 10_000.0,
+                "expected_excess_return": -0.001,
+                "uncertainty_score": 20.0,
+                "disagreement_score": 20.0,
+                "model_spec_id": "alpha_practical_d5_v3",
+                "reasons": '["swing_pullback_pattern"]',
+                "risks": "[]",
+                "explanatory_score_json": swing_payload(
+                    group="EXECUTABLE_PICKS",
+                    status="BUYABLE",
+                    final_status="CANDIDATE",
+                    score=80.0,
+                    rr=1.8,
+                    max_buy=10_100.0,
+                ),
+            },
+            {
+                "horizon": 5,
+                "eligible_flag": True,
+                "symbol": "222222",
+                "company_name": "유효신호",
+                "market": "KOSDAQ",
+                "industry": "화학",
+                "sector": "소재",
+                "final_selection_value": 78.0,
+                "grade": "A",
+                "selection_date": "2026-05-12",
+                "next_entry_trade_date": "2026-05-13",
+                "selection_close_price": 10_000.0,
+                "expected_excess_return": -0.001,
+                "uncertainty_score": 20.0,
+                "disagreement_score": 20.0,
+                "model_spec_id": "alpha_practical_d5_v3",
+                "reasons": '["swing_recovery_breakout_pattern"]',
+                "risks": "[]",
+                "explanatory_score_json": swing_payload(
+                    group="VALID_SIGNALS",
+                    status="RR_COLLAPSED",
+                    final_status="VALID_SIGNAL",
+                    score=78.0,
+                    rr=0.8,
+                    max_buy=9_600.0,
+                    pattern="recovery_breakout",
+                ),
+            },
+            {
+                "horizon": 5,
+                "eligible_flag": True,
+                "symbol": "333333",
+                "company_name": "관찰후보",
+                "market": "KOSDAQ",
+                "industry": "식품",
+                "sector": "소비재",
+                "final_selection_value": 70.0,
+                "grade": "B",
+                "selection_date": "2026-05-12",
+                "next_entry_trade_date": "2026-05-13",
+                "selection_close_price": 10_000.0,
+                "expected_excess_return": -0.001,
+                "uncertainty_score": 20.0,
+                "disagreement_score": 20.0,
+                "model_spec_id": "alpha_practical_d5_v3",
+                "reasons": '["swing_volume_expansion"]',
+                "risks": "[]",
+                "explanatory_score_json": swing_payload(
+                    group="WATCHLIST",
+                    status="BUYABLE",
+                    final_status="WATCHLIST",
+                    score=70.0,
+                    rr=1.6,
+                    max_buy=10_100.0,
+                ),
+            },
+        ]
+    )
+
+    rows = read_store._build_pick_rows(
+        frame,
+        horizon=5,
+        built_at="2026-05-13T00:00:00+09:00",
+        as_of_date="2026-05-12",
+        source_run_id="test",
+    )
+
+    assert [row["symbol"] for row in rows] == ["111111", "222222", "333333"]
+    payloads = [json.loads(row["payload_json"]) for row in rows]
+    assert [payload["message_group"] for payload in payloads] == [
+        "EXECUTABLE",
+        "VALID_SIGNAL",
+        "WATCHLIST",
+    ]
+    assert "실제 매수 가능 종목" in rows[0]["summary"]
+    assert "유효 신호(추격주의/손익비 부족)" in rows[1]["summary"]
+    assert "관찰 후보" in rows[2]["summary"]
+    assert "현재RR 0.80" in rows[1]["summary"]
+    assert "max_buy 9,600원" in rows[1]["summary"]
+
+
 def test_build_stock_summary_rows_omits_news_noise() -> None:
     frame = pd.DataFrame(
         [
@@ -652,7 +802,7 @@ def test_build_stock_summary_rows_uses_swing_payload_for_h5_candidate_label() ->
     assert payload["d5_swing_3_5d"]["recommendation_pass"] is True
 
 
-def test_build_recommendation_diagnostic_rows_explains_empty_h5_v3() -> None:
+def test_build_recommendation_diagnostic_rows_explains_empty_h5_v4() -> None:
     frame = pd.DataFrame(
         [
             {

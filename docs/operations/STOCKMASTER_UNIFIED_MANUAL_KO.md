@@ -28,7 +28,7 @@
 
 - 사용자 표면의 핵심은 **Discord bot**이다.
 - 공개 웹 대시보드는 현재 운영 진입점이 아니다.
-- H5 메인 추천 모델은 **`alpha_swing_d5_v2` 단일 주축**이다.
+- H5 메인 추천 모델은 **`alpha_practical_d5_v3` v4 종가RR/entry_policy 단일 주축**이다.
 - 이전 D5 1세대 control lane은 **운영 경로/서버 데이터/registry/runtime에서 제거되었다.**
 - H5 baseline comparator는 `alpha_recursive_expanding_v1`이다.
 
@@ -400,7 +400,7 @@ sudo -E bash scripts/server/run_scheduler_job_host.sh evaluation --as-of-date 20
 
 - `daily-close`
   - feature / ranking / selection / model training
-  - H5 active는 `alpha_swing_d5_v2`
+  - H5 active는 `alpha_practical_d5_v3`
   - Discord EOD / read-store 갱신
 
 ### 7.5 후속
@@ -626,7 +626,7 @@ python3 scripts/render_discord_eod_report.py --as-of-date 2026-04-23 --dry-run
 ## 12. 운영자가 기억해야 할 현재 제품 계약
 
 - 사용자 표면은 **Discord bot 중심**
-- H5 메인 모델은 **`alpha_swing_d5_v2`**
+- H5 메인 모델은 **`alpha_practical_d5_v3`**
 - D5 v1은 **운영에서 제거됨**
 - H5 baseline comparator는 `alpha_recursive_expanding_v1`
 - metadata split은 기본값

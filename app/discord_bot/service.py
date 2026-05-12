@@ -15,7 +15,7 @@ from app.settings import Settings
 logger = get_logger(__name__)
 
 JOB_LABELS: dict[str, str] = {
-    "run_daily_close_bundle": "장마감 v3 추천 업데이트",
+    "run_daily_close_bundle": "장마감 v4 종가RR 추천 업데이트",
     "run_evaluation_bundle": "사후 평가 정리",
     "run_news_sync_bundle": "뉴스 반영",
     "run_daily_overlay_refresh_bundle": "장중 정책 갱신",
@@ -25,7 +25,7 @@ JOB_LABELS: dict[str, str] = {
 }
 
 STEP_LABELS: dict[str, str] = {
-    "daily_pipeline": "장마감 v3 추천 사이클",
+    "daily_pipeline": "장마감 v4 추천 사이클",
     "sync_daily_ohlcv": "일봉 시세 수집",
     "sync_fundamentals_snapshot": "재무 데이터 수집",
     "sync_news_metadata": "뉴스 수집",
@@ -40,7 +40,7 @@ STEP_LABELS: dict[str, str] = {
     "materialize_alpha_shadow_candidates": "후보 모델 비교 점검",
     "run_alpha_auto_promotion": "추천 모델 교체 점검",
     "materialize_alpha_predictions_v1": "ML 목표확률 계산",
-    "materialize_selection_engine_v2": "v3 하이브리드 추천·entry_policy 계산",
+    "materialize_selection_engine_v2": "v4 종가RR 하이브리드 추천·entry_policy 계산",
     "calibrate_proxy_prediction_bands": "예측 구간 보정",
     "evaluation_pipeline": "사후 평가 계산",
     "render_evaluation_report": "사후 평가 리포트 생성",
@@ -48,6 +48,18 @@ STEP_LABELS: dict[str, str] = {
     "materialize_health_snapshots": "운영 상태 기록",
     "check_pipeline_dependencies": "의존성 점검",
     "materialize_discord_bot_read_store": "봇 조회 스냅샷 갱신",
+}
+
+NEXT_PICK_GROUP_ORDER = ("EXECUTABLE", "VALID_SIGNAL", "WATCHLIST")
+NEXT_PICK_GROUP_LABELS = {
+    "EXECUTABLE": "실제 매수 가능 종목",
+    "VALID_SIGNAL": "유효 신호(추격주의/손익비 부족)",
+    "WATCHLIST": "관찰 후보",
+}
+NEXT_PICK_GROUP_EMPTY_MESSAGES = {
+    "EXECUTABLE": "현재 가격·RR·max_buy·entry_policy를 모두 통과한 종목이 없습니다.",
+    "VALID_SIGNAL": "좋은 신호였지만 추격주의/손익비 부족/과열/목표권 도달 종목이 없습니다.",
+    "WATCHLIST": "차트 구조는 보이나 거래량·돌파·ML 트리거가 부족한 후보가 없습니다.",
 }
 
 
@@ -65,16 +77,67 @@ def _render_snapshot_list(
         return empty_message
     lines = [f"**{title}**"]
     for row in rows.itertuples(index=False):
-        subtitle = f" ({row.subtitle})" if getattr(row, "subtitle", None) else ""
-        lines.append(f"- {row.title}{subtitle}")
-        if getattr(row, "summary", None):
-            lines.append(f"  {row.summary}")
+        lines.extend(_snapshot_row_lines(row))
+    return "\n".join(lines)
+
+
+def _payload_dict(row: object) -> dict[str, object]:
+    payload = getattr(row, "payload_json", None)
+    if isinstance(payload, str) and payload.strip():
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _snapshot_row_lines(row: object) -> list[str]:
+    subtitle = f" ({row.subtitle})" if getattr(row, "subtitle", None) else ""
+    lines = [f"- {row.title}{subtitle}"]
+    if getattr(row, "summary", None):
+        lines.append(f"  {row.summary}")
+    return lines
+
+
+def _render_next_picks(
+    title: str,
+    rows,
+    *,
+    horizon: int,
+    empty_message: str,
+    per_group_limit: int,
+) -> str:
+    if int(horizon) != 5 or rows.empty:
+        return _render_snapshot_list(title, rows, empty_message=empty_message)
+
+    row_groups: list[str] = []
+    for row in rows.itertuples(index=False):
+        group = str(_payload_dict(row).get("message_group") or "").strip()
+        row_groups.append(group)
+    if not any(group in NEXT_PICK_GROUP_ORDER for group in row_groups):
+        return _render_snapshot_list(title, rows, empty_message=empty_message)
+
+    working = rows.copy()
+    working["_message_group"] = row_groups
+    lines = [f"**{title}**"]
+    if not working["_message_group"].eq("EXECUTABLE").any():
+        lines.append("- 좋은 신호는 있었지만 현재 가격 기준 실제 진입 가능한 종목은 없었습니다.")
+    for group in NEXT_PICK_GROUP_ORDER:
+        label = NEXT_PICK_GROUP_LABELS[group]
+        group_rows = working.loc[working["_message_group"].eq(group)].head(int(per_group_limit))
+        lines.append(f"**{label}**")
+        if group_rows.empty:
+            lines.append(f"- {NEXT_PICK_GROUP_EMPTY_MESSAGES[group]}")
+            continue
+        for row in group_rows.itertuples(index=False):
+            lines.extend(_snapshot_row_lines(row))
     return "\n".join(lines)
 
 
 def _next_picks_empty_message(horizon: int) -> str:
     if int(horizon) == 5:
-        return "오늘은 v4 종가RR 실행필터를 통과한 5거래일 스윙 후보가 없습니다."
+        return "오늘은 v4 종가RR·entry_policy 기준으로 표시할 5거래일 스윙 후보가 없습니다."
     if int(horizon) == 1:
         return "참고용 H1 단기 후보가 아직 없습니다."
     return "추천 후보 스냅샷이 아직 준비되지 않았습니다."
@@ -223,7 +286,7 @@ def build_discord_bot(settings: Settings):
 
     @client.tree.command(
         name="내일종목추천",
-        description="다음 거래일 후보를 보여줍니다. H5는 v3 최대진입·추격주의·무효 가격 포함.",
+        description="다음 거래일 후보를 보여줍니다. H5는 v4 종가RR 기준 3그룹으로 표시.",
     )
     @app_commands.rename(basis="보유기준", count="개수")
     @app_commands.describe(
@@ -242,11 +305,14 @@ def build_discord_bot(settings: Settings):
         count: app_commands.Range[int, 1, 10] = 5,
     ) -> None:
         await interaction.response.defer(thinking=True)
+        fetch_limit = int(count)
+        if int(basis.value) == 5:
+            fetch_limit = max(int(count) * len(NEXT_PICK_GROUP_ORDER), int(count))
         rows = fetch_discord_bot_snapshot_rows(
             settings,
             snapshot_type="next_picks",
             horizon=int(basis.value),
-            limit=int(count),
+            limit=fetch_limit,
         )
         if rows.empty and int(basis.value) == 5:
             rows = fetch_discord_bot_snapshot_rows(
@@ -255,10 +321,12 @@ def build_discord_bot(settings: Settings):
                 horizon=5,
                 limit=1,
             )
-        message = _render_snapshot_list(
+        message = _render_next_picks(
             f"내일 종목 추천 · {basis.name}",
             rows,
+            horizon=int(basis.value),
             empty_message=_next_picks_empty_message(int(basis.value)),
+            per_group_limit=int(count),
         )
         await interaction.followup.send(message)
 
@@ -279,7 +347,7 @@ def build_discord_bot(settings: Settings):
 
     @client.tree.command(
         name="종목요약",
-        description="저장된 장마감 종목 요약과 v3 가격조건(후보일 때)을 보여줍니다.",
+        description="저장된 장마감 종목 요약과 v4 종가RR 가격조건(후보일 때)을 보여줍니다.",
     )
     @app_commands.rename(query="종목")
     @app_commands.describe(query="종목명 또는 6자리 종목코드를 입력하세요.")

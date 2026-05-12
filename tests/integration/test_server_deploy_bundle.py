@@ -52,12 +52,13 @@ def test_daily_close_timer_targets_scheduler_daily_close_slug():
     assert "run_scheduler_job_host.sh %i" in service
 
 
-def test_run_indicator_product_bundle_host_targets_d5_v2_lane():
+def test_run_indicator_product_bundle_host_targets_current_v4_h5_lane():
     script = Path("scripts/server/run_indicator_product_bundle_host.sh").read_text(
         encoding="utf-8"
     )
 
-    assert "--model-spec-ids alpha_swing_d5_v2" in script
+    assert "--model-spec-ids alpha_practical_d5_v3" in script
+    assert "--require-comparator 5:alpha_practical_d5_v3" in script
     assert "--require-comparator 5:alpha_recursive_expanding_v1" in script
     assert "--require-comparator 1:alpha_recursive_expanding_v1" in script
     assert "--require-comparator 1:alpha_topbucket_h1_rolling_120_v1" in script

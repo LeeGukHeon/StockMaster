@@ -60,6 +60,7 @@ MODEL_SPEC_LABELS: dict[str, str] = {
     "alpha_lead_d1_v1": "lead d1 v1",
     "alpha_swing_d5_v2": "swing d5 top5 v2",
     "alpha_practical_d5_v2": "practical d5 buyable v2",
+    D5_DAILY_H5_CANDIDATE_MODEL_SPEC_ID: "practical d5 path v3",
     "alpha_recursive_rolling_combo": "recursive+rolling combo",
 }
 DECISION_LABELS: dict[str, str] = {

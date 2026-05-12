@@ -28,6 +28,7 @@ MODEL_SPEC_LABELS = {
     "alpha_topbucket_h1_rolling_120_v1": "하루 선행 비교 기준",
     "alpha_lead_d1_v1": "하루 선행 포착 v1",
     "alpha_swing_d5_v2": "3~5일 스윙 ML 보조",
+    "alpha_practical_d5_v3": "3~5일 v4 종가RR ML 보조",
 }
 
 

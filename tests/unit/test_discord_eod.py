@@ -98,7 +98,9 @@ def test_build_swing_gate_diagnostics_counts_and_translates_filters() -> None:
     counts = {item["key"]: item["pass_count"] for item in diagnostics["gates"]}
     assert diagnostics["total_rows"] == 3
     assert diagnostics["recommendation_pass_count"] == 1
-    assert diagnostics["valid_signal_count"] == 2
+    assert diagnostics["valid_signal_count"] == 1
+    assert diagnostics["valid_signal_non_executable_count"] == 1
+    assert diagnostics["signal_quality_count"] == 2
     assert diagnostics["rr_collapsed_count"] == 1
     assert counts["common_not_rejected"] == 2
     assert counts["pattern_present"] == 2
@@ -111,7 +113,8 @@ def test_build_swing_gate_diagnostics_counts_and_translates_filters() -> None:
     assert "공통 제외 필터: 2/3" in rendered
     assert "관리/거래정지/유동성/재무/과열" in rendered
     assert "유효 스윙 패턴: 2/3" in rendered
-    assert "유효 신호 2개" in rendered
+    assert "비실행 유효 신호 1개" in rendered
+    assert "신호권 합계 2개" in rendered
     assert "손익비 붕괴 1개" in rendered
     assert "누적 실행게이트" in rendered
 
@@ -173,7 +176,7 @@ def test_build_payload_content_labels_candidate_horizon_explicitly() -> None:
     assert "공식 추천안" not in content
 
 
-def test_build_payload_content_includes_v3_no_recommendation_gate_diagnostics() -> None:
+def test_build_payload_content_includes_v4_no_recommendation_gate_diagnostics() -> None:
     diagnostics = build_swing_gate_diagnostics(
         pd.DataFrame(
             [
@@ -212,7 +215,7 @@ def test_build_payload_content_includes_v3_no_recommendation_gate_diagnostics() 
     )
 
     assert "좋은 신호는 있었지만 현재 가격 기준 실제 진입 가능한 종목은 없습니다" in content
-    assert "H5 실행 추천: 0/2개" in content
+    assert "H5 실제 매수 가능: 0/2개" in content
     assert "핵심 병목: 유효 스윙 패턴" in content
     assert "필터별 개별 통과 수" not in content
     assert "누적 실행게이트" not in content

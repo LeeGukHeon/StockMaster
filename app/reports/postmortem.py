@@ -344,7 +344,7 @@ def _build_report_content(
         f"**StockMaster 사후평가 | {evaluation_date.isoformat()}**",
         "",
         (
-            "오늘 메시지는 현재 추천로직(selection_engine_v2/v3 D5 경로모델 포함)의 "
+            "오늘 메시지는 현재 추천로직(selection_engine_v2/v4 종가RR D5 스윙 포함)의 "
             "사후 성과만 짧게 봅니다."
         ),
         "- 평균초과: 같은 기간 비교기준보다 더 벌었는지",

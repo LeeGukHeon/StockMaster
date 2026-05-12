@@ -62,7 +62,10 @@ def _validation_reference_runs_sql(horizon_array_sql: str) -> str:
                     training_run_id,
                     ROW_NUMBER() OVER (
                         PARTITION BY horizon
-                        ORDER BY effective_from_date DESC, created_at DESC, active_alpha_model_id DESC
+                        ORDER BY
+                            effective_from_date DESC,
+                            created_at DESC,
+                            active_alpha_model_id DESC
                     ) AS row_number
                 FROM fact_alpha_active_model
                 WHERE model_version = ?
@@ -93,7 +96,10 @@ def _validation_reference_runs_sql(horizon_array_sql: str) -> str:
         reference_runs AS (
             SELECT
                 required_horizons.horizon,
-                COALESCE(active_runs.training_run_id, latest_default_runs.training_run_id) AS training_run_id
+                COALESCE(
+                    active_runs.training_run_id,
+                    latest_default_runs.training_run_id
+                ) AS training_run_id
             FROM required_horizons
             LEFT JOIN active_runs
               ON active_runs.horizon = required_horizons.horizon
@@ -445,7 +451,11 @@ def _append_d5_primary_checks(
                     {
                         "check_name": f"d5_primary_drag_improvement_{suffix}",
                         "status": "warn",
-                        "value": "" if drag_vs_raw_top5 is None else round(float(drag_vs_raw_top5), 6),
+                        "value": (
+                            ""
+                            if drag_vs_raw_top5 is None
+                            else round(float(drag_vs_raw_top5), 6)
+                        ),
                         "threshold": D5_PRIMARY_DRAG_IMPROVEMENT_TARGET,
                         "detail": detail,
                     },
@@ -620,7 +630,8 @@ def validate_alpha_model_v1(
                         "value": int(missing_training_runs or 0),
                         "threshold": 0,
                         "detail": (
-                            "An active-model run or latest default-spec run should exist for each requested horizon."
+                            "An active-model run or latest default-spec run should "
+                            "exist for each requested horizon."
                         ),
                     }
                 )
@@ -695,7 +706,11 @@ def validate_alpha_model_v1(
                         dict.fromkeys(
                             metric_name
                             for metric_name in (
-                                metric_names[-2] if len(metric_names) >= 2 else "top10_mean_excess_return",
+                                (
+                                    metric_names[-2]
+                                    if len(metric_names) >= 2
+                                    else "top10_mean_excess_return"
+                                ),
                                 "top20_mean_excess_return",
                                 "rank_ic",
                             )
@@ -800,6 +815,8 @@ def validate_alpha_model_v1(
                     for spec in ALPHA_CANDIDATE_MODEL_SPECS
                     if bool(spec.active_candidate_flag)
                 ]
+                if focus_model_spec_id and focus_model_spec_id not in active_candidate_spec_ids:
+                    active_candidate_spec_ids.append(str(focus_model_spec_id))
                 for spec_id in active_candidate_spec_ids:
                     try:
                         spec = get_alpha_model_spec(spec_id)
@@ -871,7 +888,8 @@ def validate_alpha_model_v1(
                                         "threshold": threshold,
                                         "detail": (
                                             f"Insufficient matured selection dates for {spec_id} "
-                                            f"({matured_count}/{required_count}) at summary_date={gap_row[0]}."
+                                            f"({matured_count}/{required_count}) "
+                                            f"at summary_date={gap_row[0]}."
                                         ),
                                     }
                                 )
@@ -889,7 +907,8 @@ def validate_alpha_model_v1(
                                     "value": "" if drag_value is None else round(drag_value, 6),
                                     "threshold": threshold,
                                     "detail": (
-                                        f"Latest top5 drag for {spec_id} at {window_name} should stay "
+                                        f"Latest top5 drag for {spec_id} at {window_name} "
+                                        "should stay "
                                         "within the allowed degradation band."
                                     ),
                                 }

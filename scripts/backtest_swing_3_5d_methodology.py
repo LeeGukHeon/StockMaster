@@ -568,7 +568,7 @@ def _write_report(
         f"- Range: {start_date.isoformat()} .. {end_date.isoformat()}",
         f"- Selection dates evaluated: {len(selection_dates)}",
         "- Entry/exit: t+1 open must be <= max_buy_price; otherwise NOT_EXECUTABLE. "
-        "Executable rows use v3 target_1 before stop_price within 5 trading days; "
+        "Executable rows use v4 target_1 before stop_price within 5 trading days; "
         "same-day target+stop is conservatively counted as stop.",
         f"- Summary JSON: `{summary_path}`",
         f"- Selection/outcome CSV: `{selections_path}`",

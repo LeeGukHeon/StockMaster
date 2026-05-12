@@ -39,6 +39,11 @@ from app.reports.discord_eod import (
     MODEL_SPEC_LABELS,
     REASON_LABELS,
     RISK_LABELS,
+    SWING_ENTRY_STATUS_LABELS,
+    SWING_MESSAGE_GROUP_LABELS,
+    SWING_MESSAGE_GROUP_ORDER,
+    SWING_PATTERN_LABELS,
+    SWING_VALID_SIGNAL_ENTRY_STATUSES,
     build_swing_gate_diagnostics,
     format_swing_gate_diagnostics_lines,
 )
@@ -55,6 +60,7 @@ BOT_SNAPSHOT_TABLE = "fact_discord_bot_snapshot"
 BOT_PICK_LIMIT = 20
 BOT_D5_CORE_PICK_LIMIT = 5
 BOT_D5_MAX_PICKS_PER_SECTOR = 2
+BOT_D5_SWING_GROUP_LIMIT = 3
 BOT_WEEKLY_LIMIT = 4
 BOT_SNAPSHOT_TYPES = (
     "status",
@@ -109,6 +115,254 @@ def _swing_policy_value(swing_payload: dict[str, object], key: str) -> object:
     if isinstance(policy, dict) and key in policy:
         return policy.get(key)
     return swing_payload.get(key)
+
+
+def _float_or_none(value: object) -> float | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _swing_sort_text(value: object) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return str(value).strip().upper()
+
+
+def _swing_entry_status_label(value: object) -> str:
+    text = _swing_sort_text(value)
+    return SWING_ENTRY_STATUS_LABELS.get(text, text or "상태 미확인")
+
+
+def _swing_pattern_label(value: object) -> str:
+    text = "" if value is None else str(value).strip()
+    return SWING_PATTERN_LABELS.get(text, text or "-")
+
+
+def _swing_policy_number(
+    swing_payload: dict[str, object],
+    *keys: str,
+) -> float | None:
+    for key in keys:
+        number = _float_or_none(_swing_policy_value(swing_payload, key))
+        if number is not None:
+            return number
+    return None
+
+
+def _swing_rr_value(swing_payload: dict[str, object]) -> float | None:
+    for key in ("rr_at_current", "rr_at_reference", "reward_risk_ratio"):
+        number = _float_or_none(swing_payload.get(key))
+        if number is not None:
+            return number
+    return None
+
+
+def _swing_current_price(
+    swing_payload: dict[str, object],
+    row: pd.Series | object,
+) -> float | None:
+    row_get = (
+        row.get
+        if isinstance(row, pd.Series)
+        else lambda key, default=None: getattr(row, key, default)
+    )
+    for value in (
+        swing_payload.get("current_price"),
+        swing_payload.get("observed_current_price"),
+        swing_payload.get("entry_reference_price"),
+        _swing_policy_value(swing_payload, "signal_close"),
+        row_get("selection_close_price"),
+    ):
+        number = _float_or_none(value)
+        if number is not None:
+            return number
+    return None
+
+
+def _swing_message_group_for_payload(
+    swing_payload: dict[str, object],
+    row: pd.Series | object,
+) -> str | None:
+    recommendation_group = _swing_sort_text(swing_payload.get("recommendation_group"))
+    entry_status = _swing_sort_text(
+        swing_payload.get("entry_status_eod") or swing_payload.get("entry_status")
+    )
+    final_status = _swing_sort_text(swing_payload.get("final_status"))
+    rr = _swing_rr_value(swing_payload)
+    rr_min = _float_or_none(swing_payload.get("rr_min")) or 1.5
+    current_price = _swing_current_price(swing_payload, row)
+    max_buy = _swing_policy_number(swing_payload, "max_buy_price")
+    recommendation_pass = bool(swing_payload.get("recommendation_pass", False))
+    executable_pick = bool(swing_payload.get("executable_pick", False))
+    valid_signal = bool(swing_payload.get("valid_signal", False))
+    entry_policy_pass = (
+        entry_status == "BUYABLE"
+        and rr is not None
+        and rr >= rr_min
+        and current_price is not None
+        and max_buy is not None
+        and current_price <= max_buy
+    )
+    legacy_executable_without_policy = (
+        entry_status == ""
+        and rr is not None
+        and rr >= rr_min
+        and max_buy is not None
+        and current_price is not None
+        and current_price <= max_buy
+    )
+    if (
+        recommendation_group in {"", "EXECUTABLE_PICKS"}
+        and (recommendation_pass or executable_pick)
+        and (entry_policy_pass or legacy_executable_without_policy)
+    ):
+        return "EXECUTABLE"
+    if (
+        recommendation_group == "VALID_SIGNALS"
+        or final_status == "VALID_SIGNAL"
+        or (valid_signal and entry_status in SWING_VALID_SIGNAL_ENTRY_STATUSES)
+    ):
+        return "VALID_SIGNAL"
+    if (
+        recommendation_group == "WATCHLIST"
+        or final_status == "WATCHLIST"
+        or bool(swing_payload.get("watchlist", False))
+    ):
+        return "WATCHLIST"
+    return None
+
+
+def _swing_message_group_from_row(row: pd.Series) -> str | None:
+    swing_payload = row.get("swing_3_5d_payload")
+    if not isinstance(swing_payload, dict):
+        return None
+    return _swing_message_group_for_payload(swing_payload, row)
+
+
+def _swing_payload_score(
+    swing_payload: dict[str, object],
+    row: pd.Series | object,
+) -> float:
+    row_get = (
+        row.get
+        if isinstance(row, pd.Series)
+        else lambda key, default=None: getattr(row, key, default)
+    )
+    for key in ("final_score", "hybrid_score"):
+        score = _float_or_none(swing_payload.get(key))
+        if score is not None:
+            return score
+    score = _float_or_none(row_get("final_selection_value"))
+    return score if score is not None else float("-inf")
+
+
+def _swing_group_entry_status_priority(swing_payload: dict[str, object]) -> int:
+    entry_status = _swing_sort_text(
+        swing_payload.get("entry_status_eod") or swing_payload.get("entry_status")
+    )
+    priority = {
+        "BUYABLE": 0,
+        "RR_COLLAPSED": 1,
+        "WATCH_CAUTION": 2,
+        "TARGET_ZONE_REACHED": 3,
+        "TARGET_ALREADY_REACHED": 4,
+        "CHASE_RISK": 5,
+        "EXTENDED": 6,
+        "INVALIDATED": 7,
+        "INVALID_STOP": 8,
+        "RR_INVALID": 9,
+    }
+    return priority.get(entry_status, 99)
+
+
+def _limit_swing_message_groups(working: pd.DataFrame) -> pd.DataFrame:
+    if working.empty:
+        return working
+    group_order = {group: index for index, group in enumerate(SWING_MESSAGE_GROUP_ORDER)}
+    working = working.copy()
+    working["message_group_order"] = working["message_group"].map(group_order).fillna(99)
+    working["swing_entry_status_priority"] = working["swing_3_5d_payload"].apply(
+        lambda payload: _swing_group_entry_status_priority(
+            payload if isinstance(payload, dict) else {}
+        )
+    )
+    working["swing_payload_score"] = working.apply(
+        lambda row: _swing_payload_score(
+            row["swing_3_5d_payload"] if isinstance(row["swing_3_5d_payload"], dict) else {},
+            row,
+        ),
+        axis=1,
+    )
+    working["swing_rr_value"] = working["swing_3_5d_payload"].apply(
+        lambda payload: (
+            _swing_rr_value(payload)
+            if isinstance(payload, dict) and _swing_rr_value(payload) is not None
+            else float("-inf")
+        )
+    )
+    working = working.sort_values(
+        [
+            "message_group_order",
+            "swing_entry_status_priority",
+            "swing_payload_score",
+            "swing_rr_value",
+            "d5_selection_rank",
+            "symbol",
+        ],
+        ascending=[True, True, False, False, True, True],
+        na_position="last",
+    )
+    selected_frames: list[pd.DataFrame] = []
+    for group in SWING_MESSAGE_GROUP_ORDER:
+        group_frame = working.loc[working["message_group"].eq(group)].copy()
+        if group_frame.empty:
+            continue
+        if group == "EXECUTABLE":
+            group_frame = _limit_d5_sector_concentration(
+                group_frame,
+                limit=BOT_D5_CORE_PICK_LIMIT,
+            )
+        else:
+            group_frame = group_frame.head(BOT_D5_SWING_GROUP_LIMIT)
+        selected_frames.append(group_frame)
+    if not selected_frames:
+        return working.iloc[0:0].copy()
+    return pd.concat(selected_frames, ignore_index=False)
+
+
+def _format_swing_required_summary(
+    swing_payload: dict[str, object],
+    row: object,
+) -> str:
+    entry_status = swing_payload.get("entry_status_eod") or swing_payload.get("entry_status")
+    signal_close = _swing_policy_number(swing_payload, "signal_close")
+    current_price = _swing_current_price(swing_payload, row)
+    max_buy = _swing_policy_number(swing_payload, "max_buy_price")
+    target_1 = _swing_policy_number(swing_payload, "target_1")
+    stop_price = _swing_policy_number(
+        swing_payload,
+        "stop_price",
+        "risk_line",
+        "invalidation_price",
+    )
+    final_score = _float_or_none(
+        swing_payload.get("final_score", swing_payload.get("hybrid_score"))
+    )
+    return (
+        f"패턴 {_swing_pattern_label(swing_payload.get('pattern'))} · "
+        f"signal {_format_metric_value(swing_payload.get('signal_score'), decimals=1)} · "
+        f"entry {_format_metric_value(swing_payload.get('entry_score'), decimals=1)} · "
+        f"final {_format_metric_value(final_score, decimals=1)} · "
+        f"신호종가 {_format_krw(signal_close)} · 현재가 {_format_krw(current_price)} · "
+        f"max_buy {_format_krw(max_buy)} · 목표1 {_format_krw(target_1)} · "
+        f"손절 {_format_krw(stop_price)} · "
+        f"현재RR {_format_metric_value(_swing_rr_value(swing_payload))} · "
+        f"상태 {_swing_entry_status_label(entry_status)}"
+    )
 
 
 def _format_metric_value(value: object, *, decimals: int = 2, suffix: str = "") -> str:
@@ -291,13 +545,13 @@ def _build_pick_rows(
             and _is_d5_cash_path_model(working["model_spec_id"].dropna().astype(str).iloc[0])
         )
         if swing_surface:
-            recommendation_pass = working["swing_3_5d_payload"].apply(
-                lambda payload: bool(payload and payload.get("recommendation_pass", False))
+            working["message_group"] = working.apply(_swing_message_group_from_row, axis=1)
+            blocking_risks = working["raw_risks_list"].apply(has_buyability_blocker)
+            executable_blocked = working["message_group"].eq("EXECUTABLE") & (
+                ~eligible | blocking_risks
             )
             working = working.loc[
-                eligible
-                & recommendation_pass
-                & ~working["raw_risks_list"].apply(has_buyability_blocker)
+                working["message_group"].isin(SWING_MESSAGE_GROUP_ORDER) & ~executable_blocked
             ].copy()
         elif cash_path_surface:
             report_candidate = (
@@ -321,10 +575,7 @@ def _build_pick_rows(
             return []
         if swing_surface:
             working["buyability_priority_score"] = 0.0
-            working = working.sort_values(
-                ["d5_selection_rank", "symbol"],
-                ascending=[True, True],
-            )
+            working = _limit_swing_message_groups(working)
         elif cash_path_surface:
             working["buyability_priority_score"] = 0.0
             working = working.sort_values(
@@ -356,7 +607,8 @@ def _build_pick_rows(
                 ["d5_policy_bucket", "buyability_priority_score", "d5_selection_rank", "symbol"],
                 ascending=[True, False, True, True],
             )
-        working = _limit_d5_sector_concentration(working, limit=BOT_D5_CORE_PICK_LIMIT)
+        if not swing_surface:
+            working = _limit_d5_sector_concentration(working, limit=BOT_D5_CORE_PICK_LIMIT)
     else:
         working = working.head(BOT_PICK_LIMIT)
     rows: list[dict[str, object]] = []
@@ -394,6 +646,10 @@ def _build_pick_rows(
         display_summary = judgement.summary
         summary_parts = [display_label]
         if is_d5_candidate_surface and isinstance(swing_payload, dict):
+            message_group = _safe_text(getattr(row, "message_group", None), fallback="")
+            group_label = SWING_MESSAGE_GROUP_LABELS.get(message_group, message_group)
+            if group_label:
+                summary_parts.insert(0, group_label)
             summary_parts.extend(
                 [
                     f"3~5D 스윙순위 {rank}",
@@ -408,10 +664,11 @@ def _build_pick_rows(
                 swing_payload.get("reward_risk_ratio"),
             )
             eod_status = swing_payload.get("entry_status_eod") or swing_payload.get("entry_status")
+            summary_parts.append(_format_swing_required_summary(swing_payload, row))
             summary_parts.append(
                 "종가진단 "
                 f"RR {_format_metric_value(rr_at_reference)} · "
-                f"상태 {_safe_text(eod_status)} · "
+                f"상태 {_swing_entry_status_label(eod_status)} · "
                 f"그룹 {_safe_text(swing_payload.get('recommendation_group'))}"
             )
             summary_parts.append(
@@ -475,10 +732,21 @@ def _build_pick_rows(
             "risks": risks,
             "swing_3_5d": swing_payload if isinstance(swing_payload, dict) else None,
         }
+        message_group = _safe_text(getattr(row, "message_group", None), fallback="")
+        if message_group:
+            payload["message_group"] = message_group
+            payload["message_group_label"] = SWING_MESSAGE_GROUP_LABELS.get(
+                message_group,
+                message_group,
+            )
         rows.append(
             _snapshot_row(
                 snapshot_type="next_picks",
-                snapshot_key=f"h{int(horizon)}:{_safe_text(getattr(row, 'symbol', None))}",
+                snapshot_key=(
+                    f"h{int(horizon)}:"
+                    f"{(message_group + ':') if message_group else ''}"
+                    f"{_safe_text(getattr(row, 'symbol', None))}"
+                ),
                 built_at=built_at,
                 as_of_date=as_of_date,
                 horizon=int(horizon),
@@ -490,7 +758,12 @@ def _build_pick_rows(
                     f"{_safe_text(getattr(row, 'symbol', None))} "
                     f"{_safe_text(getattr(row, 'company_name', None))}"
                 ),
-                subtitle=_hold_basis_label(int(horizon)),
+                subtitle=(
+                    f"{_hold_basis_label(int(horizon))} · "
+                    f"{SWING_MESSAGE_GROUP_LABELS.get(message_group, message_group)}"
+                    if message_group
+                    else _hold_basis_label(int(horizon))
+                ),
                 summary=" · ".join(summary_parts),
                 payload=payload,
                 source_run_id=source_run_id,
@@ -549,7 +822,7 @@ def _build_recommendation_diagnostic_rows(
             as_of_date=as_of_date,
             horizon=int(horizon),
             sort_order=1,
-            title="H5 v3/v4 미추천 사유",
+            title="H5 v4 종가RR 미추천 사유",
             subtitle="5거래일 보유 기준",
             summary=summary,
             payload=diagnostics,

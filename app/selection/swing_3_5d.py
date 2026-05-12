@@ -1156,6 +1156,9 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         - volatility_penalty.fillna(0.0)
         - overheat_penalty.fillna(0.0)
     )
+    # Upstream feature assembly can leave this frame fragmented; defragment before
+    # adding the v4 swing contract columns so test and batch runs stay warning-clean.
+    scored = scored.copy()
     scored["swing_signal_score"] = (
         0.55 * scored["swing_rule_score"]
         + 0.30 * scored["ml_probability_score"]
