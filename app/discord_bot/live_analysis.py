@@ -12,7 +12,13 @@ from app.discord_bot.live_recalc import (
 from app.discord_bot.read_store import fetch_discord_bot_snapshot_rows
 from app.ml.constants import D5_PRACTICAL_V3_MODEL_SPEC_ID
 from app.providers.kis.client import KISProvider
-from app.reports.discord_eod import REASON_LABELS, RISK_LABELS
+from app.reports.discord_eod import (
+    REASON_LABELS,
+    RISK_LABELS,
+    SWING_ENTRY_STATUS_LABELS,
+    SWING_PATTERN_LABELS,
+    SWING_VALID_SIGNAL_ENTRY_STATUSES,
+)
 from app.settings import Settings
 
 LIVE_RISK_LABELS = {
@@ -34,6 +40,19 @@ LIVE_SHORT_LABELS = {
     "앙상블 판단 차이 큼": "모델 이견",
     "모델 불안정성 큼": "모델 불안정",
     "최근 흔들림이 큼": "변동성 큼",
+}
+
+LIVE_SWING_GROUP_LABELS = {
+    "EXECUTABLE": "실제 매수 가능 종목",
+    "VALID_SIGNAL": "유효 신호(추격주의/손익비 부족)",
+    "WATCHLIST": "관찰 후보",
+    "REJECTED": "추천 제외",
+    "UNKNOWN": "분류 미확인",
+}
+
+LIVE_ENTRY_STATUS_LABELS = {
+    **SWING_ENTRY_STATUS_LABELS,
+    "BUYABLE": "현재 기준 실행 가능",
 }
 
 
@@ -98,6 +117,94 @@ def _score_text(value: object) -> str:
         return f"{float(value):.1f}"
     except (TypeError, ValueError):
         return _safe_text(value)
+
+
+def _rr_text(value: object) -> str:
+    number = _float_or_none(value)
+    return "-" if number is None else f"{number:.2f}"
+
+
+def _swing_sort_text(value: object) -> str:
+    return "" if value is None else str(value).strip().upper()
+
+
+def _entry_status_label(value: object) -> str:
+    text = _swing_sort_text(value)
+    return LIVE_ENTRY_STATUS_LABELS.get(text, text or "상태 미확인")
+
+
+def _pattern_label(value: object) -> str:
+    text = "" if value is None else str(value).strip()
+    return SWING_PATTERN_LABELS.get(text, text or "-")
+
+
+def _rr_at_price(price: object, swing_payload: dict[str, object]) -> float | None:
+    current = _float_or_none(price)
+    target_1 = _float_or_none(_swing_policy_value(swing_payload, "target_1"))
+    stop_price = _float_or_none(_swing_policy_value(swing_payload, "stop_price"))
+    if stop_price is None:
+        stop_price = _float_or_none(_swing_policy_value(swing_payload, "invalidation_price"))
+    if current is None or target_1 is None or stop_price is None:
+        for key in ("rr_at_current", "rr_at_reference", "reward_risk_ratio"):
+            rr = _float_or_none(swing_payload.get(key))
+            if rr is not None:
+                return rr
+        return None
+    risk = current - stop_price
+    reward = target_1 - current
+    if risk <= 0:
+        return None
+    return reward / risk
+
+
+def _current_swing_message_group(
+    swing_payload: dict[str, object],
+    *,
+    entry_status: str,
+    rr_at_current: float | None,
+    current_price: object,
+) -> str:
+    recommendation_group = _swing_sort_text(swing_payload.get("recommendation_group"))
+    final_status = _swing_sort_text(swing_payload.get("final_status"))
+    max_buy = _float_or_none(_swing_policy_value(swing_payload, "max_buy_price"))
+    rr_min = _float_or_none(_swing_policy_value(swing_payload, "rr_min")) or _float_or_none(
+        swing_payload.get("rr_min")
+    ) or 1.5
+    current = _float_or_none(current_price)
+    recommendation_pass = bool(swing_payload.get("recommendation_pass", False))
+    executable_pick = bool(swing_payload.get("executable_pick", False))
+    valid_signal = bool(swing_payload.get("valid_signal", False))
+    watchlist = bool(swing_payload.get("watchlist", False))
+    entry_policy_pass = (
+        _swing_sort_text(entry_status) == "BUYABLE"
+        and rr_at_current is not None
+        and rr_at_current >= rr_min
+        and current is not None
+        and max_buy is not None
+        and current <= max_buy
+    )
+    if (
+        recommendation_group in {"", "EXECUTABLE_PICKS"}
+        and (recommendation_pass or executable_pick)
+        and entry_policy_pass
+    ):
+        return "EXECUTABLE"
+    if (
+        recommendation_group == "VALID_SIGNALS"
+        or final_status == "VALID_SIGNAL"
+        or (
+            valid_signal
+            and _swing_sort_text(entry_status) in SWING_VALID_SIGNAL_ENTRY_STATUSES
+        )
+        or (
+            recommendation_group == "EXECUTABLE_PICKS"
+            and _swing_sort_text(entry_status) in SWING_VALID_SIGNAL_ENTRY_STATUSES
+        )
+    ):
+        return "VALID_SIGNAL"
+    if recommendation_group == "WATCHLIST" or final_status == "WATCHLIST" or watchlist:
+        return "WATCHLIST"
+    return "REJECTED"
 
 
 def _parse_payload(value: object) -> dict[str, Any]:
@@ -401,30 +508,59 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     if risk_flags or live_result.mode != "closed":
         lines.append(f"주의: {risk_text}")
     if isinstance(swing_payload, dict):
-        entry_status = _classify_entry_policy_status(quote.get("stck_prpr"), swing_payload)
-        rr_at_reference = swing_payload.get(
-            "rr_at_reference",
-            swing_payload.get("reward_risk_ratio"),
+        current_policy_price = quote.get("stck_prpr")
+        if _float_or_none(current_policy_price) is None:
+            current_policy_price = (
+                swing_payload.get("current_price")
+                or _swing_policy_value(swing_payload, "entry_reference_price")
+                or _swing_policy_value(swing_payload, "signal_close")
+            )
+        entry_status = _classify_entry_policy_status(current_policy_price, swing_payload)
+        rr_at_current = _rr_at_price(current_policy_price, swing_payload)
+        current_group = _current_swing_message_group(
+            swing_payload,
+            entry_status=entry_status,
+            rr_at_current=rr_at_current,
+            current_price=current_policy_price,
+        )
+        stored_group = _safe_text(swing_payload.get("recommendation_group"), "UNKNOWN")
+        valid_signal_text = "예" if bool(swing_payload.get("valid_signal", False)) else "아니오"
+        final_swing_score = _score_text(
+            swing_payload.get("final_score", swing_payload.get("hybrid_score"))
+        )
+        stop_price = (
+            _swing_policy_value(swing_payload, "stop_price")
+            or _swing_policy_value(swing_payload, "risk_line")
+            or _swing_policy_value(swing_payload, "invalidation_price")
+        )
+        lines.append(
+            "v4분류: "
+            f"{LIVE_SWING_GROUP_LABELS.get(current_group, current_group)} · "
+            f"저장그룹 {stored_group} · valid_signal {valid_signal_text}"
+        )
+        lines.append(
+            "신호: "
+            f"패턴 {_pattern_label(swing_payload.get('pattern'))} · "
+            f"signal {_score_text(swing_payload.get('signal_score'))} · "
+            f"entry {_score_text(swing_payload.get('entry_score'))} · "
+            f"final {final_swing_score}"
         )
         lines.append(
             "가격조건: "
             f"신호종가 {_int_text(_swing_policy_value(swing_payload, 'signal_close'))}원 · "
+            f"현재가 {_int_text(current_policy_price)}원 · "
+            f"max_buy {_int_text(_swing_policy_value(swing_payload, 'max_buy_price'))}원 · "
+            f"목표1 {_int_text(_swing_policy_value(swing_payload, 'target_1'))}원 · "
+            f"손절 {_int_text(stop_price)}원 · "
+            f"현재RR {_rr_text(rr_at_current)}"
+        )
+        lines.append(
+            "진입정책: "
             f"매수 {_int_text(_swing_policy_value(swing_payload, 'entry_lower_price'))}"
             f"~{_int_text(_swing_policy_value(swing_payload, 'max_buy_price'))}원 · "
-            f"최대진입 {_int_text(_swing_policy_value(swing_payload, 'max_buy_price'))}원"
-        )
-        lines.append(
-            "무효/주의: "
             f"추격주의 {_int_text(_swing_policy_value(swing_payload, 'chase_warning_price'))}원↑ · "
             f"목표권 {_int_text(_swing_policy_value(swing_payload, 'target_zone_price'))}원↑ · "
-            f"신호무효 {_int_text(_swing_policy_value(swing_payload, 'invalidation_price'))}원↓"
-        )
-        lines.append(
-            "목표: "
-            f"1차 {_int_text(_swing_policy_value(swing_payload, 'target_1'))}원 · "
-            f"2차 {_int_text(_swing_policy_value(swing_payload, 'target_2'))}원 · "
-            f"종가RR {_safe_text(rr_at_reference)} · "
-            f"현재상태 {entry_status}"
+            f"상태 {_entry_status_label(entry_status)}({entry_status})"
         )
     elif live_row is not None:
         target_price = _int_text(live_row.get("live_d5_target_price"))

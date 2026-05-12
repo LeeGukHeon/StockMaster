@@ -148,7 +148,7 @@ def test_render_live_stock_analysis_returns_candidate_list_for_ambiguous_query(m
     assert "005935 삼성전자우" in rendered
 
 
-def test_render_live_stock_analysis_renders_v3_entry_policy(monkeypatch) -> None:
+def test_render_live_stock_analysis_renders_v4_entry_policy(monkeypatch) -> None:
     snapshot_rows = pd.DataFrame(
         [
             {
@@ -167,16 +167,26 @@ def test_render_live_stock_analysis_renders_v3_entry_policy(monkeypatch) -> None
                         "d5_judgement_summary": "3~5D v3 조건 통과·가격 조건 내 분할 접근",
                         "d5_swing_3_5d": {
                             "methodology_version": "stockmaster_cycle_ml_hybrid_v3",
+                            "pattern": "pullback",
+                            "signal_score": 82.5,
+                            "entry_score": 78.0,
+                            "final_score": 73.1,
+                            "recommendation_group": "EXECUTABLE_PICKS",
+                            "recommendation_pass": True,
+                            "executable_pick": True,
+                            "valid_signal": True,
                             "entry_status": "BUYABLE",
+                            "rr_min": 1.5,
                             "entry_policy": {
                                 "signal_close": 70000.0,
                                 "entry_lower_price": 69000.0,
                                 "max_buy_price": 72000.0,
                                 "chase_warning_price": 72800.0,
-                                "target_zone_price": 73500.0,
+                                "target_zone_price": 76000.0,
+                                "stop_price": 68000.0,
                                 "invalidation_price": 68000.0,
-                                "target_1": 73500.0,
-                                "target_2": 75600.0,
+                                "target_1": 76000.0,
+                                "target_2": 78000.0,
                             },
                         },
                     },
@@ -198,9 +208,14 @@ def test_render_live_stock_analysis_renders_v3_entry_policy(monkeypatch) -> None
     rendered = render_live_stock_analysis(object(), query="삼성전자")
 
     assert "장마감 3~5D 스윙순위 1 · v4최종점수 73.1" in rendered
-    assert "가격조건: 신호종가 70,000원 · 매수 69,000~72,000원 · 최대진입 72,000원" in rendered
-    assert "추격주의 72,800원↑ · 목표권 73,500원↑ · 신호무효 68,000원↓" in rendered
-    assert "목표: 1차 73,500원 · 2차 75,600원 · 종가RR - · 현재상태 BUYABLE" in rendered
+    assert "v4분류: 실제 매수 가능 종목 · 저장그룹 EXECUTABLE_PICKS · valid_signal 예" in rendered
+    assert "신호: 패턴 20일선 눌림 · signal 82.5 · entry 78.0 · final 73.1" in rendered
+    assert (
+        "가격조건: 신호종가 70,000원 · 현재가 71,000원 · max_buy 72,000원"
+        in rendered
+    )
+    assert "목표1 76,000원 · 손절 68,000원 · 현재RR 1.67" in rendered
+    assert "상태 현재 기준 실행 가능(BUYABLE)" in rendered
 
 
 def test_render_live_stock_analysis_marks_target_zone_at_threshold(monkeypatch) -> None:
@@ -261,7 +276,7 @@ def test_render_live_stock_analysis_marks_target_zone_at_threshold(monkeypatch) 
 
     rendered = render_live_stock_analysis(object(), query="삼성전자")
 
-    assert "현재상태 TARGET_ZONE_REACHED" in rendered
+    assert "상태 목표권 근접(TARGET_ZONE_REACHED)" in rendered
 
 
 def test_build_live_analysis_payload_marks_snapshot_reuse_for_busy_mode() -> None:

@@ -295,7 +295,7 @@ def build_discord_bot(settings: Settings):
 
     @client.tree.command(
         name="즉석종목분석",
-        description="저장된 v3 추천에 최신 시세를 대입해 entry_policy 상태를 보여줍니다.",
+        description="저장된 v4 스윙 추천에 최신 시세를 대입해 RR·entry_policy 상태를 보여줍니다.",
     )
     @app_commands.rename(query="종목")
     @app_commands.describe(query="종목명 또는 6자리 종목코드를 입력하세요.")
