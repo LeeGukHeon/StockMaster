@@ -88,6 +88,8 @@ def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> Non
     assert "**3~5거래일 스윙 후보 | 5거래일 보유 기준 (H5/D+5)**" in content
     assert "**참고용 H1 단기 후보 | 하루 보유 기준 (D+1)**" in content
     assert "메인 후보는 5거래일 보유 기준(D+5) 중심" in content
+    assert "3~5D v2 ML은 신호일 룰 점수, ML 목표확률, 현재 진입점수" in content
+    assert "v2 ML 하드필터(룰·목표확률·진입상태·손익비)를 통과한 H5 스윙 후보가 없습니다" in content
 
 
 def test_build_payload_content_renders_industry_code_not_broad_sector() -> None:

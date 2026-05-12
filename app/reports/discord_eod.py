@@ -1024,14 +1024,15 @@ def _build_payload_content(
         primary_candidate_title = (
             f"**다음 거래일 후보 | {candidate_basis} (D+{int(candidate_horizon)})**"
         )
-    uses_swing_h5 = (
-        int(candidate_horizon) == 5
-        and not single_buy_candidates.empty
-        and single_buy_candidates.get("explanatory_score_json") is not None
-        and single_buy_candidates.apply(
-            lambda row: _swing_3_5d_payload(row) is not None,
-            axis=1,
-        ).any()
+    uses_swing_h5 = int(candidate_horizon) == 5 and (
+        single_buy_candidates.empty
+        or (
+            single_buy_candidates.get("explanatory_score_json") is not None
+            and single_buy_candidates.apply(
+                lambda row: _swing_3_5d_payload(row) is not None,
+                axis=1,
+            ).any()
+        )
     )
     judgement_basis_line = (
         "3~5D v2 ML은 신호일 룰 점수, ML 목표확률, 현재 진입점수를 분리해 최종 상태를 정합니다."
@@ -1052,7 +1053,13 @@ def _build_payload_content(
 
     lines.extend(["", primary_candidate_title])
     if single_buy_candidates.empty:
-        lines.append("- 상위 후보가 아직 없습니다.")
+        if int(candidate_horizon) == 5:
+            lines.append(
+                "- 오늘은 v2 ML 하드필터(룰·목표확률·진입상태·손익비)를 "
+                "통과한 H5 스윙 후보가 없습니다."
+            )
+        else:
+            lines.append("- 상위 후보가 아직 없습니다.")
     else:
         if int(candidate_horizon) == 5 and not has_actionable_primary_h5:
             lines.append(
