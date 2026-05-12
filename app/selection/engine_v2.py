@@ -38,6 +38,13 @@ from app.ranking.risk_taxonomy import (
 )
 from app.recommendation.buyability import d5_buyability_policy_bucket, has_buyability_blocker
 from app.selection.engine_v1 import _apply_selection_engine_v1
+from app.selection.swing_3_5d import (
+    apply_swing_3_5d_overlay,
+    build_swing_3_5d_frame,
+    swing_explanatory_payload,
+    swing_reason_tags,
+    swing_risk_flags,
+)
 from app.settings import Settings
 from app.storage.bootstrap import ensure_storage_layout
 from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
@@ -413,12 +420,17 @@ def _select_report_candidate_mask(
         target_variant=target_variant,
         horizon=horizon,
     )
+    swing_overlay_active = (
+        "swing_3_5d_overlay_applied" in scored.columns
+        and scored["swing_3_5d_overlay_applied"].fillna(False).astype(bool).any()
+    )
     if candidate_limit is None:
         eligible_mask = scored["eligible_flag"].fillna(False).astype(bool)
         return eligible_mask & scored["final_selection_rank_pct"].fillna(0.0).ge(0.85)
     candidate_mask = pd.Series(False, index=scored.index)
     if (
-        model_spec_id in D5_VALIDATION_EDGE_GUARDED_MODEL_SPEC_IDS
+        not swing_overlay_active
+        and model_spec_id in D5_VALIDATION_EDGE_GUARDED_MODEL_SPEC_IDS
         and int(horizon) == 5
         and _d5_validation_top5_edge_guard_applies(
             scored,
@@ -508,6 +520,7 @@ def _d5_validation_top5_edge_guard_applies(
 
 def _augment_reason_tags(row: pd.Series, tags: list[str]) -> list[str]:
     values = []
+    values.extend(swing_reason_tags(row))
     if row.get("relative_alpha_score", 0) >= 60:
         values.append("residual_strength_improving")
     if row.get("flow_persistence_score", 0) >= 60:
@@ -530,6 +543,7 @@ def _augment_reason_tags(row: pd.Series, tags: list[str]) -> list[str]:
 
 def _augment_risk_flags(row: pd.Series, flags: list[str]) -> list[str]:
     values = list(flags)
+    values.extend(swing_risk_flags(row))
     values.extend(
         model_risk_flags(
             uncertainty_score=row.get("uncertainty_score"),
@@ -558,6 +572,11 @@ def _d5_cash_path_basket_gate_payload(
 ) -> dict[str, object]:
     if model_spec_id != D5_PRACTICAL_V3_MODEL_SPEC_ID or int(horizon) != 5:
         return {"applied": False, "reasons": []}
+    if (
+        "swing_3_5d_overlay_applied" in scored.columns
+        and scored["swing_3_5d_overlay_applied"].fillna(False).astype(bool).any()
+    ):
+        return {"applied": False, "reasons": ["swing_3_5d_overlay_active"]}
     ranked = scored.sort_values(["final_selection_value", "symbol"], ascending=[False, True])
     eligible = ranked.get("eligible_flag")
     if eligible is not None:
@@ -977,6 +996,7 @@ def _score_selection_engine_v2_frame(
     *,
     horizon: int,
     settings: Settings,
+    swing_frame: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     scored = base.merge(prediction_frame, on="symbol", how="left")
     model_spec_id, target_variant = _resolve_model_spec_context(scored)
@@ -1070,6 +1090,7 @@ def _score_selection_engine_v2_frame(
         method="average",
         pct=True,
     )
+    scored = apply_swing_3_5d_overlay(scored, swing_frame, horizon=int(horizon))
 
     risk_flags = scored.apply(build_risk_flags, axis=1)
     risk_flags = pd.Series(
@@ -1226,6 +1247,7 @@ def _score_selection_engine_v2_frame(
                 "d5_cash_path_basket_gate": json.loads(
                     str(row["d5_cash_path_basket_gate_json"])
                 ),
+                "swing_3_5d": swing_explanatory_payload(row),
                 "prediction_version": row.get("prediction_version"),
                 "score_version": SELECTION_ENGINE_VERSION,
                 "score_type": "selection_engine_v2",
@@ -1247,12 +1269,14 @@ def build_selection_engine_v2_rankings(
     horizons: list[int],
     regime_map: dict[str, dict[str, object]],
     prediction_frames_by_horizon: dict[int, pd.DataFrame],
+    swing_frames_by_horizon: dict[int, pd.DataFrame] | None = None,
     run_id: str,
     settings: Settings,
     ranking_version: str = SELECTION_ENGINE_VERSION,
     output_columns: tuple[str, ...] = SELECTION_V2_RANKING_OUTPUT_COLUMNS,
 ) -> list[pd.DataFrame]:
     feature_with_regime = _attach_regime_context(feature_matrix, regime_map=regime_map)
+    swing_frames_by_horizon = swing_frames_by_horizon or {}
     ranking_frames: list[pd.DataFrame] = []
     for horizon in horizons:
         base = _apply_selection_engine_v1(feature_with_regime, horizon=horizon, settings=settings)
@@ -1271,6 +1295,7 @@ def build_selection_engine_v2_rankings(
                     spec_prediction_frame.copy(),
                     horizon=int(horizon),
                     settings=settings,
+                    swing_frame=swing_frames_by_horizon.get(int(horizon)),
                 )
                 scored["run_id"] = run_id
                 scored["as_of_date"] = as_of_date
@@ -1287,6 +1312,7 @@ def build_selection_engine_v2_rankings(
                 prediction_frame,
                 horizon=int(horizon),
                 settings=settings,
+                swing_frame=swing_frames_by_horizon.get(int(horizon)),
             )
             scored["run_id"] = run_id
             scored["as_of_date"] = as_of_date
@@ -1476,6 +1502,7 @@ def materialize_selection_engine_v2(
                     )
                 regime_map = _load_regime_map(connection, as_of_date=as_of_date)
                 prediction_frames_by_horizon: dict[int, pd.DataFrame] = {}
+                swing_frames_by_horizon: dict[int, pd.DataFrame] = {}
                 artifact_paths: list[str] = []
                 for horizon in horizons:
                     prediction_frames_by_horizon[int(horizon)] = _load_predictions(
@@ -1483,12 +1510,23 @@ def materialize_selection_engine_v2(
                         as_of_date=as_of_date,
                         horizon=int(horizon),
                     )
+                if 5 in {int(horizon) for horizon in horizons}:
+                    swing_frames_by_horizon[5] = build_swing_3_5d_frame(
+                        connection,
+                        as_of_date=as_of_date,
+                        settings=settings,
+                        symbols=symbols,
+                        limit_symbols=limit_symbols,
+                        market=market,
+                        prediction_frame=prediction_frames_by_horizon.get(5, pd.DataFrame()),
+                    )
                 ranking_frames = build_selection_engine_v2_rankings(
                     feature_matrix=feature_matrix,
                     as_of_date=as_of_date,
                     horizons=horizons,
                     regime_map=regime_map,
                     prediction_frames_by_horizon=prediction_frames_by_horizon,
+                    swing_frames_by_horizon=swing_frames_by_horizon,
                     run_id=run_context.run_id,
                     settings=settings,
                 )

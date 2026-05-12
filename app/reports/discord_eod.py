@@ -69,6 +69,12 @@ REASON_LABELS = {
     "news_drift_underreacted": "뉴스 재평가가 덜 반영됨",
     "crowding_risk_low": "과열 혼잡 부담이 낮음",
     "raw_alpha_leader_preserved": "원점수 상위 신호를 최대한 보존함",
+    "swing_pullback_pattern": "20일선 눌림 후 재상승 구조",
+    "swing_box_breakout_pattern": "박스권 압축 후 첫 돌파 구조",
+    "swing_reversal_recovery_pattern": "역배열 개선 초입 구조",
+    "swing_volume_expansion": "거래량이 20일 기준 대비 증가",
+    "swing_strong_close": "종가가 당일 고가권에서 마감",
+    "swing_reward_risk_ok": "손익비가 기준을 통과",
 }
 
 RISK_LABELS = {
@@ -86,6 +92,11 @@ RISK_LABELS = {
     "model_joint_instability_high": "고예측 오차와 모델 이견이 동시에 큼",
     "model_uncertainty_high": "고예측 구간의 과거 오차가 큼",
     "prediction_fallback": "예측 보조값을 함께 참고함",
+    "swing_common_filter_failed": "3~5일 스윙 공통 필터 미통과",
+    "swing_no_valid_pattern": "유효한 3~5일 스윙 패턴 없음",
+    "swing_upper_wick_distribution": "거래량 동반 윗꼬리 부담",
+    "swing_recent_overheat": "최근 단기 상승 과열",
+    "swing_stop_distance_wide": "손절 기준선까지 거리가 넓음",
 }
 
 ALPHA_DECISION_LABELS = {
