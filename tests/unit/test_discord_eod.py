@@ -211,11 +211,114 @@ def test_build_payload_content_includes_v3_no_recommendation_gate_diagnostics() 
         swing_gate_diagnostics=diagnostics,
     )
 
-    assert "H5 v3/v4 2개 중 실행 가능 추천 0개" in content
-    assert "공통 제외 필터: 1/2" in content
-    assert "유효 스윙 패턴: 0/2" in content
-    assert "종가 기준 실행 가능" in content
-    assert "누적 실행게이트" in content
+    assert "좋은 신호는 있었지만 현재 가격 기준 실제 진입 가능한 종목은 없습니다" in content
+    assert "H5 실행 추천: 0/2개" in content
+    assert "핵심 병목: 유효 스윙 패턴" in content
+    assert "필터별 개별 통과 수" not in content
+    assert "누적 실행게이트" not in content
+    assert "**실제 매수 가능 종목**" in content
+    assert "**유효 신호(추격주의/손익비 부족)**" in content
+    assert "**관찰 후보**" in content
+
+
+def test_build_payload_content_shows_nearest_candidate_when_no_h5_pick() -> None:
+    diagnostics = build_swing_gate_diagnostics(
+        pd.DataFrame(
+            [
+                _swing_row(
+                    symbol="241710",
+                    final_status="VALID_SIGNAL",
+                    entry_status="RR_COLLAPSED",
+                    recommendation_group="VALID_SIGNALS",
+                    pattern="recovery_breakout",
+                    reward_risk_ratio=0.6045,
+                    rule_score=62.0,
+                    ml_probability=0.494,
+                    hybrid_score=52.4,
+                )
+            ]
+        )
+    )
+    nearest_row = _swing_row(
+        symbol="241710",
+        final_status="VALID_SIGNAL",
+        entry_status="RR_COLLAPSED",
+        recommendation_group="VALID_SIGNALS",
+        pattern="recovery_breakout",
+        reward_risk_ratio=0.6045,
+        rule_score=62.0,
+        ml_probability=0.494,
+        hybrid_score=52.4,
+    )
+    nearest_row.update(
+        {
+            "company_name": "코스메카코리아",
+            "market": "KOSDAQ",
+            "industry": "화장품",
+            "sector": "소비재",
+            "final_selection_value": 52.4,
+            "grade": "C",
+            "selection_date": "2026-05-12 00:00:00",
+            "next_entry_trade_date": "2026-05-13 00:00:00",
+            "selection_close_price": 91200,
+            "expected_excess_return": -0.001,
+            "top_reason_tags_json": '["swing_recovery_breakout_pattern"]',
+            "explanatory_score_json": json.dumps(
+                {
+                    "swing_3_5d": {
+                        "recommendation_pass": False,
+                        "final_status": "VALID_SIGNAL",
+                        "entry_status": "RR_COLLAPSED",
+                        "entry_status_eod": "RR_COLLAPSED",
+                        "recommendation_group": "VALID_SIGNALS",
+                        "pattern": "recovery_breakout",
+                        "signal_tier": "BORDERLINE_SIGNAL",
+                        "entry_reference_price": 91200.0,
+                        "signal_close": 91200.0,
+                        "max_buy_price": 90055.0,
+                        "target_1": 93132.0,
+                        "stop_price": 88004.0,
+                        "rr_at_reference": 0.6045,
+                        "rr_min": 1.5,
+                        "signal_score": 55.5,
+                        "entry_score": 47.7,
+                        "rule_score": 62.0,
+                        "ml_probability_target_first": 0.494,
+                        "final_score": 52.4,
+                    }
+                },
+                ensure_ascii=False,
+            ),
+        }
+    )
+
+    content = _build_payload_content(
+        as_of_date=date(2026, 5, 12),
+        sector_horizon=5,
+        candidate_horizon=5,
+        market_pulse={},
+        alpha_promotion=pd.DataFrame(),
+        selection_gap=pd.DataFrame(),
+        sector_outlook=pd.DataFrame(),
+        single_buy_candidates=pd.DataFrame(),
+        market_news=pd.DataFrame(),
+        swing_gate_diagnostics=diagnostics,
+        swing_message_group_rows=pd.DataFrame([nearest_row]),
+    )
+
+    assert "좋은 신호는 있었지만 현재 가격 기준 실제 진입 가능한 종목은 없습니다" in content
+    assert "**유효 신호(추격주의/손익비 부족)**" in content
+    assert "`241710` 코스메카코리아" in content
+    assert "패턴 회복형 돌파" in content
+    assert "signal 55.5" in content
+    assert "entry 47.7" in content
+    assert "final 52.4" in content
+    assert "신호종가 91,200원" in content
+    assert "현재가 91,200원" in content
+    assert "max_buy 90,055원" in content
+    assert "현재RR 0.60" in content
+    assert "상태 손익비 1.5 미달" in content
+    assert "90,055원 이하 눌림 전까지 관찰" in content
 
 
 def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> None:
@@ -238,10 +341,9 @@ def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> Non
     assert "**참고용 H1 단기 후보 | 하루 보유 기준 (D+1)**" in content
     assert "메인 후보는 5거래일 보유 기준(D+5) 중심" in content
     assert "3~5D v4는 신호 점수와 종가RR 실행가능성을 분리" in content
-    assert (
-        "v4 실행필터(신호·목표확률·종가RR·entry_status_eod)를 통과한 "
-        "H5 스윙 후보가 없습니다"
-    ) in content
+    assert "**실제 매수 가능 종목**" in content
+    assert "**유효 신호(추격주의/손익비 부족)**" in content
+    assert "**관찰 후보**" in content
 
 
 def test_build_payload_content_renders_industry_code_not_broad_sector() -> None:
@@ -307,9 +409,10 @@ def test_build_payload_content_marks_d5_section_as_observation_when_no_actionabl
     )
 
     assert "**3~5거래일 관찰 후보 | 매수검토 이상 없음" in content
-    assert "오늘은 매수검토 이상 기준을 통과한 H5 스윙 후보가 없어" in content
-    assert "054050" in content
-    assert "관찰 우선" in content
+    assert "**실제 매수 가능 종목**" in content
+    assert "**유효 신호(추격주의/손익비 부족)**" in content
+    assert "**관찰 후보**" in content
+    assert "054050" not in content
 
 
 def test_build_payload_content_uses_swing_payload_despite_low_ml_expectation() -> None:
@@ -348,10 +451,23 @@ def test_build_payload_content_uses_swing_payload_despite_low_ml_expectation() -
                             "swing_3_5d": {
                                 "methodology_version": "test",
                                 "hybrid_score": 73.1,
+                                "final_score": 73.1,
+                                "signal_score": 80.0,
+                                "entry_score": 75.0,
                                 "rule_score": 84.0,
                                 "recommendation_pass": True,
+                                "recommendation_group": "EXECUTABLE_PICKS",
+                                "executable_pick": True,
                                 "candidate_pass": True,
                                 "entry_status": "BUYABLE",
+                                "entry_status_eod": "BUYABLE",
+                                "signal_close": 3000.0,
+                                "current_price": 3000.0,
+                                "max_buy_price": 3090.0,
+                                "target_1": 3150.0,
+                                "stop_price": 2890.0,
+                                "rr_at_reference": 1.65,
+                                "rr_min": 1.5,
                                 "entry_policy": {
                                     "signal_close": 3000.0,
                                     "entry_lower_price": 2950.0,
@@ -380,16 +496,21 @@ def test_build_payload_content_uses_swing_payload_despite_low_ml_expectation() -
 
     assert "**3~5거래일 스윙 후보" in content
     assert "매수검토 이상 기준을 통과한 H5 스윙 후보가 없어" not in content
-    assert "136480" in content
+    assert "**실제 매수 가능 종목**" in content
+    assert "`136480` 하림" in content
     assert "매수검토" in content
-    assert "3~5D 스윙순위 1 · v4최종점수 73.1/A" in content
-    assert "ML기대보조 -0.3%" in content
-    assert "신호 84.0 · 종가RR 1.65" in content
-    assert "가격조건 신호종가 3,000원" in content
-    assert "매수 2,950원~3,090원" in content
-    assert "목표1/2 3,150원/3,240원" in content
+    assert "패턴 -" in content
+    assert "signal 80.0" in content
+    assert "entry 75.0" in content
+    assert "final 73.1" in content
+    assert "신호종가 3,000원" in content
+    assert "현재가 3,000원" in content
+    assert "max_buy 3,090원" in content
+    assert "목표1 3,150원" in content
+    assert "손절 2,890원" in content
+    assert "현재RR 1.65" in content
     assert "고점수 과확신" not in content
-    assert "종가상태 BUYABLE" in content
+    assert "상태 종가 기준 실행 가능" in content
     assert "raw 점수대 성과" not in content
 
 
@@ -432,10 +553,10 @@ def test_build_payload_content_downgrades_v3_cash_path_negative_expected() -> No
     )
 
     assert "**3~5거래일 관찰 후보 | 매수검토 이상 없음" in content
-    assert "오늘은 매수검토 이상 기준을 통과한 H5 스윙 후보가 없어" in content
-    assert "054050" in content
-    assert "관찰 우선" in content
-    assert "기대수익률 낮음" in content
+    assert "**실제 매수 가능 종목**" in content
+    assert "**유효 신호(추격주의/손익비 부족)**" in content
+    assert "**관찰 후보**" in content
+    assert "054050" not in content
     assert "매수해볼 가치 있음" not in content
 
 

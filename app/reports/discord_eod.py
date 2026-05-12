@@ -45,6 +45,7 @@ DISCORD_EOD_REFERENCE_HORIZON = 1
 DISCORD_EOD_D5_CORE_CANDIDATE_LIMIT = 5
 DISCORD_EOD_D5_MAX_CANDIDATES_PER_SECTOR = 2
 DISCORD_EOD_MIN_REFERENCE_SCORE = 55.0
+DISCORD_EOD_SWING_GROUP_LIMIT = 3
 ACTIONABLE_JUDGEMENT_LABELS = {"매수검토", "매수해볼 가치 있음"}
 
 
@@ -90,6 +91,73 @@ SWING_RECOMMENDATION_GROUP_LABELS = {
     "VALID_SIGNALS": "유효 신호",
     "WATCHLIST": "관심 후보",
     "REJECTED": "제외",
+}
+
+SWING_ENTRY_STATUS_LABELS = {
+    "BUYABLE": "종가 기준 실행 가능",
+    "RR_COLLAPSED": "손익비 1.5 미달",
+    "TARGET_ALREADY_REACHED": "목표가 이미 도달",
+    "TARGET_ZONE_REACHED": "목표권 근접",
+    "WATCH_CAUTION": "가격 부담 관찰",
+    "CHASE_RISK": "추격 부담",
+    "EXTENDED": "신호 이후 과열",
+    "INVALIDATED": "기준선 이탈",
+    "INVALID_STOP": "손절선 오류",
+    "RR_INVALID": "손익비 계산 불가",
+}
+
+SWING_GROUP_SORT_PRIORITY = {
+    "EXECUTABLE_PICKS": 0,
+    "VALID_SIGNALS": 1,
+    "WATCHLIST": 2,
+    "REJECTED": 3,
+}
+
+SWING_SIGNAL_TIER_SORT_PRIORITY = {
+    "STRONG_SIGNAL": 0,
+    "BORDERLINE_SIGNAL": 1,
+    "WEAK_OR_REJECTED": 2,
+}
+
+SWING_ENTRY_STATUS_SORT_PRIORITY = {
+    "BUYABLE": 0,
+    "RR_COLLAPSED": 1,
+    "WATCH_CAUTION": 2,
+    "TARGET_ZONE_REACHED": 3,
+    "TARGET_ALREADY_REACHED": 4,
+    "CHASE_RISK": 5,
+    "EXTENDED": 6,
+    "INVALIDATED": 7,
+    "INVALID_STOP": 8,
+    "RR_INVALID": 9,
+}
+
+SWING_VALID_SIGNAL_ENTRY_STATUSES = {
+    "RR_COLLAPSED",
+    "EXTENDED",
+    "TARGET_ZONE_REACHED",
+    "TARGET_ALREADY_REACHED",
+    "WATCH_CAUTION",
+    "CHASE_RISK",
+}
+
+SWING_MESSAGE_GROUP_ORDER = (
+    "EXECUTABLE",
+    "VALID_SIGNAL",
+    "WATCHLIST",
+)
+
+SWING_MESSAGE_GROUP_LABELS = {
+    "EXECUTABLE": "실제 매수 가능 종목",
+    "VALID_SIGNAL": "유효 신호(추격주의/손익비 부족)",
+    "WATCHLIST": "관찰 후보",
+}
+
+SWING_PATTERN_LABELS = {
+    "pullback": "20일선 눌림",
+    "box_breakout": "박스 돌파",
+    "recovery_breakout": "회복형 돌파",
+    "reversal_recovery": "역배열 개선",
 }
 
 
@@ -521,6 +589,200 @@ def _limit_d5_sector_concentration(frame: pd.DataFrame, *, limit: int) -> pd.Dat
     return frame.loc[selected_indices].head(int(limit)).copy()
 
 
+def _swing_sort_text(value: object) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return str(value).strip().upper()
+
+
+def _swing_payload_score(payload: dict[str, object], row: pd.Series) -> float:
+    for key in ("final_score", "hybrid_score"):
+        score = _float_or_none(payload.get(key))
+        if score is not None:
+            return score
+    score = _float_or_none(row.get("final_selection_value"))
+    return score if score is not None else float("-inf")
+
+
+def _swing_near_miss_sort_metrics(row: pd.Series) -> dict[str, float | int]:
+    payload = _swing_3_5d_payload(row) or {}
+    group = _swing_sort_text(payload.get("recommendation_group"))
+    tier = _swing_sort_text(payload.get("signal_tier"))
+    entry_status = _swing_sort_text(
+        payload.get("entry_status_eod") or payload.get("entry_status")
+    )
+    final_status = _swing_sort_text(payload.get("final_status"))
+    rr = _float_or_none(
+        payload.get("rr_at_reference", payload.get("reward_risk_ratio"))
+    )
+    ml_probability = _float_or_none(payload.get("ml_probability_target_first"))
+    if group == "" and final_status in {"VALID_SIGNAL", "WATCHLIST", "REJECTED"}:
+        group = f"{final_status}S" if final_status == "VALID_SIGNAL" else final_status
+    return {
+        "group_priority": SWING_GROUP_SORT_PRIORITY.get(group, 9),
+        "entry_status_priority": SWING_ENTRY_STATUS_SORT_PRIORITY.get(entry_status, 9),
+        "tier_priority": SWING_SIGNAL_TIER_SORT_PRIORITY.get(tier, 9),
+        "score": _swing_payload_score(payload, row),
+        "rr": rr if rr is not None else float("-inf"),
+        "ml_probability": ml_probability if ml_probability is not None else float("-inf"),
+    }
+
+
+def _swing_rr_value(payload: dict[str, object]) -> float | None:
+    for key in ("rr_at_current", "rr_at_reference", "reward_risk_ratio"):
+        value = _float_or_none(payload.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _swing_current_price(payload: dict[str, object], row: pd.Series) -> float | None:
+    for value in (
+        payload.get("current_price"),
+        payload.get("observed_current_price"),
+        payload.get("entry_reference_price"),
+        payload.get("signal_close"),
+        row.get("selection_close_price"),
+    ):
+        number = _float_or_none(value)
+        if number is not None:
+            return number
+    return None
+
+
+def _swing_message_group(row: pd.Series) -> str | None:
+    payload = _swing_3_5d_payload(row) or {}
+    recommendation_group = _swing_sort_text(payload.get("recommendation_group"))
+    entry_status = _swing_sort_text(
+        payload.get("entry_status_eod") or payload.get("entry_status")
+    )
+    final_status = _swing_sort_text(payload.get("final_status"))
+    rr = _swing_rr_value(payload)
+    rr_min = _float_or_none(payload.get("rr_min")) or 1.5
+    current_price = _swing_current_price(payload, row)
+    max_buy = _float_or_none(_swing_policy_value(payload, "max_buy_price"))
+    recommendation_pass = bool(payload.get("recommendation_pass", False))
+    executable_pick = bool(payload.get("executable_pick", False))
+    valid_signal = bool(payload.get("valid_signal", False))
+    entry_policy_pass = (
+        entry_status == "BUYABLE"
+        and rr is not None
+        and rr >= rr_min
+        and current_price is not None
+        and max_buy is not None
+        and current_price <= max_buy
+    )
+    if (
+        recommendation_group in {"", "EXECUTABLE_PICKS"}
+        and (recommendation_pass or executable_pick)
+        and entry_policy_pass
+    ):
+        return "EXECUTABLE"
+    if (
+        recommendation_group == "VALID_SIGNALS"
+        or final_status == "VALID_SIGNAL"
+        or (valid_signal and entry_status in SWING_VALID_SIGNAL_ENTRY_STATUSES)
+    ):
+        return "VALID_SIGNAL"
+    if (
+        recommendation_group == "WATCHLIST"
+        or final_status == "WATCHLIST"
+        or bool(payload.get("watchlist", False))
+    ):
+        return "WATCHLIST"
+    return None
+
+
+def _load_swing_message_group_rows(
+    connection,
+    *,
+    as_of_date: date,
+    horizon: int,
+    per_group_limit: int = DISCORD_EOD_SWING_GROUP_LIMIT,
+) -> pd.DataFrame:
+    """Load H5 swing rows for the three fixed Discord display groups."""
+
+    frame = connection.execute(
+        """
+        SELECT
+            ranking.as_of_date AS selection_date,
+            ranking.horizon,
+            ranking.symbol,
+            symbol.company_name,
+            symbol.market,
+            symbol.sector,
+            symbol.industry,
+            symbol.sector_code,
+            symbol.industry_code,
+            ranking.final_selection_value,
+            ranking.grade,
+            ranking.top_reason_tags_json,
+            ranking.risk_flags_json,
+            ranking.explanatory_score_json,
+            daily.close AS selection_close_price
+        FROM fact_ranking AS ranking
+        JOIN dim_symbol AS symbol
+          ON ranking.symbol = symbol.symbol
+        LEFT JOIN fact_daily_ohlcv AS daily
+          ON ranking.symbol = daily.symbol
+         AND ranking.as_of_date = daily.trading_date
+        WHERE ranking.as_of_date = ?
+          AND ranking.horizon = ?
+          AND ranking.ranking_version = ?
+        ORDER BY ranking.final_selection_value DESC, ranking.symbol
+        """,
+        [
+            as_of_date,
+            int(horizon),
+            SELECTION_ENGINE_V2_VERSION,
+        ],
+    ).fetchdf()
+    if frame.empty:
+        return frame
+    frame = frame.loc[
+        frame.apply(lambda row: _swing_3_5d_payload(row) is not None, axis=1)
+    ].copy()
+    if frame.empty:
+        return frame
+
+    metrics = frame.apply(_swing_near_miss_sort_metrics, axis=1).apply(pd.Series)
+    groups = frame.apply(_swing_message_group, axis=1).rename("_message_group")
+    ranked = pd.concat([frame, groups, metrics.add_prefix("_near_")], axis=1)
+    ranked = ranked.loc[ranked["_message_group"].isin(SWING_MESSAGE_GROUP_ORDER)].copy()
+    if ranked.empty:
+        helper_columns = [
+            column for column in ranked.columns if str(column).startswith("_near_")
+        ]
+        return ranked.drop(columns=helper_columns)
+    group_order = {group: index for index, group in enumerate(SWING_MESSAGE_GROUP_ORDER)}
+    ranked["_message_group_order"] = ranked["_message_group"].map(group_order).fillna(99)
+    ranked = ranked.sort_values(
+        by=[
+            "_message_group_order",
+            "_near_group_priority",
+            "_near_entry_status_priority",
+            "_near_tier_priority",
+            "_near_score",
+            "_near_rr",
+            "_near_ml_probability",
+            "symbol",
+        ],
+        ascending=[True, True, True, True, False, False, False, True],
+        na_position="last",
+    )
+    limited = (
+        ranked.groupby("_message_group", group_keys=False, sort=False)
+        .head(int(per_group_limit))
+        .copy()
+    )
+    helper_columns = [
+        column
+        for column in limited.columns
+        if str(column).startswith("_near_") or column == "_message_group_order"
+    ]
+    return limited.drop(columns=helper_columns).copy()
+
+
 def _load_official_target_rows(
     connection,
     *,
@@ -857,11 +1119,7 @@ def format_swing_gate_diagnostics_lines(
     target_reached = int(diagnostics.get("target_reached_count") or 0)
     watchlist = int(diagnostics.get("watchlist_count") or 0)
     rejected = int(diagnostics.get("rejected_count") or 0)
-    top_failed = diagnostics.get("top_failed_gates") or []
-    if isinstance(top_failed, list) and top_failed:
-        bottleneck = str(top_failed[0].get("label", "하드게이트"))
-    else:
-        bottleneck = "하드게이트"
+    bottleneck = _swing_gate_bottleneck_label(diagnostics) or "하드게이트"
     lines = [
         (
             f"- 미추천 사유: H5 v3/v4 {total:,}개 중 실행 가능 추천 "
@@ -897,6 +1155,48 @@ def format_swing_gate_diagnostics_lines(
             for item in cumulative
         ]
         lines.append("- 누적 실행게이트: " + " → ".join(parts))
+    return lines
+
+
+def _swing_gate_bottleneck_label(diagnostics: dict[str, object]) -> str | None:
+    cumulative = [item for item in diagnostics.get("cumulative", []) if isinstance(item, dict)]
+    for item in cumulative:
+        if int(item.get("pass_count") or 0) <= 0:
+            return str(item.get("label") or "")
+    top_failed = diagnostics.get("top_failed_gates") or []
+    if isinstance(top_failed, list) and top_failed:
+        return str(top_failed[0].get("label") or "")
+    return None
+
+
+def format_swing_gate_diagnostics_compact_lines(
+    diagnostics: dict[str, object] | None,
+) -> list[str]:
+    """Concise Discord-facing no-pick explanation.
+
+    The detailed filter table remains available through diagnostics/read-store
+    surfaces; the live EOD webhook should stay short enough to be readable.
+    """
+
+    if not diagnostics or int(diagnostics.get("total_rows") or 0) <= 0:
+        return []
+    total = int(diagnostics.get("total_rows") or 0)
+    recommendation_pass = int(diagnostics.get("recommendation_pass_count") or 0)
+    executable = int(diagnostics.get("executable_count") or recommendation_pass)
+    valid_signal = int(diagnostics.get("valid_signal_count") or 0)
+    rr_collapsed = int(diagnostics.get("rr_collapsed_count") or 0)
+    target_reached = int(diagnostics.get("target_reached_count") or 0)
+    watchlist = int(diagnostics.get("watchlist_count") or 0)
+    bottleneck = _swing_gate_bottleneck_label(diagnostics)
+    lines = [
+        (
+            f"- H5 실행 추천: {executable:,}/{total:,}개. "
+            f"유효 신호 {valid_signal:,}개, 손익비 미달 {rr_collapsed:,}개, "
+            f"목표권/상방 부족 {target_reached:,}개, 관심 {watchlist:,}개."
+        )
+    ]
+    if bottleneck:
+        lines.append(f"- 핵심 병목: {bottleneck}.")
     return lines
 
 
@@ -1026,6 +1326,116 @@ def _compact_pick_text(value: str, *, fallback: str) -> str:
     if text == "-":
         return fallback
     return text.split(", ", 1)[0]
+
+
+def _swing_group_label(value: object) -> str:
+    text = _swing_sort_text(value)
+    return SWING_RECOMMENDATION_GROUP_LABELS.get(text, text or "분류 미확인")
+
+
+def _swing_entry_status_label(value: object) -> str:
+    text = _swing_sort_text(value)
+    return SWING_ENTRY_STATUS_LABELS.get(text, text or "상태 미확인")
+
+
+def _rr_text(value: object) -> str:
+    number = _float_or_none(value)
+    return "-" if number is None else f"{number:.2f}"
+
+
+def _score_text(value: object) -> str:
+    number = _float_or_none(value)
+    return "-" if number is None else f"{number:.1f}"
+
+
+def _swing_pattern_label(value: object) -> str:
+    text = "" if value is None else str(value).strip()
+    return SWING_PATTERN_LABELS.get(text, text or "-")
+
+
+def _format_swing_required_fields(row: pd.Series) -> str:
+    payload = _swing_3_5d_payload(row) or {}
+    entry_status = payload.get("entry_status_eod") or payload.get("entry_status")
+    signal_close = _swing_policy_value(payload, "signal_close")
+    current_price = _swing_current_price(payload, row)
+    max_buy = _swing_policy_value(payload, "max_buy_price")
+    target_1 = _swing_policy_value(payload, "target_1")
+    stop_price = (
+        _swing_policy_value(payload, "stop_price")
+        or _swing_policy_value(payload, "risk_line")
+        or _swing_policy_value(payload, "invalidation_price")
+    )
+    rr = _swing_rr_value(payload)
+    return (
+        f"패턴 {_swing_pattern_label(payload.get('pattern'))} · "
+        f"signal {_score_text(payload.get('signal_score'))} · "
+        f"entry {_score_text(payload.get('entry_score'))} · "
+        f"final {_score_text(payload.get('final_score', payload.get('hybrid_score')))} · "
+        f"신호종가 {_krw_text(signal_close)} · 현재가 {_krw_text(current_price)} · "
+        f"max_buy {_krw_text(max_buy)} · 목표1 {_krw_text(target_1)} · "
+        f"손절 {_krw_text(stop_price)} · 현재RR {_rr_text(rr)} · "
+        f"상태 {_swing_entry_status_label(entry_status)}"
+    )
+
+
+def _swing_action_text(row: pd.Series) -> str:
+    payload = _swing_3_5d_payload(row) or {}
+    entry_status = payload.get("entry_status_eod") or payload.get("entry_status")
+    max_buy = _swing_policy_value(payload, "max_buy_price")
+    wait_text = "다음 거래일 가격 재확인"
+    entry_number = _swing_current_price(payload, row)
+    max_buy_number = _float_or_none(max_buy)
+    if (
+        _swing_sort_text(entry_status) == "RR_COLLAPSED"
+        and entry_number is not None
+        and max_buy_number is not None
+        and entry_number > max_buy_number
+    ):
+        wait_text = f"{_krw_text(max_buy)} 이하 눌림 전까지 관찰"
+    elif _swing_sort_text(entry_status) == "TARGET_ALREADY_REACHED":
+        wait_text = "이미 목표권이라 신규 진입 보류"
+    elif _swing_sort_text(entry_status) == "INVALIDATED":
+        wait_text = "기준선 회복 전까지 제외"
+    return wait_text
+
+
+def _format_swing_group_row(row: pd.Series, *, rank: int) -> list[str]:
+    judgement = _pick_judgement(row, rank=rank)
+    return [
+        f"{rank}. `{row['symbol']}` {row['company_name']} · {judgement.label}",
+        f"   - {_format_swing_required_fields(row)}",
+        f"   - 행동: {_swing_action_text(row)}.",
+    ]
+
+
+def _format_swing_message_group_lines(
+    rows: pd.DataFrame | None,
+    *,
+    group: str,
+    empty_text: str,
+) -> list[str]:
+    label = SWING_MESSAGE_GROUP_LABELS[group]
+    group_rows = pd.DataFrame() if rows is None or rows.empty else rows.loc[
+        rows["_message_group"].eq(group)
+    ]
+    lines = [f"**{label}**"]
+    if group_rows.empty:
+        lines.append(f"- {empty_text}")
+        return lines
+    for rank, (_, row) in enumerate(group_rows.iterrows(), start=1):
+        lines.extend(_format_swing_group_row(row, rank=rank))
+    return lines
+
+
+def _coerce_swing_message_group_rows(
+    rows: pd.DataFrame | None,
+) -> pd.DataFrame:
+    if rows is None or rows.empty:
+        return pd.DataFrame()
+    frame = rows.copy()
+    if "_message_group" not in frame.columns:
+        frame["_message_group"] = frame.apply(_swing_message_group, axis=1)
+    return frame.loc[frame["_message_group"].isin(SWING_MESSAGE_GROUP_ORDER)].copy()
 
 
 def _pick_judgement(
@@ -1338,6 +1748,7 @@ def _build_payload_content(
     reference_candidates: pd.DataFrame | None = None,
     score_evidence_by_horizon: dict[int, dict[str, ScoreBandEvidence]] | None = None,
     swing_gate_diagnostics: dict[str, object] | None = None,
+    swing_message_group_rows: pd.DataFrame | None = None,
 ) -> str:
     sector_basis = _horizon_hold_basis_label(sector_horizon)
     candidate_basis = _horizon_hold_basis_label(candidate_horizon)
@@ -1407,26 +1818,47 @@ def _build_payload_content(
     ]
 
     lines.extend(["", primary_candidate_title])
-    if single_buy_candidates.empty:
-        if int(candidate_horizon) == 5:
+    if int(candidate_horizon) == 5:
+        display_group_rows = _coerce_swing_message_group_rows(
+            swing_message_group_rows
+            if swing_message_group_rows is not None
+            else single_buy_candidates
+        )
+        executable_group_count = int(
+            display_group_rows["_message_group"].eq("EXECUTABLE").sum()
+        ) if not display_group_rows.empty else 0
+        executable_count = int(
+            (swing_gate_diagnostics or {}).get("executable_count") or executable_group_count
+        )
+        if executable_count <= 0:
             lines.append(
-                "- 오늘은 v4 실행필터(신호·목표확률·종가RR·entry_status_eod)를 "
-                "통과한 H5 스윙 후보가 없습니다."
+                "- 좋은 신호는 있었지만 현재 가격 기준 실제 진입 가능한 종목은 없습니다."
             )
-            lines.extend(
-                format_swing_gate_diagnostics_lines(
-                    swing_gate_diagnostics,
-                    include_descriptions=True,
-                )
+        lines.extend(format_swing_gate_diagnostics_compact_lines(swing_gate_diagnostics))
+        lines.extend(
+            _format_swing_message_group_lines(
+                display_group_rows,
+                group="EXECUTABLE",
+                empty_text="현재 가격·RR·max_buy·entry_policy를 모두 통과한 종목이 없습니다.",
             )
-        else:
-            lines.append("- 상위 후보가 아직 없습니다.")
+        )
+        lines.extend(
+            _format_swing_message_group_lines(
+                display_group_rows,
+                group="VALID_SIGNAL",
+                empty_text="좋은 신호였지만 추격주의/손익비 부족/과열/목표권 도달 종목이 없습니다.",
+            )
+        )
+        lines.extend(
+            _format_swing_message_group_lines(
+                display_group_rows,
+                group="WATCHLIST",
+                empty_text="차트 구조는 보이나 거래량·돌파·ML 트리거가 부족한 후보가 없습니다.",
+            )
+        )
+    elif single_buy_candidates.empty:
+        lines.append("- 상위 후보가 아직 없습니다.")
     else:
-        if int(candidate_horizon) == 5 and not has_actionable_primary_h5:
-            lines.append(
-                "- 오늘은 매수검토 이상 기준을 통과한 H5 스윙 후보가 없어 "
-                "관찰 후보만 표시합니다."
-            )
         for index, (_, row) in enumerate(single_buy_candidates.iterrows(), start=1):
             lines.extend(
                 _format_pick_block(row, rank=index, score_evidence=primary_score_evidence)
@@ -1581,6 +2013,16 @@ def render_discord_eod_report(
                     as_of_date=as_of_date,
                     horizon=DISCORD_EOD_CANDIDATE_HORIZON,
                 )
+                swing_message_group_rows = (
+                    _load_swing_message_group_rows(
+                        connection,
+                        as_of_date=as_of_date,
+                        horizon=DISCORD_EOD_CANDIDATE_HORIZON,
+                        per_group_limit=DISCORD_EOD_SWING_GROUP_LIMIT,
+                    )
+                    if DISCORD_EOD_CANDIDATE_HORIZON == 5
+                    else None
+                )
                 reference_candidates = (
                     _load_top_selection_rows(
                         connection,
@@ -1623,6 +2065,7 @@ def render_discord_eod_report(
                     market_news=market_news,
                     score_evidence_by_horizon=score_evidence_by_horizon,
                     swing_gate_diagnostics=swing_gate_diagnostics,
+                    swing_message_group_rows=swing_message_group_rows,
                 )
                 messages = _build_payload_messages(
                     username=settings.discord.username,
