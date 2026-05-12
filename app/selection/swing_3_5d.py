@@ -486,7 +486,6 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         & scored["close"].gt(scored["ma5"])
         & scored["rsi14"].between(45, 65, inclusive="both")
         & scored["drawdown_from_high_10"].between(-0.12, -0.03, inclusive="both")
-        & volume_dry_up_then_expand
         & scored["vol_rel20"].between(1.2, 2.5, inclusive="both")
         & scored["turnover_rel20"].ge(1.2)
         & scored["vol_z20"].ge(0.5)
@@ -538,9 +537,7 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
     pattern_pass = scored["swing_pattern"].notna()
 
     scored["risk_line"] = pd.NA
-    scored.loc[scored["swing_pattern"].eq("pullback"), "risk_line"] = (
-        pd.concat([scored["low"], scored["ma20"] * 0.985], axis=1).min(axis=1)
-    )
+    scored.loc[scored["swing_pattern"].eq("pullback"), "risk_line"] = scored["ma20"]
     scored.loc[scored["swing_pattern"].eq("box_breakout"), "risk_line"] = (
         scored["high_20_prev"] * 0.98
     )
