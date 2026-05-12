@@ -1171,12 +1171,16 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
     threshold = config.recommendation_threshold + scored["market_regime"].eq("weak").astype(
         float
     ).mul(config.weak_market_threshold_add)
+    scored["swing_signal_tier_score"] = pd.concat(
+        [scored["swing_signal_score"], scored["swing_rule_score"]],
+        axis=1,
+    ).max(axis=1)
     strong_signal = (
-        scored["swing_signal_score"].ge(70.0)
+        scored["swing_signal_tier_score"].ge(70.0)
         & scored["ml_probability_target_first"].ge(0.50)
     )
     borderline_signal = (
-        scored["swing_signal_score"].ge(60.0)
+        scored["swing_signal_tier_score"].ge(60.0)
         & scored["ml_probability_target_first"].ge(0.45)
         & ~strong_signal
     )
@@ -1409,6 +1413,7 @@ def apply_swing_3_5d_overlay(
         "swing_hybrid_score",
         "swing_final_score",
         "swing_final_status",
+        "swing_signal_tier_score",
         "swing_signal_tier",
         "swing_recommendation_group",
         "swing_executable_pick",
@@ -1581,6 +1586,7 @@ def swing_explanatory_payload(row: pd.Series) -> dict[str, object] | None:
         if pd.isna(row.get("swing_final_status"))
         else row.get("swing_final_status"),
         "signal_tier": _text_field("swing_signal_tier"),
+        "signal_tier_score": _float_field("swing_signal_tier_score"),
         "recommendation_group": _text_field("swing_recommendation_group"),
         "executable_pick": bool(row.get("swing_executable_pick", False)),
         "valid_signal": bool(row.get("swing_valid_signal", False)),
