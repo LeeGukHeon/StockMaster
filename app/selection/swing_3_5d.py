@@ -391,7 +391,7 @@ def _prediction_score_frame(prediction_frame: pd.DataFrame) -> pd.DataFrame:
 
 def _financial_pass(frame: pd.DataFrame) -> pd.Series:
     equity = _safe_numeric(frame.get("equity"), index=frame.index)
-    return equity.notna() & equity.gt(0)
+    return equity.isna() | equity.gt(0)
 
 
 def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
@@ -697,6 +697,9 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
             row_risks.append("swing_recent_overheat")
         if bool(getattr(row, "risk_distance", 999) > 0.05):
             row_risks.append("swing_stop_distance_wide")
+        equity_value = getattr(row, "equity", None)
+        if pd.isna(equity_value):
+            row_risks.append("swing_financial_context_missing")
         reasons.append(row_reasons[:4])
         risks.append(row_risks[:4])
     scored["swing_reason_tags"] = reasons

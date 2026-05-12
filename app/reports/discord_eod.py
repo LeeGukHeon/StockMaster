@@ -97,6 +97,7 @@ RISK_LABELS = {
     "swing_upper_wick_distribution": "거래량 동반 윗꼬리 부담",
     "swing_recent_overheat": "최근 단기 상승 과열",
     "swing_stop_distance_wide": "손절 기준선까지 거리가 넓음",
+    "swing_financial_context_missing": "재무 품질 보조지표가 일부 비어 있음",
 }
 
 ALPHA_DECISION_LABELS = {
