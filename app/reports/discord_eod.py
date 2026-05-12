@@ -28,6 +28,7 @@ from app.recommendation.judgement import (
     RecommendationJudgement,
     ScoreBandEvidence,
     classify_recommendation,
+    classify_swing_3_5d_recommendation,
     load_score_band_evidence,
 )
 from app.reference.industry_grouping import industry_group_key
@@ -44,7 +45,7 @@ DISCORD_EOD_REFERENCE_HORIZON = 1
 DISCORD_EOD_D5_CORE_CANDIDATE_LIMIT = 5
 DISCORD_EOD_D5_MAX_CANDIDATES_PER_SECTOR = 2
 DISCORD_EOD_MIN_REFERENCE_SCORE = 55.0
-D5_ACTIONABLE_JUDGEMENT_LABELS = {"매수검토", "매수해볼 가치 있음"}
+ACTIONABLE_JUDGEMENT_LABELS = {"매수검토", "매수해볼 가치 있음"}
 
 
 def _is_d5_cash_path_model(value: object) -> bool:
@@ -308,42 +309,7 @@ def _load_top_selection_rows(
     expected_floor = -1.0 if is_d5_candidate_surface else 0.0
     priority_floor_filter = ""
     order_expression = (
-        f"""
-            CASE
-                WHEN ranking.d5_selection_rank = 1
-                 AND NOT COALESCE(prediction.fallback_flag, FALSE)
-                 AND NOT contains(
-                    COALESCE(ranking.risk_flags_json, ''),
-                    '"model_disagreement_high"'
-                 )
-                 AND NOT contains(
-                    COALESCE(ranking.risk_flags_json, ''),
-                    '"model_joint_instability_high"'
-                 )
-                 AND NOT contains(
-                    COALESCE(ranking.risk_flags_json, ''),
-                    '"prediction_error_bucket_high"'
-                 )
-                 AND COALESCE(prediction.uncertainty_score, 100.0) < 75.0
-                 AND COALESCE(prediction.disagreement_score, 100.0) < 75.0
-                 AND (
-                    COALESCE(prediction.expected_excess_return, 0.0) > 0.005
-                    OR COALESCE(active_models.model_spec_id, prediction.model_spec_id)
-                        = '{D5_PRACTICAL_V3_MODEL_SPEC_ID}'
-                 )
-                    THEN 0
-                WHEN ranking.d5_selection_rank BETWEEN 2 AND 6
-                 AND COALESCE(prediction.expected_excess_return, 0.0) > 0.005
-                    THEN 1
-                WHEN ranking.d5_selection_rank BETWEEN 7 AND 10
-                 AND COALESCE(prediction.expected_excess_return, 0.0) > 0.005
-                    THEN 2
-                WHEN ranking.d5_selection_rank BETWEEN 2 AND 6
-                    THEN 3
-                WHEN ranking.d5_selection_rank BETWEEN 7 AND 10
-                    THEN 4
-                ELSE 9
-            END,
+        """
             ranking.d5_selection_rank,
             ranking.symbol
         """
@@ -351,33 +317,8 @@ def _load_top_selection_rows(
         else "ranking.final_selection_value DESC, ranking.symbol"
     )
     d5_rank_window_filter = (
-        f"""
+        """
           AND ranking.d5_selection_rank BETWEEN 1 AND 10
-          AND (
-                ranking.d5_selection_rank <> 1
-                OR (
-                    NOT COALESCE(prediction.fallback_flag, FALSE)
-                    AND NOT contains(
-                        COALESCE(ranking.risk_flags_json, ''),
-                        '"model_disagreement_high"'
-                    )
-                    AND NOT contains(
-                        COALESCE(ranking.risk_flags_json, ''),
-                        '"model_joint_instability_high"'
-                    )
-                    AND NOT contains(
-                        COALESCE(ranking.risk_flags_json, ''),
-                        '"prediction_error_bucket_high"'
-                    )
-                    AND COALESCE(prediction.uncertainty_score, 100.0) < 75.0
-                    AND COALESCE(prediction.disagreement_score, 100.0) < 75.0
-                    AND (
-                        COALESCE(prediction.expected_excess_return, 0.0) > 0.005
-                        OR COALESCE(active_models.model_spec_id, prediction.model_spec_id)
-                            = '{D5_PRACTICAL_V3_MODEL_SPEC_ID}'
-                    )
-                )
-          )
         """
         if is_d5_candidate_surface
         else ""
@@ -453,6 +394,7 @@ def _load_top_selection_rows(
             ranking.grade,
             ranking.top_reason_tags_json,
             ranking.risk_flags_json,
+            ranking.explanatory_score_json,
             prediction.expected_excess_return,
             prediction.lower_band,
             prediction.upper_band,
@@ -633,6 +575,22 @@ def _raw_tag_list(raw_value: object) -> list[str]:
     return [str(item) for item in parsed]
 
 
+def _raw_json_dict(raw_value: object) -> dict[str, object]:
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _swing_3_5d_payload(row: pd.Series) -> dict[str, object] | None:
+    payload = _raw_json_dict(row.get("explanatory_score_json"))
+    swing_payload = payload.get("swing_3_5d")
+    return swing_payload if isinstance(swing_payload, dict) and swing_payload else None
+
+
 def _translate_tags(raw_value: object, mapping: dict[str, str], *, limit: int = 2) -> str:
     labels = [mapping.get(item, item) for item in _raw_tag_list(raw_value)[:limit]]
     return ", ".join(labels) if labels else "-"
@@ -703,6 +661,16 @@ def _pct_text(value: object) -> str:
     return f"{float(value):.1%}"
 
 
+def _float_or_none(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if pd.notna(number) else None
+
+
 def _compact_judgement_summary(summary: str) -> str:
     text = str(summary or "-")
     return text.split(" · ", 1)[0] if " · " in text else text
@@ -725,6 +693,14 @@ def _pick_judgement(
         row.get("horizon", DISCORD_EOD_CANDIDATE_HORIZON)
         or DISCORD_EOD_CANDIDATE_HORIZON
     )
+    if horizon == DISCORD_EOD_CANDIDATE_HORIZON:
+        swing_judgement = classify_swing_3_5d_recommendation(
+            final_selection_value=row.get("final_selection_value"),
+            swing_payload=_swing_3_5d_payload(row),
+            risk_flags=_raw_tag_list(row.get("risk_flags_json")),
+        )
+        if swing_judgement is not None:
+            return swing_judgement
     is_d5_buyability_pick = (
         horizon == DISCORD_EOD_CANDIDATE_HORIZON
         and pd.notna(row.get("buyability_priority_score"))
@@ -759,7 +735,7 @@ def _has_actionable_d5_candidate(
         if horizon != DISCORD_EOD_CANDIDATE_HORIZON:
             continue
         judgement = _pick_judgement(row, rank=rank, score_evidence=score_evidence)
-        if judgement.label in D5_ACTIONABLE_JUDGEMENT_LABELS:
+        if judgement.label in ACTIONABLE_JUDGEMENT_LABELS:
             return True
     return False
 
@@ -777,6 +753,12 @@ def _format_pick_block(
         or DISCORD_EOD_CANDIDATE_HORIZON
     )
     judgement = _pick_judgement(row, rank=rank, score_evidence=score_evidence)
+    swing_payload = (
+        _swing_3_5d_payload(row)
+        if horizon == DISCORD_EOD_CANDIDATE_HORIZON
+        else None
+    )
+    is_swing_pick = swing_payload is not None
     display_label = judgement.label
     display_summary = judgement.summary
     risk_text = (
@@ -796,23 +778,48 @@ def _format_pick_block(
         f"   - 판단 {_compact_judgement_summary(display_summary)}"
         f" | 근거 {reason_text} | 주의 {risk_text}"
     )
-    if pd.notna(row.get("selection_close_price")) and pd.notna(
+    if is_swing_pick:
+        rule_score = _float_or_none(swing_payload.get("rule_score"))
+        reward_risk = _float_or_none(swing_payload.get("reward_risk_ratio"))
+        swing_parts = []
+        if rule_score is not None:
+            swing_parts.append(f"룰 {rule_score:.1f}")
+        if reward_risk is not None:
+            swing_parts.append(f"손익비 {reward_risk:.2f}")
+        if swing_parts:
+            detail += f" | {' · '.join(swing_parts)}"
+        risk_line = _float_or_none(swing_payload.get("risk_line"))
+        resistance_line = _float_or_none(swing_payload.get("resistance_line"))
+        price_parts = []
+        if risk_line is not None:
+            price_parts.append(f"손절참고 {risk_line:,.0f}원")
+        if resistance_line is not None:
+            price_parts.append(f"저항/목표 {resistance_line:,.0f}원")
+        if price_parts:
+            detail += f" | {' / '.join(price_parts)}"
+    elif pd.notna(row.get("selection_close_price")) and pd.notna(
         row.get("expected_excess_return")
     ):
         base_price = float(row["selection_close_price"])
         target_price = base_price * (1.0 + float(row["expected_excess_return"]))
         detail += f" | 목표 {target_price:,.0f}원"
-    if is_cash_path_pick:
+    if is_swing_pick and pd.notna(row.get("d5_selection_rank")):
         headline_metric = (
-            f"D{horizon} 경로순위 {int(row['d5_selection_rank'])} "
+            f"3~5D 스윙순위 {int(row['d5_selection_rank'])} "
+            f"· 하이브리드점수 {score:.1f}/{row['grade']}"
+        )
+    elif is_cash_path_pick:
+        headline_metric = (
+            f"H{horizon} 순위 {int(row['d5_selection_rank'])} "
             f"· 상대점수 {score:.1f}/{row['grade']}"
         )
     else:
-        headline_metric = f"D{horizon} {score:.1f}/{row['grade']}"
+        headline_metric = f"H{horizon} {score:.1f}/{row['grade']}"
+    expected_label = "ML보조" if is_swing_pick else "기대"
     return [
         (
             f"{rank}. `{row['symbol']}` {row['company_name']} · {display_label}"
-            f" | {headline_metric} | 기대 {expected_text}"
+            f" | {headline_metric} | {expected_label} {expected_text}"
         ),
         detail,
     ]
@@ -975,7 +982,7 @@ def _build_payload_content(
         str(market_pulse.get("regime_state")),
         market_pulse.get("regime_state") or "미확인",
     )
-    has_actionable_primary_d5 = (
+    has_actionable_primary_h5 = (
         int(candidate_horizon) == 5
         and _has_actionable_d5_candidate(
             single_buy_candidates,
@@ -984,26 +991,30 @@ def _build_payload_content(
     )
     if int(candidate_horizon) == 5:
         primary_candidate_title = (
-            f"**2~5거래일 스윙 후보 | {candidate_basis} (D+{int(candidate_horizon)})**"
-            if has_actionable_primary_d5 or single_buy_candidates.empty
+            f"**3~5거래일 스윙 후보 | {candidate_basis} (H5/D+{int(candidate_horizon)})**"
+            if has_actionable_primary_h5 or single_buy_candidates.empty
             else (
-                f"**2~5거래일 관찰 후보 | 매수검토 이상 없음 | "
-                f"{candidate_basis} (D+{int(candidate_horizon)})**"
+                f"**3~5거래일 관찰 후보 | 매수검토 이상 없음 | "
+                f"{candidate_basis} (H5/D+{int(candidate_horizon)})**"
             )
         )
     else:
         primary_candidate_title = (
             f"**다음 거래일 후보 | {candidate_basis} (D+{int(candidate_horizon)})**"
         )
-    uses_cash_path_d5 = (
+    uses_swing_h5 = (
         int(candidate_horizon) == 5
         and not single_buy_candidates.empty
-        and single_buy_candidates.get("model_spec_id") is not None
-        and single_buy_candidates["model_spec_id"].dropna().map(_is_d5_cash_path_model).any()
+        and single_buy_candidates.get("explanatory_score_json") is not None
+        and single_buy_candidates.apply(
+            lambda row: _swing_3_5d_payload(row) is not None,
+            axis=1,
+        ).any()
     )
     judgement_basis_line = (
-        "v3 D5는 2~5거래일 경로순위 후보를 우선 보고, raw 점수대 성과는 보조 참고로만 봅니다."
-        if uses_cash_path_d5
+        "3~5D 스윙은 룰 기반 차트·거래량·손익비를 1차 기준으로 보고, "
+        "ML 기대값은 보조 참고로만 봅니다."
+        if uses_swing_h5
         else _score_band_evidence_line(primary_score_evidence)
     )
     lines = [
@@ -1022,9 +1033,9 @@ def _build_payload_content(
     if single_buy_candidates.empty:
         lines.append("- 상위 후보가 아직 없습니다.")
     else:
-        if int(candidate_horizon) == 5 and not has_actionable_primary_d5:
+        if int(candidate_horizon) == 5 and not has_actionable_primary_h5:
             lines.append(
-                "- 오늘은 매수검토 이상 기준을 통과한 D5 후보가 없어 "
+                "- 오늘은 매수검토 이상 기준을 통과한 H5 스윙 후보가 없어 "
                 "관찰 후보만 표시합니다."
             )
         for index, (_, row) in enumerate(single_buy_candidates.iterrows(), start=1):
@@ -1036,11 +1047,11 @@ def _build_payload_content(
         lines.extend(
             [
                 "",
-                f"**참고용 D1 단기 후보 | {reference_basis} (D+{int(reference_horizon)})**",
+                f"**참고용 H1 단기 후보 | {reference_basis} (D+{int(reference_horizon)})**",
             ]
         )
         if reference_candidates.empty:
-            lines.append("- 참고용 D1 후보가 아직 없습니다.")
+            lines.append("- 참고용 H1 후보가 아직 없습니다.")
         else:
             for index, (_, row) in enumerate(reference_candidates.head(2).iterrows(), start=1):
                 lines.extend(

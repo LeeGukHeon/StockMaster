@@ -29,6 +29,7 @@ from app.recommendation.buyability import (
 from app.recommendation.judgement import (
     ScoreBandEvidence,
     classify_recommendation,
+    classify_swing_3_5d_recommendation,
     load_score_band_evidence,
 )
 from app.reference.industry_grouping import industry_group, industry_group_key
@@ -133,6 +134,12 @@ def _parse_raw_json_dict(value: object) -> dict[str, object]:
 
 def _validation_edge_guard_applied(value: object) -> bool:
     return bool(_parse_raw_json_dict(value).get("validation_top5_edge_guard_applied"))
+
+
+def _swing_3_5d_payload(value: object) -> dict[str, object] | None:
+    payload = _parse_raw_json_dict(value)
+    swing_payload = payload.get("swing_3_5d")
+    return swing_payload if isinstance(swing_payload, dict) and swing_payload else None
 
 
 def _model_label(value: object) -> str:
@@ -243,6 +250,11 @@ def _build_pick_rows(
     is_d5_candidate_surface = int(horizon) == 5
     if is_d5_candidate_surface:
         working["raw_risks_list"] = working["risks"].apply(_parse_raw_json_list)
+        working["swing_3_5d_payload"] = working.get(
+            "explanatory_score_json",
+            pd.Series([None] * len(working), index=working.index),
+        ).apply(_swing_3_5d_payload)
+        swing_surface = working["swing_3_5d_payload"].apply(bool).any()
         expected = pd.to_numeric(working["expected_excess_return"], errors="coerce")
         eligible = (
             working["eligible_flag"].astype(bool)
@@ -259,7 +271,16 @@ def _build_pick_rows(
             and working["model_spec_id"].dropna().astype(str).nunique() == 1
             and _is_d5_cash_path_model(working["model_spec_id"].dropna().astype(str).iloc[0])
         )
-        if cash_path_surface:
+        if swing_surface:
+            recommendation_pass = working["swing_3_5d_payload"].apply(
+                lambda payload: bool(payload and payload.get("recommendation_pass", False))
+            )
+            working = working.loc[
+                eligible
+                & recommendation_pass
+                & ~working["raw_risks_list"].apply(has_buyability_blocker)
+            ].copy()
+        elif cash_path_surface:
             report_candidate = (
                 working["report_candidate_flag"].fillna(False).astype(bool)
                 if "report_candidate_flag" in working.columns
@@ -279,7 +300,13 @@ def _build_pick_rows(
             ].copy()
         if working.empty:
             return []
-        if cash_path_surface:
+        if swing_surface:
+            working["buyability_priority_score"] = 0.0
+            working = working.sort_values(
+                ["d5_selection_rank", "symbol"],
+                ascending=[True, True],
+            )
+        elif cash_path_surface:
             working["buyability_priority_score"] = 0.0
             working = working.sort_values(
                 ["d5_selection_rank", "symbol"],
@@ -323,23 +350,44 @@ def _build_pick_rows(
         path_rank_candidate = is_d5_candidate_surface and _is_d5_cash_path_model(
             getattr(row, "model_spec_id", None)
         )
-        judgement = classify_recommendation(
-            final_selection_value=getattr(row, "final_selection_value", None),
-            expected_excess_return=getattr(row, "expected_excess_return", None),
-            risk_flags=raw_risks,
-            evidence_by_band=score_evidence,
-            candidate_selected=is_d5_candidate_surface,
-            candidate_rank=rank if is_d5_candidate_surface else None,
-            buyability_priority_score=getattr(row, "buyability_priority_score", None),
-            path_rank_candidate=path_rank_candidate,
+        swing_payload = getattr(row, "swing_3_5d_payload", None)
+        judgement = (
+            classify_swing_3_5d_recommendation(
+                final_selection_value=getattr(row, "final_selection_value", None),
+                swing_payload=swing_payload,
+                risk_flags=raw_risks,
+            )
+            if is_d5_candidate_surface and isinstance(swing_payload, dict)
+            else None
         )
+        if judgement is None:
+            judgement = classify_recommendation(
+                final_selection_value=getattr(row, "final_selection_value", None),
+                expected_excess_return=getattr(row, "expected_excess_return", None),
+                risk_flags=raw_risks,
+                evidence_by_band=score_evidence,
+                candidate_selected=is_d5_candidate_surface,
+                candidate_rank=rank if is_d5_candidate_surface else None,
+                buyability_priority_score=getattr(row, "buyability_priority_score", None),
+                path_rank_candidate=path_rank_candidate,
+            )
         display_label = judgement.label
         display_summary = judgement.summary
         summary_parts = [display_label]
-        if path_rank_candidate:
+        if is_d5_candidate_surface and isinstance(swing_payload, dict):
             summary_parts.extend(
                 [
-                    f"경로순위 {rank}",
+                    f"3~5D 스윙순위 {rank}",
+                    f"하이브리드점수 {_format_number(getattr(row, 'final_selection_value', None))}",
+                    f"등급 {_safe_text(getattr(row, 'grade', None))}",
+                    "ML보조 "
+                    f"{_format_percent(getattr(row, 'expected_excess_return', None), signed=True)}",
+                ]
+            )
+        elif path_rank_candidate:
+            summary_parts.extend(
+                [
+                    f"H5 순위 {rank}",
                     f"상대점수 {_format_number(getattr(row, 'final_selection_value', None))}",
                     f"등급 {_safe_text(getattr(row, 'grade', None))}",
                 ]
@@ -355,8 +403,10 @@ def _build_pick_rows(
             )
         summary_parts.append(f"진입 {_safe_text(getattr(row, 'next_entry_trade_date', None))}")
         if is_d5_candidate_surface:
-            if path_rank_candidate:
-                summary_parts.append("경로모델")
+            if isinstance(swing_payload, dict):
+                summary_parts.append("3~5D스윙")
+            elif path_rank_candidate:
+                summary_parts.append("H5경로모델")
             else:
                 priority_text = _format_number(
                     getattr(row, "buyability_priority_score", None),
@@ -387,6 +437,7 @@ def _build_pick_rows(
             "score_band": judgement.score_band,
             "reasons": reasons,
             "risks": risks,
+            "swing_3_5d": swing_payload if isinstance(swing_payload, dict) else None,
         }
         rows.append(
             _snapshot_row(
@@ -592,6 +643,9 @@ def _build_stock_summary_rows(
         raw_d5_reasons = _parse_raw_json_list(
             getattr(live, "live_d5_top_reason_tags_json", "[]") if live else "[]"
         )
+        d5_swing_payload = _swing_3_5d_payload(
+            getattr(live, "live_d5_explanatory_score_json", None) if live else None
+        )
         raw_d5_candidate_rank = (
             getattr(live, "live_d5_selection_rank", None) if live is not None else None
         )
@@ -621,27 +675,44 @@ def _build_stock_summary_rows(
             d5_candidate_rank = None
         d5_display_rank = d5_display_rank_by_symbol.get(symbol)
         is_d5_candidate = d5_display_rank is not None
-        judgement = classify_recommendation(
-            final_selection_value=d5_score,
-            expected_excess_return=d5_expected,
-            risk_flags=raw_d5_risks,
-            evidence_by_band=score_evidence,
-            candidate_selected=is_d5_candidate,
-            candidate_rank=d5_display_rank,
-            buyability_priority_score=d5_buyability_priority,
-            path_rank_candidate=is_d5_candidate and _is_d5_cash_path_model(d5_model_spec_id),
+        judgement = (
+            classify_swing_3_5d_recommendation(
+                final_selection_value=d5_score,
+                swing_payload=d5_swing_payload,
+                risk_flags=raw_d5_risks,
+            )
+            if is_d5_candidate and isinstance(d5_swing_payload, dict)
+            else None
         )
+        if judgement is None:
+            judgement = classify_recommendation(
+                final_selection_value=d5_score,
+                expected_excess_return=d5_expected,
+                risk_flags=raw_d5_risks,
+                evidence_by_band=score_evidence,
+                candidate_selected=is_d5_candidate,
+                candidate_rank=d5_display_rank,
+                buyability_priority_score=d5_buyability_priority,
+                path_rank_candidate=is_d5_candidate and _is_d5_cash_path_model(d5_model_spec_id),
+            )
         d5_cash_path_candidate = is_d5_candidate and _is_d5_cash_path_model(d5_model_spec_id)
-        if d5_cash_path_candidate:
+        if is_d5_candidate and isinstance(d5_swing_payload, dict):
             d5_metric_parts = [
-                f"D5 경로순위 {d5_display_rank}",
+                f"3~5D 스윙순위 {d5_display_rank}",
+                f"하이브리드점수 {_format_number(d5_score)}",
+                f"H5 {d5_grade}",
+                f"ML보조 {_format_percent(d5_expected, signed=True)}",
+            ]
+        elif d5_cash_path_candidate:
+            d5_metric_parts = [
+                f"H5 순위 {d5_display_rank}",
                 f"상대점수 {_format_number(d5_score)}",
-                f"D5 {d5_grade}",
+                f"H5 {d5_grade}",
             ]
         else:
             d5_metric_parts = [
-                f"D5 점수 {_format_number(d5_score)}",
-                f"D5 {d5_grade}",
+                f"H5 점수 {_format_number(d5_score)}",
+                f"H5 {d5_grade}",
                 f"기대 {_format_percent(d5_expected, signed=True)}",
             ]
         summary = " · ".join(
@@ -671,6 +742,7 @@ def _build_stock_summary_rows(
             "d5_report_candidate_flag": is_d5_candidate,
             "d5_selection_rank": d5_candidate_rank,
             "d5_display_rank": d5_display_rank,
+            "d5_swing_3_5d": d5_swing_payload,
             "buyability_priority_score": d5_buyability_priority,
             "d5_reason_tags": raw_d5_reasons[:2],
             "risk_flags": raw_d5_risks[:3],
@@ -941,6 +1013,13 @@ def _d5_display_rank_by_symbol(
         ),
         axis=1,
     )
+    if "live_d5_explanatory_score_json" in working.columns:
+        working["swing_3_5d_payload"] = working["live_d5_explanatory_score_json"].apply(
+            _swing_3_5d_payload
+        )
+    else:
+        working["swing_3_5d_payload"] = pd.Series([None] * len(working), index=working.index)
+    swing_surface = working["swing_3_5d_payload"].apply(bool).any()
     cash_path_surface = (
         "live_d5_model_spec_id" in working.columns
         and working["live_d5_model_spec_id"].dropna().astype(str).nunique() == 1
@@ -957,7 +1036,17 @@ def _d5_display_rank_by_symbol(
         if "live_d5_eligible_flag" in working.columns
         else pd.Series(True, index=working.index)
     )
-    if cash_path_surface:
+    if swing_surface:
+        recommendation_pass = working["swing_3_5d_payload"].apply(
+            lambda payload: bool(payload and payload.get("recommendation_pass", False))
+        )
+        working = working.loc[
+            eligible
+            & recommendation_pass
+            & ~validation_guard_applied
+            & ~working["raw_risks_list"].apply(has_buyability_blocker)
+        ].copy()
+    elif cash_path_surface:
         report_candidate = (
             working["live_d5_report_candidate_flag"].fillna(False).astype(bool)
             if "live_d5_report_candidate_flag" in working.columns
@@ -980,7 +1069,12 @@ def _d5_display_rank_by_symbol(
         ].copy()
     if working.empty:
         return {}
-    if cash_path_surface:
+    if swing_surface:
+        working = working.sort_values(
+            ["d5_selection_rank", "symbol"],
+            ascending=[True, True],
+        )
+    elif cash_path_surface:
         working = working.sort_values(
             ["d5_selection_rank", "symbol"],
             ascending=[True, True],

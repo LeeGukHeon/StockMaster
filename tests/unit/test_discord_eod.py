@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pandas as pd
@@ -84,8 +85,8 @@ def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> Non
     )
 
     assert "**강세 예상 업종 | 5거래일 보유 기준 (D+5)**" in content
-    assert "**2~5거래일 스윙 후보 | 5거래일 보유 기준 (D+5)**" in content
-    assert "**참고용 D1 단기 후보 | 하루 보유 기준 (D+1)**" in content
+    assert "**3~5거래일 스윙 후보 | 5거래일 보유 기준 (H5/D+5)**" in content
+    assert "**참고용 H1 단기 후보 | 하루 보유 기준 (D+1)**" in content
     assert "메인 후보는 5거래일 보유 기준(D+5) 중심" in content
 
 
@@ -122,13 +123,13 @@ def test_build_payload_content_marks_d5_section_as_observation_when_no_actionabl
         market_news=pd.DataFrame(),
     )
 
-    assert "**2~5거래일 관찰 후보 | 매수검토 이상 없음" in content
-    assert "오늘은 매수검토 이상 기준을 통과한 D5 후보가 없어" in content
+    assert "**3~5거래일 관찰 후보 | 매수검토 이상 없음" in content
+    assert "오늘은 매수검토 이상 기준을 통과한 H5 스윙 후보가 없어" in content
     assert "054050" in content
     assert "관찰 우선" in content
 
 
-def test_build_payload_content_treats_v3_cash_path_rank_as_actionable() -> None:
+def test_build_payload_content_uses_swing_payload_despite_low_ml_expectation() -> None:
     content = _build_payload_content(
         as_of_date=date(2026, 4, 29),
         sector_horizon=5,
@@ -146,33 +147,54 @@ def test_build_payload_content_treats_v3_cash_path_rank_as_actionable() -> None:
                     "market": "KOSDAQ",
                     "industry": "식품",
                     "sector": "소비재",
-                    "final_selection_value": 100.0,
+                    "final_selection_value": 73.1,
                     "d5_selection_rank": 1,
                     "grade": "A",
                     "selection_date": "2026-04-29 00:00:00",
                     "next_entry_trade_date": "2026-04-30 00:00:00",
                     "selection_close_price": 3000,
-                    "expected_excess_return": 0.009,
+                    "expected_excess_return": -0.003,
                     "buyability_priority_score": -1.9,
                     "model_spec_id": "alpha_practical_d5_v3",
-                    "top_reason_tags_json": '["ml_alpha_supportive"]',
+                    "top_reason_tags_json": (
+                        '["swing_pullback_pattern","swing_volume_expansion"]'
+                    ),
                     "risk_flags_json": "[]",
+                    "explanatory_score_json": json.dumps(
+                        {
+                            "swing_3_5d": {
+                                "methodology_version": "test",
+                                "hybrid_score": 73.1,
+                                "rule_score": 84.0,
+                                "recommendation_pass": True,
+                                "candidate_pass": True,
+                                "risk_line": 2890.0,
+                                "resistance_line": 3200.0,
+                                "reward_risk_ratio": 1.65,
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
                 }
             ]
         ),
         market_news=pd.DataFrame(),
         score_evidence_by_horizon={
-            5: {"75+": ScoreBandEvidence("75+", 3, -0.046, 0.0)}
+            5: {"65-75": ScoreBandEvidence("65-75", 3, -0.046, 0.0)}
         },
     )
 
-    assert "**2~5거래일 스윙 후보" in content
-    assert "매수검토 이상 기준을 통과한 D5 후보가 없어" not in content
+    assert "**3~5거래일 스윙 후보" in content
+    assert "매수검토 이상 기준을 통과한 H5 스윙 후보가 없어" not in content
     assert "136480" in content
-    assert "매수해볼 가치 있음" in content
-    assert "D5 경로순위 1 · 상대점수 100.0/A" in content
+    assert "매수검토" in content
+    assert "3~5D 스윙순위 1 · 하이브리드점수 73.1/A" in content
+    assert "ML보조 -0.3%" in content
+    assert "룰 84.0 · 손익비 1.65" in content
+    assert "손절참고 2,890원 / 저항/목표 3,200원" in content
     assert "고점수 과확신" not in content
-    assert "raw 점수대 성과는 보조 참고" in content
+    assert "ML 기대값은 보조 참고" in content
+    assert "raw 점수대 성과" not in content
 
 
 def test_build_payload_content_downgrades_v3_cash_path_negative_expected() -> None:
@@ -213,8 +235,8 @@ def test_build_payload_content_downgrades_v3_cash_path_negative_expected() -> No
         },
     )
 
-    assert "**2~5거래일 관찰 후보 | 매수검토 이상 없음" in content
-    assert "오늘은 매수검토 이상 기준을 통과한 D5 후보가 없어" in content
+    assert "**3~5거래일 관찰 후보 | 매수검토 이상 없음" in content
+    assert "오늘은 매수검토 이상 기준을 통과한 H5 스윙 후보가 없어" in content
     assert "054050" in content
     assert "관찰 우선" in content
     assert "기대수익률 낮음" in content
@@ -321,8 +343,8 @@ def test_format_pick_block_uses_row_horizon_label() -> None:
 
     rendered = "\n".join(_format_pick_block(row, rank=1))
 
-    assert "D1 57.4/A" in rendered
-    assert "D5 57.4/A" not in rendered
+    assert "H1 57.4/A" in rendered
+    assert "H5 57.4/A" not in rendered
 
 
 def test_format_pick_block_labels_d5_buyability_candidate_without_score_band_conflict() -> None:

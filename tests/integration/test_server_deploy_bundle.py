@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.ops.scheduler import SCHEDULED_JOB_MAP
+
 
 def test_server_deploy_bundle_files_exist():
     required_paths = [
@@ -34,6 +36,20 @@ def test_readme_links_server_deployment_bundle():
     assert "OCI / server deployment" in readme
     assert "deploy/docker-compose.server.yml" in readme
     assert "docs/operations/STOCKMASTER_UNIFIED_MANUAL_KO.md" in readme
+
+
+def test_daily_close_timer_targets_scheduler_daily_close_slug():
+    timer = Path("deploy/systemd/stockmaster-daily-close.timer").read_text(
+        encoding="utf-8"
+    )
+    service = Path("deploy/systemd/stockmaster-scheduler@.service").read_text(
+        encoding="utf-8"
+    )
+    job = SCHEDULED_JOB_MAP["daily_close"]
+
+    assert f"Unit=stockmaster-scheduler@{job.service_slug}.service" in timer
+    assert f"OnCalendar={job.on_calendar[0]}" in timer
+    assert "run_scheduler_job_host.sh %i" in service
 
 
 def test_run_indicator_product_bundle_host_targets_d5_v2_lane():

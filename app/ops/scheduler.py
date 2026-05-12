@@ -136,10 +136,10 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
         service_slug="daily-close",
         bundle_script="scripts/run_daily_close_bundle.py",
         bundle_args=(),
-        schedule_label="평일 17:00",
-        on_calendar=("Mon..Fri *-*-* 17:00:00",),
+        schedule_label="평일 17:30",
+        on_calendar=("Mon..Fri *-*-* 17:30:00",),
         weekdays=(0, 1, 2, 3, 4),
-        run_times=("17:00",),
+        run_times=("17:30",),
         date_semantics=DATE_SEMANTICS_TRADING,
         trading_day_required=True,
         heavy_job=True,
@@ -620,7 +620,11 @@ def latest_scheduled_run_at(
         if candidate_day.weekday() not in job.weekdays:
             continue
         for candidate_time in reversed(daily_times):
-            candidate_dt = datetime.combine(candidate_day, candidate_time, tzinfo=effective_now.tzinfo)
+            candidate_dt = datetime.combine(
+                candidate_day,
+                candidate_time,
+                tzinfo=effective_now.tzinfo,
+            )
             if candidate_dt <= effective_now:
                 return candidate_dt
     return None

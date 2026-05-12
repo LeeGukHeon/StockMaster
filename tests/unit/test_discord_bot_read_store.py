@@ -244,9 +244,63 @@ def test_build_pick_rows_keeps_cash_path_v3_report_candidates_by_rank() -> None:
     assert [row["symbol"] for row in rows] == ["111111", "222222"]
     assert "관찰 우선" in rows[0]["summary"]
     assert "매수해볼 가치 있음" not in rows[0]["summary"]
-    assert "경로순위 1" in rows[0]["summary"]
+    assert "H5 순위 1" in rows[0]["summary"]
     assert "상대점수 99.0" in rows[0]["summary"]
     assert "기대수익률 낮음" in rows[0]["payload_json"]
+
+
+def test_build_pick_rows_uses_swing_payload_not_negative_ml_expectation_for_h5() -> None:
+    swing_payload = {
+        "swing_3_5d": {
+            "methodology_version": "test",
+            "hybrid_score": 73.1,
+            "rule_score": 84.0,
+            "recommendation_pass": True,
+            "candidate_pass": True,
+            "reward_risk_ratio": 1.65,
+        }
+    }
+    frame = pd.DataFrame(
+        [
+            {
+                "horizon": 5,
+                "eligible_flag": True,
+                "report_candidate_flag": True,
+                "symbol": "241710",
+                "company_name": "코스메카코리아",
+                "market": "KOSDAQ",
+                "industry": "화학",
+                "sector": "소재",
+                "final_selection_value": 73.1,
+                "grade": "A",
+                "selection_date": "2026-05-11",
+                "next_entry_trade_date": "2026-05-12",
+                "expected_excess_return": -0.003,
+                "uncertainty_score": 20.0,
+                "disagreement_score": 20.0,
+                "model_spec_id": "alpha_practical_d5_v3",
+                "reasons": '["swing_pullback_pattern","swing_volume_expansion"]',
+                "risks": "[]",
+                "explanatory_score_json": json.dumps(swing_payload, ensure_ascii=False),
+            }
+        ]
+    )
+
+    rows = read_store._build_pick_rows(
+        frame,
+        horizon=5,
+        built_at="2026-05-12T00:00:00+09:00",
+        as_of_date="2026-05-11",
+        source_run_id="test",
+    )
+
+    assert len(rows) == 1
+    payload = json.loads(rows[0]["payload_json"])
+    assert "매수검토" in rows[0]["summary"]
+    assert "기대수익률 낮음" not in rows[0]["payload_json"]
+    assert "3~5D 스윙순위 1" in rows[0]["summary"]
+    assert "ML보조 -0.3%" in rows[0]["summary"]
+    assert payload["swing_3_5d"]["recommendation_pass"] is True
 
 
 def test_build_stock_summary_rows_omits_news_noise() -> None:
@@ -506,8 +560,80 @@ def test_build_stock_summary_rows_keeps_cash_path_v3_display_candidate() -> None
     payload = json.loads(rows[0]["payload_json"])
     assert "관찰 우선" in rows[0]["summary"]
     assert "매수해볼 가치 있음" not in rows[0]["summary"]
-    assert "D5 경로순위 1" in rows[0]["summary"]
+    assert "H5 순위 1" in rows[0]["summary"]
     assert "상대점수 80.0" in rows[0]["summary"]
     assert payload["d5_report_candidate_flag"] is True
     assert payload["d5_display_rank"] == 1
     assert "기대수익률 낮음" in payload["d5_judgement_summary"]
+
+
+def test_build_stock_summary_rows_uses_swing_payload_for_h5_candidate_label() -> None:
+    swing_payload = {
+        "swing_3_5d": {
+            "methodology_version": "test",
+            "hybrid_score": 73.1,
+            "rule_score": 84.0,
+            "recommendation_pass": True,
+            "candidate_pass": True,
+            "reward_risk_ratio": 1.65,
+        }
+    }
+    summary_frame = pd.DataFrame(
+        [
+            {
+                "symbol": "241710",
+                "company_name": "코스메카코리아",
+                "market": "KOSDAQ",
+                "sector": "소재",
+                "industry": "화학",
+                "d1_selection_v2_grade": "B",
+                "d5_selection_v2_grade": "A",
+                "d5_alpha_expected_excess_return": -0.003,
+                "d5_selection_v2_value": 73.1,
+                "ret_5d": 0.0,
+                "ret_20d": 0.0,
+                "news_count_3d": 0,
+                "d5_alpha_uncertainty_score": 20.0,
+                "d5_alpha_disagreement_score": 20.0,
+            }
+        ]
+    )
+    live_frame = pd.DataFrame(
+        [
+            {
+                "symbol": "241710",
+                "live_d5_selection_v2_grade": "A",
+                "live_d5_expected_excess_return": -0.003,
+                "live_d5_selection_v2_value": 73.1,
+                "live_d5_selection_rank": 1,
+                "live_d5_uncertainty_score": 20.0,
+                "live_d5_disagreement_score": 20.0,
+                "live_d5_risk_flags_json": "[]",
+                "live_d5_top_reason_tags_json": '["swing_pullback_pattern"]',
+                "live_d5_eligible_flag": True,
+                "live_d5_report_candidate_flag": True,
+                "live_d5_model_spec_id": "alpha_practical_d5_v3",
+                "live_d5_explanatory_score_json": json.dumps(
+                    swing_payload,
+                    ensure_ascii=False,
+                ),
+            }
+        ]
+    )
+
+    rows = read_store._build_stock_summary_rows(
+        summary_frame=summary_frame,
+        live_frame=live_frame,
+        built_at="2026-05-12T00:00:00+09:00",
+        as_of_date="2026-05-11",
+        source_run_id="test",
+    )
+
+    payload = json.loads(rows[0]["payload_json"])
+    assert "매수검토" in rows[0]["summary"]
+    assert "3~5D 스윙순위 1" in rows[0]["summary"]
+    assert "ML보조 -0.3%" in rows[0]["summary"]
+    assert "기대수익률 낮음" not in payload["d5_judgement_summary"]
+    assert payload["d5_report_candidate_flag"] is True
+    assert payload["d5_display_rank"] == 1
+    assert payload["d5_swing_3_5d"]["recommendation_pass"] is True
