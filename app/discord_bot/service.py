@@ -72,6 +72,14 @@ def _render_snapshot_list(
     return "\n".join(lines)
 
 
+def _next_picks_empty_message(horizon: int) -> str:
+    if int(horizon) == 5:
+        return "오늘은 v3 하드필터를 통과한 5거래일 스윙 후보가 없습니다."
+    if int(horizon) == 1:
+        return "참고용 H1 단기 후보가 아직 없습니다."
+    return "추천 후보 스냅샷이 아직 준비되지 않았습니다."
+
+
 def _format_running_duration(value: Any) -> str:
     try:
         total_seconds = max(0, int(float(value)))
@@ -215,7 +223,7 @@ def build_discord_bot(settings: Settings):
 
     @client.tree.command(
         name="내일종목추천",
-        description="다음 거래일 v3 후보와 최대진입·추격주의·무효 가격을 보여줍니다.",
+        description="다음 거래일 후보를 보여줍니다. H5는 v3 최대진입·추격주의·무효 가격 포함.",
     )
     @app_commands.rename(basis="보유기준", count="개수")
     @app_commands.describe(
@@ -243,7 +251,7 @@ def build_discord_bot(settings: Settings):
         message = _render_snapshot_list(
             f"내일 종목 추천 · {basis.name}",
             rows,
-            empty_message="추천 후보 스냅샷이 아직 준비되지 않았습니다.",
+            empty_message=_next_picks_empty_message(int(basis.value)),
         )
         await interaction.followup.send(message)
 
@@ -264,7 +272,7 @@ def build_discord_bot(settings: Settings):
 
     @client.tree.command(
         name="종목요약",
-        description="저장된 장마감 v3 추천·가격조건 요약을 보여줍니다.",
+        description="저장된 장마감 종목 요약과 v3 가격조건(후보일 때)을 보여줍니다.",
     )
     @app_commands.rename(query="종목")
     @app_commands.describe(query="종목명 또는 6자리 종목코드를 입력하세요.")
