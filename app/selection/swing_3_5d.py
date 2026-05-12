@@ -30,7 +30,7 @@ class Swing35DConfig:
     min_history_days: int = 120
     rule_score_min: float = 70.0
     recommendation_threshold: float = 75.0
-    weak_market_threshold_add: float = 5.0
+    weak_market_threshold_add: float = 3.0
     ml_weight: float = 0.20
     rule_weight: float = 0.70
     sector_weight: float = 0.10
