@@ -42,7 +42,11 @@ from app.recommendation.buyability import (
     d5_buyability_policy_bucket,
     has_buyability_blocker,
 )
-from app.recommendation.judgement import classify_recommendation, load_score_band_evidence
+from app.recommendation.judgement import (
+    classify_recommendation,
+    classify_swing_3_5d_recommendation,
+    load_score_band_evidence,
+)
 from app.selection.engine_v2 import build_selection_engine_v2_rankings
 from app.settings import Settings
 from app.storage.duckdb import bootstrap_core_tables
@@ -94,6 +98,12 @@ def _json_dict(value: object) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _swing_3_5d_payload(value: object) -> dict[str, object] | None:
+    payload = _json_dict(value)
+    swing_payload = payload.get("swing_3_5d")
+    return swing_payload if isinstance(swing_payload, dict) and swing_payload else None
 
 
 def _derive_invalidation_conditions(risk_flags: list[str]) -> list[str]:
@@ -780,6 +790,10 @@ def compute_live_stock_recommendation(
                         .astype("Int64")
                     )
                     frame["risk_flag_list"] = frame["risk_flags_json"].map(_json_list)
+                    frame["swing_3_5d_payload"] = frame["explanatory_score_json"].map(
+                        _swing_3_5d_payload
+                    )
+                    swing_surface = frame["swing_3_5d_payload"].apply(bool).any()
                     if "expected_excess_return" not in frame.columns:
                         frame["expected_excess_return"] = pd.NA
                     if "model_spec_id" not in frame.columns:
@@ -810,7 +824,17 @@ def compute_live_stock_recommendation(
                         ),
                         axis=1,
                     )
-                    if _is_d5_cash_path_frame(frame):
+                    if swing_surface:
+                        display_candidates = frame.loc[
+                            frame["eligible_flag"].fillna(False).astype(bool)
+                            & frame["swing_3_5d_payload"].apply(
+                                lambda payload: bool(
+                                    payload and payload.get("recommendation_pass", False)
+                                )
+                            )
+                            & ~frame["risk_flag_list"].apply(has_buyability_blocker)
+                        ].copy()
+                    elif _is_d5_cash_path_frame(frame):
                         display_candidates = frame.loc[
                             frame["eligible_flag"].fillna(False).astype(bool)
                             & frame["report_candidate_flag"].fillna(False).astype(bool)
@@ -828,7 +852,7 @@ def compute_live_stock_recommendation(
                             & ~frame["risk_flag_list"].apply(has_buyability_blocker)
                         ].copy()
                     if not display_candidates.empty:
-                        if _is_d5_cash_path_frame(frame):
+                        if swing_surface or _is_d5_cash_path_frame(frame):
                             display_candidates = display_candidates.sort_values(
                                 ["d5_selection_rank", "symbol"],
                                 ascending=[True, True],
@@ -879,6 +903,9 @@ def compute_live_stock_recommendation(
                 horizon=5,
                 ranking_version=SELECTION_ENGINE_V2_VERSION,
             )
+            d5_swing_payload = _swing_3_5d_payload(
+                ranking_by_horizon.get(5, {}).get("explanatory_score_json")
+            )
             d5_buyability_priority_score = (
                 None
                 if d5_prediction_row is None
@@ -889,23 +916,33 @@ def compute_live_stock_recommendation(
                 )
             )
             d5_display_rank = d5_display_rank_by_symbol.get(normalized_symbol)
-            d5_judgement = classify_recommendation(
-                final_selection_value=ranking_by_horizon.get(5, {}).get("final_selection_value"),
-                expected_excess_return=None
-                if d5_prediction_row is None
-                else d5_prediction_row.get("expected_excess_return"),
-                risk_flags=d5_risk_flags,
-                evidence_by_band=d5_evidence,
-                candidate_selected=d5_display_rank is not None,
-                candidate_rank=d5_display_rank,
-                buyability_priority_score=d5_buyability_priority_score,
-                path_rank_candidate=(
-                    d5_display_rank is not None
-                    and d5_prediction_row is not None
-                    and str(d5_prediction_row.get("model_spec_id"))
-                    == D5_PRACTICAL_V3_MODEL_SPEC_ID
+            d5_judgement = classify_swing_3_5d_recommendation(
+                final_selection_value=ranking_by_horizon.get(5, {}).get(
+                    "final_selection_value"
                 ),
+                swing_payload=d5_swing_payload,
+                risk_flags=d5_risk_flags,
             )
+            if d5_judgement is None:
+                d5_judgement = classify_recommendation(
+                    final_selection_value=ranking_by_horizon.get(5, {}).get(
+                        "final_selection_value"
+                    ),
+                    expected_excess_return=None
+                    if d5_prediction_row is None
+                    else d5_prediction_row.get("expected_excess_return"),
+                    risk_flags=d5_risk_flags,
+                    evidence_by_band=d5_evidence,
+                    candidate_selected=d5_display_rank is not None,
+                    candidate_rank=d5_display_rank,
+                    buyability_priority_score=d5_buyability_priority_score,
+                    path_rank_candidate=(
+                        d5_display_rank is not None
+                        and d5_prediction_row is not None
+                        and str(d5_prediction_row.get("model_spec_id"))
+                        == D5_PRACTICAL_V3_MODEL_SPEC_ID
+                    ),
+                )
             expected = (
                 None
                 if d5_prediction_row is None

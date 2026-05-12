@@ -16,7 +16,7 @@ from app.storage.duckdb import bootstrap_core_tables, duckdb_connection
 from app.storage.manifests import record_run_finish, record_run_start
 from app.storage.parquet_io import write_parquet
 
-SWING_3_5D_VERSION = "stockmaster_3_5d_swing_v2_ml"
+SWING_3_5D_VERSION = "stockmaster_cycle_ml_hybrid_v3"
 SWING_3_5D_OUTPUT_DIR = "swing_3_5d"
 
 
@@ -34,10 +34,24 @@ class Swing35DConfig:
     min_ml_probability: float = 0.50
     high_confidence_ml_probability: float = 0.58
     weak_market_threshold_add: float = 0.0
-    ml_weight: float = 0.35
     rule_weight: float = 0.40
-    entry_weight: float = 0.25
+    ml_weight: float = 0.35
+    market_regime_weight: float = 0.10
+    sector_strength_weight: float = 0.10
+    liquidity_weight: float = 0.05
+    entry_weight: float = 0.0
     sector_weight: float = 0.10
+    max_entry_move_from_signal: float = 1.03
+    max_target_zone_move: float = 1.04
+    max_dist_ma20_entry: float = 1.08
+    min_upside_to_resistance: float = 0.04
+    min_reward_risk_at_entry: float = 1.50
+    chase_warning_move: float = 1.04
+    target_zone_move: float = 1.05
+    extended_move: float = 1.08
+    entry_lower_signal_discount: float = 0.99
+    entry_lower_stop_buffer: float = 1.005
+    max_risk_pct: float = 0.05
     max_reversal_ratio: float = 0.20
     max_candidates_strong: int = 15
     max_candidates_neutral: int = 8
@@ -445,14 +459,59 @@ def _rowwise_max_below(frame: pd.DataFrame, current: pd.Series) -> pd.Series:
     return below.max(axis=1)
 
 
+def _round_price_series(series: pd.Series) -> pd.Series:
+    return _safe_numeric(series).round(0)
+
+
+def _entry_policy_status_series(
+    *,
+    current_price: pd.Series,
+    max_buy_price: pd.Series,
+    chase_warning_price: pd.Series,
+    target_zone_price: pd.Series,
+    extended_price: pd.Series,
+    invalidation_price: pd.Series,
+) -> pd.Series:
+    price = _safe_numeric(current_price)
+    status = pd.Series("UNKNOWN", index=price.index, dtype="object")
+    valid_price = price.gt(0) & price.notna()
+    status.loc[valid_price] = "EXTENDED"
+    status.loc[valid_price & price.le(extended_price)] = "TARGET_ZONE_REACHED"
+    status.loc[valid_price & price.lt(target_zone_price)] = "CHASE_RISK"
+    status.loc[valid_price & price.le(chase_warning_price)] = "WATCH_CAUTION"
+    status.loc[valid_price & price.le(max_buy_price)] = "BUYABLE"
+    status.loc[valid_price & price.lt(invalidation_price)] = "INVALIDATED"
+    return status
+
+
 def _entry_status_series(
     *,
     current_price: pd.Series,
-    signal_close: pd.Series,
+    signal_close: pd.Series | None = None,
     invalidation_price: pd.Series,
+    max_buy_price: pd.Series | None = None,
+    chase_warning_price: pd.Series | None = None,
+    target_zone_price: pd.Series | None = None,
+    extended_price: pd.Series | None = None,
 ) -> pd.Series:
+    if (
+        max_buy_price is not None
+        and chase_warning_price is not None
+        and target_zone_price is not None
+        and extended_price is not None
+    ):
+        return _entry_policy_status_series(
+            current_price=current_price,
+            max_buy_price=max_buy_price,
+            chase_warning_price=chase_warning_price,
+            target_zone_price=target_zone_price,
+            extended_price=extended_price,
+            invalidation_price=invalidation_price,
+        )
+    if signal_close is None:
+        return pd.Series("UNKNOWN", index=current_price.index, dtype="object")
     move = current_price / signal_close.replace(0, np.nan) - 1.0
-    status = pd.Series("VALID", index=current_price.index, dtype="object")
+    status = pd.Series("BUYABLE", index=current_price.index, dtype="object")
     status.loc[move.ge(0.03)] = "WATCH_CAUTION"
     status.loc[move.ge(0.04)] = "CHASE_RISK"
     status.loc[move.ge(0.05)] = "TARGET_ZONE_REACHED"
@@ -468,7 +527,8 @@ def _entry_score(
     reward_risk_ratio: pd.Series,
 ) -> pd.Series:
     score = pd.Series(70.0, index=entry_status.index)
-    score = score + entry_status.eq("VALID").astype(float).mul(10.0)
+    score = score + entry_status.eq("BUYABLE").astype(float).mul(10.0)
+    score = score - entry_status.eq("WATCH_CAUTION").astype(float).mul(8.0)
     score = score - entry_status.eq("CHASE_RISK").astype(float).mul(15.0)
     score = score - entry_status.eq("TARGET_ZONE_REACHED").astype(float).mul(30.0)
     score = score - entry_status.eq("EXTENDED").astype(float).mul(40.0)
@@ -684,19 +744,109 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
     scored["nearest_support"] = _rowwise_max_below(support_candidates, scored["close"]).fillna(
         scored["ma20"] * 0.985
     )
-    invalidation_candidates = pd.DataFrame(
+    scored["signal_close"] = scored["close"]
+    pullback_stop = _rowwise_min_positive(
+        pd.DataFrame(
+            {
+                "signal_low": scored["low"],
+                "ma20_floor": scored["ma20"] * 0.985,
+                "support_floor": scored["nearest_support"] * 0.99,
+            },
+            index=scored.index,
+        )
+    )
+    breakout_stop = scored["breakout_level"] * 0.98
+    recovery_stop = _rowwise_min_positive(
+        pd.DataFrame(
+            {
+                "signal_low": scored["low"],
+                "ma20_floor": scored["ma20"] * 0.98,
+            },
+            index=scored.index,
+        )
+    )
+    default_stop = recovery_stop.fillna(scored["ma20"] * 0.98)
+    stop_price = default_stop.copy()
+    stop_price.loc[scored["swing_pattern"].eq("pullback")] = pullback_stop.loc[
+        scored["swing_pattern"].eq("pullback")
+    ]
+    breakout_pattern = scored["swing_pattern"].isin(["box_breakout", "recovery_breakout"])
+    stop_price.loc[breakout_pattern] = breakout_stop.loc[breakout_pattern]
+    stop_price = stop_price.fillna(default_stop).fillna(scored["signal_close"] * 0.97)
+    scored["stop_price"] = _round_price_series(stop_price)
+    scored["risk_line"] = scored["stop_price"]
+    scored["invalidation_price"] = scored["stop_price"]
+    scored["target_1"] = _round_price_series(
+        pd.Series(
+            np.where(
+                scored["resistance_line"].gt(scored["signal_close"]),
+                np.minimum(
+                    scored["signal_close"] * 1.05,
+                    scored["resistance_line"] * 0.995,
+                ),
+                scored["signal_close"] * 1.05,
+            ),
+            index=scored.index,
+        )
+    )
+    scored["target_2"] = _round_price_series(
+        pd.Series(
+            np.where(
+                scored["resistance_line"].gt(scored["signal_close"]),
+                np.minimum(
+                    scored["signal_close"] * 1.08,
+                    scored["resistance_line"] * 1.02,
+                ),
+                scored["signal_close"] * 1.08,
+            ),
+            index=scored.index,
+        )
+    )
+    max_by_signal_move = scored["signal_close"] * config.max_entry_move_from_signal
+    max_by_target_zone = scored["signal_close"] * config.max_target_zone_move
+    max_by_ma20_dist = scored["ma20"] * config.max_dist_ma20_entry
+    max_by_resistance = pd.Series(
+        np.where(
+            scored["resistance_line"].gt(scored["signal_close"]),
+            scored["resistance_line"] / (1.0 + config.min_upside_to_resistance),
+            scored["signal_close"] * config.max_entry_move_from_signal,
+        ),
+        index=scored.index,
+    )
+    max_by_rr = (
+        scored["target_1"] + config.min_reward_risk_at_entry * scored["stop_price"]
+    ) / (1.0 + config.min_reward_risk_at_entry)
+    max_buy_candidates = pd.DataFrame(
         {
-            "signal_low": scored["low"],
-            "ma20_floor": scored["ma20"] * 0.985,
-            "breakout_floor": scored["breakout_level"] * 0.98,
+            "max_by_signal_move": max_by_signal_move,
+            "max_by_target_zone": max_by_target_zone,
+            "max_by_ma20_dist": max_by_ma20_dist,
+            "max_by_resistance": max_by_resistance,
+            "max_by_rr": max_by_rr,
         },
         index=scored.index,
     )
-    scored["risk_line"] = _rowwise_min_positive(invalidation_candidates).fillna(
-        scored["ma20"] * 0.985
+    scored["max_buy_price"] = _round_price_series(
+        _rowwise_min_positive(max_buy_candidates).fillna(max_by_signal_move)
     )
-    scored["invalidation_price"] = scored["risk_line"]
-    scored["signal_close"] = scored["close"]
+    entry_lower = pd.concat(
+        [
+            scored["invalidation_price"] * config.entry_lower_stop_buffer,
+            scored["signal_close"] * config.entry_lower_signal_discount,
+        ],
+        axis=1,
+    ).max(axis=1)
+    scored["entry_lower_price"] = _round_price_series(
+        entry_lower.where(entry_lower.le(scored["max_buy_price"]), scored["max_buy_price"])
+    )
+    scored["chase_warning_price"] = _round_price_series(
+        scored["signal_close"] * config.chase_warning_move
+    )
+    scored["target_zone_price"] = _round_price_series(
+        scored["signal_close"] * config.target_zone_move
+    )
+    scored["extended_price"] = _round_price_series(scored["signal_close"] * config.extended_move)
+    scored["nearest_resistance"] = scored["resistance_line"]
     if "current_price" not in scored.columns:
         scored["current_price"] = scored["signal_close"]
     scored["current_price"] = scored["current_price"].fillna(scored["signal_close"])
@@ -704,18 +854,24 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         scored["current_price"] / scored["signal_close"].replace(0, np.nan) - 1.0
     )
     scored["risk_distance"] = (
-        scored["current_price"] / _safe_numeric(scored["risk_line"]).replace(0, np.nan) - 1.0
+        scored["current_price"] / _safe_numeric(scored["stop_price"]).replace(0, np.nan) - 1.0
     )
     scored["upside_to_resistance"] = (
         scored["resistance_line"] / scored["current_price"].replace(0, np.nan) - 1.0
     )
-    scored["reward_risk_ratio"] = scored["upside_to_resistance"] / scored[
-        "risk_distance"
-    ].replace(0, np.nan)
+    scored["upside_to_target_1"] = (
+        scored["target_1"] / scored["current_price"].replace(0, np.nan) - 1.0
+    )
+    entry_risk_amount = scored["current_price"] - scored["stop_price"]
+    entry_reward_amount = scored["target_1"] - scored["current_price"]
+    scored["reward_risk_ratio"] = entry_reward_amount / entry_risk_amount.replace(0, np.nan)
     scored["entry_status"] = _entry_status_series(
         current_price=scored["current_price"],
-        signal_close=scored["signal_close"],
         invalidation_price=scored["invalidation_price"],
+        max_buy_price=scored["max_buy_price"],
+        chase_warning_price=scored["chase_warning_price"],
+        target_zone_price=scored["target_zone_price"],
+        extended_price=scored["extended_price"],
     )
     scored["entry_score"] = _entry_score(
         entry_status=scored["entry_status"],
@@ -723,7 +879,9 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         reward_risk_ratio=scored["reward_risk_ratio"],
     )
 
-    risk_reward_pass = scored["risk_distance"].le(0.05) & scored["reward_risk_ratio"].ge(1.2)
+    risk_reward_pass = scored["risk_distance"].le(config.max_risk_pct) & scored[
+        "reward_risk_ratio"
+    ].ge(config.min_reward_risk_at_entry)
     scored["swing_common_pass"] = common_pass
     scored["swing_pattern_pass"] = pattern_pass
     scored["swing_candidate_pass"] = common_pass & pattern_pass & risk_reward_pass.fillna(False)
@@ -825,6 +983,31 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         (scored["ml_probability_target_first"] - 0.40).div(0.30).mul(100.0)
     ).clip(0.0, 100.0)
     scored["sector_score_scaled"] = scored["swing_regime_score"].div(10.0).mul(100.0)
+    scored["market_regime_score_scaled"] = (
+        scored["market_regime"]
+        .map({"strong": 90.0, "neutral": 65.0, "weak": 35.0})
+        .fillna(50.0)
+    )
+    scored["sector_strength_score_scaled"] = (
+        (1.0 - _safe_numeric(scored.get("sector_rank_20")).clip(0.0, 1.0)).mul(100.0)
+    ).fillna(50.0)
+    liquidity_score = (
+        scored["close"].ge(config.price_min_krw).astype(float).mul(15.0)
+        + (
+            scored["market_cap"].isna()
+            | scored["market_cap"].ge(config.market_cap_min_krw)
+        )
+        .astype(float)
+        .mul(20.0)
+        + scored["avg_turnover_20"].ge(config.avg_turnover_20_min_krw).astype(float).mul(20.0)
+        + scored["median_turnover_20"]
+        .ge(config.median_turnover_20_min_krw)
+        .astype(float)
+        .mul(15.0)
+        + scored["avg_volume_20"].ge(config.avg_volume_20_min).astype(float).mul(15.0)
+        + scored["turnover_rel20"].ge(1.3).astype(float).mul(15.0)
+    )
+    scored["liquidity_score_scaled"] = liquidity_score.clip(0.0, 100.0)
     expected_reward = scored["upside_to_resistance"].clip(lower=0.0, upper=0.08)
     expected_risk = scored["risk_distance"].clip(lower=0.0, upper=0.05)
     volatility_penalty = (scored["atr_pct"] - 0.08).clip(lower=0.0).mul(0.5)
@@ -840,8 +1023,12 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
     scored["swing_hybrid_score"] = (
         config.rule_weight * scored["swing_signal_score"]
         + config.ml_weight * scored["ml_probability_score"]
+        + config.market_regime_weight * scored["market_regime_score_scaled"]
+        + config.sector_strength_weight * scored["sector_strength_score_scaled"]
+        + config.liquidity_weight * scored["liquidity_score_scaled"]
         + config.entry_weight * scored["entry_score"]
     ).clip(lower=0.0, upper=100.0)
+    scored["swing_final_score"] = scored["swing_hybrid_score"]
     threshold = config.recommendation_threshold + scored["market_regime"].eq("weak").astype(
         float
     ).mul(config.weak_market_threshold_add)
@@ -851,12 +1038,12 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         & risk_reward_pass.fillna(False)
         & scored["swing_rule_score"].ge(config.rule_score_min)
         & scored["ml_probability_target_first"].ge(config.min_ml_probability)
-        & scored["entry_status"].isin(["VALID", "WATCH_CAUTION"])
+        & scored["entry_status"].eq("BUYABLE")
         & scored["swing_hybrid_score"].ge(threshold)
     )
     high_confidence = (
         operating_candidate
-        & scored["entry_status"].eq("VALID")
+        & scored["entry_status"].eq("BUYABLE")
         & scored["swing_rule_score"].ge(80.0)
         & scored["ml_probability_target_first"].ge(config.high_confidence_ml_probability)
         & scored["entry_score"].ge(70.0)
@@ -870,6 +1057,7 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
     final_status.loc[scored["entry_status"].eq("EXTENDED")] = "EXTENDED"
     final_status.loc[scored["entry_status"].eq("TARGET_ZONE_REACHED")] = "TARGET_ZONE_REACHED"
     final_status.loc[scored["entry_status"].eq("CHASE_RISK")] = "CHASE_RISK"
+    final_status.loc[scored["entry_status"].eq("WATCH_CAUTION")] = "WATCH_CAUTION"
     final_status.loc[operating_candidate] = "CANDIDATE"
     final_status.loc[high_confidence] = "HIGH_CONFIDENCE"
     scored["swing_final_status"] = final_status
@@ -1037,6 +1225,9 @@ def apply_swing_3_5d_overlay(
         "swing_volume_score",
         "swing_overheat_score",
         "swing_regime_score",
+        "market_regime_score_scaled",
+        "sector_strength_score_scaled",
+        "liquidity_score_scaled",
         "swing_risk_reward_score",
         "swing_candle_score",
         "swing_financial_score",
@@ -1050,11 +1241,21 @@ def apply_swing_3_5d_overlay(
         "price_move_from_signal",
         "breakout_level",
         "risk_line",
+        "stop_price",
+        "entry_lower_price",
+        "max_buy_price",
+        "chase_warning_price",
+        "target_zone_price",
+        "extended_price",
+        "target_1",
+        "target_2",
         "nearest_support",
+        "nearest_resistance",
         "invalidation_price",
         "resistance_line",
         "risk_distance",
         "upside_to_resistance",
+        "upside_to_target_1",
         "reward_risk_ratio",
         "vol_rel20",
         "turnover_rel20",
@@ -1089,6 +1290,44 @@ def apply_swing_3_5d_overlay(
 def swing_explanatory_payload(row: pd.Series) -> dict[str, object] | None:
     if not bool(row.get("swing_3_5d_overlay_applied", False)):
         return None
+    entry_policy = {
+        "status": "WAIT_FOR_NEXT_DAY_PRICE",
+        "signal_close": None
+        if pd.isna(row.get("signal_close"))
+        else float(row.get("signal_close")),
+        "entry_lower_price": None
+        if pd.isna(row.get("entry_lower_price"))
+        else float(row.get("entry_lower_price")),
+        "max_buy_price": None
+        if pd.isna(row.get("max_buy_price"))
+        else float(row.get("max_buy_price")),
+        "chase_warning_price": None
+        if pd.isna(row.get("chase_warning_price"))
+        else float(row.get("chase_warning_price")),
+        "target_zone_price": None
+        if pd.isna(row.get("target_zone_price"))
+        else float(row.get("target_zone_price")),
+        "extended_price": None
+        if pd.isna(row.get("extended_price"))
+        else float(row.get("extended_price")),
+        "stop_price": None if pd.isna(row.get("stop_price")) else float(row.get("stop_price")),
+        "invalidation_price": None
+        if pd.isna(row.get("invalidation_price"))
+        else float(row.get("invalidation_price")),
+        "target_1": None if pd.isna(row.get("target_1")) else float(row.get("target_1")),
+        "target_2": None if pd.isna(row.get("target_2")) else float(row.get("target_2")),
+        "nearest_support": None
+        if pd.isna(row.get("nearest_support"))
+        else float(row.get("nearest_support")),
+        "nearest_resistance": None
+        if pd.isna(row.get("nearest_resistance"))
+        else float(row.get("nearest_resistance")),
+    }
+    if entry_policy["entry_lower_price"] is not None and entry_policy["max_buy_price"] is not None:
+        entry_policy["buyable_range"] = [
+            entry_policy["entry_lower_price"],
+            entry_policy["max_buy_price"],
+        ]
     return {
         "methodology_version": SWING_3_5D_VERSION,
         "pattern": None if pd.isna(row.get("swing_pattern")) else row.get("swing_pattern"),
@@ -1111,9 +1350,19 @@ def swing_explanatory_payload(row: pd.Series) -> dict[str, object] | None:
         "entry_score": None
         if pd.isna(row.get("entry_score"))
         else float(row.get("entry_score")),
+        "entry_policy_status": "WAIT_FOR_NEXT_DAY_PRICE",
+        "entry_policy": entry_policy,
         "signal_close": None
         if pd.isna(row.get("signal_close"))
         else float(row.get("signal_close")),
+        "entry_lower_price": entry_policy.get("entry_lower_price"),
+        "max_buy_price": entry_policy.get("max_buy_price"),
+        "chase_warning_price": entry_policy.get("chase_warning_price"),
+        "target_zone_price": entry_policy.get("target_zone_price"),
+        "extended_price": entry_policy.get("extended_price"),
+        "stop_price": entry_policy.get("stop_price"),
+        "target_1": entry_policy.get("target_1"),
+        "target_2": entry_policy.get("target_2"),
         "current_price": None
         if pd.isna(row.get("current_price"))
         else float(row.get("current_price")),
@@ -1144,6 +1393,15 @@ def swing_explanatory_payload(row: pd.Series) -> dict[str, object] | None:
             "regime": None
             if pd.isna(row.get("swing_regime_score"))
             else float(row.get("swing_regime_score")),
+            "market_regime": None
+            if pd.isna(row.get("market_regime_score_scaled"))
+            else float(row.get("market_regime_score_scaled")),
+            "sector_strength": None
+            if pd.isna(row.get("sector_strength_score_scaled"))
+            else float(row.get("sector_strength_score_scaled")),
+            "liquidity": None
+            if pd.isna(row.get("liquidity_score_scaled"))
+            else float(row.get("liquidity_score_scaled")),
             "risk_reward": None
             if pd.isna(row.get("swing_risk_reward_score"))
             else float(row.get("swing_risk_reward_score")),
@@ -1160,6 +1418,9 @@ def swing_explanatory_payload(row: pd.Series) -> dict[str, object] | None:
         "nearest_support": None
         if pd.isna(row.get("nearest_support"))
         else float(row.get("nearest_support")),
+        "nearest_resistance": None
+        if pd.isna(row.get("nearest_resistance"))
+        else float(row.get("nearest_resistance")),
         "invalidation_price": None
         if pd.isna(row.get("invalidation_price"))
         else float(row.get("invalidation_price")),
@@ -1173,6 +1434,9 @@ def swing_explanatory_payload(row: pd.Series) -> dict[str, object] | None:
         "upside_to_resistance": None
         if pd.isna(row.get("upside_to_resistance"))
         else float(row.get("upside_to_resistance")),
+        "upside_to_target_1": None
+        if pd.isna(row.get("upside_to_target_1"))
+        else float(row.get("upside_to_target_1")),
         "reward_risk_ratio": None
         if pd.isna(row.get("reward_risk_ratio"))
         else float(row.get("reward_risk_ratio")),

@@ -180,7 +180,7 @@ MODEL_SPEC_LABELS = {
     "alpha_rank_rolling_120_v1": "5일 지속성 비교 기준",
     "alpha_topbucket_h1_rolling_120_v1": "하루 선행 비교 기준",
     "alpha_lead_d1_v1": "하루 선행 포착 v1",
-    "alpha_swing_d5_v2": "2~5일 스윙 포착 v2",
+    "alpha_swing_d5_v2": "3~5일 스윙 ML 보조",
     "alpha_recursive_rolling_combo": "누적+최근 구간 혼합",
     "recursive": "확장형 누적 학습",
     "rolling 120d": "최근 120거래일 중심 학습",
@@ -678,6 +678,18 @@ def _float_or_none(value: object) -> float | None:
     return number if pd.notna(number) else None
 
 
+def _krw_text(value: object) -> str:
+    number = _float_or_none(value)
+    return "-" if number is None else f"{number:,.0f}원"
+
+
+def _swing_policy_value(swing_payload: dict[str, object], key: str) -> object:
+    policy = swing_payload.get("entry_policy")
+    if isinstance(policy, dict) and key in policy:
+        return policy.get(key)
+    return swing_payload.get(key)
+
+
 def _compact_judgement_summary(summary: str) -> str:
     text = str(summary or "-")
     return text.split(" · ", 1)[0] if " · " in text else text
@@ -801,15 +813,25 @@ def _format_pick_block(
             swing_parts.append(f"손익비 {reward_risk:.2f}")
         if swing_parts:
             detail += f" | {' · '.join(swing_parts)}"
-        risk_line = _float_or_none(swing_payload.get("risk_line"))
-        resistance_line = _float_or_none(swing_payload.get("resistance_line"))
-        price_parts = []
-        if risk_line is not None:
-            price_parts.append(f"손절참고 {risk_line:,.0f}원")
-        if resistance_line is not None:
-            price_parts.append(f"저항/목표 {resistance_line:,.0f}원")
-        if price_parts:
-            detail += f" | {' / '.join(price_parts)}"
+        signal_close = _swing_policy_value(swing_payload, "signal_close")
+        entry_lower = _swing_policy_value(swing_payload, "entry_lower_price")
+        max_buy = _swing_policy_value(swing_payload, "max_buy_price")
+        chase_warning = _swing_policy_value(swing_payload, "chase_warning_price")
+        target_zone = _swing_policy_value(swing_payload, "target_zone_price")
+        invalidation = _swing_policy_value(swing_payload, "invalidation_price")
+        target_1 = _swing_policy_value(swing_payload, "target_1")
+        target_2 = _swing_policy_value(swing_payload, "target_2")
+        detail += (
+            f" | 가격조건 기준 {_krw_text(signal_close)}"
+            f" · 매수 {_krw_text(entry_lower)}~{_krw_text(max_buy)}"
+            f" · 추격주의 {_krw_text(chase_warning)}↑"
+            f" · 목표권 {_krw_text(target_zone)}↑"
+            f" · 무효 {_krw_text(invalidation)}↓"
+            f" · 목표1/2 {_krw_text(target_1)}/{_krw_text(target_2)}"
+        )
+        entry_status = swing_payload.get("entry_status")
+        if entry_status:
+            detail += f" | 상태 {entry_status}"
     elif pd.notna(row.get("selection_close_price")) and pd.notna(
         row.get("expected_excess_return")
     ):
@@ -819,7 +841,7 @@ def _format_pick_block(
     if is_swing_pick and pd.notna(row.get("d5_selection_rank")):
         headline_metric = (
             f"3~5D 스윙순위 {int(row['d5_selection_rank'])} "
-            f"· v2최종점수 {score:.1f}/{row['grade']}"
+            f"· v3최종점수 {score:.1f}/{row['grade']}"
         )
     elif is_cash_path_pick:
         headline_metric = (
@@ -1035,7 +1057,8 @@ def _build_payload_content(
         )
     )
     judgement_basis_line = (
-        "3~5D v2 ML은 신호일 룰 점수, ML 목표확률, 현재 진입점수를 분리해 최종 상태를 정합니다."
+        "3~5D v3는 룰 하드필터 후 ML 목표확률로 재정렬하고, "
+        "entry_policy 가격 조건을 함께 고정합니다."
         if uses_swing_h5
         else _score_band_evidence_line(primary_score_evidence)
     )
@@ -1055,7 +1078,7 @@ def _build_payload_content(
     if single_buy_candidates.empty:
         if int(candidate_horizon) == 5:
             lines.append(
-                "- 오늘은 v2 ML 하드필터(룰·목표확률·진입상태·손익비)를 "
+                "- 오늘은 v3 하드필터(룰·목표확률·entry_policy·손익비)를 "
                 "통과한 H5 스윙 후보가 없습니다."
             )
         else:

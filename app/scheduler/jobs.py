@@ -222,6 +222,23 @@ def _resolve_lookback_start_date(
     return row[0]
 
 
+def _resolve_previous_trading_date(settings: Settings, *, end_date: date) -> date:
+    with duckdb_connection(settings.paths.duckdb_path, read_only=True) as connection:
+        bootstrap_core_tables(connection)
+        row = connection.execute(
+            """
+            SELECT MAX(trading_date)
+            FROM dim_trading_calendar
+            WHERE trading_date < ?
+              AND is_trading_day
+            """,
+            [end_date],
+        ).fetchone()
+    if row is None or row[0] is None:
+        return end_date
+    return row[0]
+
+
 def _is_optional_calibration_error(exc: RuntimeError) -> bool:
     message = str(exc)
     return any(
@@ -275,19 +292,32 @@ def run_daily_pipeline_job(
                 "sync_investor_flow",
                 "build_feature_store",
                 "build_market_regime_snapshot",
+                "materialize_selection_outcomes",
                 "materialize_explanatory_ranking",
                 "materialize_selection_engine_v1",
-                "materialize_alpha_shadow_candidates",
-                "run_alpha_auto_promotion",
-                "materialize_alpha_predictions_v1",
-                "materialize_selection_engine_v2",
-                "calibrate_proxy_prediction_bands",
             ]
             if run_training:
-                input_sources.insert(8, "train_alpha_model_v1")
-                input_sources.insert(9, "train_alpha_candidate_models")
+                input_sources.extend(
+                    [
+                        "train_alpha_model_v1",
+                        "train_alpha_candidate_models",
+                    ]
+                )
+            input_sources.extend(
+                [
+                    "materialize_alpha_shadow_candidates",
+                    "run_alpha_auto_promotion",
+                ]
+            )
             if active_d5_swing:
                 input_sources.append("freeze_alpha_active_model_h5_d5_swing_init")
+            input_sources.extend(
+                [
+                    "materialize_alpha_predictions_v1",
+                    "materialize_selection_engine_v2",
+                    "calibrate_proxy_prediction_bands",
+                ]
+            )
             if publish_discord:
                 input_sources.append("publish_discord_eod_report")
             record_run_start(
@@ -336,6 +366,21 @@ def run_daily_pipeline_job(
             regime_result = build_market_regime_snapshot(
                 settings,
                 as_of_date=pipeline_date,
+            )
+            outcome_end_date = _resolve_previous_trading_date(
+                settings,
+                end_date=pipeline_date,
+            )
+            outcome_start_date = _resolve_lookback_start_date(
+                settings,
+                end_date=outcome_end_date,
+                trading_days=60,
+            )
+            outcome_result = materialize_selection_outcomes(
+                settings,
+                start_selection_date=outcome_start_date,
+                end_selection_date=outcome_end_date,
+                horizons=[1, 5],
             )
             ranking_result = materialize_explanatory_ranking(
                 settings,
@@ -449,6 +494,7 @@ def run_daily_pipeline_job(
             artifact_paths.extend(flow_result.artifact_paths)
             artifact_paths.extend(feature_result.artifact_paths)
             artifact_paths.extend(regime_result.artifact_paths)
+            artifact_paths.extend(outcome_result.artifact_paths)
             artifact_paths.extend(ranking_result.artifact_paths)
             artifact_paths.extend(selection_result.artifact_paths)
             if alpha_training_result is not None:
@@ -492,6 +538,7 @@ def run_daily_pipeline_job(
                 f"flow_rows={flow_result.row_count}, "
                 f"feature_rows={feature_result.feature_row_count}, "
                 f"regime_rows={regime_result.row_count}, "
+                f"outcome_rows={outcome_result.row_count}, "
                 f"ranking_rows={ranking_result.row_count}, "
                 f"selection_rows={selection_result.row_count}, "
                 "alpha_training_runs="

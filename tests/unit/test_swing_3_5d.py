@@ -9,6 +9,7 @@ from app.selection.engine_v2 import (
 )
 from app.selection.swing_3_5d import (
     Swing35DConfig,
+    _entry_policy_status_series,
     _score_rows,
     apply_swing_3_5d_overlay,
     swing_explanatory_payload,
@@ -109,8 +110,8 @@ def test_pullback_pattern_does_not_require_prior_volume_dry_up() -> None:
                 "close": 50_000.0,
                 "ma5": 48_500.0,
                 "ma5_prev": 48_000.0,
-                "ma20": 48_600.0,
-                "ma20_prev": 47_900.0,
+                "ma20": 49_700.0,
+                "ma20_prev": 49_100.0,
                 "ma5_cross_ma20_up": False,
                 "ma60": 43_500.0,
                 "ma120": 41_000.0,
@@ -175,7 +176,7 @@ def test_pullback_pattern_does_not_require_prior_volume_dry_up() -> None:
     assert bool(row["swing_recommendation_pass"])
 
 
-def test_recovery_breakout_uses_v2_ml_entry_revalidation() -> None:
+def test_recovery_breakout_uses_v3_entry_policy_revalidation() -> None:
     features = pd.DataFrame(
         [
             {
@@ -257,7 +258,7 @@ def test_recovery_breakout_uses_v2_ml_entry_revalidation() -> None:
     assert "swing_target_zone_reached" in row["swing_risk_flags"]
 
 
-def test_v2_final_score_combines_rule_ml_probability_and_entry_score() -> None:
+def test_v3_final_score_combines_rule_ml_market_sector_and_liquidity() -> None:
     features = pd.DataFrame(
         [
             {
@@ -270,8 +271,8 @@ def test_v2_final_score_combines_rule_ml_probability_and_entry_score() -> None:
                 "close": 50_000.0,
                 "ma5": 48_500.0,
                 "ma5_prev": 48_000.0,
-                "ma20": 48_600.0,
-                "ma20_prev": 47_900.0,
+                "ma20": 49_700.0,
+                "ma20_prev": 49_100.0,
                 "ma5_cross_ma20_up": False,
                 "ma60": 43_500.0,
                 "ma120": 41_000.0,
@@ -332,11 +333,82 @@ def test_v2_final_score_combines_rule_ml_probability_and_entry_score() -> None:
     expected = (
         0.40 * row["swing_rule_score"]
         + 0.35 * row["ml_probability_score"]
-        + 0.25 * row["entry_score"]
+        + 0.10 * row["market_regime_score_scaled"]
+        + 0.10 * row["sector_strength_score_scaled"]
+        + 0.05 * row["liquidity_score_scaled"]
     )
 
     assert abs(row["swing_hybrid_score"] - expected) < 1e-9
     assert row["swing_final_status"] in {"CANDIDATE", "HIGH_CONFIDENCE"}
+    assert row["entry_status"] == "BUYABLE"
+    assert row["max_buy_price"] <= row["target_1"]
+    assert row["reward_risk_ratio"] >= 1.5
+
+
+def test_v3_explanatory_payload_contains_entry_policy_contract() -> None:
+    base = pd.DataFrame(
+        [
+            {
+                "symbol": "000001",
+                "final_selection_value": 10.0,
+                "eligible_flag": False,
+                "final_selection_rank_pct": 0.1,
+            }
+        ]
+    )
+    swing = pd.DataFrame(
+        [
+            {
+                "symbol": "000001",
+                "swing_hybrid_score": 88.0,
+                "swing_rule_score": 82.0,
+                "swing_candidate_pass": True,
+                "swing_recommendation_pass": True,
+                "swing_pattern": "pullback",
+                "entry_status": "BUYABLE",
+                "signal_close": 10_000.0,
+                "entry_lower_price": 9_900.0,
+                "max_buy_price": 10_250.0,
+                "chase_warning_price": 10_400.0,
+                "target_zone_price": 10_500.0,
+                "extended_price": 10_800.0,
+                "stop_price": 9_700.0,
+                "invalidation_price": 9_700.0,
+                "target_1": 10_500.0,
+                "target_2": 10_800.0,
+                "nearest_support": 9_800.0,
+                "nearest_resistance": 11_000.0,
+            }
+        ]
+    )
+
+    overlaid = apply_swing_3_5d_overlay(base, swing, horizon=5)
+    payload = swing_explanatory_payload(overlaid.iloc[0])
+
+    assert payload["methodology_version"] == "stockmaster_cycle_ml_hybrid_v3"
+    assert payload["entry_policy"]["status"] == "WAIT_FOR_NEXT_DAY_PRICE"
+    assert payload["entry_policy"]["buyable_range"] == [9_900.0, 10_250.0]
+    assert payload["max_buy_price"] == 10_250.0
+    assert payload["target_1"] == 10_500.0
+
+
+def test_v3_entry_status_marks_target_zone_at_threshold() -> None:
+    status = _entry_policy_status_series(
+        current_price=pd.Series([9_699.0, 10_250.0, 10_399.0, 10_500.0, 10_801.0]),
+        invalidation_price=pd.Series([9_700.0] * 5),
+        max_buy_price=pd.Series([10_250.0] * 5),
+        chase_warning_price=pd.Series([10_400.0] * 5),
+        target_zone_price=pd.Series([10_500.0] * 5),
+        extended_price=pd.Series([10_800.0] * 5),
+    )
+
+    assert status.tolist() == [
+        "INVALIDATED",
+        "BUYABLE",
+        "WATCH_CAUTION",
+        "TARGET_ZONE_REACHED",
+        "EXTENDED",
+    ]
 
 
 def test_swing_overlay_replaces_h5_score_and_eligibility() -> None:

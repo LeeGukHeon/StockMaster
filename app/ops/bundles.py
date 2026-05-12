@@ -260,7 +260,10 @@ def _session_date_chunks(
         return [(start_date, end_date)]
     effective_chunk_size = max(1, int(chunk_size))
     return [
-        (session_dates[index], session_dates[min(index + effective_chunk_size - 1, len(session_dates) - 1)])
+        (
+            session_dates[index],
+            session_dates[min(index + effective_chunk_size - 1, len(session_dates) - 1)],
+        )
         for index in range(0, len(session_dates), effective_chunk_size)
     ]
 
@@ -361,8 +364,12 @@ def _run_intraday_overlay_refresh_steps(
             horizons=list(DEFAULT_HORIZONS),
             critical=False,
         )
-    policy_auto_enabled = auto_activate and settings.intraday_research.policy_auto_activation_enabled
-    meta_auto_enabled = auto_activate and settings.intraday_research.meta_model_auto_activation_enabled
+    policy_auto_enabled = (
+        auto_activate and settings.intraday_research.policy_auto_activation_enabled
+    )
+    meta_auto_enabled = (
+        auto_activate and settings.intraday_research.meta_model_auto_activation_enabled
+    )
     if policy_auto_enabled:
         job.run_step(
             "run_intraday_policy_auto_promotion",
@@ -1215,7 +1222,7 @@ def run_daily_close_bundle(
             notes=f"Scheduler daily close bundle for {target_date.isoformat()}",
             details={
                 "bundle_phase": "daily_close",
-                "profile": "final_news_and_report",
+                "profile": "post_close_v3_entry_policy_report",
                 "date_semantics": "trading_day",
             },
         ) as job:
@@ -1367,8 +1374,8 @@ def run_daily_close_bundle(
             return job_result_from_context(
                 job,
                 notes=(
-                    "Daily close bundle completed with final news recollect, "
-                    "selection, portfolio, and post-close reports."
+                    "Daily close bundle completed with v3 hybrid selection, entry_policy, "
+                    "portfolio snapshots, read-store refresh, and post-close reports."
                 ),
             )
 
@@ -2293,7 +2300,8 @@ def run_weekly_policy_research_bundle(
                             critical=False,
                         )
                 job.mark_degraded(
-                    "Weekly policy research refreshed heavy walk-forward and ablation artifacts only. "
+                    "Weekly policy research refreshed heavy walk-forward and ablation "
+                    "artifacts only. "
                     "Any activation remains on the daily overlay refresh path."
                 )
                 job.run_step(

@@ -88,8 +88,11 @@ def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> Non
     assert "**3~5거래일 스윙 후보 | 5거래일 보유 기준 (H5/D+5)**" in content
     assert "**참고용 H1 단기 후보 | 하루 보유 기준 (D+1)**" in content
     assert "메인 후보는 5거래일 보유 기준(D+5) 중심" in content
-    assert "3~5D v2 ML은 신호일 룰 점수, ML 목표확률, 현재 진입점수" in content
-    assert "v2 ML 하드필터(룰·목표확률·진입상태·손익비)를 통과한 H5 스윙 후보가 없습니다" in content
+    assert "3~5D v3는 룰 하드필터 후 ML 목표확률로 재정렬" in content
+    assert (
+        "v3 하드필터(룰·목표확률·entry_policy·손익비)를 통과한 "
+        "H5 스윙 후보가 없습니다"
+    ) in content
 
 
 def test_build_payload_content_renders_industry_code_not_broad_sector() -> None:
@@ -199,6 +202,17 @@ def test_build_payload_content_uses_swing_payload_despite_low_ml_expectation() -
                                 "rule_score": 84.0,
                                 "recommendation_pass": True,
                                 "candidate_pass": True,
+                                "entry_status": "BUYABLE",
+                                "entry_policy": {
+                                    "signal_close": 3000.0,
+                                    "entry_lower_price": 2950.0,
+                                    "max_buy_price": 3090.0,
+                                    "chase_warning_price": 3120.0,
+                                    "target_zone_price": 3150.0,
+                                    "invalidation_price": 2890.0,
+                                    "target_1": 3150.0,
+                                    "target_2": 3240.0,
+                                },
                                 "risk_line": 2890.0,
                                 "resistance_line": 3200.0,
                                 "reward_risk_ratio": 1.65,
@@ -219,10 +233,12 @@ def test_build_payload_content_uses_swing_payload_despite_low_ml_expectation() -
     assert "매수검토 이상 기준을 통과한 H5 스윙 후보가 없어" not in content
     assert "136480" in content
     assert "매수검토" in content
-    assert "3~5D 스윙순위 1 · v2최종점수 73.1/A" in content
+    assert "3~5D 스윙순위 1 · v3최종점수 73.1/A" in content
     assert "ML기대보조 -0.3%" in content
     assert "신호 84.0 · 손익비 1.65" in content
-    assert "손절참고 2,890원 / 저항/목표 3,200원" in content
+    assert "가격조건 기준 3,000원" in content
+    assert "매수 2,950원~3,090원" in content
+    assert "목표1/2 3,150원/3,240원" in content
     assert "고점수 과확신" not in content
     assert "ML 목표확률" in content
     assert "raw 점수대 성과" not in content

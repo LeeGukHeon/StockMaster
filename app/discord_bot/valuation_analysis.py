@@ -121,13 +121,16 @@ def render_stock_valuation(settings: Settings, *, query: str) -> str:
         )
     )
     display_industry = industry_group.get("label") or payload.get("industry") or "-"
+    peer_group_type = str(peer.get("group_type") or industry_group.get("type") or "-")
+    peer_group_label = "산업코드" if peer_group_type == "industry" else "섹터코드"
+    peer_group_value = peer.get("group_value") or industry_group.get("key") or "-"
     lines = [
         f"**{row['title']} 가치평가**",
         f"최종 판단: {label}",
         f"평가기반: {evaluation_basis}",
         (
             f"기준: {row.get('as_of_date') or '-'} · "
-            f"업종 {display_industry} / 상위분류 {payload.get('sector') or '-'}"
+            f"업종 {display_industry} / 비교기준 {peer_group_label} {peer_group_value}"
         ),
         (
             "핵심지표: "
@@ -138,7 +141,7 @@ def render_stock_valuation(settings: Settings, *, query: str) -> str:
         ),
         (
             "동종비교: "
-            f"{peer.get('group_type') or '-'} {peer.get('group_value') or '-'} · "
+            f"{peer_group_label} {peer_group_value} · "
             f"표본 {peer.get('peer_count') or 0}개 · "
             f"PER 중앙 {_fmt(peer.get('median_per'), suffix='배')} · "
             f"PBR 중앙 {_fmt(peer.get('median_pbr'), suffix='배')}"

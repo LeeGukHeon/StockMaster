@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pytest
 
 from app.common.paths import project_root
+from app.evaluation.outcomes import SelectionOutcomeMaterializationResult
 from app.features.feature_store import FeatureStoreBuildResult
 from app.ml.inference import AlphaPredictionMaterializationResult
 from app.ml.promotion import AlphaPromotionResult
@@ -143,6 +145,28 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
             artifact_paths=["curated/regime.parquet"],
             notes="ok",
             regime_version="market_regime_v1",
+        )
+
+    def fake_materialize_selection_outcomes(
+        settings_arg,
+        *,
+        start_selection_date,
+        end_selection_date,
+        horizons,
+        **kwargs,
+    ):
+        observed_dates.append(end_selection_date)
+        assert start_selection_date <= end_selection_date
+        assert horizons == [1, 5]
+        return SelectionOutcomeMaterializationResult(
+            run_id="outcome-run",
+            start_selection_date=start_selection_date,
+            end_selection_date=end_selection_date,
+            row_count=12,
+            matured_row_count=10,
+            pending_row_count=2,
+            artifact_paths=["curated/selection_outcomes.parquet"],
+            notes="ok",
         )
 
     def fake_materialize_explanatory_ranking(settings_arg, *, as_of_date, horizons, **kwargs):
@@ -310,6 +334,10 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
         fake_build_market_regime_snapshot,
     )
     monkeypatch.setattr(
+        "app.scheduler.jobs.materialize_selection_outcomes",
+        fake_materialize_selection_outcomes,
+    )
+    monkeypatch.setattr(
         "app.scheduler.jobs.materialize_explanatory_ranking",
         fake_materialize_explanatory_ranking,
     )
@@ -350,13 +378,14 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
     result = run_daily_pipeline_job(settings)
 
     assert result.status == "success"
-    assert observed_dates == [date(2026, 3, 6)] * 16
+    assert observed_dates == [date(2026, 3, 6)] * 17
     assert "ohlcv_rows=8" in result.notes
     assert "fundamentals_rows=6" in result.notes
     assert "news_rows=7" in result.notes
     assert "flow_rows=8" in result.notes
     assert "feature_rows=640" in result.notes
     assert "regime_rows=3" in result.notes
+    assert "outcome_rows=12" in result.notes
     assert "ranking_rows=20" in result.notes
     assert "selection_rows=20" in result.notes
     assert "alpha_training_runs=2" in result.notes
@@ -373,14 +402,21 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
     with duckdb_connection(settings.paths.duckdb_path) as connection:
         manifest_row = connection.execute(
             """
-            SELECT run_type, status, notes, model_version, feature_version, ranking_version
+            SELECT
+                run_type,
+                status,
+                notes,
+                model_version,
+                feature_version,
+                ranking_version,
+                input_sources_json
             FROM ops_run_manifest
             WHERE run_type = 'daily_pipeline'
             ORDER BY started_at DESC
             LIMIT 1
             """
         ).fetchone()
-        assert manifest_row == (
+        assert manifest_row[:6] == (
             "daily_pipeline",
             "success",
             result.notes,
@@ -388,6 +424,25 @@ def test_run_daily_pipeline_job_orchestrates_core_syncs(tmp_path, monkeypatch):
             "feature_store_v1",
             "selection_engine_v2",
         )
+        assert json.loads(manifest_row[6]) == [
+            "sync_daily_ohlcv",
+            "sync_fundamentals_snapshot",
+            "sync_news_metadata",
+            "sync_investor_flow",
+            "build_feature_store",
+            "build_market_regime_snapshot",
+            "materialize_selection_outcomes",
+            "materialize_explanatory_ranking",
+            "materialize_selection_engine_v1",
+            "train_alpha_model_v1",
+            "train_alpha_candidate_models",
+            "materialize_alpha_shadow_candidates",
+            "run_alpha_auto_promotion",
+            "materialize_alpha_predictions_v1",
+            "materialize_selection_engine_v2",
+            "calibrate_proxy_prediction_bands",
+            "publish_discord_eod_report",
+        ]
 
 
 def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monkeypatch):
@@ -495,6 +550,27 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
             artifact_paths=["curated/regime.parquet"],
             notes="ok",
             regime_version="market_regime_v1",
+        )
+
+    def fake_materialize_selection_outcomes(
+        settings_arg,
+        *,
+        start_selection_date,
+        end_selection_date,
+        horizons,
+        **kwargs,
+    ):
+        assert start_selection_date <= end_selection_date
+        assert horizons == [1, 5]
+        return SelectionOutcomeMaterializationResult(
+            run_id="outcome-run",
+            start_selection_date=start_selection_date,
+            end_selection_date=end_selection_date,
+            row_count=12,
+            matured_row_count=10,
+            pending_row_count=2,
+            artifact_paths=["curated/selection_outcomes.parquet"],
+            notes="ok",
         )
 
     def fake_materialize_explanatory_ranking(settings_arg, *, as_of_date, horizons, **kwargs):
@@ -642,6 +718,10 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
         fake_build_market_regime_snapshot,
     )
     monkeypatch.setattr(
+        "app.scheduler.jobs.materialize_selection_outcomes",
+        fake_materialize_selection_outcomes,
+    )
+    monkeypatch.setattr(
         "app.scheduler.jobs.materialize_explanatory_ranking",
         fake_materialize_explanatory_ranking,
     )
@@ -686,6 +766,7 @@ def test_run_daily_pipeline_job_allows_empty_calibration_history(tmp_path, monke
     assert "alpha_candidate_training_runs=4" in result.notes
     assert "alpha_promotion_rows=24" in result.notes
     assert "alpha_auto_promoted_horizons=0" in result.notes
+    assert "outcome_rows=12" in result.notes
     assert "alpha_prediction_rows=20" in result.notes
     assert "alpha_shadow_prediction_rows=60" in result.notes
     assert "alpha_shadow_ranking_rows=60" in result.notes

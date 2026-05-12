@@ -148,6 +148,122 @@ def test_render_live_stock_analysis_returns_candidate_list_for_ambiguous_query(m
     assert "005935 삼성전자우" in rendered
 
 
+def test_render_live_stock_analysis_renders_v3_entry_policy(monkeypatch) -> None:
+    snapshot_rows = pd.DataFrame(
+        [
+            {
+                "symbol": "005930",
+                "company_name": "삼성전자",
+                "market": "KOSPI",
+                "title": "005930 삼성전자",
+                "summary": "3~5D v3",
+                "payload_json": json.dumps(
+                    {
+                        "d5_grade": "A",
+                        "d5_expected_excess_return": -0.003,
+                        "d5_final_selection_value": 73.1,
+                        "d5_display_rank": 1,
+                        "d5_judgement_label": "매수검토",
+                        "d5_judgement_summary": "3~5D v3 조건 통과·가격 조건 내 분할 접근",
+                        "d5_swing_3_5d": {
+                            "methodology_version": "stockmaster_cycle_ml_hybrid_v3",
+                            "entry_status": "BUYABLE",
+                            "entry_policy": {
+                                "signal_close": 70000.0,
+                                "entry_lower_price": 69000.0,
+                                "max_buy_price": 72000.0,
+                                "chase_warning_price": 72800.0,
+                                "target_zone_price": 73500.0,
+                                "invalidation_price": 68000.0,
+                                "target_1": 73500.0,
+                                "target_2": 75600.0,
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "app.discord_bot.live_analysis.fetch_discord_bot_snapshot_rows",
+        lambda *args, **kwargs: snapshot_rows,
+    )
+    monkeypatch.setattr("app.discord_bot.live_analysis.KISProvider", _FakeKISProvider)
+    monkeypatch.setattr(
+        "app.discord_bot.live_analysis.compute_live_stock_recommendation",
+        lambda *args, **kwargs: LiveRecalcResult(pd.DataFrame(), mode="closed"),
+    )
+
+    rendered = render_live_stock_analysis(object(), query="삼성전자")
+
+    assert "장마감 3~5D 스윙순위 1 · v3최종점수 73.1" in rendered
+    assert "가격조건: 기준 70,000원 · 매수 69,000~72,000원 · 최대진입 72,000원" in rendered
+    assert "추격주의 72,800원↑ · 목표권 73,500원↑ · 신호무효 68,000원↓" in rendered
+    assert "목표: 1차 73,500원 · 2차 75,600원 · 현재상태 BUYABLE" in rendered
+
+
+def test_render_live_stock_analysis_marks_target_zone_at_threshold(monkeypatch) -> None:
+    class _TargetZoneQuoteProvider:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def fetch_current_quote(self, *, symbol: str, persist_probe_artifacts: bool = True):
+            assert symbol == "005930"
+            return {"output": {"stck_prpr": "73500", "prdy_vrss": "0", "prdy_ctrt": "0"}}
+
+        def close(self) -> None:
+            return None
+
+    snapshot_rows = pd.DataFrame(
+        [
+            {
+                "symbol": "005930",
+                "company_name": "삼성전자",
+                "market": "KOSPI",
+                "title": "005930 삼성전자",
+                "summary": "3~5D v3",
+                "payload_json": json.dumps(
+                    {
+                        "d5_grade": "A",
+                        "d5_final_selection_value": 73.1,
+                        "d5_display_rank": 1,
+                        "d5_judgement_label": "관찰 우선",
+                        "d5_judgement_summary": "목표권 확인",
+                        "d5_swing_3_5d": {
+                            "entry_policy": {
+                                "signal_close": 70000.0,
+                                "entry_lower_price": 69000.0,
+                                "max_buy_price": 72000.0,
+                                "chase_warning_price": 72800.0,
+                                "target_zone_price": 73500.0,
+                                "extended_price": 75600.0,
+                                "invalidation_price": 68000.0,
+                                "target_1": 73500.0,
+                                "target_2": 75600.0,
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "app.discord_bot.live_analysis.fetch_discord_bot_snapshot_rows",
+        lambda *args, **kwargs: snapshot_rows,
+    )
+    monkeypatch.setattr("app.discord_bot.live_analysis.KISProvider", _TargetZoneQuoteProvider)
+    monkeypatch.setattr(
+        "app.discord_bot.live_analysis.compute_live_stock_recommendation",
+        lambda *args, **kwargs: LiveRecalcResult(pd.DataFrame(), mode="closed"),
+    )
+
+    rendered = render_live_stock_analysis(object(), query="삼성전자")
+
+    assert "현재상태 TARGET_ZONE_REACHED" in rendered
+
+
 def test_build_live_analysis_payload_marks_snapshot_reuse_for_busy_mode() -> None:
     payload = build_live_analysis_payload(
         {

@@ -66,6 +66,14 @@ def _int_text(value: object) -> str:
         return _safe_text(value)
 
 
+def _float_or_none(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if pd.notna(number) else None
+
+
 def _pct_text(value: object, *, signed: bool = True) -> str:
     if value in (None, "", "-"):
         return "-"
@@ -100,6 +108,47 @@ def _parse_payload(value: object) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _swing_payload_from_mapping(payload: dict[str, object] | None) -> dict[str, object] | None:
+    if not isinstance(payload, dict):
+        return None
+    direct = payload.get("d5_swing_3_5d")
+    if isinstance(direct, dict) and direct:
+        return direct
+    nested = payload.get("swing_3_5d")
+    if isinstance(nested, dict) and nested:
+        return nested
+    return None
+
+
+def _swing_policy_value(swing_payload: dict[str, object], key: str) -> object:
+    policy = swing_payload.get("entry_policy")
+    if isinstance(policy, dict) and key in policy:
+        return policy.get(key)
+    return swing_payload.get(key)
+
+
+def _classify_entry_policy_status(price: object, swing_payload: dict[str, object]) -> str:
+    current = _float_or_none(price)
+    if current is None or current <= 0:
+        return _safe_text(swing_payload.get("entry_status"), "UNKNOWN")
+    invalidation = _float_or_none(_swing_policy_value(swing_payload, "invalidation_price"))
+    max_buy = _float_or_none(_swing_policy_value(swing_payload, "max_buy_price"))
+    chase_warning = _float_or_none(_swing_policy_value(swing_payload, "chase_warning_price"))
+    target_zone = _float_or_none(_swing_policy_value(swing_payload, "target_zone_price"))
+    extended = _float_or_none(_swing_policy_value(swing_payload, "extended_price"))
+    if invalidation is not None and current < invalidation:
+        return "INVALIDATED"
+    if max_buy is not None and current <= max_buy:
+        return "BUYABLE"
+    if chase_warning is not None and current <= chase_warning:
+        return "WATCH_CAUTION"
+    if target_zone is not None and current < target_zone:
+        return "CHASE_RISK"
+    if extended is not None and current <= extended:
+        return "TARGET_ZONE_REACHED"
+    return "EXTENDED"
 
 
 def _translate_tag(value: object, mapping: dict[str, str]) -> str:
@@ -291,7 +340,23 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     stable_d5_rank = payload.get("d5_display_rank") or analysis_payload.get(
         "live_d5_display_rank"
     )
+    swing_payload = _swing_payload_from_mapping(payload)
+    if live_row is not None:
+        live_swing_payload = _swing_payload_from_mapping(
+            _parse_payload(live_row.get("live_d5_explanatory_score_json"))
+        )
+        if live_swing_payload is not None:
+            swing_payload = live_swing_payload
     if (
+        isinstance(swing_payload, dict)
+        and stable_d5_rank not in (None, "", "-")
+    ):
+        d5_line = (
+            f"장마감 3~5D 스윙순위 {int(float(stable_d5_rank))} "
+            f"· v3최종점수 {stable_d5_score} · ML기대보조 {_pct_text(stable_d5_expected)} "
+            f"· 현재 {current_price}원 ({change_rate})"
+        )
+    elif (
         stable_d5_model == D5_PRACTICAL_V3_MODEL_SPEC_ID
         and stable_d5_rank not in (None, "", "-")
     ):
@@ -321,7 +386,28 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
     lines.append(f"근거: {reason_text}")
     if risk_flags or live_result.mode != "closed":
         lines.append(f"주의: {risk_text}")
-    if live_row is not None:
+    if isinstance(swing_payload, dict):
+        entry_status = _classify_entry_policy_status(quote.get("stck_prpr"), swing_payload)
+        lines.append(
+            "가격조건: "
+            f"기준 {_int_text(_swing_policy_value(swing_payload, 'signal_close'))}원 · "
+            f"매수 {_int_text(_swing_policy_value(swing_payload, 'entry_lower_price'))}"
+            f"~{_int_text(_swing_policy_value(swing_payload, 'max_buy_price'))}원 · "
+            f"최대진입 {_int_text(_swing_policy_value(swing_payload, 'max_buy_price'))}원"
+        )
+        lines.append(
+            "무효/주의: "
+            f"추격주의 {_int_text(_swing_policy_value(swing_payload, 'chase_warning_price'))}원↑ · "
+            f"목표권 {_int_text(_swing_policy_value(swing_payload, 'target_zone_price'))}원↑ · "
+            f"신호무효 {_int_text(_swing_policy_value(swing_payload, 'invalidation_price'))}원↓"
+        )
+        lines.append(
+            "목표: "
+            f"1차 {_int_text(_swing_policy_value(swing_payload, 'target_1'))}원 · "
+            f"2차 {_int_text(_swing_policy_value(swing_payload, 'target_2'))}원 · "
+            f"현재상태 {entry_status}"
+        )
+    elif live_row is not None:
         target_price = _int_text(live_row.get("live_d5_target_price"))
         stop_price = _int_text(live_row.get("live_d5_stop_price"))
         lines.append(f"가격: 목표 {target_price}원 · 손절 {stop_price}원")

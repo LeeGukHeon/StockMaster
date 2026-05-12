@@ -92,6 +92,22 @@ def _format_number(value: object, *, decimals: int = 1) -> str:
     return f"{float(value):,.{decimals}f}"
 
 
+def _format_krw(value: object) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "-"
+    try:
+        return f"{float(value):,.0f}원"
+    except (TypeError, ValueError):
+        return _safe_text(value)
+
+
+def _swing_policy_value(swing_payload: dict[str, object], key: str) -> object:
+    policy = swing_payload.get("entry_policy")
+    if isinstance(policy, dict) and key in policy:
+        return policy.get(key)
+    return swing_payload.get(key)
+
+
 def _format_metric_value(value: object, *, decimals: int = 2, suffix: str = "") -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return "-"
@@ -378,11 +394,17 @@ def _build_pick_rows(
             summary_parts.extend(
                 [
                     f"3~5D 스윙순위 {rank}",
-                    f"v2최종점수 {_format_number(getattr(row, 'final_selection_value', None))}",
+                    f"v3최종점수 {_format_number(getattr(row, 'final_selection_value', None))}",
                     f"등급 {_safe_text(getattr(row, 'grade', None))}",
                     "ML기대보조 "
                     f"{_format_percent(getattr(row, 'expected_excess_return', None), signed=True)}",
                 ]
+            )
+            summary_parts.append(
+                "가격조건 "
+                f"기준 {_format_krw(_swing_policy_value(swing_payload, 'signal_close'))} · "
+                f"최대진입 {_format_krw(_swing_policy_value(swing_payload, 'max_buy_price'))} · "
+                f"무효 {_format_krw(_swing_policy_value(swing_payload, 'invalidation_price'))}"
             )
         elif path_rank_candidate:
             summary_parts.extend(
@@ -699,9 +721,11 @@ def _build_stock_summary_rows(
         if is_d5_candidate and isinstance(d5_swing_payload, dict):
             d5_metric_parts = [
                 f"3~5D 스윙순위 {d5_display_rank}",
-                f"v2최종점수 {_format_number(d5_score)}",
+                f"v3최종점수 {_format_number(d5_score)}",
                 f"H5 {d5_grade}",
                 f"ML기대보조 {_format_percent(d5_expected, signed=True)}",
+                "가격조건 "
+                f"최대진입 {_format_krw(_swing_policy_value(d5_swing_payload, 'max_buy_price'))}",
             ]
         elif d5_cash_path_candidate:
             d5_metric_parts = [

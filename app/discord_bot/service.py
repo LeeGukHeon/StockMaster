@@ -15,7 +15,7 @@ from app.settings import Settings
 logger = get_logger(__name__)
 
 JOB_LABELS: dict[str, str] = {
-    "run_daily_close_bundle": "내일 종목 추천 업데이트",
+    "run_daily_close_bundle": "장마감 v3 추천 업데이트",
     "run_evaluation_bundle": "사후 평가 정리",
     "run_news_sync_bundle": "뉴스 반영",
     "run_daily_overlay_refresh_bundle": "장중 정책 갱신",
@@ -25,21 +25,22 @@ JOB_LABELS: dict[str, str] = {
 }
 
 STEP_LABELS: dict[str, str] = {
-    "daily_pipeline": "추천 데이터 수집과 계산",
+    "daily_pipeline": "장마감 v3 추천 사이클",
     "sync_daily_ohlcv": "일봉 시세 수집",
     "sync_fundamentals_snapshot": "재무 데이터 수집",
     "sync_news_metadata": "뉴스 수집",
     "sync_investor_flow": "수급 데이터 수집",
     "build_feature_store": "특징값 생성",
     "build_market_regime_snapshot": "시장 국면 계산",
+    "materialize_selection_outcomes": "기존 추천 성과·성숙 라벨 갱신",
     "materialize_explanatory_ranking": "기본 점수 계산",
     "materialize_selection_engine_v1": "기본 추천 계산",
-    "train_alpha_model_v1": "기본 추천 모델 학습",
+    "train_alpha_model_v1": "성숙 라벨 기반 모델 학습",
     "train_alpha_candidate_models": "후보 모델 비교 학습",
     "materialize_alpha_shadow_candidates": "후보 모델 비교 점검",
     "run_alpha_auto_promotion": "추천 모델 교체 점검",
-    "materialize_alpha_predictions_v1": "예상 수익 계산",
-    "materialize_selection_engine_v2": "최종 추천 점수 계산",
+    "materialize_alpha_predictions_v1": "ML 목표확률 계산",
+    "materialize_selection_engine_v2": "v3 하이브리드 추천·entry_policy 계산",
     "calibrate_proxy_prediction_bands": "예측 구간 보정",
     "evaluation_pipeline": "사후 평가 계산",
     "render_evaluation_report": "사후 평가 리포트 생성",
@@ -213,7 +214,8 @@ def build_discord_bot(settings: Settings):
         await interaction.followup.send(_render_status(rows, active_jobs=active_jobs))
 
     @client.tree.command(
-        name="내일종목추천", description="다음 거래일 기준 상위 후보를 보여줍니다."
+        name="내일종목추천",
+        description="다음 거래일 v3 후보와 최대진입·추격주의·무효 가격을 보여줍니다.",
     )
     @app_commands.rename(basis="보유기준", count="개수")
     @app_commands.describe(
@@ -261,7 +263,8 @@ def build_discord_bot(settings: Settings):
         await interaction.followup.send(message)
 
     @client.tree.command(
-        name="종목요약", description="종목명 또는 6자리 코드로 최신 요약을 보여줍니다."
+        name="종목요약",
+        description="저장된 장마감 v3 추천·가격조건 요약을 보여줍니다.",
     )
     @app_commands.rename(query="종목")
     @app_commands.describe(query="종목명 또는 6자리 종목코드를 입력하세요.")
@@ -277,7 +280,7 @@ def build_discord_bot(settings: Settings):
 
     @client.tree.command(
         name="즉석종목분석",
-        description="최신 시세와 최근 뉴스를 반영한 즉석 분석을 보여줍니다.",
+        description="저장된 v3 추천에 최신 시세를 대입해 entry_policy 상태를 보여줍니다.",
     )
     @app_commands.rename(query="종목")
     @app_commands.describe(query="종목명 또는 6자리 종목코드를 입력하세요.")
@@ -288,7 +291,7 @@ def build_discord_bot(settings: Settings):
 
     @client.tree.command(
         name="가치평가",
-        description="공시 기반 PER/PBR과 동종 섹터 비교 가치평가를 보여줍니다.",
+        description="공시 기반 PER/PBR과 동종 산업코드 비교 가치평가를 보여줍니다.",
     )
     @app_commands.rename(query="종목")
     @app_commands.describe(query="종목명 또는 6자리 종목코드를 입력하세요.")

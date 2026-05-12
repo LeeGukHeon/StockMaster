@@ -132,7 +132,10 @@ SCHEDULED_JOBS: tuple[ScheduledJobDefinition, ...] = (
     ScheduledJobDefinition(
         job_key="daily_close",
         label="장후 추천 생성",
-        description="최종 뉴스 재수집 후 selection, portfolio, 장후 리포트와 snapshot을 생성",
+        description=(
+            "v3 3~5D 하이브리드 추천, entry_policy, portfolio, "
+            "장후 리포트와 snapshot을 생성"
+        ),
         service_slug="daily-close",
         bundle_script="scripts/run_daily_close_bundle.py",
         bundle_args=(),

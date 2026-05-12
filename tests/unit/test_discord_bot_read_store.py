@@ -258,6 +258,11 @@ def test_build_pick_rows_uses_swing_payload_not_negative_ml_expectation_for_h5()
             "recommendation_pass": True,
             "candidate_pass": True,
             "reward_risk_ratio": 1.65,
+            "entry_policy": {
+                "signal_close": 30_000.0,
+                "max_buy_price": 30_900.0,
+                "invalidation_price": 28_900.0,
+            },
         }
     }
     frame = pd.DataFrame(
@@ -299,6 +304,7 @@ def test_build_pick_rows_uses_swing_payload_not_negative_ml_expectation_for_h5()
     assert "매수검토" in rows[0]["summary"]
     assert "기대수익률 낮음" not in rows[0]["payload_json"]
     assert "3~5D 스윙순위 1" in rows[0]["summary"]
+    assert "가격조건 기준 30,000원 · 최대진입 30,900원 · 무효 28,900원" in rows[0]["summary"]
     assert "ML기대보조 -0.3%" in rows[0]["summary"]
     assert payload["swing_3_5d"]["recommendation_pass"] is True
 
@@ -576,6 +582,9 @@ def test_build_stock_summary_rows_uses_swing_payload_for_h5_candidate_label() ->
             "recommendation_pass": True,
             "candidate_pass": True,
             "reward_risk_ratio": 1.65,
+            "entry_policy": {
+                "max_buy_price": 30_900.0,
+            },
         }
     }
     summary_frame = pd.DataFrame(
@@ -632,6 +641,7 @@ def test_build_stock_summary_rows_uses_swing_payload_for_h5_candidate_label() ->
     payload = json.loads(rows[0]["payload_json"])
     assert "매수검토" in rows[0]["summary"]
     assert "3~5D 스윙순위 1" in rows[0]["summary"]
+    assert "가격조건 최대진입 30,900원" in rows[0]["summary"]
     assert "ML기대보조 -0.3%" in rows[0]["summary"]
     assert "기대수익률 낮음" not in payload["d5_judgement_summary"]
     assert payload["d5_report_candidate_flag"] is True

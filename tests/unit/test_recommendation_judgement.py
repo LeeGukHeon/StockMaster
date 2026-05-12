@@ -74,7 +74,7 @@ def test_classify_recommendation_ignores_sparse_bad_band_for_cash_path_rank() ->
     )
 
     assert judgement.label == "매수해볼 가치 있음"
-    assert judgement.summary == "경로모델 추천권·2~5일 분할 접근"
+    assert judgement.summary == "H5 경로모델 추천권·가격 조건 확인 후 분할 접근"
     assert "과확신" not in judgement.summary
 
 

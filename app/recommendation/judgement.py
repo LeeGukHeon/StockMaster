@@ -183,11 +183,18 @@ def classify_swing_3_5d_recommendation(
             score_band=band,
             evidence=None,
         )
+    if final_status == "WATCH_CAUTION" or entry_status == "WATCH_CAUTION":
+        return RecommendationJudgement(
+            label="관찰 우선",
+            summary="최대 허용 진입가를 넘어 가격 부담 확인 필요",
+            score_band=band,
+            evidence=None,
+        )
     if recommendation_pass:
         if final_status == "CANDIDATE":
             return RecommendationJudgement(
                 label="매수검토",
-                summary="3~5D v2 조건 통과·분할 접근 검토",
+                summary="3~5D v3 조건 통과·가격 조건 내 분할 접근 검토",
                 score_band=band,
                 evidence=None,
             )
@@ -199,13 +206,13 @@ def classify_swing_3_5d_recommendation(
         if strong_score and strong_rule and strong_reward:
             return RecommendationJudgement(
                 label="매수해볼 가치 있음",
-                summary="3~5D v2 고신뢰 조건 통과·분할 접근",
+                summary="3~5D v3 고신뢰 조건 통과·가격 조건 내 분할 접근",
                 score_band=band,
                 evidence=None,
             )
         return RecommendationJudgement(
             label="매수검토",
-            summary="3~5D v2 조건 통과·분할 접근 검토",
+            summary="3~5D v3 조건 통과·가격 조건 내 분할 접근 검토",
             score_band=band,
             evidence=None,
         )
@@ -264,7 +271,7 @@ def _selected_d5_judgement(
             )
         return RecommendationJudgement(
             label="매수해볼 가치 있음",
-            summary="경로모델 추천권·2~5일 분할 접근",
+            summary="H5 경로모델 추천권·가격 조건 확인 후 분할 접근",
             score_band=score_band_for_value(score),
             evidence=evidence,
         )

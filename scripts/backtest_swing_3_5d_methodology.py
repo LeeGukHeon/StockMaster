@@ -260,7 +260,6 @@ def _barrier_outcome(
             None,
             None,
             None,
-            None,
             False,
             0,
         )
@@ -295,8 +294,29 @@ def _barrier_outcome(
 
     gap_return = (entry_open / prior_close - 1.0) if prior_close and prior_close > 0 else None
     gap_risk = bool(gap_return is not None and abs(gap_return) >= TAKE_PROFIT_RETURN)
-    target_price = entry_open * (1.0 + TAKE_PROFIT_RETURN)
-    stop_price = entry_open * (1.0 + STOP_LOSS_RETURN)
+    max_buy_price = _safe_float(row.get("max_buy_price"))
+    if max_buy_price is not None and entry_open > max_buy_price:
+        return BarrierOutcome(
+            symbol,
+            as_of_date,
+            entry_date,
+            entry_date,
+            "not_executable",
+            entry_open,
+            None,
+            None,
+            gap_return,
+            gap_risk,
+            0,
+        )
+    target_price = _safe_float(row.get("target_1")) or entry_open * (1.0 + TAKE_PROFIT_RETURN)
+    stop_price = (
+        _safe_float(row.get("stop_price"))
+        or _safe_float(row.get("invalidation_price"))
+        or entry_open * (1.0 + STOP_LOSS_RETURN)
+    )
+    target_return = target_price / entry_open - 1.0
+    stop_return = stop_price / entry_open - 1.0
 
     for idx, price_row in enumerate(path.itertuples(index=False), start=1):
         low = _safe_float(price_row.low)
@@ -313,7 +333,7 @@ def _barrier_outcome(
                 "ambiguous_stop_first",
                 entry_open,
                 stop_price,
-                STOP_LOSS_RETURN,
+                stop_return,
                 gap_return,
                 gap_risk,
                 idx,
@@ -327,7 +347,7 @@ def _barrier_outcome(
                 "stop_loss",
                 entry_open,
                 stop_price,
-                STOP_LOSS_RETURN,
+                stop_return,
                 gap_return,
                 gap_risk,
                 idx,
@@ -341,7 +361,7 @@ def _barrier_outcome(
                 "take_profit",
                 entry_open,
                 target_price,
-                TAKE_PROFIT_RETURN,
+                target_return,
                 gap_return,
                 gap_risk,
                 idx,
@@ -400,6 +420,18 @@ def _selection_columns(frame: pd.DataFrame) -> pd.DataFrame:
         "swing_rule_score",
         "swing_hybrid_score",
         "swing_recommendation_pass",
+        "entry_status",
+        "signal_close",
+        "entry_lower_price",
+        "max_buy_price",
+        "chase_warning_price",
+        "target_zone_price",
+        "extended_price",
+        "stop_price",
+        "invalidation_price",
+        "target_1",
+        "target_2",
+        "reward_risk_ratio",
         "final_selection_value",
         "grade",
     ]
@@ -455,17 +487,26 @@ def _metric_rows(outcomes: pd.DataFrame, *, top_k_values: list[int]) -> pd.DataF
             evaluable = realized.notna()
             target_hits = group["outcome"].eq("take_profit")
             stop_hits = group["outcome"].isin(["stop_loss", "ambiguous_stop_first"])
+            not_executable = group["outcome"].eq("not_executable")
+            executable = ~not_executable
+            executable_count = int(executable.sum())
             rows.append(
                 {
                     "strategy": strategy,
                     "top_k": top_k,
                     "selection_dates": int(group["as_of_date"].nunique()),
                     "selected_count": int(len(group)),
+                    "executable_count": executable_count,
                     "evaluable_count": int(evaluable.sum()),
-                    "take_profit_rate": float(target_hits.mean()) if len(group) else None,
-                    "stop_or_ambiguous_rate": float(stop_hits.mean()) if len(group) else None,
-                    "timeout_rate": float(group["outcome"].eq("timeout").mean())
-                    if len(group)
+                    "not_executable_rate": float(not_executable.mean()) if len(group) else None,
+                    "take_profit_rate": float(target_hits[executable].mean())
+                    if executable_count
+                    else None,
+                    "stop_or_ambiguous_rate": float(stop_hits[executable].mean())
+                    if executable_count
+                    else None,
+                    "timeout_rate": float(group.loc[executable, "outcome"].eq("timeout").mean())
+                    if executable_count
                     else None,
                     "positive_return_rate": float(realized[evaluable].gt(0).mean())
                     if evaluable.any()
@@ -526,8 +567,9 @@ def _write_report(
         f"- Methodology version: `{SWING_3_5D_VERSION}`",
         f"- Range: {start_date.isoformat()} .. {end_date.isoformat()}",
         f"- Selection dates evaluated: {len(selection_dates)}",
-        "- Entry/exit: t+1 open entry, +5% take-profit before -3% stop-loss, "
-        "5 trading-day timeout; same-day target+stop is conservatively counted as stop.",
+        "- Entry/exit: t+1 open must be <= max_buy_price; otherwise NOT_EXECUTABLE. "
+        "Executable rows use v3 target_1 before stop_price within 5 trading days; "
+        "same-day target+stop is conservatively counted as stop.",
         f"- Summary JSON: `{summary_path}`",
         f"- Selection/outcome CSV: `{selections_path}`",
         "",
@@ -542,6 +584,7 @@ def _write_report(
             "take_profit_rate",
             "stop_or_ambiguous_rate",
             "timeout_rate",
+            "not_executable_rate",
             "positive_return_rate",
             "mean_return",
             "median_return",
@@ -671,8 +714,10 @@ def run_backtest(args: argparse.Namespace) -> BacktestArtifacts:
         "top_k": top_k_values,
         "barrier": {
             "entry": "t_plus_1_open",
-            "take_profit_return": TAKE_PROFIT_RETURN,
-            "stop_loss_return": STOP_LOSS_RETURN,
+            "entry_filter": "entry_open <= max_buy_price",
+            "not_executable": "entry_open > max_buy_price",
+            "fallback_take_profit_return": TAKE_PROFIT_RETURN,
+            "fallback_stop_loss_return": STOP_LOSS_RETURN,
             "horizon_trading_days": HORIZON,
             "same_day_target_and_stop": "counted_as_ambiguous_stop_first",
         },
