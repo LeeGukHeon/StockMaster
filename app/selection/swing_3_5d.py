@@ -59,7 +59,7 @@ def _safe_numeric(series: pd.Series | object, *, index: pd.Index | None = None) 
 
 
 def _safe_div(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
-    return _safe_numeric(numerator) / _safe_numeric(denominator).replace(0, pd.NA)
+    return _safe_numeric(numerator) / _safe_numeric(denominator).replace(0, np.nan)
 
 
 def _clip_score(series: pd.Series, maximum: float) -> pd.Series:
@@ -70,7 +70,7 @@ def _rsi(close: pd.Series, window: int) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0.0).rolling(window, min_periods=window).mean()
     loss = (-delta.clip(upper=0.0)).rolling(window, min_periods=window).mean()
-    rs = gain / loss.replace(0, pd.NA)
+    rs = gain / loss.replace(0, np.nan)
     rsi = 100.0 - (100.0 / (1.0 + rs))
     return rsi.fillna(100.0).where(loss.ne(0), 100.0)
 
@@ -128,7 +128,7 @@ def _compute_symbol_features(history: pd.DataFrame, *, as_of_date: date) -> pd.D
     working["ma_compression_5_20_60"] = (
         working[["ma5", "ma20", "ma60"]].max(axis=1)
         - working[["ma5", "ma20", "ma60"]].min(axis=1)
-    ) / working["close"].replace(0, pd.NA)
+    ) / working["close"].replace(0, np.nan)
 
     for window in (1, 3, 5, 10, 20):
         working[f"ret{window}"] = group["close"].pct_change(periods=window)
@@ -148,11 +148,11 @@ def _compute_symbol_features(history: pd.DataFrame, *, as_of_date: date) -> pd.D
     working["median_turnover_20"] = group["turnover_effective"].transform(
         lambda series: series.rolling(20, min_periods=20).median()
     )
-    working["vol_rel20"] = working["volume"] / working["median_volume_20"].replace(0, pd.NA)
-    working["vol_rel60"] = working["volume"] / working["median_volume_60"].replace(0, pd.NA)
+    working["vol_rel20"] = working["volume"] / working["median_volume_20"].replace(0, np.nan)
+    working["vol_rel60"] = working["volume"] / working["median_volume_60"].replace(0, np.nan)
     working["turnover_rel20"] = working["turnover_effective"] / working[
         "median_turnover_20"
-    ].replace(0, pd.NA)
+    ].replace(0, np.nan)
     working["avg_volume_prev5"] = group["volume"].transform(
         lambda series: series.shift(1).rolling(5, min_periods=5).mean()
     )
@@ -170,9 +170,9 @@ def _compute_symbol_features(history: pd.DataFrame, *, as_of_date: date) -> pd.D
         )
     ) / log_volume.groupby(working["symbol"]).transform(
         lambda series: series.rolling(20, min_periods=20).std(ddof=0)
-    ).replace(0, pd.NA)
+    ).replace(0, np.nan)
 
-    candle_range = (working["high"] - working["low"]).replace(0, pd.NA)
+    candle_range = (working["high"] - working["low"]).replace(0, np.nan)
     working["close_loc"] = ((working["close"] - working["low"]) / candle_range).fillna(0.5)
     working["upper_wick_ratio"] = (
         (working["high"] - working[["open", "close"]].max(axis=1)) / candle_range
@@ -199,12 +199,12 @@ def _compute_symbol_features(history: pd.DataFrame, *, as_of_date: date) -> pd.D
     )
     working["drawdown_from_high_10"] = working["close"] / working["high_10"] - 1.0
     working["box_width_20"] = (
-        working["high_20_prev"] / working["low_20_prev"].replace(0, pd.NA) - 1.0
+        working["high_20_prev"] / working["low_20_prev"].replace(0, np.nan) - 1.0
     )
 
     bb_mid = working["ma20"]
     bb_std = group["close"].transform(lambda series: series.rolling(20, min_periods=20).std(ddof=0))
-    working["bb_width"] = (4.0 * bb_std) / bb_mid.replace(0, pd.NA)
+    working["bb_width"] = (4.0 * bb_std) / bb_mid.replace(0, np.nan)
     working["bb_width_rank_120"] = group["bb_width"].transform(
         lambda series: _rolling_percentile_of_last(series, 120)
     )
@@ -221,7 +221,7 @@ def _compute_symbol_features(history: pd.DataFrame, *, as_of_date: date) -> pd.D
     working["atr14"] = true_range.groupby(working["symbol"]).transform(
         lambda series: series.rolling(14, min_periods=14).mean()
     )
-    working["atr_pct"] = working["atr14"] / working["close"].replace(0, pd.NA)
+    working["atr_pct"] = working["atr14"] / working["close"].replace(0, np.nan)
     working["rsi14"] = group["close"].transform(lambda series: _rsi(series, 14))
     working["rsi5"] = group["close"].transform(lambda series: _rsi(series, 5))
     working["consecutive_up_days"] = group["close"].transform(_count_consecutive_up)
@@ -543,14 +543,14 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         "resistance_60"
     ]
     scored["risk_distance"] = (
-        scored["close"] / _safe_numeric(scored["risk_line"]).replace(0, pd.NA) - 1.0
+        scored["close"] / _safe_numeric(scored["risk_line"]).replace(0, np.nan) - 1.0
     )
     scored["upside_to_resistance"] = (
-        scored["resistance_line"] / scored["close"].replace(0, pd.NA) - 1.0
+        scored["resistance_line"] / scored["close"].replace(0, np.nan) - 1.0
     )
     scored["reward_risk_ratio"] = scored["upside_to_resistance"] / scored[
         "risk_distance"
-    ].replace(0, pd.NA)
+    ].replace(0, np.nan)
 
     risk_reward_pass = scored["risk_distance"].le(0.05) & scored["reward_risk_ratio"].ge(1.5)
     scored["swing_common_pass"] = common_pass
