@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.selection.engine_v2 import _load_predictions
 from app.selection.swing_3_5d import SWING_3_5D_VERSION, build_swing_3_5d_frame
 from app.settings import load_settings
 from app.storage.bootstrap import bootstrap_core_tables
@@ -87,21 +88,8 @@ def _load_prediction_frame(
     *,
     as_of_date: date,
 ) -> pd.DataFrame:
-    frame = connection.execute(
-        """
-        SELECT *
-        FROM fact_prediction
-        WHERE as_of_date = ?
-          AND horizon = ?
-        QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY symbol
-            ORDER BY created_at DESC NULLS LAST, run_id DESC
-        ) = 1
-        """,
-        [as_of_date, HORIZON],
-    ).fetchdf()
+    frame = _load_predictions(connection, as_of_date=as_of_date, horizon=HORIZON)
     if not frame.empty:
-        frame["as_of_date"] = pd.to_datetime(frame["as_of_date"]).dt.date
         frame["symbol"] = frame["symbol"].astype(str).str.zfill(6)
     return frame
 
