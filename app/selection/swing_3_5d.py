@@ -1117,8 +1117,8 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         scored["ml_probability_target_first"]
     ).fillna(0.55).clip(0.0, 1.0)
     scored["ml_probability_score"] = (
-        (scored["ml_probability_target_first"] - 0.40).div(0.30).mul(100.0)
-    ).clip(0.0, 100.0)
+        scored["ml_probability_target_first"].mul(100.0).clip(0.0, 100.0)
+    )
     scored["sector_score_scaled"] = scored["swing_regime_score"].div(10.0).mul(100.0)
     scored["market_regime_score_scaled"] = (
         scored["market_regime"]
