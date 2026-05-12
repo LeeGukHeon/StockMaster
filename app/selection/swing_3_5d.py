@@ -66,6 +66,13 @@ def _clip_score(series: pd.Series, maximum: float) -> pd.Series:
     return _safe_numeric(series).fillna(0.0).clip(lower=0.0, upper=float(maximum))
 
 
+def _bool_column(frame: pd.DataFrame, column: str, *, default: bool = False) -> pd.Series:
+    values = frame.get(column)
+    if values is None:
+        return pd.Series(default, index=frame.index, dtype=bool)
+    return values.astype("boolean").fillna(default).astype(bool)
+
+
 def _rsi(close: pd.Series, window: int) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0.0).rolling(window, min_periods=window).mean()
@@ -431,8 +438,10 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         & scored["avg_volume_20"].ge(config.avg_volume_20_min)
     )
     financial_pass = _financial_pass(scored)
-    market_risk_pass = ~scored.get("is_management_issue", False).fillna(False).astype(bool)
+    market_risk_pass = ~_bool_column(scored, "is_management_issue")
     history_pass = scored["history_days"].ge(config.min_history_days)
+    volume_dry_up_then_expand = _bool_column(scored, "volume_dry_up_then_expand")
+    ma5_cross_ma20_up = _bool_column(scored, "ma5_cross_ma20_up")
 
     heavy_down_volume = (
         scored["close"].lt(scored["open"])
@@ -477,7 +486,7 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         & scored["close"].gt(scored["ma5"])
         & scored["rsi14"].between(45, 65, inclusive="both")
         & scored["drawdown_from_high_10"].between(-0.12, -0.03, inclusive="both")
-        & scored["volume_dry_up_then_expand"].fillna(False).astype(bool)
+        & volume_dry_up_then_expand
         & scored["vol_rel20"].between(1.2, 2.5, inclusive="both")
         & scored["turnover_rel20"].ge(1.2)
         & scored["vol_z20"].ge(0.5)
@@ -503,7 +512,7 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
     )
     reversal = (
         scored["close"].gt(scored["ma20"])
-        & scored["ma5_cross_ma20_up"].fillna(False).astype(bool)
+        & ma5_cross_ma20_up
         & scored["ma20_slope_5"].gt(-0.003)
         & scored["vol_rel20"].between(1.5, 3.5, inclusive="both")
         & scored["rsi14"].between(40, 60, inclusive="both")
@@ -577,7 +586,7 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         scored["vol_rel20"].between(1.3, 3.5, inclusive="both").astype(float).mul(6)
         + scored["vol_rel20"].between(1.1, 1.3, inclusive="left").astype(float).mul(3)
         + scored["turnover_rel20"].ge(1.3).astype(float).mul(4)
-        + scored["volume_dry_up_then_expand"].fillna(False).astype(float).mul(5)
+        + volume_dry_up_then_expand.astype(float).mul(5)
         + scored["vol_z20"].between(0.8, 2.8, inclusive="both").astype(float).mul(3)
         + (scored["close"].gt(scored["open"]) & scored["vol_rel20"].ge(1.3)).astype(float).mul(2)
         - (scored["vol_rel20"].gt(4.0) & scored["ret1"].gt(0.08)).astype(float).mul(5)
