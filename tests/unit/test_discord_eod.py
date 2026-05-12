@@ -90,6 +90,35 @@ def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> Non
     assert "메인 후보는 5거래일 보유 기준(D+5) 중심" in content
 
 
+def test_build_payload_content_renders_industry_code_not_broad_sector() -> None:
+    content = _build_payload_content(
+        as_of_date=date(2026, 3, 20),
+        sector_horizon=5,
+        candidate_horizon=5,
+        market_pulse={},
+        alpha_promotion=pd.DataFrame(),
+        selection_gap=pd.DataFrame(),
+        sector_outlook=pd.DataFrame(
+            [
+                {
+                    "outlook_label": "전기전자/반도체",
+                    "outlook_group_key": "0013",
+                    "outlook_group_type": "industry",
+                    "broad_sector": "제조/산업재",
+                    "top10_count": 2,
+                    "avg_expected_excess_return": 0.012,
+                    "sample_symbols": "삼성전자, SK하이닉스",
+                }
+            ]
+        ),
+        single_buy_candidates=pd.DataFrame(),
+        market_news=pd.DataFrame(),
+    )
+
+    assert "전기전자/반도체 (산업코드 0013)" in content
+    assert "제조/산업재" not in content
+
+
 def test_build_payload_content_marks_d5_section_as_observation_when_no_actionable_pick() -> None:
     content = _build_payload_content(
         as_of_date=date(2026, 4, 27),

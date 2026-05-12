@@ -839,10 +839,19 @@ def _format_pick_block(
 
 
 def _format_sector_outlook_line(row: pd.Series, *, rank: int) -> str:
-    broad_sector = row.get("broad_sector") or "-"
+    group_key = row.get("outlook_group_key")
+    group_type = row.get("outlook_group_type")
+    group_label = row.get("outlook_label")
+    group_basis = ""
+    if pd.notna(group_key) and str(group_key).strip():
+        key_text = str(group_key).strip()
+        label_text = "" if pd.isna(group_label) else str(group_label).strip()
+        if key_text != label_text:
+            prefix = "산업코드" if str(group_type).strip() == "industry" else "섹터코드"
+            group_basis = f" ({prefix} {key_text})"
     examples = row.get("sample_symbols") or "-"
     return (
-        f"{rank}. {row['outlook_label']} ({broad_sector})"
+        f"{rank}. {row['outlook_label']}{group_basis}"
         f" | 상위 10위 내 {int(row['top10_count'] or 0)}종목"
         f" | 평균 기대 초과수익 {_pct_text(row.get('avg_expected_excess_return'))}"
         f" | 대표 종목 {examples}"

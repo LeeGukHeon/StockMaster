@@ -63,7 +63,6 @@ def sector_outlook_frame(
         label_column="outlook_label",
         type_column="outlook_group_type",
     )
-    ranked["broad_sector"] = ranked["sector"].combine_first(ranked["industry"])
     ranked = ranked.loc[ranked["outlook_label"].notna()].copy()
     ranked = ranked.loc[~ranked["outlook_label"].isin(GENERIC_OUTLOOK_LABELS)].copy()
     if ranked.empty:
@@ -71,7 +70,12 @@ def sector_outlook_frame(
 
     grouped = (
         ranked.groupby(
-            ["selection_date", "outlook_group_key", "outlook_label", "broad_sector"],
+            [
+                "selection_date",
+                "outlook_group_key",
+                "outlook_label",
+                "outlook_group_type",
+            ],
             dropna=False,
         )
         .agg(
