@@ -10,7 +10,98 @@ from app.reports.discord_eod import (
     _build_payload_content,
     _format_alpha_promotion_line,
     _format_pick_block,
+    build_swing_gate_diagnostics,
+    format_swing_gate_diagnostics_lines,
 )
+
+
+def _swing_row(
+    *,
+    symbol: str,
+    risk_flags: list[str] | None = None,
+    eligible: bool = False,
+    recommendation_pass: bool = False,
+    final_status: str = "WATCHLIST",
+    entry_status: str = "BUYABLE",
+    pattern: str | None = None,
+    risk_distance: float = 0.03,
+    reward_risk_ratio: float = 2.0,
+    rule_score: float = 72.0,
+    ml_probability: float = 0.56,
+    hybrid_score: float = 73.0,
+) -> dict[str, object]:
+    return {
+        "horizon": 5,
+        "symbol": symbol,
+        "eligible_flag": eligible,
+        "risk_flags_json": json.dumps(risk_flags or [], ensure_ascii=False),
+        "explanatory_score_json": json.dumps(
+            {
+                "swing_3_5d": {
+                    "recommendation_pass": recommendation_pass,
+                    "final_status": final_status,
+                    "entry_status": entry_status,
+                    "pattern": pattern,
+                    "risk_distance": risk_distance,
+                    "reward_risk_ratio": reward_risk_ratio,
+                    "rule_score": rule_score,
+                    "ml_probability_target_first": ml_probability,
+                    "hybrid_score": hybrid_score,
+                }
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+
+def test_build_swing_gate_diagnostics_counts_and_translates_filters() -> None:
+    diagnostics = build_swing_gate_diagnostics(
+        pd.DataFrame(
+            [
+                _swing_row(
+                    symbol="000001",
+                    eligible=True,
+                    recommendation_pass=True,
+                    final_status="CANDIDATE",
+                    pattern="pullback",
+                ),
+                _swing_row(
+                    symbol="000002",
+                    risk_flags=["swing_common_filter_failed"],
+                    final_status="REJECTED",
+                    pattern=None,
+                    rule_score=65.0,
+                    hybrid_score=66.0,
+                ),
+                _swing_row(
+                    symbol="000003",
+                    final_status="WATCH_CAUTION",
+                    entry_status="WATCH_CAUTION",
+                    pattern="recovery_breakout",
+                    risk_distance=0.07,
+                    reward_risk_ratio=0.8,
+                    ml_probability=0.49,
+                ),
+            ]
+        )
+    )
+
+    counts = {item["key"]: item["pass_count"] for item in diagnostics["gates"]}
+    assert diagnostics["total_rows"] == 3
+    assert diagnostics["recommendation_pass_count"] == 1
+    assert counts["common_not_rejected"] == 2
+    assert counts["pattern_present"] == 2
+    assert counts["risk_distance_le_5pct"] == 2
+    assert counts["rr_ge_1_5"] == 2
+    assert counts["ml_ge_0_50"] == 2
+    assert counts["entry_buyable"] == 2
+
+    rendered = "\n".join(format_swing_gate_diagnostics_lines(diagnostics))
+    assert "공통 제외 필터: 2/3" in rendered
+    assert "관리/거래정지/유동성/재무/과열" in rendered
+    assert "유효 스윙 패턴: 2/3" in rendered
+    assert "누적 하드게이트" in rendered
+
 
 
 def test_format_alpha_promotion_line_uses_korean_labels() -> None:
@@ -67,6 +158,51 @@ def test_build_payload_content_labels_candidate_horizon_explicitly() -> None:
     assert "기대수익은 보장값이 아니라" in content
     assert "**모델/선택 점검**" not in content
     assert "공식 추천안" not in content
+
+
+def test_build_payload_content_includes_v3_no_recommendation_gate_diagnostics() -> None:
+    diagnostics = build_swing_gate_diagnostics(
+        pd.DataFrame(
+            [
+                _swing_row(
+                    symbol="000001",
+                    final_status="WATCHLIST",
+                    pattern=None,
+                    rule_score=72.0,
+                    ml_probability=0.65,
+                    hybrid_score=74.0,
+                ),
+                _swing_row(
+                    symbol="000002",
+                    risk_flags=["swing_common_filter_failed"],
+                    final_status="REJECTED",
+                    pattern=None,
+                    rule_score=60.0,
+                    ml_probability=0.45,
+                    hybrid_score=62.0,
+                ),
+            ]
+        )
+    )
+
+    content = _build_payload_content(
+        as_of_date=date(2026, 5, 12),
+        sector_horizon=5,
+        candidate_horizon=5,
+        market_pulse={},
+        alpha_promotion=pd.DataFrame(),
+        selection_gap=pd.DataFrame(),
+        sector_outlook=pd.DataFrame(),
+        single_buy_candidates=pd.DataFrame(),
+        market_news=pd.DataFrame(),
+        swing_gate_diagnostics=diagnostics,
+    )
+
+    assert "H5 v3 2개 중 최종 추천 통과 0개" in content
+    assert "공통 제외 필터: 1/2" in content
+    assert "유효 스윙 패턴: 0/2" in content
+    assert "entry_policy 매수 가능" in content
+    assert "누적 하드게이트" in content
 
 
 def test_build_payload_content_labels_d5_as_primary_and_d1_as_reference() -> None:

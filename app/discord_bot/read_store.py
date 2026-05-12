@@ -39,6 +39,8 @@ from app.reports.discord_eod import (
     MODEL_SPEC_LABELS,
     REASON_LABELS,
     RISK_LABELS,
+    build_swing_gate_diagnostics,
+    format_swing_gate_diagnostics_lines,
 )
 from app.settings import Settings
 from app.storage.metadata_postgres import (
@@ -60,6 +62,7 @@ BOT_SNAPSHOT_TYPES = (
     "weekly_report",
     "stock_summary",
     "stock_valuation",
+    "recommendation_diagnostics",
 )
 
 
@@ -506,6 +509,42 @@ def _limit_d5_sector_concentration(frame: pd.DataFrame, *, limit: int) -> pd.Dat
             if len(selected_indices) >= int(limit):
                 break
     return frame.loc[selected_indices].head(int(limit)).copy()
+
+
+def _build_recommendation_diagnostic_rows(
+    frame: pd.DataFrame,
+    *,
+    horizon: int,
+    built_at: str,
+    as_of_date: str | None,
+    source_run_id: str,
+) -> list[dict[str, object]]:
+    if int(horizon) != 5:
+        return []
+    diagnostics = build_swing_gate_diagnostics(frame)
+    if int(diagnostics.get("total_rows") or 0) <= 0:
+        return []
+    summary = "\n".join(
+        format_swing_gate_diagnostics_lines(
+            diagnostics,
+            include_descriptions=True,
+        )
+    )
+    return [
+        _snapshot_row(
+            snapshot_type="recommendation_diagnostics",
+            snapshot_key="h5_v3_gate_summary",
+            built_at=built_at,
+            as_of_date=as_of_date,
+            horizon=int(horizon),
+            sort_order=1,
+            title="H5 v3 미추천 사유",
+            subtitle="5거래일 보유 기준",
+            summary=summary,
+            payload=diagnostics,
+            source_run_id=source_run_id,
+        )
+    ]
 
 
 def _build_weekly_rows(
@@ -1200,6 +1239,15 @@ def materialize_discord_bot_read_store(
                 score_evidence=score_evidence_by_horizon.get(int(horizon)),
             )
         )
+    rows.extend(
+        _build_recommendation_diagnostic_rows(
+            leaderboard,
+            horizon=5,
+            built_at=built_at_text,
+            as_of_date=target_as_of_date_text,
+            source_run_id=job_run_id,
+        )
+    )
     rows.extend(
         _build_weekly_rows(
             alpha_promotion=alpha_promotion,

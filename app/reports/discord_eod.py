@@ -48,6 +48,44 @@ DISCORD_EOD_MIN_REFERENCE_SCORE = 55.0
 ACTIONABLE_JUDGEMENT_LABELS = {"매수검토", "매수해볼 가치 있음"}
 
 
+SWING_GATE_ORDER = (
+    "common_not_rejected",
+    "pattern_present",
+    "risk_distance_le_5pct",
+    "rr_ge_1_5",
+    "rule_ge_70",
+    "ml_ge_0_50",
+    "entry_buyable",
+    "hybrid_ge_70",
+)
+
+SWING_GATE_LABELS = {
+    "common_not_rejected": "공통 제외 필터",
+    "pattern_present": "유효 스윙 패턴",
+    "risk_distance_le_5pct": "손절폭 5% 이하",
+    "rr_ge_1_5": "손익비 1.5 이상",
+    "rule_ge_70": "룰 점수 70 이상",
+    "ml_ge_0_50": "ML 목표확률 50% 이상",
+    "entry_buyable": "entry_policy 매수 가능",
+    "hybrid_ge_70": "최종 v3 점수 70 이상",
+}
+
+SWING_GATE_DESCRIPTIONS = {
+    "common_not_rejected": (
+        "관리/거래정지/유동성/재무/과열/윗꼬리/급락 거래량 등 기본 제외 조건을 피했는지"
+    ),
+    "pattern_present": "20일선 눌림, 박스 돌파, 회복형 돌파, 역배열 개선 중 하나가 잡혔는지",
+    "risk_distance_le_5pct": "현재 기준가에서 신호 무효·손절선까지 하락 여지가 5% 이내인지",
+    "rr_ge_1_5": "1차 목표까지 기대보상이 손절위험의 1.5배 이상인지",
+    "rule_ge_70": "차트·거래량·과열방지·상대강도·손익비·캔들·재무 룰 점수가 70점 이상인지",
+    "ml_ge_0_50": "ML이 5거래일 안에 목표가가 손절보다 먼저 나올 확률을 50% 이상으로 봤는지",
+    "entry_buyable": (
+        "종가 기준 현재 가격이 max_buy_price 이하라 다음 거래일 조건부 진입 가능권인지"
+    ),
+    "hybrid_ge_70": "룰 점수, ML 확률, 시장/섹터, 유동성을 합친 최종 v3 점수가 70점 이상인지",
+}
+
+
 def _is_d5_cash_path_model(value: object) -> bool:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return False
@@ -598,6 +636,231 @@ def _swing_3_5d_payload(row: pd.Series) -> dict[str, object] | None:
     return swing_payload if isinstance(swing_payload, dict) and swing_payload else None
 
 
+def _payload_float(payload: dict[str, object], key: str) -> float | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if pd.notna(number) else None
+
+
+def _swing_gate_flags(row: pd.Series) -> dict[str, bool] | None:
+    payload = _swing_3_5d_payload(row)
+    if not payload:
+        return None
+    risk_flags = set(_raw_tag_list(row.get("risk_flags_json")))
+    final_status = str(payload.get("final_status") or "")
+    pattern = payload.get("pattern")
+    risk_distance = _payload_float(payload, "risk_distance")
+    reward_risk = _payload_float(payload, "reward_risk_ratio")
+    rule_score = _payload_float(payload, "rule_score")
+    ml_probability = _payload_float(payload, "ml_probability_target_first")
+    hybrid_score = _payload_float(payload, "hybrid_score")
+    entry_status = str(payload.get("entry_status") or "")
+    return {
+        "common_not_rejected": (
+            "swing_common_filter_failed" not in risk_flags and final_status != "REJECTED"
+        ),
+        "pattern_present": pattern is not None and str(pattern).strip() not in {"", "nan", "None"},
+        "risk_distance_le_5pct": risk_distance is not None and risk_distance <= 0.05,
+        "rr_ge_1_5": reward_risk is not None and reward_risk >= 1.5,
+        "rule_ge_70": rule_score is not None and rule_score >= 70.0,
+        "ml_ge_0_50": ml_probability is not None and ml_probability >= 0.50,
+        "entry_buyable": entry_status == "BUYABLE",
+        "hybrid_ge_70": hybrid_score is not None and hybrid_score >= 70.0,
+    }
+
+
+def build_swing_gate_diagnostics(frame: pd.DataFrame) -> dict[str, object]:
+    """Summarize why the v3 H5 swing surface produced no final recommendation."""
+
+    if frame.empty:
+        return {
+            "total_rows": 0,
+            "payload_rows": 0,
+            "recommendation_pass_count": 0,
+            "eligible_count": 0,
+            "gates": [],
+            "cumulative": [],
+        }
+
+    working = frame.copy()
+    if "horizon" in working.columns:
+        working = working.loc[pd.to_numeric(working["horizon"], errors="coerce") == 5].copy()
+    if working.empty:
+        return {
+            "total_rows": 0,
+            "payload_rows": 0,
+            "recommendation_pass_count": 0,
+            "eligible_count": 0,
+            "gates": [],
+            "cumulative": [],
+        }
+
+    payloads = working.apply(_swing_3_5d_payload, axis=1)
+    payload_mask = payloads.apply(bool)
+    working = working.loc[payload_mask].copy()
+    payloads = payloads.loc[payload_mask]
+    total = int(len(working))
+    if total == 0:
+        return {
+            "total_rows": 0,
+            "payload_rows": 0,
+            "recommendation_pass_count": 0,
+            "eligible_count": 0,
+            "gates": [],
+            "cumulative": [],
+        }
+
+    gate_flags = working.apply(_swing_gate_flags, axis=1)
+    flag_rows = [flags for flags in gate_flags.tolist() if isinstance(flags, dict)]
+    gate_rows = [
+        {
+            "key": key,
+            "label": SWING_GATE_LABELS[key],
+            "description": SWING_GATE_DESCRIPTIONS[key],
+            "pass_count": int(sum(1 for flags in flag_rows if flags.get(key, False))),
+            "total_count": total,
+        }
+        for key in SWING_GATE_ORDER
+    ]
+
+    remaining = list(flag_rows)
+    cumulative: list[dict[str, object]] = []
+    for key in SWING_GATE_ORDER:
+        remaining = [flags for flags in remaining if flags.get(key, False)]
+        cumulative.append(
+            {
+                "key": key,
+                "label": SWING_GATE_LABELS[key],
+                "pass_count": int(len(remaining)),
+                "total_count": total,
+            }
+        )
+
+    recommendation_pass_count = int(
+        sum(1 for payload in payloads if bool(payload.get("recommendation_pass", False)))
+    )
+    eligible_count = (
+        int(working["eligible_flag"].fillna(False).astype(bool).sum())
+        if "eligible_flag" in working.columns
+        else recommendation_pass_count
+    )
+    final_status_counts = (
+        pd.Series([str(payload.get("final_status") or "UNKNOWN") for payload in payloads])
+        .value_counts()
+        .to_dict()
+    )
+    entry_status_counts = (
+        pd.Series([str(payload.get("entry_status") or "UNKNOWN") for payload in payloads])
+        .value_counts()
+        .to_dict()
+    )
+    failed_gate_counts = {
+        key: int(total - row["pass_count"])
+        for key, row in zip(SWING_GATE_ORDER, gate_rows, strict=False)
+    }
+    top_failed = sorted(
+        (
+            {
+                "key": key,
+                "label": SWING_GATE_LABELS[key],
+                "fail_count": count,
+                "total_count": total,
+            }
+            for key, count in failed_gate_counts.items()
+        ),
+        key=lambda item: int(item["fail_count"]),
+        reverse=True,
+    )
+
+    return {
+        "total_rows": total,
+        "payload_rows": total,
+        "recommendation_pass_count": recommendation_pass_count,
+        "eligible_count": eligible_count,
+        "gates": gate_rows,
+        "cumulative": cumulative,
+        "top_failed_gates": top_failed,
+        "final_status_counts": final_status_counts,
+        "entry_status_counts": entry_status_counts,
+    }
+
+
+def _gate_count_text(pass_count: object, total_count: object) -> str:
+    return f"{int(pass_count):,}/{int(total_count):,}"
+
+
+def format_swing_gate_diagnostics_lines(
+    diagnostics: dict[str, object] | None,
+    *,
+    include_descriptions: bool = True,
+) -> list[str]:
+    if not diagnostics or int(diagnostics.get("total_rows") or 0) <= 0:
+        return []
+    total = int(diagnostics.get("total_rows") or 0)
+    recommendation_pass = int(diagnostics.get("recommendation_pass_count") or 0)
+    top_failed = diagnostics.get("top_failed_gates") or []
+    if isinstance(top_failed, list) and top_failed:
+        bottleneck = str(top_failed[0].get("label", "하드게이트"))
+    else:
+        bottleneck = "하드게이트"
+    lines = [
+        (
+            f"- 미추천 사유: H5 v3 {total:,}개 중 최종 추천 통과 "
+            f"{recommendation_pass:,}개입니다. 가장 큰 병목은 {bottleneck}입니다."
+        )
+    ]
+    gates = [item for item in diagnostics.get("gates", []) if isinstance(item, dict)]
+    if gates:
+        lines.append("- 필터별 개별 통과 수:")
+        for item in gates:
+            label = str(item.get("label"))
+            count_text = _gate_count_text(item.get("pass_count", 0), item.get("total_count", total))
+            if include_descriptions:
+                lines.append(f"  · {label}: {count_text} — {item.get('description')}")
+            else:
+                lines.append(f"  · {label}: {count_text}")
+    cumulative = [item for item in diagnostics.get("cumulative", []) if isinstance(item, dict)]
+    if cumulative:
+        parts = [
+            (
+                f"{item.get('label')} "
+                f"{_gate_count_text(item.get('pass_count', 0), item.get('total_count', total))}"
+            )
+            for item in cumulative
+        ]
+        lines.append("- 누적 하드게이트: " + " → ".join(parts))
+    return lines
+
+
+def _load_swing_gate_diagnostics(
+    connection,
+    *,
+    as_of_date: date,
+    horizon: int = DISCORD_EOD_CANDIDATE_HORIZON,
+) -> dict[str, object]:
+    frame = connection.execute(
+        """
+        SELECT
+            horizon,
+            eligible_flag,
+            final_selection_value,
+            risk_flags_json,
+            explanatory_score_json
+        FROM fact_ranking
+        WHERE as_of_date = ?
+          AND ranking_version = ?
+          AND horizon = ?
+        """,
+        [as_of_date, SELECTION_ENGINE_V2_VERSION, int(horizon)],
+    ).fetchdf()
+    return build_swing_gate_diagnostics(frame)
+
+
 def _translate_tags(raw_value: object, mapping: dict[str, str], *, limit: int = 2) -> str:
     labels = [mapping.get(item, item) for item in _raw_tag_list(raw_value)[:limit]]
     return ", ".join(labels) if labels else "-"
@@ -1006,6 +1269,7 @@ def _build_payload_content(
     reference_horizon: int | None = None,
     reference_candidates: pd.DataFrame | None = None,
     score_evidence_by_horizon: dict[int, dict[str, ScoreBandEvidence]] | None = None,
+    swing_gate_diagnostics: dict[str, object] | None = None,
 ) -> str:
     sector_basis = _horizon_hold_basis_label(sector_horizon)
     candidate_basis = _horizon_hold_basis_label(candidate_horizon)
@@ -1080,6 +1344,12 @@ def _build_payload_content(
             lines.append(
                 "- 오늘은 v3 하드필터(룰·목표확률·entry_policy·손익비)를 "
                 "통과한 H5 스윙 후보가 없습니다."
+            )
+            lines.extend(
+                format_swing_gate_diagnostics_lines(
+                    swing_gate_diagnostics,
+                    include_descriptions=True,
+                )
             )
         else:
             lines.append("- 상위 후보가 아직 없습니다.")
@@ -1238,6 +1508,11 @@ def render_discord_eod_report(
                     horizon=DISCORD_EOD_CANDIDATE_HORIZON,
                     limit=top_limit,
                 )
+                swing_gate_diagnostics = _load_swing_gate_diagnostics(
+                    connection,
+                    as_of_date=as_of_date,
+                    horizon=DISCORD_EOD_CANDIDATE_HORIZON,
+                )
                 reference_candidates = (
                     _load_top_selection_rows(
                         connection,
@@ -1279,6 +1554,7 @@ def render_discord_eod_report(
                     reference_candidates=reference_candidates,
                     market_news=market_news,
                     score_evidence_by_horizon=score_evidence_by_horizon,
+                    swing_gate_diagnostics=swing_gate_diagnostics,
                 )
                 messages = _build_payload_messages(
                     username=settings.discord.username,

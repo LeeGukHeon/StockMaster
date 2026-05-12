@@ -248,6 +248,13 @@ def build_discord_bot(settings: Settings):
             horizon=int(basis.value),
             limit=int(count),
         )
+        if rows.empty and int(basis.value) == 5:
+            rows = fetch_discord_bot_snapshot_rows(
+                settings,
+                snapshot_type="recommendation_diagnostics",
+                horizon=5,
+                limit=1,
+            )
         message = _render_snapshot_list(
             f"내일 종목 추천 · {basis.name}",
             rows,

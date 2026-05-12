@@ -647,3 +647,48 @@ def test_build_stock_summary_rows_uses_swing_payload_for_h5_candidate_label() ->
     assert payload["d5_report_candidate_flag"] is True
     assert payload["d5_display_rank"] == 1
     assert payload["d5_swing_3_5d"]["recommendation_pass"] is True
+
+
+def test_build_recommendation_diagnostic_rows_explains_empty_h5_v3() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "horizon": 5,
+                "symbol": "000001",
+                "eligible_flag": False,
+                "risk_flags_json": json.dumps([]),
+                "explanatory_score_json": json.dumps(
+                    {
+                        "swing_3_5d": {
+                            "recommendation_pass": False,
+                            "final_status": "WATCHLIST",
+                            "entry_status": "BUYABLE",
+                            "pattern": None,
+                            "risk_distance": 0.03,
+                            "reward_risk_ratio": 2.0,
+                            "rule_score": 72.0,
+                            "ml_probability_target_first": 0.6,
+                            "hybrid_score": 73.0,
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        ]
+    )
+
+    rows = read_store._build_recommendation_diagnostic_rows(
+        frame,
+        horizon=5,
+        built_at="2026-05-12T21:00:00+09:00",
+        as_of_date="2026-05-12",
+        source_run_id="run-test",
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["snapshot_type"] == "recommendation_diagnostics"
+    assert rows[0]["horizon"] == 5
+    assert "유효 스윙 패턴: 0/1" in rows[0]["summary"]
+    assert "미추천 사유" in rows[0]["summary"]
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["total_rows"] == 1
