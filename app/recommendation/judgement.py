@@ -142,6 +142,8 @@ def classify_swing_3_5d_recommendation(
     reward_risk = _float_or_none(swing_payload.get("reward_risk_ratio"))
     recommendation_pass = bool(swing_payload.get("recommendation_pass", False))
     candidate_pass = bool(swing_payload.get("candidate_pass", False))
+    final_status = str(swing_payload.get("final_status") or "").upper()
+    entry_status = str(swing_payload.get("entry_status") or "").upper()
     risks = {str(flag) for flag in (risk_flags or [])}
     has_severe_risk = bool(risks & SEVERE_RISK_FLAGS)
     band = score_band_for_value(score)
@@ -160,7 +162,35 @@ def classify_swing_3_5d_recommendation(
             score_band=band,
             evidence=None,
         )
+    if final_status in {"INVALIDATED", "REJECTED"} or entry_status == "INVALIDATED":
+        return RecommendationJudgement(
+            label="매수 보류",
+            summary="3~5D 기준선 이탈 또는 하드 필터 미통과",
+            score_band=band,
+            evidence=None,
+        )
+    if final_status in {"EXTENDED", "TARGET_ZONE_REACHED"}:
+        return RecommendationJudgement(
+            label="관찰 우선",
+            summary="3~5D 목표권 도달 가능성·신규 진입 보류",
+            score_band=band,
+            evidence=None,
+        )
+    if final_status == "CHASE_RISK" or entry_status == "CHASE_RISK":
+        return RecommendationJudgement(
+            label="관찰 우선",
+            summary="신호 이후 상승폭 커 눌림 대기 우선",
+            score_band=band,
+            evidence=None,
+        )
     if recommendation_pass:
+        if final_status == "CANDIDATE":
+            return RecommendationJudgement(
+                label="매수검토",
+                summary="3~5D v2 조건 통과·분할 접근 검토",
+                score_band=band,
+                evidence=None,
+            )
         strong_score = score >= SWING_3_5D_STRONG_SCORE
         strong_rule = rule_score is None or rule_score >= SWING_3_5D_STRONG_RULE_SCORE
         strong_reward = (
@@ -169,13 +199,13 @@ def classify_swing_3_5d_recommendation(
         if strong_score and strong_rule and strong_reward:
             return RecommendationJudgement(
                 label="매수해볼 가치 있음",
-                summary="3~5D 스윙 강한 조건 통과·분할 접근",
+                summary="3~5D v2 고신뢰 조건 통과·분할 접근",
                 score_band=band,
                 evidence=None,
             )
         return RecommendationJudgement(
             label="매수검토",
-            summary="3~5D 스윙 조건 통과·분할 접근 검토",
+            summary="3~5D v2 조건 통과·분할 접근 검토",
             score_band=band,
             evidence=None,
         )

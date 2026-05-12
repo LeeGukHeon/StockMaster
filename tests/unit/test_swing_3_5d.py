@@ -24,19 +24,19 @@ def test_swing_feature_scoring_finds_box_breakout_candidate() -> None:
                 "market": "KOSPI",
                 "open": 10_200.0,
                 "high": 10_900.0,
-                "low": 10_000.0,
+                "low": 10_600.0,
                 "close": 10_800.0,
-                "ma5": 10_150.0,
+                "ma5": 10_650.0,
                 "ma5_prev": 10_000.0,
-                "ma20": 10_000.0,
-                "ma20_prev": 9_950.0,
+                "ma20": 10_500.0,
+                "ma20_prev": 10_250.0,
                 "ma5_cross_ma20_up": False,
                 "ma60": 9_850.0,
                 "ma120": 9_700.0,
                 "ma20_slope_5": 0.01,
                 "ma60_slope_20": 0.002,
                 "ma120_slope_20": 0.001,
-                "dist_ma20": 0.08,
+                "dist_ma20": 0.028,
                 "dist_ma60": 0.096,
                 "ret1": 0.04,
                 "ret5": 0.09,
@@ -58,7 +58,7 @@ def test_swing_feature_scoring_finds_box_breakout_candidate() -> None:
                 "resistance_60": 12_000.0,
                 "drawdown_from_high_10": -0.009,
                 "box_width_20": 0.126,
-                "ma_compression_5_20_60": 0.028,
+                "ma_compression_5_20_60": 0.074,
                 "bb_width_rank_120": 0.30,
                 "rsi14": 62.0,
                 "rsi5": 70.0,
@@ -109,15 +109,15 @@ def test_pullback_pattern_does_not_require_prior_volume_dry_up() -> None:
                 "close": 50_000.0,
                 "ma5": 48_500.0,
                 "ma5_prev": 48_000.0,
-                "ma20": 48_200.0,
-                "ma20_prev": 47_500.0,
+                "ma20": 48_600.0,
+                "ma20_prev": 47_900.0,
                 "ma5_cross_ma20_up": False,
                 "ma60": 43_500.0,
                 "ma120": 41_000.0,
                 "ma20_slope_5": 0.03,
                 "ma60_slope_20": 0.08,
                 "ma120_slope_20": 0.02,
-                "dist_ma20": 0.037,
+                "dist_ma20": 0.029,
                 "dist_ma60": 0.149,
                 "ret1": 0.03,
                 "ret5": 0.07,
@@ -173,6 +173,170 @@ def test_pullback_pattern_does_not_require_prior_volume_dry_up() -> None:
     assert row["swing_pattern"] == "pullback"
     assert bool(row["swing_candidate_pass"])
     assert bool(row["swing_recommendation_pass"])
+
+
+def test_recovery_breakout_uses_v2_ml_entry_revalidation() -> None:
+    features = pd.DataFrame(
+        [
+            {
+                "symbol": "000004",
+                "company_name": "회복돌파",
+                "market": "KOSPI",
+                "open": 10_200.0,
+                "high": 10_950.0,
+                "low": 10_650.0,
+                "close": 10_900.0,
+                "current_price": 11_460.0,
+                "ma5": 10_700.0,
+                "ma5_prev": 10_200.0,
+                "ma20": 10_500.0,
+                "ma20_prev": 10_200.0,
+                "ma5_cross_ma20_up": False,
+                "ma60": 10_300.0,
+                "ma120": 10_100.0,
+                "ma20_slope_5": 0.01,
+                "ma60_slope_20": -0.005,
+                "ma120_slope_20": 0.0,
+                "dist_ma20": 0.038,
+                "dist_ma60": 0.058,
+                "ret1": 0.035,
+                "ret5": 0.08,
+                "ret10": 0.10,
+                "ret20": 0.18,
+                "vol_rel20": 2.0,
+                "vol_rel60": 1.8,
+                "turnover_rel20": 1.7,
+                "vol_z20": 1.1,
+                "volume_dry_up_then_expand": True,
+                "close_loc": 0.83,
+                "upper_wick_ratio": 0.10,
+                "lower_wick_ratio": 0.15,
+                "body_ratio": 0.55,
+                "high_20_prev": 10_700.0,
+                "low_20_prev": 9_800.0,
+                "high_10": 10_950.0,
+                "resistance_20": 12_200.0,
+                "resistance_60": 12_400.0,
+                "drawdown_from_high_10": -0.005,
+                "box_width_20": 0.20,
+                "ma_compression_5_20_60": 0.055,
+                "bb_width_rank_120": 0.55,
+                "rsi14": 63.0,
+                "rsi5": 68.0,
+                "atr_pct": 0.04,
+                "consecutive_up_days": 2,
+                "history_days": 130,
+                "market_cap": 300_000_000_000,
+                "avg_turnover_20": 4_000_000_000,
+                "median_turnover_20": 3_500_000_000,
+                "avg_volume_20": 120_000,
+                "is_management_issue": False,
+                "equity": 120_000_000_000,
+                "debt_ratio": 90.0,
+                "operating_income": 12_000_000_000,
+                "net_income": 9_000_000_000,
+                "revenue": 80_000_000_000,
+                "market_regime": "strong",
+                "market_ret5": 0.01,
+                "market_ret20": 0.02,
+                "sector_ret5": 0.03,
+                "sector_ret20": 0.04,
+                "sector_rank_20": 0.2,
+                "ml_probability_target_first": 0.62,
+            }
+        ]
+    )
+
+    scored = _score_rows(features, config=Swing35DConfig())
+    row = scored.iloc[0]
+
+    assert row["swing_pattern"] == "recovery_breakout"
+    assert row["entry_status"] == "TARGET_ZONE_REACHED"
+    assert row["swing_final_status"] == "TARGET_ZONE_REACHED"
+    assert not bool(row["swing_recommendation_pass"])
+    assert "swing_target_zone_reached" in row["swing_risk_flags"]
+
+
+def test_v2_final_score_combines_rule_ml_probability_and_entry_score() -> None:
+    features = pd.DataFrame(
+        [
+            {
+                "symbol": "000005",
+                "company_name": "최종점수",
+                "market": "KOSPI",
+                "open": 49_200.0,
+                "high": 50_100.0,
+                "low": 49_000.0,
+                "close": 50_000.0,
+                "ma5": 48_500.0,
+                "ma5_prev": 48_000.0,
+                "ma20": 48_600.0,
+                "ma20_prev": 47_900.0,
+                "ma5_cross_ma20_up": False,
+                "ma60": 43_500.0,
+                "ma120": 41_000.0,
+                "ma20_slope_5": 0.03,
+                "ma60_slope_20": 0.08,
+                "ma120_slope_20": 0.02,
+                "dist_ma20": 0.029,
+                "dist_ma60": 0.149,
+                "ret1": 0.03,
+                "ret5": 0.07,
+                "ret10": 0.03,
+                "ret20": 0.17,
+                "vol_rel20": 1.5,
+                "vol_rel60": 1.4,
+                "turnover_rel20": 1.4,
+                "vol_z20": 0.9,
+                "volume_dry_up_then_expand": False,
+                "close_loc": 0.92,
+                "upper_wick_ratio": 0.05,
+                "lower_wick_ratio": 0.20,
+                "body_ratio": 0.60,
+                "high_20_prev": 52_700.0,
+                "low_20_prev": 42_000.0,
+                "high_10": 52_700.0,
+                "resistance_20": 54_500.0,
+                "resistance_60": 56_000.0,
+                "drawdown_from_high_10": -0.05,
+                "box_width_20": 0.25,
+                "ma_compression_5_20_60": 0.10,
+                "bb_width_rank_120": 0.25,
+                "rsi14": 59.0,
+                "rsi5": 65.0,
+                "atr_pct": 0.04,
+                "consecutive_up_days": 2,
+                "history_days": 130,
+                "market_cap": 500_000_000_000,
+                "avg_turnover_20": 5_000_000_000,
+                "median_turnover_20": 4_000_000_000,
+                "avg_volume_20": 100_000,
+                "is_management_issue": False,
+                "equity": 100_000_000_000,
+                "debt_ratio": 80.0,
+                "operating_income": 10_000_000_000,
+                "net_income": 8_000_000_000,
+                "revenue": 50_000_000_000,
+                "market_regime": "strong",
+                "market_ret5": 0.01,
+                "market_ret20": 0.02,
+                "sector_ret5": 0.03,
+                "sector_ret20": 0.04,
+                "sector_rank_20": 0.2,
+                "ml_probability_target_first": 0.61,
+            }
+        ]
+    )
+
+    row = _score_rows(features, config=Swing35DConfig()).iloc[0]
+    expected = (
+        0.40 * row["swing_rule_score"]
+        + 0.35 * row["ml_probability_score"]
+        + 0.25 * row["entry_score"]
+    )
+
+    assert abs(row["swing_hybrid_score"] - expected) < 1e-9
+    assert row["swing_final_status"] in {"CANDIDATE", "HIGH_CONFIDENCE"}
 
 
 def test_swing_overlay_replaces_h5_score_and_eligibility() -> None:

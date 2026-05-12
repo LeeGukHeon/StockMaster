@@ -378,9 +378,9 @@ def _build_pick_rows(
             summary_parts.extend(
                 [
                     f"3~5D 스윙순위 {rank}",
-                    f"하이브리드점수 {_format_number(getattr(row, 'final_selection_value', None))}",
+                    f"v2최종점수 {_format_number(getattr(row, 'final_selection_value', None))}",
                     f"등급 {_safe_text(getattr(row, 'grade', None))}",
-                    "ML보조 "
+                    "ML기대보조 "
                     f"{_format_percent(getattr(row, 'expected_excess_return', None), signed=True)}",
                 ]
             )
@@ -699,9 +699,9 @@ def _build_stock_summary_rows(
         if is_d5_candidate and isinstance(d5_swing_payload, dict):
             d5_metric_parts = [
                 f"3~5D 스윙순위 {d5_display_rank}",
-                f"하이브리드점수 {_format_number(d5_score)}",
+                f"v2최종점수 {_format_number(d5_score)}",
                 f"H5 {d5_grade}",
-                f"ML보조 {_format_percent(d5_expected, signed=True)}",
+                f"ML기대보조 {_format_percent(d5_expected, signed=True)}",
             ]
         elif d5_cash_path_candidate:
             d5_metric_parts = [

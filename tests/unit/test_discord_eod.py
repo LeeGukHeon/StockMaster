@@ -188,12 +188,12 @@ def test_build_payload_content_uses_swing_payload_despite_low_ml_expectation() -
     assert "매수검토 이상 기준을 통과한 H5 스윙 후보가 없어" not in content
     assert "136480" in content
     assert "매수검토" in content
-    assert "3~5D 스윙순위 1 · 하이브리드점수 73.1/A" in content
-    assert "ML보조 -0.3%" in content
-    assert "룰 84.0 · 손익비 1.65" in content
+    assert "3~5D 스윙순위 1 · v2최종점수 73.1/A" in content
+    assert "ML기대보조 -0.3%" in content
+    assert "신호 84.0 · 손익비 1.65" in content
     assert "손절참고 2,890원 / 저항/목표 3,200원" in content
     assert "고점수 과확신" not in content
-    assert "ML 기대값은 보조 참고" in content
+    assert "ML 목표확률" in content
     assert "raw 점수대 성과" not in content
 
 

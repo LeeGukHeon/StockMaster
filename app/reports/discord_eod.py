@@ -72,6 +72,7 @@ REASON_LABELS = {
     "raw_alpha_leader_preserved": "원점수 상위 신호를 최대한 보존함",
     "swing_pullback_pattern": "20일선 눌림 후 재상승 구조",
     "swing_box_breakout_pattern": "박스권 압축 후 첫 돌파 구조",
+    "swing_recovery_breakout_pattern": "회복형 돌파 후 가격 재검증 구조",
     "swing_reversal_recovery_pattern": "역배열 개선 초입 구조",
     "swing_volume_expansion": "거래량이 20일 기준 대비 증가",
     "swing_strong_close": "종가가 당일 고가권에서 마감",
@@ -98,6 +99,12 @@ RISK_LABELS = {
     "swing_upper_wick_distribution": "거래량 동반 윗꼬리 부담",
     "swing_recent_overheat": "최근 단기 상승 과열",
     "swing_stop_distance_wide": "손절 기준선까지 거리가 넓음",
+    "swing_near_resistance": "가까운 저항까지 여유가 좁음",
+    "swing_low_reward_risk": "손익비가 기준보다 낮음",
+    "swing_chase_risk": "신호 이후 상승폭이 커 추격 부담",
+    "swing_target_zone_reached": "3~5일 목표권 도달 가능성",
+    "swing_extended": "신호 이후 과도하게 상승",
+    "swing_invalidated": "핵심 기준선 이탈",
     "swing_financial_context_missing": "재무 품질 보조지표가 일부 비어 있음",
 }
 
@@ -780,10 +787,16 @@ def _format_pick_block(
     )
     if is_swing_pick:
         rule_score = _float_or_none(swing_payload.get("rule_score"))
+        entry_score = _float_or_none(swing_payload.get("entry_score"))
+        ml_probability = _float_or_none(swing_payload.get("ml_probability_target_first"))
         reward_risk = _float_or_none(swing_payload.get("reward_risk_ratio"))
         swing_parts = []
         if rule_score is not None:
-            swing_parts.append(f"룰 {rule_score:.1f}")
+            swing_parts.append(f"신호 {rule_score:.1f}")
+        if entry_score is not None:
+            swing_parts.append(f"진입 {entry_score:.1f}")
+        if ml_probability is not None:
+            swing_parts.append(f"목표확률 {ml_probability:.0%}")
         if reward_risk is not None:
             swing_parts.append(f"손익비 {reward_risk:.2f}")
         if swing_parts:
@@ -806,7 +819,7 @@ def _format_pick_block(
     if is_swing_pick and pd.notna(row.get("d5_selection_rank")):
         headline_metric = (
             f"3~5D 스윙순위 {int(row['d5_selection_rank'])} "
-            f"· 하이브리드점수 {score:.1f}/{row['grade']}"
+            f"· v2최종점수 {score:.1f}/{row['grade']}"
         )
     elif is_cash_path_pick:
         headline_metric = (
@@ -815,7 +828,7 @@ def _format_pick_block(
         )
     else:
         headline_metric = f"H{horizon} {score:.1f}/{row['grade']}"
-    expected_label = "ML보조" if is_swing_pick else "기대"
+    expected_label = "ML기대보조" if is_swing_pick else "기대"
     return [
         (
             f"{rank}. `{row['symbol']}` {row['company_name']} · {display_label}"
@@ -1012,8 +1025,7 @@ def _build_payload_content(
         ).any()
     )
     judgement_basis_line = (
-        "3~5D 스윙은 룰 기반 차트·거래량·손익비를 1차 기준으로 보고, "
-        "ML 기대값은 보조 참고로만 봅니다."
+        "3~5D v2 ML은 신호일 룰 점수, ML 목표확률, 현재 진입점수를 분리해 최종 상태를 정합니다."
         if uses_swing_h5
         else _score_band_evidence_line(primary_score_evidence)
     )
