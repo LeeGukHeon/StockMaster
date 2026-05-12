@@ -567,9 +567,23 @@ def _write_report(
                 display[column] = display[column].map(
                     lambda value: "" if pd.isna(value) else f"{float(value):.2%}"
                 )
-        lines.append(display.to_markdown(index=False))
+        lines.append(_markdown_table(display))
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report_path
+
+
+def _markdown_table(frame: pd.DataFrame) -> str:
+    if frame.empty:
+        return ""
+    headers = [str(column) for column in frame.columns]
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in frame.itertuples(index=False, name=None):
+        values = ["" if pd.isna(value) else str(value) for value in row]
+        lines.append("| " + " | ".join(values) + " |")
+    return "\n".join(lines)
 
 
 def run_backtest(args: argparse.Namespace) -> BacktestArtifacts:
@@ -626,7 +640,10 @@ def run_backtest(args: argparse.Namespace) -> BacktestArtifacts:
 
         if not per_date_selections:
             raise RuntimeError("No candidate selections were produced for backtest")
-        selections = pd.concat(per_date_selections, ignore_index=True)
+        non_empty_selections = [frame for frame in per_date_selections if not frame.empty]
+        if not non_empty_selections:
+            raise RuntimeError("No non-empty candidate selections were produced for backtest")
+        selections = pd.concat(non_empty_selections, ignore_index=True)
         unique_symbols = selections["symbol"].dropna().astype(str).str.zfill(6).unique().tolist()
         calendar_start = min(selection_dates)
         max_available = connection.execute(
