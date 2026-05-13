@@ -343,6 +343,11 @@ def _format_swing_required_summary(
     current_price = _swing_current_price(swing_payload, row)
     max_buy = _swing_policy_number(swing_payload, "max_buy_price")
     target_1 = _swing_policy_number(swing_payload, "target_1")
+    expected_target = _swing_policy_number(
+        swing_payload,
+        "expected_target",
+        "rr_target_price",
+    )
     stop_price = _swing_policy_number(
         swing_payload,
         "stop_price",
@@ -359,6 +364,7 @@ def _format_swing_required_summary(
         f"final {_format_metric_value(final_score, decimals=1)} · "
         f"신호종가 {_format_krw(signal_close)} · 현재가 {_format_krw(current_price)} · "
         f"max_buy {_format_krw(max_buy)} · 목표1 {_format_krw(target_1)} · "
+        f"기대목표 {_format_krw(expected_target)} · "
         f"손절 {_format_krw(stop_price)} · "
         f"현재RR {_format_metric_value(_swing_rr_value(swing_payload))} · "
         f"상태 {_swing_entry_status_label(entry_status)}"
@@ -675,6 +681,7 @@ def _build_pick_rows(
                 "가격조건 "
                 f"신호종가 {_format_krw(_swing_policy_value(swing_payload, 'signal_close'))} · "
                 f"최대진입 {_format_krw(_swing_policy_value(swing_payload, 'max_buy_price'))} · "
+                f"기대목표 {_format_krw(_swing_policy_value(swing_payload, 'expected_target'))} · "
                 f"무효 {_format_krw(_swing_policy_value(swing_payload, 'invalidation_price'))}"
             )
         elif path_rank_candidate:
@@ -1059,6 +1066,7 @@ def _build_stock_summary_rows(
                 f"상태 {_safe_text(d5_entry_status)}",
                 "가격조건 "
                 f"최대진입 {_format_krw(_swing_policy_value(d5_swing_payload, 'max_buy_price'))}",
+                f"기대목표 {_format_krw(_swing_policy_value(d5_swing_payload, 'expected_target'))}",
             ]
         elif d5_cash_path_candidate:
             d5_metric_parts = [

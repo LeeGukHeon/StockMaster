@@ -259,12 +259,18 @@ def test_recovery_breakout_uses_v4_eod_entry_reference_not_intraday_current_pric
     assert row["entry_reference_price"] == 10_900.0
     assert row["current_price"] == 10_900.0
     assert row["observed_current_price"] == 11_460.0
-    assert row["entry_status_eod"] == "RR_COLLAPSED"
-    assert row["entry_status"] == "RR_COLLAPSED"
-    assert row["swing_final_status"] == "VALID_SIGNAL"
-    assert row["swing_recommendation_group"] == "VALID_SIGNALS"
-    assert not bool(row["swing_recommendation_pass"])
-    assert "swing_rr_collapsed" in row["swing_risk_flags"]
+    assert bool(row["continuation_mode"])
+    assert row["target_weight_profile"] == "recovery_breakout"
+    assert row["target_1_weight"] == 0.60
+    assert row["target_2_weight"] == 0.40
+    assert row["rr_target_basis"] == "expected_target"
+    assert row["expected_target"] > row["target_1"]
+    assert row["rr_at_reference"] >= 1.5
+    assert row["entry_status_eod"] == "BUYABLE"
+    assert row["entry_status"] == "BUYABLE"
+    assert row["swing_final_status"] in {"CANDIDATE", "HIGH_CONFIDENCE"}
+    assert row["swing_recommendation_group"] == "EXECUTABLE_PICKS"
+    assert bool(row["swing_recommendation_pass"])
 
 
 def test_v3_final_score_combines_rule_ml_market_sector_and_liquidity() -> None:
@@ -352,7 +358,7 @@ def test_v3_final_score_combines_rule_ml_market_sector_and_liquidity() -> None:
     assert row["swing_final_status"] in {"CANDIDATE", "HIGH_CONFIDENCE"}
     assert row["entry_status_eod"] == "BUYABLE"
     assert row["price_basis"] == "EOD_SIGNAL_CLOSE"
-    assert row["max_buy_price"] <= row["target_1"]
+    assert row["max_buy_price"] <= row["rr_target_price"]
     assert row["rr_at_reference"] >= 1.5
 
 
@@ -400,6 +406,14 @@ def test_v3_explanatory_payload_contains_entry_policy_contract() -> None:
                 "invalidation_price": 9_700.0,
                 "target_1": 10_500.0,
                 "target_2": 10_800.0,
+                "expected_target": 10_560.0,
+                "rr_target_price": 10_560.0,
+                "rr_target_basis": "expected_target",
+                "target_weight_profile": "pullback",
+                "target_1_weight": 0.8,
+                "target_2_weight": 0.2,
+                "continuation_mode": False,
+                "strong_continuation_mode": False,
                 "nearest_support": 9_800.0,
                 "nearest_resistance": 11_000.0,
             }
@@ -422,6 +436,9 @@ def test_v3_explanatory_payload_contains_entry_policy_contract() -> None:
     assert payload["rr_at_reference"] == 1.67
     assert payload["max_buy_price"] == 10_250.0
     assert payload["target_1"] == 10_500.0
+    assert payload["expected_target"] == 10_560.0
+    assert payload["entry_policy"]["rr_target_basis"] == "expected_target"
+    assert payload["entry_policy"]["target_weight_profile"] == "pullback"
 
 
 def test_v3_entry_status_marks_target_zone_at_threshold() -> None:

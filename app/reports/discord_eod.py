@@ -77,7 +77,7 @@ SWING_GATE_DESCRIPTIONS = {
     ),
     "pattern_present": "20일선 눌림, 박스 돌파, 회복형 돌파, 역배열 개선 중 하나가 잡혔는지",
     "risk_distance_le_5pct": "신호 종가에서 신호 무효·손절선까지 하락 여지가 5% 이내인지",
-    "rr_ge_1_5": "신호 종가 기준 1차 목표까지 기대보상이 손절위험의 1.5배 이상인지",
+    "rr_ge_1_5": "신호 종가 기준 RR 목표(목표1 또는 패턴별 기대목표)까지 기대보상이 손절위험의 1.5배 이상인지",
     "rule_ge_70": "차트·거래량·과열방지·상대강도·손익비·캔들·재무 룰 점수가 70점 이상인지",
     "ml_ge_0_50": "ML이 5거래일 안에 목표가가 손절보다 먼저 나올 확률을 50% 이상으로 봤는지",
     "entry_buyable": (
@@ -1371,6 +1371,14 @@ def _swing_pattern_label(value: object) -> str:
     return SWING_PATTERN_LABELS.get(text, text or "-")
 
 
+def _swing_target_basis_label(value: object) -> str:
+    text = "" if value is None else str(value).strip()
+    return {
+        "expected_target": "기대목표",
+        "target_1": "목표1",
+    }.get(text, text or "-")
+
+
 def _format_swing_required_fields(row: pd.Series) -> str:
     payload = _swing_3_5d_payload(row) or {}
     entry_status = payload.get("entry_status_eod") or payload.get("entry_status")
@@ -1378,6 +1386,10 @@ def _format_swing_required_fields(row: pd.Series) -> str:
     current_price = _swing_current_price(payload, row)
     max_buy = _swing_policy_value(payload, "max_buy_price")
     target_1 = _swing_policy_value(payload, "target_1")
+    expected_target = (
+        _swing_policy_value(payload, "expected_target")
+        or _swing_policy_value(payload, "rr_target_price")
+    )
     stop_price = (
         _swing_policy_value(payload, "stop_price")
         or _swing_policy_value(payload, "risk_line")
@@ -1391,6 +1403,7 @@ def _format_swing_required_fields(row: pd.Series) -> str:
         f"final {_score_text(payload.get('final_score', payload.get('hybrid_score')))} · "
         f"신호종가 {_krw_text(signal_close)} · 현재가 {_krw_text(current_price)} · "
         f"max_buy {_krw_text(max_buy)} · 목표1 {_krw_text(target_1)} · "
+        f"기대목표 {_krw_text(expected_target)} · "
         f"손절 {_krw_text(stop_price)} · 현재RR {_rr_text(rr)} · "
         f"상태 {_swing_entry_status_label(entry_status)}"
     )
@@ -1581,6 +1594,12 @@ def _format_pick_block(
         invalidation = _swing_policy_value(swing_payload, "invalidation_price")
         target_1 = _swing_policy_value(swing_payload, "target_1")
         target_2 = _swing_policy_value(swing_payload, "target_2")
+        expected_target = (
+            _swing_policy_value(swing_payload, "expected_target")
+            or _swing_policy_value(swing_payload, "rr_target_price")
+        )
+        target_basis = _swing_policy_value(swing_payload, "rr_target_basis")
+        continuation_mode = _swing_policy_value(swing_payload, "continuation_mode")
         detail += (
             f" | 가격조건 신호종가 {_krw_text(signal_close)}"
             f" · 매수 {_krw_text(entry_lower)}~{_krw_text(max_buy)}"
@@ -1588,7 +1607,12 @@ def _format_pick_block(
             f" · 목표권 {_krw_text(target_zone)}↑"
             f" · 무효 {_krw_text(invalidation)}↓"
             f" · 목표1/2 {_krw_text(target_1)}/{_krw_text(target_2)}"
+            f" · 기대목표 {_krw_text(expected_target)}"
         )
+        if target_basis:
+            detail += f" · RR기준 {_swing_target_basis_label(target_basis)}"
+        if continuation_mode:
+            detail += " · 지속모드"
         if entry_status:
             detail += f" | 종가상태 {entry_status}"
     elif pd.notna(row.get("selection_close_price")) and pd.notna(

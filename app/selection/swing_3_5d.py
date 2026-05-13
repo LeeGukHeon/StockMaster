@@ -53,6 +53,21 @@ class Swing35DConfig:
     entry_lower_stop_buffer: float = 1.005
     max_risk_pct: float = 0.05
     max_reversal_ratio: float = 0.20
+    target2_atr_multiplier: float = 2.0
+    target2_measured_move_fraction: float = 0.50
+    target2_min_continuation_extension_pct: float = 0.06
+    target2_max_continuation_extension_pct: float = 0.12
+    continuation_min_volume_rel20: float = 1.20
+    continuation_max_volume_rel20: float = 3.50
+    continuation_min_close_location: float = 0.70
+    continuation_max_upper_wick_ratio: float = 0.30
+    continuation_max_ret5: float = 0.12
+    continuation_max_ret20: float = 0.25
+    continuation_max_dist_ma20: float = 0.10
+    continuation_max_rsi14: float = 70.0
+    pullback_target2_weight: float = 0.20
+    recovery_breakout_target2_weight: float = 0.40
+    strong_continuation_target2_weight: float = 0.60
     max_candidates_strong: int = 15
     max_candidates_neutral: int = 8
     max_candidates_weak: int = 3
@@ -686,6 +701,7 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         "vol_z20",
         "rsi14",
         "rsi5",
+        "atr14",
         "atr_pct",
         "ma20_slope_5",
         "ma60_slope_20",
@@ -919,9 +935,115 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
             index=scored.index,
         )
     )
+    scored["target_2_base"] = scored["target_2"]
+    continuation_mode = (
+        scored["close"].gt(scored["ma20"])
+        & scored["ma20_slope_5"].gt(0.0)
+        & scored["close_loc"].ge(config.continuation_min_close_location)
+        & scored["vol_rel20"].between(
+            config.continuation_min_volume_rel20,
+            config.continuation_max_volume_rel20,
+            inclusive="both",
+        )
+        & scored["upper_wick_ratio"].lt(config.continuation_max_upper_wick_ratio)
+        & scored["ret5"].le(config.continuation_max_ret5)
+        & scored["ret20"].le(config.continuation_max_ret20)
+        & scored["dist_ma20"].le(config.continuation_max_dist_ma20)
+        & scored["rsi14"].le(config.continuation_max_rsi14)
+    ).fillna(False)
+    continuation_pattern = scored["swing_pattern"].isin(["box_breakout", "recovery_breakout"])
+    strong_continuation_mode = (
+        continuation_mode
+        & continuation_pattern
+        & scored["close"].gt(scored["high_20_prev"] * 1.005)
+        & scored["ma60_slope_20"].ge(0.0)
+        & scored["close_loc"].ge(0.80)
+        & scored["vol_rel20"].between(1.5, config.continuation_max_volume_rel20, inclusive="both")
+        & scored["upper_wick_ratio"].le(0.25)
+    ).fillna(False)
+    atr14 = (
+        _safe_numeric(scored["atr14"])
+        if "atr14" in scored.columns
+        else scored["signal_close"] * scored["atr_pct"]
+    )
+    atr14 = atr14.fillna(scored["signal_close"] * scored["atr_pct"]).fillna(
+        scored["signal_close"] * 0.04
+    )
+    measured_move = (scored["high_20_prev"] - scored["low_20_prev"]).clip(lower=0.0)
+    continuation_extension_pct = (
+        scored["atr_pct"]
+        .fillna(0.04)
+        .mul(config.target2_atr_multiplier)
+        .clip(
+            lower=config.target2_min_continuation_extension_pct,
+            upper=config.target2_max_continuation_extension_pct,
+        )
+    )
+    target_2_atr = scored["signal_close"] + atr14.mul(config.target2_atr_multiplier)
+    target_2_measured_move = (
+        scored["signal_close"] + measured_move.mul(config.target2_measured_move_fraction)
+    )
+    target_2_volatility_extension = scored["signal_close"] * (1.0 + continuation_extension_pct)
+    continuation_target_2_raw = pd.concat(
+        [
+            scored["target_2_base"],
+            target_2_atr,
+            target_2_measured_move,
+            target_2_volatility_extension,
+        ],
+        axis=1,
+    ).max(axis=1)
+    continuation_target_2 = continuation_target_2_raw.clip(
+        upper=scored["signal_close"] * (1.0 + config.target2_max_continuation_extension_pct)
+    )
+    scored["target_2_atr"] = _round_price_series(target_2_atr)
+    scored["target_2_measured_move"] = _round_price_series(target_2_measured_move)
+    scored["target_2_volatility_extension"] = _round_price_series(target_2_volatility_extension)
+    scored["continuation_mode"] = continuation_mode.astype(bool)
+    scored["strong_continuation_mode"] = strong_continuation_mode.astype(bool)
+    scored["target_2"] = _round_price_series(
+        pd.Series(
+            np.where(
+                continuation_mode & continuation_pattern,
+                continuation_target_2,
+                scored["target_2_base"],
+            ),
+            index=scored.index,
+        )
+    )
+    scored["target_2"] = _round_price_series(
+        pd.concat([scored["target_2"], scored["target_1"]], axis=1).max(axis=1)
+    )
+    target_2_weight = pd.Series(0.0, index=scored.index)
+    target_profile = pd.Series("target_1", index=scored.index, dtype="object")
+    pullback_mask = scored["swing_pattern"].eq("pullback")
+    target_2_weight.loc[pullback_mask] = config.pullback_target2_weight
+    target_profile.loc[pullback_mask] = "pullback"
+    recovery_continuation = (
+        scored["swing_pattern"].eq("recovery_breakout") & continuation_mode
+    )
+    target_2_weight.loc[recovery_continuation] = config.recovery_breakout_target2_weight
+    target_profile.loc[recovery_continuation] = "recovery_breakout"
+    target_2_weight.loc[strong_continuation_mode] = config.strong_continuation_target2_weight
+    target_profile.loc[strong_continuation_mode] = "strong_continuation"
+    target_2_weight = target_2_weight.clip(lower=0.0, upper=1.0)
+    target_1_weight = 1.0 - target_2_weight
+    expected_target = scored["target_1"].mul(target_1_weight) + scored["target_2"].mul(
+        target_2_weight
+    )
+    scored["target_1_weight"] = target_1_weight
+    scored["target_2_weight"] = target_2_weight
+    scored["target_weight_profile"] = target_profile
+    scored["expected_target"] = _round_price_series(expected_target)
+    scored["rr_target_price"] = scored["expected_target"].where(
+        target_2_weight.gt(0.0),
+        scored["target_1"],
+    )
+    scored["rr_target_basis"] = pd.Series("target_1", index=scored.index, dtype="object")
+    scored.loc[target_2_weight.gt(0.0), "rr_target_basis"] = "expected_target"
     max_by_signal_move = scored["signal_close"] * config.max_entry_move_from_signal
     max_by_rr = calculate_max_buy_price(
-        target_1=scored["target_1"],
+        target_1=scored["rr_target_price"],
         stop_price=scored["stop_price"],
         rr_min=config.min_reward_risk_at_entry,
     )
@@ -967,16 +1089,19 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
     scored["upside_to_target_1"] = (
         scored["target_1"] / scored["entry_reference_price"].replace(0, np.nan) - 1.0
     )
+    scored["upside_to_expected_target"] = (
+        scored["rr_target_price"] / scored["entry_reference_price"].replace(0, np.nan) - 1.0
+    )
     scored["rr_at_reference"] = calculate_rr(
         entry_reference_price=scored["entry_reference_price"],
-        target_1=scored["target_1"],
+        target_1=scored["rr_target_price"],
         stop_price=scored["stop_price"],
     )
     scored["reward_risk_ratio"] = scored["rr_at_reference"]
     scored["entry_status_eod"] = _entry_status_eod_series(
         entry_reference_price=scored["entry_reference_price"],
         signal_close=scored["signal_close"],
-        target_1=scored["target_1"],
+        target_1=scored["rr_target_price"],
         stop_price=scored["stop_price"],
         max_buy_price=scored["max_buy_price"],
         rr_at_reference=scored["rr_at_reference"],
@@ -1002,7 +1127,7 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         1.0 - scored["risk_distance"].div(config.max_risk_pct)
     ).mul(100.0).clip(lower=0.0, upper=100.0)
     scored["entry_target_room_score"] = (
-        scored["upside_to_target_1"].div(0.05).mul(100.0)
+        scored["upside_to_expected_target"].div(0.05).mul(100.0)
     ).clip(lower=0.0, upper=100.0)
     scored["entry_score"] = (
         0.45 * scored["entry_rr_score"].fillna(0.0)
@@ -1022,6 +1147,10 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
     scored["swing_common_pass"] = common_pass
     scored["swing_pattern_pass"] = pattern_pass
     scored["swing_risk_reward_pass"] = risk_reward_pass.fillna(False)
+
+    # Target refinement adds several explainability columns. Defragment before
+    # score insertions so batch/test runs stay warning-clean.
+    scored = scored.copy()
 
     chart_score = (
         scored["close"].gt(scored["ma20"]).astype(float).mul(5)
@@ -1070,8 +1199,11 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
     rr_score = (
         scored["risk_distance"].le(0.04).astype(float).mul(4)
         + scored["risk_distance"].between(0.04, 0.05, inclusive="right").astype(float).mul(2)
-        + scored["upside_to_resistance"].ge(0.05).astype(float).mul(3)
-        + scored["upside_to_resistance"].between(0.04, 0.05, inclusive="left").astype(float).mul(2)
+        + scored["upside_to_expected_target"].ge(0.05).astype(float).mul(3)
+        + scored["upside_to_expected_target"]
+        .between(0.04, 0.05, inclusive="left")
+        .astype(float)
+        .mul(2)
         + scored["reward_risk_ratio"].ge(2.0).astype(float).mul(3)
         + scored["reward_risk_ratio"].between(1.5, 2.0, inclusive="left").astype(float).mul(2)
     )
@@ -1145,7 +1277,7 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         + scored["turnover_rel20"].ge(1.3).astype(float).mul(15.0)
     )
     scored["liquidity_score_scaled"] = liquidity_score.clip(0.0, 100.0)
-    expected_reward = scored["upside_to_resistance"].clip(lower=0.0, upper=0.08)
+    expected_reward = scored["upside_to_expected_target"].clip(lower=0.0, upper=0.10)
     expected_risk = scored["risk_distance"].clip(lower=0.0, upper=0.05)
     volatility_penalty = (scored["atr_pct"] - 0.08).clip(lower=0.0).mul(0.5)
     overheat_penalty = (scored["dist_ma20"] - 0.08).clip(lower=0.0).mul(0.8)
@@ -1157,7 +1289,7 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
         - overheat_penalty.fillna(0.0)
     )
     # Upstream feature assembly can leave this frame fragmented; defragment before
-    # adding the v4 swing contract columns so test and batch runs stay warning-clean.
+    # adding final swing contract columns so test and batch runs stay warning-clean.
     scored = scored.copy()
     scored["swing_signal_score"] = (
         0.55 * scored["swing_rule_score"]
@@ -1468,6 +1600,18 @@ def apply_swing_3_5d_overlay(
         "extended_price",
         "target_1",
         "target_2",
+        "target_2_base",
+        "target_2_atr",
+        "target_2_measured_move",
+        "target_2_volatility_extension",
+        "expected_target",
+        "rr_target_price",
+        "rr_target_basis",
+        "target_weight_profile",
+        "target_1_weight",
+        "target_2_weight",
+        "continuation_mode",
+        "strong_continuation_mode",
         "nearest_support",
         "nearest_resistance",
         "invalidation_price",
@@ -1475,6 +1619,7 @@ def apply_swing_3_5d_overlay(
         "risk_distance",
         "upside_to_resistance",
         "upside_to_target_1",
+        "upside_to_expected_target",
         "reward_risk_ratio",
         "rr_at_reference",
         "vol_rel20",
@@ -1558,6 +1703,22 @@ def swing_explanatory_payload(row: pd.Series) -> dict[str, object] | None:
         else float(row.get("invalidation_price")),
         "target_1": None if pd.isna(row.get("target_1")) else float(row.get("target_1")),
         "target_2": None if pd.isna(row.get("target_2")) else float(row.get("target_2")),
+        "target_2_base": _float_field("target_2_base"),
+        "target_2_atr": _float_field("target_2_atr"),
+        "target_2_measured_move": _float_field("target_2_measured_move"),
+        "target_2_volatility_extension": _float_field("target_2_volatility_extension"),
+        "expected_target": _float_field("expected_target"),
+        "rr_target_price": _float_field("rr_target_price"),
+        "rr_target_basis": _text_field("rr_target_basis"),
+        "target_weight_profile": _text_field("target_weight_profile"),
+        "target_1_weight": _float_field("target_1_weight"),
+        "target_2_weight": _float_field("target_2_weight"),
+        "continuation_mode": False
+        if _missing(row.get("continuation_mode"))
+        else bool(row.get("continuation_mode")),
+        "strong_continuation_mode": False
+        if _missing(row.get("strong_continuation_mode"))
+        else bool(row.get("strong_continuation_mode")),
         "nearest_support": None
         if pd.isna(row.get("nearest_support"))
         else float(row.get("nearest_support")),
@@ -1619,6 +1780,14 @@ def swing_explanatory_payload(row: pd.Series) -> dict[str, object] | None:
         "stop_price": entry_policy.get("stop_price"),
         "target_1": entry_policy.get("target_1"),
         "target_2": entry_policy.get("target_2"),
+        "expected_target": entry_policy.get("expected_target"),
+        "rr_target_price": entry_policy.get("rr_target_price"),
+        "rr_target_basis": entry_policy.get("rr_target_basis"),
+        "target_weight_profile": entry_policy.get("target_weight_profile"),
+        "target_1_weight": entry_policy.get("target_1_weight"),
+        "target_2_weight": entry_policy.get("target_2_weight"),
+        "continuation_mode": entry_policy.get("continuation_mode"),
+        "strong_continuation_mode": entry_policy.get("strong_continuation_mode"),
         "current_price": None
         if pd.isna(row.get("current_price"))
         else float(row.get("current_price")),

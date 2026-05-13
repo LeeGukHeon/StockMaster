@@ -138,20 +138,32 @@ def _pattern_label(value: object) -> str:
     return SWING_PATTERN_LABELS.get(text, text or "-")
 
 
+def _target_basis_label(value: object) -> str:
+    text = _safe_text(value)
+    return {
+        "expected_target": "기대목표",
+        "target_1": "목표1",
+    }.get(text, text)
+
+
 def _rr_at_price(price: object, swing_payload: dict[str, object]) -> float | None:
     current = _float_or_none(price)
-    target_1 = _float_or_none(_swing_policy_value(swing_payload, "target_1"))
+    target_price = (
+        _float_or_none(_swing_policy_value(swing_payload, "rr_target_price"))
+        or _float_or_none(_swing_policy_value(swing_payload, "expected_target"))
+        or _float_or_none(_swing_policy_value(swing_payload, "target_1"))
+    )
     stop_price = _float_or_none(_swing_policy_value(swing_payload, "stop_price"))
     if stop_price is None:
         stop_price = _float_or_none(_swing_policy_value(swing_payload, "invalidation_price"))
-    if current is None or target_1 is None or stop_price is None:
+    if current is None or target_price is None or stop_price is None:
         for key in ("rr_at_current", "rr_at_reference", "reward_risk_ratio"):
             rr = _float_or_none(swing_payload.get(key))
             if rr is not None:
                 return rr
         return None
     risk = current - stop_price
-    reward = target_1 - current
+    reward = target_price - current
     if risk <= 0:
         return None
     return reward / risk
@@ -249,6 +261,11 @@ def _classify_entry_policy_status(price: object, swing_payload: dict[str, object
     chase_warning = _float_or_none(_swing_policy_value(swing_payload, "chase_warning_price"))
     signal_close = _float_or_none(_swing_policy_value(swing_payload, "signal_close"))
     target_1 = _float_or_none(_swing_policy_value(swing_payload, "target_1"))
+    rr_target_price = (
+        _float_or_none(_swing_policy_value(swing_payload, "rr_target_price"))
+        or _float_or_none(_swing_policy_value(swing_payload, "expected_target"))
+        or target_1
+    )
     rr_min = _float_or_none(_swing_policy_value(swing_payload, "rr_min")) or 1.5
     if invalidation is not None and current <= invalidation:
         return "INVALIDATED"
@@ -256,13 +273,11 @@ def _classify_entry_policy_status(price: object, swing_payload: dict[str, object
         return "TARGET_ZONE_REACHED"
     if max_buy is not None and current > max_buy:
         return "RR_COLLAPSED"
-    if stop_price is not None and target_1 is not None:
+    if stop_price is not None and rr_target_price is not None:
         risk = current - stop_price
-        reward = target_1 - current
+        reward = rr_target_price - current
         if risk <= 0:
             return "INVALIDATED"
-        if reward <= 0:
-            return "TARGET_ZONE_REACHED"
         if reward / risk < rr_min:
             return "RR_COLLAPSED"
     if signal_close is not None and signal_close > 0 and current / signal_close - 1.0 >= 0.05:
@@ -551,8 +566,10 @@ def render_live_stock_analysis(settings: Settings, *, query: str) -> str:
             f"현재가 {_int_text(current_policy_price)}원 · "
             f"max_buy {_int_text(_swing_policy_value(swing_payload, 'max_buy_price'))}원 · "
             f"목표1 {_int_text(_swing_policy_value(swing_payload, 'target_1'))}원 · "
+            f"기대목표 {_int_text(_swing_policy_value(swing_payload, 'expected_target'))}원 · "
             f"손절 {_int_text(stop_price)}원 · "
-            f"현재RR {_rr_text(rr_at_current)}"
+            f"현재RR {_rr_text(rr_at_current)} · "
+            f"RR기준 {_target_basis_label(_swing_policy_value(swing_payload, 'rr_target_basis'))}"
         )
         lines.append(
             "진입정책: "

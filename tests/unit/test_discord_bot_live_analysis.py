@@ -187,6 +187,9 @@ def test_render_live_stock_analysis_renders_v4_entry_policy(monkeypatch) -> None
                                 "invalidation_price": 68000.0,
                                 "target_1": 76000.0,
                                 "target_2": 78000.0,
+                                "expected_target": 77000.0,
+                                "rr_target_price": 77000.0,
+                                "rr_target_basis": "expected_target",
                             },
                         },
                     },
@@ -214,7 +217,7 @@ def test_render_live_stock_analysis_renders_v4_entry_policy(monkeypatch) -> None
         "가격조건: 신호종가 70,000원 · 현재가 71,000원 · max_buy 72,000원"
         in rendered
     )
-    assert "목표1 76,000원 · 손절 68,000원 · 현재RR 1.67" in rendered
+    assert "목표1 76,000원 · 기대목표 77,000원 · 손절 68,000원 · 현재RR 2.00" in rendered
     assert "상태 현재 기준 실행 가능(BUYABLE)" in rendered
 
 

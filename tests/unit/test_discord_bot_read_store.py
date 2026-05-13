@@ -261,6 +261,7 @@ def test_build_pick_rows_uses_swing_payload_not_negative_ml_expectation_for_h5()
             "entry_policy": {
                 "signal_close": 30_000.0,
                 "max_buy_price": 30_900.0,
+                "expected_target": 31_600.0,
                 "invalidation_price": 28_900.0,
             },
         }
@@ -305,7 +306,7 @@ def test_build_pick_rows_uses_swing_payload_not_negative_ml_expectation_for_h5()
     assert "기대수익률 낮음" not in rows[0]["payload_json"]
     assert "3~5D 스윙순위 1" in rows[0]["summary"]
     assert (
-        "가격조건 신호종가 30,000원 · 최대진입 30,900원 · 무효 28,900원"
+        "가격조건 신호종가 30,000원 · 최대진입 30,900원 · 기대목표 31,600원 · 무효 28,900원"
         in rows[0]["summary"]
     )
     assert "ML기대보조 -0.3%" in rows[0]["summary"]
