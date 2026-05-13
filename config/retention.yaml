@@ -2,5 +2,5 @@ raw_api_days: 14
 intraday_5m_days: 45
 intraday_1m_days: 30
 orderbook_summary_days: 21
-report_cache_days: 21
+report_cache_days: 1
 log_days: 30

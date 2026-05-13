@@ -59,6 +59,7 @@ from app.ops.maintenance import (
     cleanup_docker_build_cache,
     cleanup_model_artifacts,
     cleanup_stale_job_runs,
+    enforce_retention_policies,
     reconcile_failed_runs,
     recover_incomplete_runs,
     reset_open_recovery_actions,
@@ -901,6 +902,16 @@ def run_ops_maintenance_bundle(
             job.run_step(
                 "cleanup_model_artifacts",
                 cleanup_model_artifacts,
+                settings,
+                connection=connection,
+                job_run_id=job.run_id,
+                dry_run=dry_run,
+                policy_config_path=policy_config_path,
+                critical=False,
+            )
+            job.run_step(
+                "enforce_retention_policies",
+                enforce_retention_policies,
                 settings,
                 connection=connection,
                 job_run_id=job.run_id,

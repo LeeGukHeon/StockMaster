@@ -59,6 +59,37 @@ def _safe_relative(path: Path, root: Path) -> str:
         return path.resolve().as_posix()
 
 
+def _cleanup_policy_path(path: Path, settings: Settings) -> str:
+    """Map local or external runtime paths to stable retention policy paths."""
+
+    resolved = path.resolve()
+    logical_roots: list[tuple[Path, str]] = [
+        (settings.paths.raw_dir, "data/raw"),
+        (settings.paths.cache_dir, "data/cache"),
+        (settings.paths.logs_dir, "data/logs"),
+        (settings.paths.artifacts_dir, "data/artifacts"),
+        (settings.paths.curated_dir / "intraday" / "bar_1m", "data/curated/intraday/bar_1m"),
+        (
+            settings.paths.curated_dir / "intraday" / "trade_summary",
+            "data/curated/intraday/trade_summary",
+        ),
+        (
+            settings.paths.curated_dir / "intraday" / "quote_summary",
+            "data/curated/intraday/quote_summary",
+        ),
+        (settings.paths.curated_dir, "data/curated"),
+        (settings.paths.marts_dir, "data/marts"),
+        (settings.paths.data_dir, "data"),
+    ]
+    for root, logical_prefix in logical_roots:
+        root_resolved = root.resolve()
+        if resolved == root_resolved:
+            return logical_prefix
+        if root_resolved in resolved.parents:
+            return f"{logical_prefix}/{resolved.relative_to(root_resolved).as_posix()}"
+    return _safe_relative(path, settings.paths.project_root)
+
+
 def _normalize_relative_path(value: str) -> str:
     return value.strip("/").replace("\\", "/")
 
@@ -107,8 +138,10 @@ def _latest_referenced_artifact_paths(
     ).fetchall()
     for artifact_path, summary_json in rows:
         if artifact_path:
+            artifact = Path(str(artifact_path))
+            protected_paths.add(_cleanup_policy_path(artifact, settings))
             protected_paths.add(
-                _safe_relative(Path(str(artifact_path)), settings.paths.project_root),
+                _safe_relative(artifact, settings.paths.project_root),
             )
         if not summary_json:
             continue
@@ -118,8 +151,10 @@ def _latest_referenced_artifact_paths(
             continue
         payload_path = payload.get("payload_path")
         if payload_path:
+            payload_artifact = Path(str(payload_path))
+            protected_paths.add(_cleanup_policy_path(payload_artifact, settings))
             protected_paths.add(
-                _safe_relative(Path(str(payload_path)), settings.paths.project_root),
+                _safe_relative(payload_artifact, settings.paths.project_root),
             )
     return protected_paths
 
@@ -550,17 +585,13 @@ def enforce_retention_policies(
     for _scope_name, base_path, max_age_days in _cleanup_targets(settings):
         if not base_path.exists():
             continue
-        relative_base = _normalize_relative_path(
-            _safe_relative(base_path, settings.paths.project_root)
-        )
+        relative_base = _normalize_relative_path(_cleanup_policy_path(base_path, settings))
         if allowlist and relative_base not in allowlist:
             continue
         for candidate in base_path.rglob("*"):
             if not candidate.is_file():
                 continue
-            relative_candidate = _normalize_relative_path(
-                _safe_relative(candidate, settings.paths.project_root)
-            )
+            relative_candidate = _normalize_relative_path(_cleanup_policy_path(candidate, settings))
             if relative_candidate in protected_paths:
                 continue
             if any(

@@ -127,6 +127,39 @@ def test_retention_keeps_latest_report_artifacts_but_prunes_unreferenced_artifac
     assert not orphaned_artifact.exists()
 
 
+def test_retention_prunes_external_runtime_artifacts_with_logical_allowlist(tmp_path) -> None:
+    settings = build_test_settings(tmp_path)
+    runtime_root = tmp_path / "external-runtime"
+    settings.paths.data_dir = runtime_root / "data"
+    settings.paths.raw_dir = settings.paths.data_dir / "raw"
+    settings.paths.curated_dir = settings.paths.data_dir / "curated"
+    settings.paths.marts_dir = settings.paths.data_dir / "marts"
+    settings.paths.cache_dir = settings.paths.data_dir / "cache"
+    settings.paths.logs_dir = settings.paths.data_dir / "logs"
+    settings.paths.artifacts_dir = runtime_root / "artifacts"
+
+    old_runtime_artifact = settings.paths.artifacts_dir / "reports" / "orphaned.md"
+    protected_core_curated = settings.paths.curated_dir / "features" / "feature.parquet"
+    for candidate in (old_runtime_artifact, protected_core_curated):
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_text("old", encoding="utf-8")
+        stale_at = datetime.now(tz=timezone.utc) - timedelta(days=90)
+        os.utime(candidate, (stale_at.timestamp(), stale_at.timestamp()))
+
+    with duckdb_connection(tmp_path / "data" / "marts" / "integration.duckdb") as connection:
+        bootstrap_core_tables(connection)
+        result = enforce_retention_policies(
+            settings,
+            connection=connection,
+            dry_run=False,
+            policy_config_path=project_root() / "config" / "ops" / "default_ops_policy.yaml",
+        )
+
+    assert result.row_count == 1
+    assert not old_runtime_artifact.exists()
+    assert protected_core_curated.exists()
+
+
 def test_parse_reclaimed_bytes_supports_human_units() -> None:
     assert _parse_reclaimed_bytes("Total reclaimed space: 54.73GB") == int(54.73 * (1024**3))
     assert _parse_reclaimed_bytes("Total reclaimed space: 512MB") == 512 * (1024**2)
