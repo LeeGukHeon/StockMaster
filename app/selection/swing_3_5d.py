@@ -1109,6 +1109,9 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
     )
     scored["entry_status"] = scored["entry_status_eod"]
     scored["entry_status_next_day"] = "WAIT_FOR_NEXT_DAY_PRICE"
+    # Target construction adds several audit columns before entry scoring;
+    # compact the frame here to keep full-universe server runs warning-clean.
+    scored = scored.copy()
     scored["entry_rr_score"] = (
         scored["rr_at_reference"].div(config.min_reward_risk_at_entry).mul(100.0)
     ).clip(lower=0.0, upper=100.0)
@@ -1148,8 +1151,7 @@ def _score_rows(frame: pd.DataFrame, *, config: Swing35DConfig) -> pd.DataFrame:
     scored["swing_pattern_pass"] = pattern_pass
     scored["swing_risk_reward_pass"] = risk_reward_pass.fillna(False)
 
-    # Target refinement adds several explainability columns. Defragment before
-    # score insertions so batch/test runs stay warning-clean.
+    # Defragment before score insertions so batch/test runs stay warning-clean.
     scored = scored.copy()
 
     chart_score = (
